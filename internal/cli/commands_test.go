@@ -105,18 +105,18 @@ func TestSettingsPrecedence(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "agalma"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "agalma", "config.toml"), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "agalma", "config.yaml"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	const file = `url = "https://api.file.test"
-token = "file-token"
-admin_url = "https://admin.file.test"
-admin_token = "file-admin"
+	const file = `url: https://api.file.test
+token: file-token
+admin_url: https://admin.file.test
+admin_token: file-admin
 `
 	tests := []struct {
 		name    string
-		config  string // written to $XDG_CONFIG_HOME/agalma/config.toml
+		config  string // written to $XDG_CONFIG_HOME/agalma/config.yaml
 		env     map[string]string
 		flags   globals
 		want    settings
@@ -152,18 +152,28 @@ admin_token = "file-admin"
 		},
 		{
 			name:    "explicit config must exist",
-			flags:   globals{config: "/nonexistent/agalma.toml"},
-			wantErr: "config /nonexistent/agalma.toml",
+			flags:   globals{config: "/nonexistent/agalma.yaml"},
+			wantErr: "config /nonexistent/agalma.yaml",
 		},
 		{
 			name:    "unknown key",
-			config:  "url = \"x\"\ntokn = \"y\"\n",
-			wantErr: `unknown key "tokn"`,
+			config:  "url: x\ntokn: y\n",
+			wantErr: "line 2: field tokn not found",
 		},
 		{
-			name:    "bad toml",
-			config:  "url = \n",
+			name:    "bad yaml",
+			config:  "url: [unclosed\n",
 			wantErr: "config ",
+		},
+		{
+			name:    "wrong type",
+			config:  "url: [a, b]\n",
+			wantErr: "cannot unmarshal",
+		},
+		{
+			name:   "comments only",
+			config: "# url: https://api.file.test\n",
+			want:   settings{},
 		},
 	}
 	for _, tt := range tests {
@@ -200,7 +210,7 @@ func TestConfigFromHome(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`url = "u"`+"\n"+`token = "home-token"`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("url: u\ntoken: home-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r := &runner{lookupEnv: envMap(map[string]string{"HOME": home})}

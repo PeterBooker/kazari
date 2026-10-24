@@ -3,7 +3,7 @@
 # Every key is shown with its default except base_domain, data_dir and
 # tls.email, which have none. Secrets are never written here: a value of the
 # form ${NAME} (or ${NAME:-default}) is replaced by the environment variable
-# NAME, read from the process environment or from a .env file next to the
+# NAME, read from the process environment or from a .env file in the
 # working directory (or the file named by --env-file / $AGALMA_ENV_FILE).
 # A reference to an unset variable without a default is an error.
 #

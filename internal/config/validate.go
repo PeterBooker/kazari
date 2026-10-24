@@ -10,7 +10,7 @@ import (
 )
 
 // Validate checks the configuration and returns every problem found, joined
-// with errors.Join, each prefixed by the TOML key it concerns, e.g.
+// with errors.Join, each prefixed by the YAML key it concerns, e.g.
 // "tls.mode: must be one of acme, files, self-signed".
 func (c *Config) Validate() error {
 	var v validator
@@ -79,7 +79,7 @@ func (c *Config) Validate() error {
 	return errors.Join(v.errs...)
 }
 
-// validator collects problems keyed by TOML path.
+// validator collects problems keyed by YAML path.
 type validator struct {
 	errs []error
 }
@@ -110,7 +110,7 @@ func (v *validator) positive(section string, s any) {
 	for i := range t.NumField() {
 		f := rv.Field(i)
 		if f.CanInt() && f.Int() <= 0 {
-			v.add(section+"."+tomlName(t.Field(i)), "must be greater than 0")
+			v.add(section+"."+keyName(t.Field(i)), "must be greater than 0")
 		}
 	}
 }

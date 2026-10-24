@@ -1,21 +1,26 @@
 // Package config loads, validates and describes Agalma's configuration: one
-// TOML file plus AGALMA_* environment overrides. Nothing else in the code
-// reads files or the environment for settings; internal/app passes the
-// loaded Config to every constructor.
+// YAML file whose ${NAME} references are filled from the environment, an
+// optional .env file, and AGALMA_* environment overrides. Nothing else in
+// the code reads files or the environment for settings; internal/app passes
+// the loaded Config to every constructor.
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 )
 
 // DefaultCSP is the Content-Security-Policy sent with every artifact unless
@@ -33,127 +38,127 @@ var defaultReservedSlugs = []string{
 	"api", "mcp", "admin", "www", "mail", "ns1", "ns2", "autoconfig", "autodiscover", "localhost",
 }
 
-// Config is the effective configuration. Field tags give the TOML key; the
+// Config is the effective configuration. Field tags give the YAML key; the
 // environment variable for a key is AGALMA_ followed by the key's full path,
 // upper-cased and joined with underscores (see LoadWith).
 type Config struct {
 	// BaseDomain is the domain every artifact is served under, as
 	// <slug>.<base_domain>. Lower-case, no scheme, port or trailing dot.
-	BaseDomain string `toml:"base_domain"`
+	BaseDomain string `yaml:"base_domain"`
 	// DataDir holds agalma.db, blobs/, uploads/ and certmagic/.
-	DataDir string `toml:"data_dir"`
+	DataDir string `yaml:"data_dir"`
 	// ExternalScheme is the scheme used when building public URLs:
 	// "https" (default) or "http" for a plain-HTTP development setup.
-	ExternalScheme string `toml:"external_scheme"`
+	ExternalScheme string `yaml:"external_scheme"`
 	// ExternalPort is appended to public URLs when non-zero and not the
 	// scheme's default port, e.g. 8080 for http://demo.localhost:8080/.
-	ExternalPort int `toml:"external_port"`
+	ExternalPort int `yaml:"external_port"`
 
-	Listen    Listen    `toml:"listen"`
-	TLS       TLS       `toml:"tls"`
-	Limits    Limits    `toml:"limits"`
-	Lifecycle Lifecycle `toml:"lifecycle"`
-	Serve     Serve     `toml:"serve"`
-	Auth      Auth      `toml:"auth"`
-	Admin     Admin     `toml:"admin"`
-	Log       Log       `toml:"log"`
+	Listen    Listen    `yaml:"listen"`
+	TLS       TLS       `yaml:"tls"`
+	Limits    Limits    `yaml:"limits"`
+	Lifecycle Lifecycle `yaml:"lifecycle"`
+	Serve     Serve     `yaml:"serve"`
+	Auth      Auth      `yaml:"auth"`
+	Admin     Admin     `yaml:"admin"`
+	Log       Log       `yaml:"log"`
 }
 
 // Listen holds the public listener addresses.
 type Listen struct {
 	// HTTPS is the TLS listener address, e.g. ":443".
-	HTTPS string `toml:"https"`
+	HTTPS string `yaml:"https"`
 	// HTTP is the plain listener: a redirect to HTTPS normally, the only
 	// listener in proxy mode. Empty disables it outside proxy mode.
-	HTTP string `toml:"http"`
+	HTTP string `yaml:"http"`
 	// ProxyMode serves plain HTTP on HTTP and trusts X-Forwarded-* headers
 	// from a TLS-terminating reverse proxy.
-	ProxyMode bool `toml:"proxy_mode"`
+	ProxyMode bool `yaml:"proxy_mode"`
 }
 
 // TLS selects where certificates come from.
 type TLS struct {
 	// Mode is acme, files or self-signed.
-	Mode string `toml:"mode"`
+	Mode string `yaml:"mode"`
 	// Email is the ACME account contact.
-	Email string `toml:"email"`
+	Email string `yaml:"email"`
 	// CA is letsencrypt, letsencrypt-staging or an https ACME directory URL.
-	CA string `toml:"ca"`
+	CA string `yaml:"ca"`
 	// DNSProvider is the libdns provider for DNS-01: cloudflare, route53 or hetzner.
-	DNSProvider string `toml:"dns_provider"`
+	DNSProvider string `yaml:"dns_provider"`
 	// CertFile and KeyFile are PEM files for mode files.
-	CertFile string `toml:"cert_file"`
-	KeyFile  string `toml:"key_file"`
-	DNS      DNS    `toml:"dns"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	DNS      DNS    `yaml:"dns"`
 }
 
 // DNS holds the DNS provider credentials.
 type DNS struct {
 	// APIToken is the provider's API token (unused for route53, which reads
 	// the standard AWS credential chain).
-	APIToken string `toml:"api_token" secret:"true"`
+	APIToken string `yaml:"api_token" secret:"true"`
 }
 
 // Limits bounds uploads, metadata and write rates.
 type Limits struct {
-	MaxVersionBytes     Bytes    `toml:"max_version_bytes"`
-	MaxFileBytes        Bytes    `toml:"max_file_bytes"`
-	MaxFiles            int      `toml:"max_files"`
-	MetadataMaxPairs    int      `toml:"metadata_max_pairs"`
-	WriteRatePerMinute  int      `toml:"write_rate_per_minute"`
-	DefaultUserQuota    Bytes    `toml:"default_user_quota"`
-	InlineGuidanceBytes Bytes    `toml:"inline_guidance_bytes"`
-	MaxChunkBytes       Bytes    `toml:"max_chunk_bytes"`
-	UploadTTL           Duration `toml:"upload_ttl"`
-	MaxOpenUploads      int      `toml:"max_open_uploads"`
+	MaxVersionBytes     Bytes    `yaml:"max_version_bytes"`
+	MaxFileBytes        Bytes    `yaml:"max_file_bytes"`
+	MaxFiles            int      `yaml:"max_files"`
+	MetadataMaxPairs    int      `yaml:"metadata_max_pairs"`
+	WriteRatePerMinute  int      `yaml:"write_rate_per_minute"`
+	DefaultUserQuota    Bytes    `yaml:"default_user_quota"`
+	InlineGuidanceBytes Bytes    `yaml:"inline_guidance_bytes"`
+	MaxChunkBytes       Bytes    `yaml:"max_chunk_bytes"`
+	UploadTTL           Duration `yaml:"upload_ttl"`
+	MaxOpenUploads      int      `yaml:"max_open_uploads"`
 }
 
 // Lifecycle sets the stale, retention and garbage-collection timings.
 type Lifecycle struct {
-	DefaultGrace  Duration `toml:"default_grace"`
-	Retention     Duration `toml:"retention"`
-	Tombstone     Duration `toml:"tombstone"`
-	SweepInterval Duration `toml:"sweep_interval"`
-	GCInterval    Duration `toml:"gc_interval"`
+	DefaultGrace  Duration `yaml:"default_grace"`
+	Retention     Duration `yaml:"retention"`
+	Tombstone     Duration `yaml:"tombstone"`
+	SweepInterval Duration `yaml:"sweep_interval"`
+	GCInterval    Duration `yaml:"gc_interval"`
 }
 
 // Serve controls headers on served artifacts and which slugs are reserved.
 type Serve struct {
 	// CSP is the instance default Content-Security-Policy; empty sends none.
-	CSP string `toml:"csp"`
+	CSP string `yaml:"csp"`
 	// AllowCSPOverride lets agalma.csp metadata replace CSP per artifact.
-	AllowCSPOverride bool `toml:"allow_csp_override"`
+	AllowCSPOverride bool `yaml:"allow_csp_override"`
 	// ReservedSlugs may not be used as artifact slugs.
-	ReservedSlugs []string `toml:"reserved_slugs"`
+	ReservedSlugs []string `yaml:"reserved_slugs"`
 }
 
 // Auth holds the write policy, the admin token and the optional identity provider.
 type Auth struct {
 	// WritePolicy is shared (any writer may update any artifact) or owner.
-	WritePolicy string `toml:"write_policy"`
+	WritePolicy string `yaml:"write_policy"`
 	// AdminToken is accepted as a bearer token on the admin host.
-	AdminToken string `toml:"admin_token" secret:"true"`
-	// OIDC is nil when the [auth.oidc] table is absent, which falls back
+	AdminToken string `yaml:"admin_token" secret:"true"`
+	// OIDC is nil when the auth.oidc mapping is absent, which falls back
 	// to API-key sign-in on the OAuth consent page.
-	OIDC *OIDC `toml:"oidc"`
+	OIDC *OIDC `yaml:"oidc"`
 }
 
 // OIDC configures the upstream OpenID Connect provider users sign in with.
 type OIDC struct {
 	// Issuer is the provider's https issuer URL, used for discovery.
-	Issuer       string `toml:"issuer"`
-	ClientID     string `toml:"client_id"`
-	ClientSecret string `toml:"client_secret" secret:"true"`
+	Issuer       string `yaml:"issuer"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret" secret:"true"`
 	// AllowedDomains are the verified email domains that may sign in.
-	AllowedDomains []string `toml:"allowed_domains"`
+	AllowedDomains []string `yaml:"allowed_domains"`
 	// AutoProvision creates a member on first sign-in from an allowed
-	// domain. Defaults to true when the table is present.
-	AutoProvision bool `toml:"auto_provision"`
+	// domain. Defaults to true when the mapping is present.
+	AutoProvision bool `yaml:"auto_provision"`
 	// AdminEmails are provisioned with the admin role.
-	AdminEmails []string `toml:"admin_emails"`
+	AdminEmails []string `yaml:"admin_emails"`
 }
 
-// applyDefaults fills the defaults that apply once the [auth.oidc] table exists.
+// applyDefaults fills the defaults that apply once the auth.oidc mapping exists.
 func (o *OIDC) applyDefaults() {
 	o.AutoProvision = true
 }
@@ -162,15 +167,15 @@ func (o *OIDC) applyDefaults() {
 type Admin struct {
 	// Listen is an optional second listener for the admin host only,
 	// e.g. "127.0.0.1:9443". The admin host stays reachable on the public listener too.
-	Listen string `toml:"listen"`
+	Listen string `yaml:"listen"`
 }
 
 // Log configures the slog logger.
 type Log struct {
 	// Level is debug, info, warn or error.
-	Level string `toml:"level"`
+	Level string `yaml:"level"`
 	// Format is text or json.
-	Format string `toml:"format"`
+	Format string `yaml:"format"`
 }
 
 // Default returns the configuration used before the file and environment
@@ -221,25 +226,56 @@ func Default() Config {
 	}
 }
 
-// Load reads the configuration from path (skipped when empty), applies
-// environment overrides from the process environment and validates it.
-func Load(path string) (Config, error) {
-	return LoadWith(path, os.LookupEnv)
+// DefaultEnvFile is the dotenv file Load reads when no env file is named
+// and the file exists in the working directory.
+const DefaultEnvFile = ".env"
+
+// Load reads the configuration from path (skipped when empty), with ${NAME}
+// references and AGALMA_* overrides resolved from the process environment
+// and a dotenv file, then validates it.
+//
+// The dotenv file is envFile when it is not empty, and then it must exist;
+// otherwise it is ./.env (DefaultEnvFile) if that file exists. Variables in
+// the process environment always win over the dotenv file (see EnvLookup).
+func Load(path, envFile string) (Config, error) {
+	dotenv, err := loadDotenv(envFile)
+	if err != nil {
+		return Config{}, err
+	}
+	return LoadWith(path, EnvLookup(dotenv))
 }
 
-// LoadWith is Load with the environment lookup supplied by the caller.
+// loadDotenv reads envFile, or DefaultEnvFile when envFile is empty and
+// DefaultEnvFile exists.
+func loadDotenv(envFile string) (map[string]string, error) {
+	if envFile != "" {
+		return LoadEnvFile(envFile)
+	}
+	m, err := LoadEnvFile(DefaultEnvFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return m, err
+}
+
+// LoadWith is Load with the variable lookup supplied by the caller instead
+// of the process environment and dotenv file.
 //
-// The order is: Default, then the TOML file at path if path is not empty
-// (a missing file or an unknown key is an error), then overrides, then
-// Validate. Every leaf key has an override named AGALMA_ plus its TOML path
+// The order is: Default, then the YAML file at path if path is not empty,
+// then overrides, then Validate. A missing file is an error satisfying
+// fs.ErrNotExist. ${NAME} and ${NAME:-default} references in the file's
+// scalar values are replaced through lookup (see expandNode); decoding is
+// strict, so an unknown key is an error naming it.
+//
+// Every leaf key has an override named AGALMA_ plus its YAML path
 // upper-cased with "." replaced by "_", for example AGALMA_LISTEN_PROXY_MODE
 // for listen.proxy_mode and AGALMA_TLS_DNS_API_TOKEN for tls.dns.api_token.
-// Lists are comma-separated. Setting any AGALMA_AUTH_OIDC_* variable
-// enables the [auth.oidc] table.
+// Overrides are read through lookup too. Lists are comma-separated. Setting
+// any AGALMA_AUTH_OIDC_* variable enables the auth.oidc mapping.
 func LoadWith(path string, lookup func(key string) (string, bool)) (Config, error) {
 	cfg := Default()
 	if path != "" {
-		if err := decodeFile(path, &cfg); err != nil {
+		if err := decodeFile(path, &cfg, lookup); err != nil {
 			return Config{}, err
 		}
 	}
@@ -252,32 +288,71 @@ func LoadWith(path string, lookup func(key string) (string, bool)) (Config, erro
 	return cfg, nil
 }
 
-// decodeFile decodes the TOML file at path over cfg, rejecting unknown keys.
-func decodeFile(path string, cfg *Config) error {
+// decodeFile decodes the YAML file at path over cfg: it parses the file,
+// checks its keys, expands ${NAME} references in scalar values (see
+// expandNode), re-encodes the result and decodes that strictly, rejecting
+// unknown keys.
+func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	// Decode into a pre-filled OIDC so its defaults survive a table that
-	// omits them, then drop it again if the table was absent.
-	oidc := &OIDC{}
-	oidc.applyDefaults()
-	cfg.Auth.OIDC = oidc
-	md, err := toml.Decode(string(data), cfg)
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("config: %s: %w", path, err)
+	}
+	if doc.Kind == 0 {
+		return nil // empty, or nothing but comments
+	}
+	if err := checkKeys(&doc, path); err != nil {
+		return err
+	}
+	if err := expandNode(&doc, path, lookup); err != nil {
+		return err
+	}
+	expanded, err := yaml.Marshal(&doc)
 	if err != nil {
 		return fmt.Errorf("config: %s: %w", path, err)
 	}
-	if !md.IsDefined("auth", "oidc") {
+	// Decode into a pre-filled OIDC so its defaults survive a mapping that
+	// omits them, then drop it again if the mapping was absent or null.
+	oidc := &OIDC{}
+	oidc.applyDefaults()
+	cfg.Auth.OIDC = oidc
+	dec := yaml.NewDecoder(bytes.NewReader(expanded))
+	dec.KnownFields(true)
+	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("config: %s: %w", path, withoutLines(err))
+	}
+	var probe struct {
+		Auth struct {
+			OIDC *yaml.Node `yaml:"oidc"`
+		} `yaml:"auth"`
+	}
+	if err := doc.Decode(&probe); err != nil {
+		return fmt.Errorf("config: %s: %w", path, err)
+	}
+	if probe.Auth.OIDC == nil {
 		cfg.Auth.OIDC = nil
 	}
-	if undecoded := md.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, len(undecoded))
-		for i, k := range undecoded {
-			keys[i] = k.String()
-		}
-		return fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(keys, ", "))
-	}
 	return nil
+}
+
+// yamlLine matches the "line N: " prefix of a yaml.TypeError entry.
+var yamlLine = regexp.MustCompile(`^line \d+: `)
+
+// withoutLines drops the line numbers from a decoding error: they refer to
+// the re-encoded document, not to the file.
+func withoutLines(err error) error {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err
+	}
+	out := &yaml.TypeError{Errors: make([]string, len(te.Errors))}
+	for i, e := range te.Errors {
+		out.Errors[i] = yamlLine.ReplaceAllString(e, "")
+	}
+	return out
 }
 
 // DBPath is the SQLite database file.
@@ -340,9 +415,9 @@ func (c Config) Logger(w io.Writer) *slog.Logger {
 }
 
 // Redacted returns the configuration as a JSON-friendly map keyed like the
-// TOML file, with secrets (tls.dns.api_token, auth.admin_token,
+// YAML file, with secrets (tls.dns.api_token, auth.admin_token,
 // auth.oidc.client_secret) replaced by "***" when set. Sizes and durations
-// are rendered as strings ("50MiB", "336h"); a missing [auth.oidc] is nil.
+// are rendered as strings ("50MiB", "336h"); a missing auth.oidc is nil.
 func (c Config) Redacted() map[string]any {
 	return redactStruct(reflect.ValueOf(c))
 }
@@ -352,7 +427,7 @@ func redactStruct(v reflect.Value) map[string]any {
 	m := make(map[string]any, t.NumField())
 	for i := range t.NumField() {
 		f := t.Field(i)
-		name := tomlName(f)
+		name := keyName(f)
 		if name == "" {
 			continue
 		}
@@ -389,12 +464,12 @@ func redactValue(v reflect.Value, secret bool) any {
 	}
 }
 
-// tomlName returns the TOML key of a struct field, or "" to skip it.
-func tomlName(f reflect.StructField) string {
+// keyName returns the YAML key of a struct field, or "" to skip it.
+func keyName(f reflect.StructField) string {
 	if !f.IsExported() {
 		return ""
 	}
-	name, _, _ := strings.Cut(f.Tag.Get("toml"), ",")
+	name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
 	if name == "-" || name == "" {
 		return ""
 	}

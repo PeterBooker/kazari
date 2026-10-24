@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,13 +19,19 @@ import (
 
 // defaultConfigPath is read by serve when neither --config nor
 // $AGALMA_CONFIG names a file and it exists.
-const defaultConfigPath = "/etc/agalma/agalma.toml"
+const defaultConfigPath = "/etc/agalma/agalma.yaml"
+
+// defaultEnvFile is loaded when neither --env-file nor $AGALMA_ENV_FILE
+// names a file and it exists in the working directory.
+const defaultEnvFile = ".env"
 
 const usage = `usage: agalma <command> [arguments]
 
 Server:
-  serve [--config PATH]   run the server (config: --config, $AGALMA_CONFIG,
-                          /etc/agalma/agalma.toml, else environment only)
+  serve [--config PATH] [--env-file PATH]
+                          run the server (config: --config, $AGALMA_CONFIG,
+                          /etc/agalma/agalma.yaml, else environment only;
+                          secrets: --env-file, $AGALMA_ENV_FILE, else ./.env)
   version                 print the version
 
 Client (run "agalma help" for the full list and global flags):
@@ -48,9 +55,9 @@ func main() {
 	case "help":
 		fmt.Print(usage)
 		fmt.Println()
-		os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stdout, os.LookupEnv))
+		os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stdout, clientEnv()))
 	default:
-		os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.LookupEnv))
+		os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, clientEnv()))
 	}
 }
 
@@ -59,6 +66,7 @@ func main() {
 func serve(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("config", "", "config file (default $AGALMA_CONFIG, then "+defaultConfigPath+" if it exists)")
+	envFile := fs.String("env-file", "", "dotenv file with secrets (default $AGALMA_ENV_FILE, then ./"+defaultEnvFile+" if it exists)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -70,7 +78,7 @@ func serve(args []string) int {
 		return 2
 	}
 
-	cfg, err := config.Load(configPath(*path))
+	cfg, err := config.Load(configPath(*path), envFilePath(*envFile))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
 		return 2
@@ -105,4 +113,31 @@ func configPath(flagValue string) string {
 		return defaultConfigPath
 	}
 	return ""
+}
+
+// envFilePath picks the dotenv file: the flag, then $AGALMA_ENV_FILE, else
+// "" which lets config.Load use ./.env when it exists.
+func envFilePath(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv("AGALMA_ENV_FILE")
+}
+
+// clientEnv is the environment lookup for client commands: the process
+// environment first, then ./.env (or $AGALMA_ENV_FILE) when it exists, so a
+// local .env can hold AGALMA_URL and AGALMA_TOKEN.
+func clientEnv() func(string) (string, bool) {
+	path := os.Getenv("AGALMA_ENV_FILE")
+	if path == "" {
+		path = defaultEnvFile
+	}
+	dotenv, err := config.LoadEnvFile(path)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
+		}
+		return os.LookupEnv
+	}
+	return config.EnvLookup(dotenv)
 }

@@ -13,8 +13,8 @@ import (
 const envPrefix = "AGALMA"
 
 // applyEnv overrides cfg from the environment. It walks the struct by its
-// toml tags, so every leaf key, including ones added later, gets a variable
-// named AGALMA_<PATH> with the TOML path upper-cased and joined by "_".
+// yaml tags, so every leaf key, including ones added later, gets a variable
+// named AGALMA_<PATH> with the YAML path upper-cased and joined by "_".
 func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
 	_, err := applyEnvStruct(reflect.ValueOf(cfg).Elem(), envPrefix, lookup)
 	return err
@@ -28,7 +28,7 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 	var errs []error
 	for i := range t.NumField() {
 		f := t.Field(i)
-		name := tomlName(f)
+		name := keyName(f)
 		if name == "" {
 			continue
 		}
@@ -36,7 +36,7 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 		fv := v.Field(i)
 		switch {
 		case f.Type.Kind() == reflect.Pointer && f.Type.Elem().Kind() == reflect.Struct:
-			// An optional table: work on a defaulted copy and keep it only
+			// An optional mapping: work on a defaulted copy and keep it only
 			// if a variable for it was set.
 			target := fv
 			if fv.IsNil() {

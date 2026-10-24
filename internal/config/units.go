@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Bytes is a size in bytes. In TOML and environment variables it is written
+// Bytes is a size in bytes. In YAML and environment variables it is written
 // as a plain integer or an integer with a unit: B, KiB, MiB, GiB, TiB
 // (powers of 1024) or KB, MB, GB, TB (powers of 1000), case-insensitive,
 // with an optional space, e.g. "50MiB" or "2 GiB".

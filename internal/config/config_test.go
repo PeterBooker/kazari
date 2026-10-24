@@ -32,9 +32,9 @@ func env(m map[string]string) func(string) (string, bool) {
 	}
 }
 
-func writeTOML(t *testing.T, content string) string {
+func writeYAML(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "agalma.toml")
+	path := filepath.Join(t.TempDir(), "agalma.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,8 @@ func TestDefaultNotShared(t *testing.T) {
 }
 
 func TestExampleFile(t *testing.T) {
-	const path = "../../deploy/agalma.toml"
-	got, err := LoadWith(path, env(map[string]string{"AGALMA_TLS_DNS_API_TOKEN": "tok"}))
+	const path = "../../deploy/agalma.yaml"
+	got, err := LoadWith(path, env(map[string]string{"AGALMA_TLS_DNS_API_TOKEN": "tok", "AGALMA_AUTH_ADMIN_TOKEN": "adm"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
@@ -103,8 +103,47 @@ func TestExampleFile(t *testing.T) {
 	want.DataDir = "/var/lib/agalma"
 	want.TLS.Email = "ops@example.com"
 	want.TLS.DNS.APIToken = "tok"
+	want.Auth.AdminToken = "adm"
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("example differs from Default:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestExampleFileUnsetSecret(t *testing.T) {
+	_, err := LoadWith("../../deploy/agalma.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": "adm"}))
+	want := "config: ../../deploy/agalma.yaml: ${AGALMA_TLS_DNS_API_TOKEN} is not set"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+func TestDevFile(t *testing.T) {
+	got, err := LoadWith("../../deploy/dev.yaml", env(nil))
+	if err != nil {
+		t.Fatalf("LoadWith: %v", err)
+	}
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"base_domain", got.BaseDomain, "localhost"},
+		{"external_scheme", got.ExternalScheme, "http"},
+		{"external_port", got.ExternalPort, 8080},
+		{"listen.http", got.Listen.HTTP, ":8080"},
+		{"listen.proxy_mode", got.Listen.ProxyMode, true},
+		{"tls.mode", got.TLS.Mode, "self-signed"},
+		{"auth.admin_token", got.Auth.AdminToken, "dev-admin-token"},
+		{"log.level", got.Log.Level, "debug"},
+	}
+	for _, ch := range checks {
+		if !reflect.DeepEqual(ch.got, ch.want) {
+			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		}
+	}
+
+	got, err = LoadWith("../../deploy/dev.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": "mine"}))
+	if err != nil || got.Auth.AdminToken != "mine" {
+		t.Errorf("admin token from env = %q, %v; want mine", got.Auth.AdminToken, err)
 	}
 }
 
@@ -116,48 +155,69 @@ func TestLoadNoFile(t *testing.T) {
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	_, err := LoadWith(filepath.Join(t.TempDir(), "nope.toml"), env(nil))
+	_, err := LoadWith(filepath.Join(t.TempDir(), "nope.yaml"), env(nil))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want not exist", err)
 	}
 }
 
 func TestLoadUnknownKey(t *testing.T) {
-	path := writeTOML(t, `
-base_domain = "art.example.com"
-colour = "blue"
+	path := writeYAML(t, `
+base_domain: art.example.com
+colour: blue
 
-[listen]
-htps = ":443"
+listen:
+  htps: ":443"
 `)
 	_, err := LoadWith(path, env(nil))
 	if err == nil {
 		t.Fatal("want error for unknown keys")
 	}
-	for _, k := range []string{"colour", "listen.htps"} {
+	for _, k := range []string{path + ": line 3: unknown key colour", path + ": line 6: unknown key listen.htps"} {
 		if !strings.Contains(err.Error(), k) {
 			t.Errorf("error %q does not name %s", err, k)
 		}
 	}
 }
 
+func TestLoadUnknownKeyMerged(t *testing.T) {
+	path := writeYAML(t, "listen: &l\n  https: \":443\"\nadmin:\n  <<: *l\n")
+	_, err := LoadWith(path, env(nil))
+	if want := path + ": line 2: unknown key admin.https"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+func TestLoadTypeError(t *testing.T) {
+	path := writeYAML(t, "\n\nbase_domain: [a, b]\n")
+	_, err := LoadWith(path, env(nil))
+	if err == nil || !strings.Contains(err.Error(), "cannot unmarshal !!seq into string") {
+		t.Fatalf("err = %v, want a type error", err)
+	}
+	// Line numbers would refer to the re-encoded document, so they are dropped.
+	if strings.Contains(err.Error(), "line ") {
+		t.Errorf("err = %v, want no line number", err)
+	}
+}
+
 func TestLoadBadValue(t *testing.T) {
-	path := writeTOML(t, "[limits]\nmax_version_bytes = \"lots\"\n")
+	path := writeYAML(t, "limits:\n  max_version_bytes: lots\n")
 	if _, err := LoadWith(path, env(nil)); err == nil || !strings.Contains(err.Error(), "lots") {
 		t.Fatalf("err = %v, want invalid size error", err)
 	}
 }
 
-func TestLoadOIDCTable(t *testing.T) {
+func TestLoadOIDCMapping(t *testing.T) {
 	base := `
-base_domain = "art.example.com"
-data_dir = "/data"
-[tls]
-mode = "self-signed"
-[auth.oidc]
-issuer = "https://accounts.google.com"
-client_id = "id"
-client_secret = "secret"
+base_domain: art.example.com
+data_dir: /data
+tls:
+  mode: self-signed
+auth:
+  oidc:
+    issuer: https://accounts.google.com
+    client_id: id
+    client_secret: secret
 `
 	tests := []struct {
 		name  string
@@ -165,11 +225,11 @@ client_secret = "secret"
 		want  bool
 	}{
 		{"default", "", true},
-		{"explicit false", "auto_provision = false\n", false},
+		{"explicit false", "    auto_provision: false\n", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := LoadWith(writeTOML(t, base+tt.extra), env(nil))
+			c, err := LoadWith(writeYAML(t, base+tt.extra), env(nil))
 			if err != nil {
 				t.Fatalf("LoadWith: %v", err)
 			}
@@ -183,14 +243,82 @@ client_secret = "secret"
 	}
 }
 
-func TestLoadIntegerBytes(t *testing.T) {
-	path := writeTOML(t, "base_domain = \"localhost\"\ndata_dir = \"/d\"\n[tls]\nmode = \"self-signed\"\n[limits]\nmax_chunk_bytes = 1048576\n")
+func TestLoadOIDCAbsent(t *testing.T) {
+	tests := map[string]string{
+		"no auth":       "",
+		"auth only":     "auth:\n  write_policy: owner\n",
+		"null oidc":     "auth:\n  oidc:\n",
+		"empty mapping": "auth: {}\n",
+	}
+	for name, extra := range tests {
+		t.Run(name, func(t *testing.T) {
+			c, err := LoadWith(writeYAML(t, "base_domain: localhost\ndata_dir: /d\ntls:\n  mode: self-signed\n"+extra), env(nil))
+			if err != nil {
+				t.Fatalf("LoadWith: %v", err)
+			}
+			if c.Auth.OIDC != nil {
+				t.Errorf("OIDC = %+v, want nil", c.Auth.OIDC)
+			}
+		})
+	}
+}
+
+func TestLoadScalars(t *testing.T) {
+	path := writeYAML(t, `
+base_domain: localhost
+data_dir: /d
+tls:
+  mode: self-signed
+limits:
+  max_chunk_bytes: 1048576
+  max_file_bytes: "2 MiB"
+  upload_ttl: 1d12h
+lifecycle:
+  default_grace: 14d
+serve:
+  reserved_slugs:
+    - api
+    - mcp
+`)
 	c, err := LoadWith(path, env(nil))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
-	if c.Limits.MaxChunkBytes != MiB {
-		t.Errorf("MaxChunkBytes = %v, want 1MiB", c.Limits.MaxChunkBytes)
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"limits.max_chunk_bytes", c.Limits.MaxChunkBytes, MiB},
+		{"limits.max_file_bytes", c.Limits.MaxFileBytes, 2 * MiB},
+		{"limits.upload_ttl", c.Limits.UploadTTL, Duration(36 * time.Hour)},
+		{"lifecycle.default_grace", c.Lifecycle.DefaultGrace, Duration(14 * 24 * time.Hour)},
+		{"serve.reserved_slugs", c.Serve.ReservedSlugs, []string{"api", "mcp"}},
+		{"limits.max_version_bytes default", c.Limits.MaxVersionBytes, 50 * MiB},
+	}
+	for _, ch := range checks {
+		if !reflect.DeepEqual(ch.got, ch.want) {
+			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		}
+	}
+}
+
+func TestLoadEmptyFile(t *testing.T) {
+	c, err := LoadWith(writeYAML(t, "# nothing but a comment\n"), env(map[string]string{
+		"AGALMA_BASE_DOMAIN": "localhost", "AGALMA_DATA_DIR": "/d", "AGALMA_TLS_MODE": "self-signed",
+	}))
+	if err != nil {
+		t.Fatalf("LoadWith: %v", err)
+	}
+	if c.BaseDomain != "localhost" || c.Limits.MaxFiles != 2000 {
+		t.Errorf("got %+v", c)
+	}
+}
+
+func TestLoadBadYAML(t *testing.T) {
+	path := writeYAML(t, "base_domain: [unclosed\n")
+	_, err := LoadWith(path, env(nil))
+	if err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("err = %v, want a YAML error naming %s", err, path)
 	}
 }
 
@@ -246,7 +374,7 @@ func TestEnvOverrides(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	path := writeTOML(t, "base_domain = \"from.file\"\ndata_dir = \"/d\"\n[tls]\nmode = \"self-signed\"\n")
+	path := writeYAML(t, "base_domain: from.file\ndata_dir: /d\ntls:\n  mode: self-signed\n")
 	c, err := LoadWith(path, env(map[string]string{"AGALMA_BASE_DOMAIN": "from.env"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
@@ -284,7 +412,7 @@ func TestEnvNamesUnique(t *testing.T) {
 	walk = func(rt reflect.Type, prefix string) {
 		for i := range rt.NumField() {
 			f := rt.Field(i)
-			name := tomlName(f)
+			name := keyName(f)
 			if name == "" {
 				continue
 			}
@@ -534,7 +662,7 @@ func TestRedacted(t *testing.T) {
 		}
 	}
 
-	// Empty secrets stay empty and a missing OIDC table is nil.
+	// Empty secrets stay empty and a missing OIDC mapping is nil.
 	d := Default()
 	m = d.Redacted()
 	if got := section(m, "auth")["admin_token"]; got != "" {

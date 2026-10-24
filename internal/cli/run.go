@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -13,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 )
 
 // Exit codes returned by Run.
@@ -49,12 +50,12 @@ type settings struct {
 	URL, Token, AdminURL, AdminToken string
 }
 
-// fileConfig is ~/.config/agalma/config.toml.
+// fileConfig is ~/.config/agalma/config.yaml.
 type fileConfig struct {
-	URL        string `toml:"url"`
-	Token      string `toml:"token"`
-	AdminURL   string `toml:"admin_url"`
-	AdminToken string `toml:"admin_token"`
+	URL        string `yaml:"url"`
+	Token      string `yaml:"token"`
+	AdminURL   string `yaml:"admin_url"`
+	AdminToken string `yaml:"admin_token"`
 }
 
 // runner carries the I/O and configuration of one Run.
@@ -93,7 +94,7 @@ func (r *runner) run(args []string) error {
 	fs.StringVar(&r.g.token, "token", "", "API key (env AGALMA_TOKEN)")
 	fs.StringVar(&r.g.adminURL, "admin-url", "", "admin API URL (env AGALMA_ADMIN_URL)")
 	fs.StringVar(&r.g.adminToken, "admin-token", "", "admin token (env AGALMA_ADMIN_TOKEN)")
-	fs.StringVar(&r.g.config, "config", "", "config file (default $XDG_CONFIG_HOME/agalma/config.toml)")
+	fs.StringVar(&r.g.config, "config", "", "config file (default $XDG_CONFIG_HOME/agalma/config.yaml or ~/.config/agalma/config.yaml)")
 	fs.BoolVar(&r.g.json, "json", false, "print JSON responses")
 	fs.Usage = func() {
 		fmt.Fprint(r.stderr, topUsage)
@@ -159,29 +160,33 @@ func (r *runner) configPath() (string, bool) {
 		return r.g.config, true
 	}
 	if x := r.env("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "agalma", "config.toml"), false
+		return filepath.Join(x, "agalma", "config.yaml"), false
 	}
 	if h := r.env("HOME"); h != "" {
-		return filepath.Join(h, ".config", "agalma", "config.toml"), false
+		return filepath.Join(h, ".config", "agalma", "config.yaml"), false
 	}
 	return "", false
 }
 
+// loadConfigFile reads the YAML config file, if any. Unknown keys are an
+// error; a missing file is skipped unless it was named with --config.
 func (r *runner) loadConfigFile() (fileConfig, error) {
 	var fc fileConfig
 	path, explicit := r.configPath()
 	if path == "" {
 		return fc, nil
 	}
-	md, err := toml.DecodeFile(path, &fc)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if !explicit && errors.Is(err, os.ErrNotExist) {
 			return fc, nil
 		}
-		return fc, &usageError{msg: fmt.Sprintf("config %s: %v", path, err)}
+		return fc, usagef("config %s: %v", path, err)
 	}
-	if u := md.Undecoded(); len(u) > 0 {
-		return fc, usagef("config %s: unknown key %q", path, u[0].String())
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&fc); err != nil && !errors.Is(err, io.EOF) {
+		return fileConfig{}, usagef("config %s: %v", path, err)
 	}
 	return fc, nil
 }
@@ -263,7 +268,7 @@ func (r *runner) configHint() string {
 	if p, _ := r.configPath(); p != "" {
 		return p
 	}
-	return "~/.config/agalma/config.toml"
+	return "~/.config/agalma/config.yaml"
 }
 
 // newFlags returns a flag set for a subcommand. usage is the synopsis after
