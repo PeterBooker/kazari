@@ -1,0 +1,18 @@
+{{- /* Links between the Markdown files in docs/ point at other .md files. Resolve them to pages,
+       send the README to GitHub, and fail the build on a link to a page that does not exist. */ -}}
+{{- $u := urls.Parse .Destination -}}
+{{- $href := .Destination -}}
+{{- if and (not $u.IsAbs) (strings.HasSuffix $u.Path ".md") -}}
+  {{- if eq (path.Base $u.Path) "README.md" -}}
+    {{- $href = printf "%s/blob/%s/README.md" site.Params.repo site.Params.branch -}}
+  {{- else -}}
+    {{- with .PageInner.GetPage (strings.TrimSuffix ".md" $u.Path) -}}
+      {{- $href = .RelPermalink -}}
+    {{- else -}}
+      {{- errorf "%s: link to a missing page %q" .PageInner.File.Path .Destination -}}
+    {{- end -}}
+  {{- end -}}
+  {{- with $u.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
+{{- end -}}
+<a href="{{ $href | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}{{ if $u.IsAbs }} rel="noopener"{{ end }}>{{ .Text }}</a>
+{{- /* chomp trailing newline */ -}}

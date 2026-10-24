@@ -1,0 +1,39 @@
+# The Agalma website and documentation, published to GitHub Pages by
+# .github/workflows/pages.yml. Build: hugo --source site. Preview: hugo server --source site.
+# The reference pages are the Markdown files in ../docs, mounted under /docs/.
+
+baseURL = "https://peterbooker.github.io/agalma/"
+title = "Agalma"
+locale = "en-GB"
+disableKinds = ["taxonomy", "term", "rss"]
+enableRobotsTXT = true
+
+[params]
+  description = "A self-hosted home for the pages Claude builds: prototypes, reports and dashboards on your own domain, with versions, sign-in through your identity provider and an MCP server, REST API and CLI."
+  repo = "https://github.com/PeterBooker/agalma"
+  branch = "main"
+
+[outputs]
+  home = ["html", "json"]
+  section = ["html"]
+  page = ["html"]
+
+[markup]
+  # The docs pages are ours, so raw HTML in them (the cards on the overview page) is allowed.
+  [markup.goldmark.renderer]
+    unsafe = true
+  [markup.goldmark.parser]
+    autoHeadingIDType = "github"
+  [markup.highlight]
+    noClasses = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 3
+
+[module]
+  [[module.mounts]]
+    source = "content"
+    target = "content"
+  [[module.mounts]]
+    source = "../docs"
+    target = "content/docs"

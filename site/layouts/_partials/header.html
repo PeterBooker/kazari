@@ -1,0 +1,25 @@
+{{- $docs := site.GetPage "/docs" }}
+{{- $quick := site.GetPage "/docs/quickstart" }}
+{{- $inDocs := eq .Section "docs" }}
+<header class="site-header">
+  <div class="header-inner">
+    {{- if $inDocs }}
+    <button class="icon-button nav-toggle" type="button" aria-controls="docs-nav" aria-expanded="false" aria-label="Open the documentation menu">{{ partial "icon.html" "menu" }}</button>
+    {{- end }}
+    <a class="brand" href="{{ site.Home.RelPermalink }}">{{ partial "logo.html" }}<span>Agalma</span></a>
+    <nav class="header-nav" aria-label="Main">
+      <a href="{{ $docs.RelPermalink }}"{{ if $inDocs }} aria-current="true"{{ end }}>Docs</a>
+      <a href="{{ $quick.RelPermalink }}" class="hide-sm">Quick start</a>
+      <a href="{{ (site.GetPage "/docs/api").RelPermalink }}" class="hide-md">API</a>
+    </nav>
+    <div class="header-actions">
+      <button class="search-button" type="button" data-search-open aria-label="Search the documentation">
+        {{ partial "icon.html" "search" }}<span class="search-label">Search docs</span><kbd>/</kbd>
+      </button>
+      <button class="icon-button" type="button" data-theme-toggle aria-label="Switch colour theme">
+        <span class="theme-icon-light">{{ partial "icon.html" "sun" }}</span><span class="theme-icon-dark">{{ partial "icon.html" "moon" }}</span>
+      </button>
+      <a class="icon-button" href="{{ site.Params.repo }}" aria-label="Agalma on GitHub">{{ partial "github.html" }}</a>
+    </div>
+  </div>
+</header>

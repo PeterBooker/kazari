@@ -1,0 +1,27 @@
+{{- /* The search index: every page in the sidebar with its headings and plain text. */ -}}
+{{- define "_partials/inline/headings.html" -}}
+  {{- $acc := slice -}}
+  {{- range . -}}
+    {{- if and .ID (ge .Level 2) (le .Level 4) -}}
+      {{- $acc = $acc | append (dict "id" .ID "text" (.Title | plainify | htmlUnescape)) -}}
+    {{- end -}}
+    {{- with .Headings }}{{ $acc = $acc | append (partial "inline/headings.html" .) }}{{ end -}}
+  {{- end -}}
+  {{- return $acc -}}
+{{- end -}}
+{{- $out := slice -}}
+{{- range hugo.Data.nav.sections -}}
+  {{- $group := .title -}}
+  {{- range .pages -}}
+    {{- with site.GetPage .path -}}
+      {{- $out = $out | append (dict
+        "title" (partial "title.html" .)
+        "group" $group
+        "url" .RelPermalink
+        "headings" (partial "inline/headings.html" .Fragments.Headings)
+        "text" (.Content | replaceRE `<a class="anchor"[^>]*>#</a>` "" | replaceRE `(</(p|h[1-6]|li|td|th|pre|dt|dd|summary)>)` "$1 " | plainify | htmlUnescape)
+      ) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $out | jsonify -}}

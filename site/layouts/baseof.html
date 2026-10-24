@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="{{ site.Language.Locale }}">
+<head>
+  {{- partial "head.html" . }}
+</head>
+<body class="{{ block "bodyclass" . }}{{ end }}">
+  <a class="skip-link" href="#main">Skip to content</a>
+  {{ partial "header.html" . }}
+  {{ block "main" . }}{{ end }}
+  {{ partial "footer.html" . }}
+  {{ partial "search.html" . }}
+  {{- $js := resources.Get "js/main.js" | js.Build (dict "minify" hugo.IsProduction "target" "es2020") | fingerprint }}
+  <script src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}" data-index="{{ "index.json" | relURL }}" defer></script>
+</body>
+</html>

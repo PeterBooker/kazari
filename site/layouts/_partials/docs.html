@@ -1,0 +1,68 @@
+{{- /* Documentation page: sidebar from data/nav.toml, the content, an "On this page" list, previous and next. */ -}}
+{{- $page := . }}
+{{- $flat := slice }}
+{{- $group := "" }}
+{{- range hugo.Data.nav.sections }}
+  {{- $title := .title }}
+  {{- range .pages }}
+    {{- with site.GetPage .path }}
+      {{- $flat = $flat | append . }}
+      {{- if eq .RelPermalink $page.RelPermalink }}{{ $group = $title }}{{ end }}
+    {{- else }}
+      {{- errorf "data/nav.toml: no page at %s" .path }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $i := -1 }}
+{{- range $n, $p := $flat }}{{ if eq $p.RelPermalink $page.RelPermalink }}{{ $i = $n }}{{ end }}{{ end }}
+
+{{- $hasToc := ge (len .Fragments.Identifiers) 3 }}
+{{- $content := .Content }}
+{{- if $hasToc }}
+  {{- $inline := printf `<details class="toc-inline"><summary>On this page</summary>%s</details>` (.Fragments.ToHTML 2 3 false | replaceRE `<nav id="TableOfContents">` `<nav>`) }}
+  {{- $content = replace $content "</h1>" (printf "</h1>%s" $inline) 1 }}
+{{- end }}
+<div class="docs-layout">
+  <aside class="docs-sidebar" id="docs-nav">
+    <nav aria-label="Documentation">
+      {{- range hugo.Data.nav.sections }}
+      <div class="nav-group">
+        <h2>{{ .title }}</h2>
+        <ul>
+          {{- range .pages }}
+          {{- $p := site.GetPage .path }}
+          <li><a href="{{ $p.RelPermalink }}"{{ if eq $p.RelPermalink $page.RelPermalink }} aria-current="page"{{ end }}>{{ .title }}</a></li>
+          {{- end }}
+        </ul>
+      </div>
+      {{- end }}
+    </nav>
+  </aside>
+  <main id="main" class="docs-main">
+    <article class="prose">
+      {{- with $group }}<p class="eyebrow">{{ . }}</p>{{ end }}
+      {{ $content | safeHTML }}
+    </article>
+    <footer class="docs-footer">
+      {{- with .File }}
+      {{- $root := path.Dir hugo.WorkingDir }}
+      {{- $src := strings.TrimPrefix (printf "%s/" $root) .Filename }}
+      <a class="edit-link" href="{{ site.Params.repo }}/edit/{{ site.Params.branch }}/{{ $src }}">{{ partial "icon.html" "edit" }}Edit this page on GitHub</a>
+      {{- end }}
+      <nav class="pager" aria-label="Previous and next">
+        {{- if gt $i 0 }}{{ with index $flat (sub $i 1) }}
+        <a class="pager-prev" href="{{ .RelPermalink }}" rel="prev"><span>Previous</span>{{ partial "title.html" . }}</a>
+        {{- end }}{{ end }}
+        {{- if and (ge $i 0) (lt $i (sub (len $flat) 1)) }}{{ with index $flat (add $i 1) }}
+        <a class="pager-next" href="{{ .RelPermalink }}" rel="next"><span>Next</span>{{ partial "title.html" . }}</a>
+        {{- end }}{{ end }}
+      </nav>
+    </footer>
+  </main>
+  {{- if $hasToc }}
+  <aside class="docs-toc" aria-label="On this page">
+    <h2>On this page</h2>
+    {{ .Fragments.ToHTML 2 3 false | replaceRE `<nav id="TableOfContents">` `<nav>` | safeHTML }}
+  </aside>
+  {{- end }}
+</div>

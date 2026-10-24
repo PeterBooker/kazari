@@ -1,0 +1,22 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{- $title := partial "title.html" . }}
+{{- $full := cond .IsHome (printf "%s: self-hosted publishing for the pages Claude builds" site.Title) (printf "%s · %s" $title site.Title) }}
+{{- $desc := or .Description (cond .IsHome site.Params.description (printf "%s: %s" $title "Agalma documentation")) }}
+<title>{{ $full }}</title>
+<meta name="description" content="{{ $desc }}">
+<link rel="canonical" href="{{ .Permalink }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.Title }}">
+<meta property="og:title" content="{{ $full }}">
+<meta property="og:description" content="{{ $desc }}">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="{{ "favicon.svg" | relURL }}" type="image/svg+xml">
+<link rel="preload" href="{{ "fonts/instrument-serif-400.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
+<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+{{- $css := resources.Get "css/main.css" | resources.ExecuteAsTemplate "css/main.css" . }}
+{{- if hugo.IsProduction }}{{ $css = $css | minify }}{{ end }}
+{{- $css = $css | fingerprint }}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}">

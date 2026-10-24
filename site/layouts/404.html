@@ -1,0 +1,11 @@
+{{ define "main" }}
+<main id="main" class="not-found container">
+  <p class="eyebrow">404</p>
+  <h1>Nothing at this address</h1>
+  <p>The page may have moved. Try the search, or start from the documentation.</p>
+  <p class="cta-row">
+    <a class="button button-primary" href="{{ (site.GetPage "/docs").RelPermalink }}">Documentation</a>
+    <a class="button" href="{{ site.Home.RelPermalink }}">Home</a>
+  </p>
+</main>
+{{ end }}

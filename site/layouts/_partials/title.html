@@ -1,0 +1,8 @@
+{{- /* The page title: front matter, else the first "# " heading of the Markdown (the files in docs/ have no front matter). */ -}}
+{{- $t := .Title -}}
+{{- if not $t -}}
+  {{- with findRESubmatch `(?m)^# +(.+?)\s*$` .RawContent 1 -}}
+    {{- $t = index (index . 0) 1 | markdownify | plainify | htmlUnescape -}}
+  {{- end -}}
+{{- end -}}
+{{- return $t -}}

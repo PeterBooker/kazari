@@ -1,0 +1,62 @@
+name: Pages
+
+# Builds the website in site/ (which mounts docs/) with Hugo and publishes it to GitHub Pages.
+# In the repository settings, Pages must use "GitHub Actions" as its source.
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUGO_VERSION: "0.161.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Hugo
+        run: |
+          base=https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}
+          archive=hugo_${HUGO_VERSION}_linux-amd64.tar.gz
+          curl -fsSLO "$base/$archive"
+          curl -fsSL "$base/hugo_${HUGO_VERSION}_checksums.txt" | grep " $archive\$" | sha256sum --check
+          tar -xzf "$archive" hugo
+          sudo install -m 0755 hugo /usr/local/bin/hugo
+          hugo version
+      - id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+      - name: Build
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: hugo --source site --gc --minify ${BASE_URL:+--baseURL "$BASE_URL/"}
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/public
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
