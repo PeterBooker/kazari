@@ -1,13 +1,16 @@
-{{- /* Documentation page: sidebar from data/nav.toml, the content, an "On this page" list, previous and next. */ -}}
+{{- /* Documentation page: sidebar from data/nav.toml, the content with its vertical running head
+       (the group's Japanese label, from nav.toml), an "On this page" list, previous and next. */ -}}
 {{- $page := . }}
 {{- $flat := slice }}
 {{- $group := "" }}
+{{- $groupJa := "" }}
 {{- range hugo.Data.nav.sections }}
   {{- $title := .title }}
+  {{- $ja := .ja }}
   {{- range .pages }}
     {{- with site.GetPage .path }}
       {{- $flat = $flat | append . }}
-      {{- if eq .RelPermalink $page.RelPermalink }}{{ $group = $title }}{{ end }}
+      {{- if eq .RelPermalink $page.RelPermalink }}{{ $group = $title }}{{ $groupJa = $ja }}{{ end }}
     {{- else }}
       {{- errorf "data/nav.toml: no page at %s" .path }}
     {{- end }}
@@ -40,7 +43,10 @@
   </aside>
   <main id="main" class="docs-main">
     <article class="prose">
-      {{- with $group }}<p class="eyebrow">{{ . }}</p>{{ end }}
+      {{- with $group }}
+      <p class="hashira" aria-hidden="true">{{ with $groupJa }}<span lang="ja">{{ . }}</span>{{ end }}{{ . }} · {{ partial "title.html" $page }}</p>
+      <p class="crumb">{{ . }}</p>
+      {{- end }}
       {{ $content | safeHTML }}
     </article>
     <footer class="docs-footer">

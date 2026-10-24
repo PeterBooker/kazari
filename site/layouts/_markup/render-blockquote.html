@@ -1,6 +1,7 @@
 {{- if eq .Type "alert" }}
+{{- $ja := index (dict "note" "注" "tip" "ヒント" "important" "重要" "warning" "警告" "caution" "注意") .AlertType }}
 <div class="callout callout-{{ .AlertType }}" role="note">
-  <p class="callout-title">{{ or .AlertTitle (.AlertType | strings.FirstUpper) }}</p>
+  <p class="callout-title">{{ with $ja }}<span lang="ja" aria-hidden="true">{{ . }}</span>{{ end }}{{ or .AlertTitle (.AlertType | strings.FirstUpper) }}</p>
   {{ .Text }}
 </div>
 {{- else }}

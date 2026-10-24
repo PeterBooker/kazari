@@ -1,0 +1,12 @@
+{{- /* The solar term in force at a time, as its index in data/sekki.toml (立春 = 0): the term with the
+       latest start on or before the date, else the year's last one (冬至, before 5 January).
+       Usage: partial "sekki.html" now. The inline script in head.html does the same in the browser. */ -}}
+{{- $md := .Format "01-02" -}}
+{{- $n := -1 -}}{{- $best := "" -}}
+{{- $lastN := 0 -}}{{- $last := "" -}}
+{{- range $i, $t := hugo.Data.sekki.terms -}}
+  {{- if and (le $t.start $md) (gt $t.start $best) }}{{ $best = $t.start }}{{ $n = $i }}{{ end -}}
+  {{- if gt $t.start $last }}{{ $last = $t.start }}{{ $lastN = $i }}{{ end -}}
+{{- end -}}
+{{- if lt $n 0 }}{{ $n = $lastN }}{{ end -}}
+{{- return $n -}}

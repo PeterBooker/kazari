@@ -1,8 +1,8 @@
-# The Kazari website and documentation, published to GitHub Pages by
+# The Kazari website and documentation at https://kazari.io/, published to GitHub Pages by
 # .github/workflows/pages.yml. Build: hugo --source site. Preview: hugo server --source site.
 # The reference pages are the Markdown files in ../docs, mounted under /docs/.
 
-baseURL = "https://peterbooker.github.io/kazari/"
+baseURL = "https://kazari.io/"
 title = "Kazari"
 locale = "en-GB"
 disableKinds = ["taxonomy", "term", "rss"]

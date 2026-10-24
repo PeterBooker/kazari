@@ -1,0 +1,26 @@
+{{- /* The year as a ring of the 24 solar terms in their colours, 立春 at the top; main.css lifts the
+       current one (the :root[data-sekki] blocks) and the labels in the middle follow it. */ -}}
+{{- $rad := div math.Pi 180 }}
+{{- $pt := "%.2f %.2f" }}
+<figure class="wheel" id="season">
+  <div class="wheel-ring">
+    <svg viewBox="-124 -124 248 248" aria-hidden="true" focusable="false">
+      {{- range $i, $t := hugo.Data.sekki.terms }}
+      {{- $a0 := mul (add (add -90 (mul $i 15)) 0.8) $rad }}
+      {{- $a1 := mul (sub (add -90 (mul (add $i 1) 15)) 0.8) $rad }}
+      {{- $d := printf "M%s A88 88 0 0 1 %s L%s A62 62 0 0 0 %sZ"
+        (printf $pt (mul 88 (math.Cos $a0)) (mul 88 (math.Sin $a0)))
+        (printf $pt (mul 88 (math.Cos $a1)) (mul 88 (math.Sin $a1)))
+        (printf $pt (mul 62 (math.Cos $a1)) (mul 62 (math.Sin $a1)))
+        (printf $pt (mul 62 (math.Cos $a0)) (mul 62 (math.Sin $a0))) }}
+      <path data-n="{{ $i }}" d="{{ $d }}" fill="{{ $t.base }}"><title>{{ $t.kanji }} {{ $t.name }}, {{ $t.motif_en }}</title></path>
+      {{- end }}
+      {{- range slice (slice "春" 0) (slice "夏" 6) (slice "秋" 12) (slice "冬" 18) }}
+      {{- $a := mul (add (add -90 (mul (index . 1) 15)) 7.5) $rad }}
+      <text x="{{ printf "%.1f" (mul 110 (math.Cos $a)) }}" y="{{ printf "%.1f" (add 4 (mul 110 (math.Sin $a))) }}" text-anchor="middle">{{ index . 0 }}</text>
+      {{- end }}
+    </svg>
+    <p class="wheel-centre"><span class="sekki-kanji" lang="ja"></span><span class="sekki-name"></span><span class="sekki-dates"></span></p>
+  </div>
+  <figcaption>The colour of this site follows the 24 solar terms of the old Japanese calendar. <span class="sekki-note"></span></figcaption>
+</figure>

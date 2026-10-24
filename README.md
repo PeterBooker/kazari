@@ -4,6 +4,8 @@ Kazari is a self-hosted artifact host for pages written by LLMs. One Go binary s
 
 > *Kazari* (飾り) is Japanese for a decoration set out on display, like the dolls and New Year pieces that are brought out for a season and then put away. Kazari does the same for pages: it puts them on show for as long as they are wanted, then retires them.
 
+Documentation and guides: <https://kazari.io/docs/>
+
 ## Features
 
 - **One origin per artifact.** `demo.art.example.com` serves the published version, `demo--v3.art.example.com` pins version 3 forever. Each artifact is its own browser origin, so one page cannot read another's storage.
@@ -119,21 +121,22 @@ Releases are cut by pushing a `v*` tag; GitHub Actions runs goreleaser. The full
 
 ### Website
 
-The website at <https://peterbooker.github.io/kazari/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, so a change to `docs/` is a change to the site. The landing page and the guides (quick start, publishing with Claude, publishing from code) live in `site/content/`. Building it needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node, no theme.
+The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, so a change to `docs/` is a change to the site. The landing page and the guides (quick start, publishing with Claude, publishing from code) live in `site/content/`. Building it needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node, no theme.
 
 ```sh
 go install github.com/gohugoio/hugo@v0.168.0   # Hugo at the version CI uses
-hugo server --source site                      # preview at http://localhost:1313/kazari/, reloads on save
+hugo server --source site                      # preview at http://localhost:1313/, reloads on save
 hugo --source site --gc --minify               # build into site/public/ as CI does
 ```
 
 - Pages in `docs/` stay plain Markdown that reads well on GitHub: no front matter, the first `# ` heading is the title, and links between pages are relative `.md` links (`install.md#tls-modes`). The build fails on a link to a page that does not exist.
 - A page appears in the sidebar, the previous and next links and the search once it is listed in `site/data/nav.toml`.
+- The fonts are self-hosted and subset to the characters the site uses. After adding Japanese text, run `site/subset-fonts.sh` (needs `curl` and fonttools with brotli) and commit the regenerated files in `site/static/fonts/`.
 - `.github/workflows/pages.yml` builds the site for pull requests that touch `site/` or `docs/` and deploys it from `main`. The repository's Pages source must be set to GitHub Actions.
 
 ## Documentation
 
-The documentation is published, with guides for publishing with Claude and from code, at <https://peterbooker.github.io/kazari/>. The reference pages are the files in `docs/`:
+The documentation is published, with guides for publishing with Claude and from code, at <https://kazari.io/docs/>. The reference pages are the files in `docs/`:
 
 | Document                                     | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |

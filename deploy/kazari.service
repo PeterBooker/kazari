@@ -1,6 +1,6 @@
 [Unit]
 Description=Kazari artifact host
-Documentation=https://github.com/PeterBooker/kazari
+Documentation=https://kazari.io/docs/ https://github.com/PeterBooker/kazari
 After=network-online.target
 Wants=network-online.target
 

@@ -16,4 +16,4 @@ hugo version
 
 ## Verify
 
-`hugo --source site --gc --minify` must finish with no `WARN` and no `ERROR` lines. Hugo deprecates template functions and config keys often (`.Site.Data` became `hugo.Data`, `languageCode` became `locale`): fix each deprecation the way its message says, then rebuild. Then look at `hugo server --source site` (<http://localhost:1313/kazari/>): the home page, one docs page and a search.
+`hugo --source site --gc --minify` must finish with no `WARN` and no `ERROR` lines. Hugo deprecates template functions and config keys often (`.Site.Data` became `hugo.Data`, `languageCode` became `locale`): fix each deprecation the way its message says, then rebuild. Then look at `hugo server --source site` (<http://localhost:1313/>): the home page, one docs page and a search.

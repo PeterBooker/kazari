@@ -11,11 +11,14 @@
 <meta property="og:title" content="{{ $full }}">
 <meta property="og:description" content="{{ $desc }}">
 <meta property="og:url" content="{{ .Permalink }}">
-<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eff1ec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151815" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="{{ "favicon.svg" | relURL }}" type="image/svg+xml">
-<link rel="preload" href="{{ "fonts/instrument-serif-400.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
-<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="preload" href="{{ "fonts/ibm-plex-sans.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ "fonts/shippori-mincho-b1-800.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
+{{- /* Before first paint: the remembered theme, and the solar term for the visitor's date (see _partials/sekki.html). */}}
+{{- $starts := slice }}{{ range hugo.Data.sekki.terms }}{{ $starts = $starts | append .start }}{{ end }}
+<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}(function(s){var d=new Date(),k=("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2),n=-1,b="",l="",m=0;s.forEach(function(x,i){if(x<=k&&x>b){b=x;n=i}if(x>l){l=x;m=i}});document.documentElement.dataset.sekki=n<0?m:n})({{ $starts | jsonify | safeJS }})</script>
 {{- $css := resources.Get "css/main.css" | resources.ExecuteAsTemplate "css/main.css" . }}
 {{- if hugo.IsProduction }}{{ $css = $css | minify }}{{ end }}
 {{- $css = $css | fingerprint }}

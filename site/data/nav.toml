@@ -1,7 +1,9 @@
 # The documentation sidebar, in reading order. Previous and next links follow it too.
+# ja is the group's Japanese label for the vertical running head on its pages (site-design skill).
 
 [[sections]]
   title = "Get started"
+  ja = "はじめに"
   [[sections.pages]]
     title = "Overview"
     path = "/docs"
@@ -17,6 +19,7 @@
 
 [[sections]]
   title = "Run Kazari"
+  ja = "運用"
   [[sections.pages]]
     title = "Install"
     path = "/docs/install"
@@ -35,6 +38,7 @@
 
 [[sections]]
   title = "Reference"
+  ja = "参照"
   [[sections.pages]]
     title = "MCP server"
     path = "/docs/mcp"
@@ -47,6 +51,7 @@
 
 [[sections]]
   title = "Decisions"
+  ja = "設計記録"
   [[sections.pages]]
     title = "Go as the language"
     path = "/docs/adr/0001-language"

@@ -6,216 +6,196 @@
 
   <section class="hero">
     <div class="container hero-grid">
+      <p class="hero-mark" lang="ja" aria-hidden="true">飾り<span>かざり</span></p>
       <div class="hero-copy">
-        <p class="eyebrow">Open source · Self-hosted · MIT licensed</p>
-        <h1>Ask Claude for a page.<br>Share it on <em>your</em> domain.</h1>
+        <h1>Ask Claude for a page. Share it on your domain.</h1>
         <p class="lede">Kazari is a small, self-hosted home for what Claude builds: prototypes, reports, dashboards and demos. Every page gets its own address, every change is kept as a version, and people can sign in with the work account they already have.</p>
         <p class="cta-row">
           <a class="button button-primary" href="{{ $quick.RelPermalink }}">Get started {{ partial "icon.html" "arrow" }}</a>
-          <a class="button" href="{{ $docs.RelPermalink }}">Read the docs</a>
+          <a class="text-link" href="{{ $docs.RelPermalink }}">Read the docs</a>
         </p>
         <ul class="hero-points">
+          <li>Open source, MIT licensed</li>
           <li>One Go binary</li>
           <li>MCP, REST and CLI</li>
           <li>Your identity provider</li>
         </ul>
       </div>
-
-      <div class="hero-visual" role="img" aria-label="A conversation in which Claude builds an onboarding prototype and publishes it to onboarding.art.example.com">
-        <div class="chat">
-          <div class="msg msg-user">
-            <span class="who">You</span>
-            <p>Build a clickable prototype of the new onboarding flow and publish it to Kazari.</p>
-          </div>
-          <div class="tool-call"><span class="pulse"></span>kazari <span>·</span> create_artifact</div>
-          <div class="msg msg-claude">
-            <span class="who">Claude</span>
-            <p>Published <span class="link">https://onboarding.art.example.com/</span> (version 1)</p>
-          </div>
-        </div>
-        <div class="browser">
-          <div class="browser-bar">
-            <span class="dots"><i></i><i></i><i></i></span>
-            <span class="address"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>onboarding.art.example.com</span>
-          </div>
-          <div class="browser-body">
-            <div class="mock-steps"><b class="on">1</b><i></i><b>2</b><i></i><b>3</b></div>
-            <p class="mock-title">Create your workspace</p>
-            <span class="mock-label"></span><span class="mock-input"></span>
-            <span class="mock-label short"></span><span class="mock-input"></span>
-            <span class="mock-button">Continue</span>
-          </div>
-        </div>
-      </div>
+      {{ partial "sekki-wheel.html" . }}
     </div>
   </section>
 
   <section class="section" aria-labelledby="how">
-    <div class="container">
-      <div class="section-head">
-        <p class="eyebrow">How it works</p>
-        <h2 id="how">From a sentence to a link</h2>
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">仕組み</p>
+      <div>
+        <div class="section-head">
+          <h2 id="how">From a sentence to a link</h2>
+        </div>
+        <ol class="ruled">
+          <li>
+            <span class="step-n">1</span>
+            <h3>Connect</h3>
+            <p>Add Kazari to claude.ai as a custom connector, or to Claude Code with one command, and sign in with your work account or an API key.</p>
+          </li>
+          <li>
+            <span class="step-n">2</span>
+            <h3>Ask</h3>
+            <p>Describe what you want. Claude writes the page, publishes it with Kazari's tools and replies with the link.</p>
+          </li>
+          <li>
+            <span class="step-n">3</span>
+            <h3>Iterate and share</h3>
+            <p>Ask for changes and Claude publishes a new version. The link stays the same, and every version keeps an address of its own.</p>
+          </li>
+        </ol>
       </div>
-      <ol class="steps">
-        <li>
-          <span class="step-n">1</span>
-          <h3>Connect</h3>
-          <p>Add Kazari to claude.ai as a custom connector, or to Claude Code with one command, and sign in with your work account or an API key.</p>
-        </li>
-        <li>
-          <span class="step-n">2</span>
-          <h3>Ask</h3>
-          <p>Describe what you want. Claude writes the page, publishes it with Kazari's tools and replies with the link.</p>
-        </li>
-        <li>
-          <span class="step-n">3</span>
-          <h3>Iterate and share</h3>
-          <p>Ask for changes and Claude publishes a new version. The link stays the same, and every version keeps an address of its own.</p>
-        </li>
-      </ol>
     </div>
   </section>
 
-  <section class="section section-soft" aria-labelledby="who">
-    <div class="container">
-      <div class="section-head">
-        <p class="eyebrow">Who it's for</p>
-        <h2 id="who">Made for the people who make things</h2>
-        <p>One service with three ways in, so everyone on the team can use the one that suits them.</p>
-      </div>
-      <div class="audiences">
-        <article class="card">
-          <span class="card-icon">{{ partial "icon.html" "chat" }}</span>
-          <p class="card-kicker">Designers and admin staff</p>
-          <h3>Prototypes without a pipeline</h3>
-          <ul>
-            <li>Turn an idea into a clickable page in one conversation</li>
-            <li>No repository, build step or hosting account</li>
-            <li>Go back to any earlier version by asking</li>
-          </ul>
-          <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
-        </article>
-        <article class="card">
-          <span class="card-icon">{{ partial "icon.html" "terminal" }}</span>
-          <p class="card-kicker">Vibe coders</p>
-          <h3>From prompt to URL</h3>
-          <ul>
-            <li>Claude Code builds the site and ships it with a tool call</li>
-            <li>Large bundles upload in resumable chunks</li>
-            <li>Single-page apps route correctly</li>
-          </ul>
-          <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
-        </article>
-        <article class="card">
-          <span class="card-icon">{{ partial "icon.html" "code" }}</span>
-          <p class="card-kicker">Developers</p>
-          <h3>A proper API underneath</h3>
-          <ul>
-            <li>Publish from CI with the CLI or the REST API</li>
-            <li>Pin reviews to immutable version URLs</li>
-            <li>Let preview builds expire on their own</li>
-          </ul>
-          <a class="card-link" href="{{ (site.GetPage "/docs/publish-from-code").RelPermalink }}">Publish from code {{ partial "icon.html" "arrow" }}</a>
-        </article>
-        <article class="card">
-          <span class="card-icon">{{ partial "icon.html" "server" }}</span>
-          <p class="card-kicker">Operators and IT</p>
-          <h3>Yours to run</h3>
-          <ul>
-            <li>One binary, SQLite and a directory of files</li>
-            <li>Wildcard TLS, OIDC sign-in, quotas and rate limits</li>
-            <li>An audit log and Prometheus metrics</li>
-          </ul>
-          <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Install {{ partial "icon.html" "arrow" }}</a>
-        </article>
+  <section class="section" aria-labelledby="who">
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">使う人</p>
+      <div>
+        <div class="section-head">
+          <h2 id="who">Made for the people who make things</h2>
+          <p>One service with three ways in, so everyone on the team can use the one that suits them.</p>
+        </div>
+        <div class="ruled ruled-4">
+          <article>
+            <p class="kicker">Designers and admin staff</p>
+            <h3>Prototypes without a pipeline</h3>
+            <ul>
+              <li>Turn an idea into a clickable page in one conversation</li>
+              <li>No repository, build step or hosting account</li>
+              <li>Go back to any earlier version by asking</li>
+            </ul>
+            <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
+          </article>
+          <article>
+            <p class="kicker">Vibe coders</p>
+            <h3>From prompt to URL</h3>
+            <ul>
+              <li>Claude Code builds the site and ships it with a tool call</li>
+              <li>Large bundles upload in resumable chunks</li>
+              <li>Single-page apps route correctly</li>
+            </ul>
+            <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
+          </article>
+          <article>
+            <p class="kicker">Developers</p>
+            <h3>A proper API underneath</h3>
+            <ul>
+              <li>Publish from CI with the CLI or the REST API</li>
+              <li>Pin reviews to immutable version URLs</li>
+              <li>Let preview builds expire on their own</li>
+            </ul>
+            <a class="card-link" href="{{ (site.GetPage "/docs/publish-from-code").RelPermalink }}">Publish from code {{ partial "icon.html" "arrow" }}</a>
+          </article>
+          <article>
+            <p class="kicker">Operators and IT</p>
+            <h3>Yours to run</h3>
+            <ul>
+              <li>One binary, SQLite and a directory of files</li>
+              <li>Wildcard TLS, OIDC sign-in, quotas and rate limits</li>
+              <li>An audit log and Prometheus metrics</li>
+            </ul>
+            <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Install {{ partial "icon.html" "arrow" }}</a>
+          </article>
+        </div>
       </div>
     </div>
   </section>
 
   <section class="section" aria-labelledby="origins">
-    <div class="container split">
-      <div class="section-head">
-        <p class="eyebrow">Addresses</p>
-        <h2 id="origins">Every page is its own site</h2>
-        <p>Kazari serves each artifact from its own subdomain under one wildcard certificate. Each is a separate browser origin, so one page can't read another's cookies or storage.</p>
-        <p>Versions never change. Put a version link in a review thread and it will always show what the reviewer saw.</p>
-      </div>
-      <div class="hosts">
-        <div class="host">
-          <code><b class="slug">onboarding</b><span class="base">.art.example.com</span></code>
-          <p>The published version. It moves when you publish or roll back.</p>
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">アドレス</p>
+      <div class="split">
+        <div class="section-head">
+          <h2 id="origins">Every page is its own site</h2>
+          <p>Kazari serves each artifact from its own subdomain under one wildcard certificate. Each is a separate browser origin, so one page can't read another's cookies or storage.</p>
+          <p>Versions never change. Put a version link in a review thread and it will always show what the reviewer saw.</p>
         </div>
-        <div class="host">
-          <code><b class="slug">onboarding</b><b class="ver">--v3</b><span class="base">.art.example.com</span></code>
-          <p>Version 3, for good. Safe to cache, safe to link.</p>
+        <div>
+          <div class="hosts">
+            <div class="host">
+              <code><b class="slug">onboarding</b><span class="base">.art.example.com</span></code>
+              <p>The published version. It moves when you publish or roll back.</p>
+            </div>
+            <div class="host">
+              <code><b class="slug">onboarding</b><b class="ver">--v3</b><span class="base">.art.example.com</span></code>
+              <p>Version 3, for good. Safe to cache, safe to link.</p>
+            </div>
+            <div class="host">
+              <code><b class="sys">mcp</b><span class="base">.art.example.com</span></code>
+              <p>The MCP server for Claude, beside <code>api.</code> for the REST API and <code>admin.</code> for operators.</p>
+            </div>
+          </div>
+          <div class="versions" aria-label="Versions 1 to 4, with version 4 published">
+            <span>v1</span><span>v2</span><span>v3</span><span class="current">v4<small>published</small></span>
+          </div>
+          <p class="versions-note">Rolling back moves a pointer. Nothing is copied and nothing is lost.</p>
         </div>
-        <div class="host">
-          <code><b class="sys">mcp</b><span class="base">.art.example.com</span></code>
-          <p>The MCP server for Claude, beside <code>api.</code> for the REST API and <code>admin.</code> for operators.</p>
-        </div>
-        <div class="versions" aria-label="Versions 1 to 4, with version 4 published">
-          <span>v1</span><span>v2</span><span>v3</span><span class="current">v4<small>published</small></span>
-        </div>
-        <p class="versions-note">Rolling back moves a pointer. Nothing is copied and nothing is lost.</p>
       </div>
     </div>
   </section>
 
-  <section class="section section-soft" aria-labelledby="ways">
-    <div class="container">
-      <div class="section-head">
-        <p class="eyebrow">Publish your way</p>
-        <h2 id="ways">Same service, whichever door you use</h2>
-        <p>The MCP server, the REST API and the CLI share one service layer and return the same JSON.</p>
-      </div>
-      <div class="tabs" data-tabs>
-        <div class="tab-list" role="tablist" aria-label="Ways to publish">
-          <button role="tab" type="button" id="tab-claude" aria-controls="panel-claude" aria-selected="true">claude.ai</button>
-          <button role="tab" type="button" id="tab-code" aria-controls="panel-code" aria-selected="false" tabindex="-1">Claude Code</button>
-          <button role="tab" type="button" id="tab-cli" aria-controls="panel-cli" aria-selected="false" tabindex="-1">CLI</button>
-          <button role="tab" type="button" id="tab-rest" aria-controls="panel-rest" aria-selected="false" tabindex="-1">REST API</button>
+  <section class="section" aria-labelledby="ways">
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">公開</p>
+      <div>
+        <div class="section-head">
+          <h2 id="ways">Same service, whichever door you use</h2>
+          <p>The MCP server, the REST API and the CLI share one service layer and return the same JSON.</p>
         </div>
-        <div class="tab-panel" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
-          <div class="panel-text">
-            <p>Add a custom connector with your instance's MCP address, sign in once, then ask in plain words.</p>
-            <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
+        <div class="tabs" data-tabs>
+          <div class="tab-list" role="tablist" aria-label="Ways to publish">
+            <button role="tab" type="button" id="tab-claude" aria-controls="panel-claude" aria-selected="true">claude.ai</button>
+            <button role="tab" type="button" id="tab-code" aria-controls="panel-code" aria-selected="false" tabindex="-1">Claude Code</button>
+            <button role="tab" type="button" id="tab-cli" aria-controls="panel-cli" aria-selected="false" tabindex="-1">CLI</button>
+            <button role="tab" type="button" id="tab-rest" aria-controls="panel-rest" aria-selected="false" tabindex="-1">REST API</button>
           </div>
-          <div class="prompt-demo">
-            <p class="connector"><span>Connector URL</span><code>https://mcp.art.example.com/</code></p>
-            <div class="msg msg-user"><span class="who">You</span><p>Turn the attached CSV into a dashboard with a chart per region and publish it to Kazari as q3-dashboard.</p></div>
-            <div class="msg msg-claude"><span class="who">Claude</span><p>Published <span class="link">https://q3-dashboard.art.example.com/</span> (version 1)</p></div>
+          <div class="tab-panel" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
+            <div class="panel-text">
+              <p>Add a custom connector with your instance's MCP address, sign in once, then ask in plain words.</p>
+              <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
+            </div>
+            <div class="prompt-demo">
+              <p class="connector"><span>Connector URL</span><code>https://mcp.art.example.com/</code></p>
+              <div class="msg msg-user"><span class="who">You</span><p>Turn the attached CSV into a dashboard with a chart per region and publish it to Kazari as q3-dashboard.</p></div>
+              <div class="msg msg-claude"><span class="who">Claude</span><p>Published <span class="link">https://q3-dashboard.art.example.com/</span> (version 1)</p></div>
+            </div>
           </div>
-        </div>
-        <div class="tab-panel" role="tabpanel" id="panel-code" aria-labelledby="tab-code" hidden>
-          <div class="panel-text">
-            <p>One command adds the server. Without a key, Claude Code signs you in through OAuth the first time it uses it.</p>
-            <a class="card-link" href="{{ (site.GetPage "/docs/mcp").RelPermalink }}">MCP server reference {{ partial "icon.html" "arrow" }}</a>
-          </div>
-          {{ partial "snippet.html" (dict "lang" "sh" "code" `
+          <div class="tab-panel" role="tabpanel" id="panel-code" aria-labelledby="tab-code" hidden>
+            <div class="panel-text">
+              <p>One command adds the server. Without a key, Claude Code signs you in through OAuth the first time it uses it.</p>
+              <a class="card-link" href="{{ (site.GetPage "/docs/mcp").RelPermalink }}">MCP server reference {{ partial "icon.html" "arrow" }}</a>
+            </div>
+            {{ partial "snippet.html" (dict "lang" "sh" "code" `
 claude mcp add --transport http kazari https://mcp.art.example.com/
 
 # or with an API key instead of OAuth
 claude mcp add --transport http kazari https://mcp.art.example.com/ \
   --header "Authorization: Bearer kzk_..."` ) }}
-        </div>
-        <div class="tab-panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
-          <div class="panel-text">
-            <p>The same binary as the server. Publish a directory, add versions, roll back, retire.</p>
-            <a class="card-link" href="{{ (site.GetPage "/docs/cli").RelPermalink }}">CLI reference {{ partial "icon.html" "arrow" }}</a>
           </div>
-          {{ partial "snippet.html" (dict "lang" "console" "code" `
+          <div class="tab-panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
+            <div class="panel-text">
+              <p>The same binary as the server. Publish a directory, add versions, roll back, retire.</p>
+              <a class="card-link" href="{{ (site.GetPage "/docs/cli").RelPermalink }}">CLI reference {{ partial "icon.html" "arrow" }}</a>
+            </div>
+            {{ partial "snippet.html" (dict "lang" "console" "code" `
 $ kazari publish ./site --slug q3-report --name "Q3 report"
 https://q3-report.art.example.com/
 $ kazari update q3-report ./site --label "fix chart"
 $ kazari rollback q3-report 1
 $ kazari stale q3-report --grace 72h` ) }}
-        </div>
-        <div class="tab-panel" role="tabpanel" id="panel-rest" aria-labelledby="tab-rest" hidden>
-          <div class="panel-text">
-            <p>JSON for small pages, a tar.gz bundle for sites, chunked uploads for anything large.</p>
-            <a class="card-link" href="{{ (site.GetPage "/docs/api").RelPermalink }}">REST API reference {{ partial "icon.html" "arrow" }}</a>
           </div>
-          {{ partial "snippet.html" (dict "lang" "sh" "code" `
+          <div class="tab-panel" role="tabpanel" id="panel-rest" aria-labelledby="tab-rest" hidden>
+            <div class="panel-text">
+              <p>JSON for small pages, a tar.gz bundle for sites, chunked uploads for anything large.</p>
+              <a class="card-link" href="{{ (site.GetPage "/docs/api").RelPermalink }}">REST API reference {{ partial "icon.html" "arrow" }}</a>
+            </div>
+            {{ partial "snippet.html" (dict "lang" "sh" "code" `
 curl https://api.art.example.com/v1/artifacts \
   -H "Authorization: Bearer $KAZARI_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -223,69 +203,75 @@ curl https://api.art.example.com/v1/artifacts \
        "files": [{"path": "index.html", "content": "<h1>Hello</h1>"}]}'
 
 # {"url": "https://hello.art.example.com/", "version": 1, "artifact": {...}}` ) }}
+          </div>
         </div>
       </div>
     </div>
   </section>
 
   <section class="section" aria-labelledby="features">
-    <div class="container">
-      <div class="section-head">
-        <p class="eyebrow">Features</p>
-        <h2 id="features">What a team needs, and little else</h2>
-      </div>
-      <div class="features">
-        <div class="feature">{{ partial "icon.html" "layers" }}<h3>Versions you can trust</h3><p>Every publish is an immutable, content-addressed version. Roll back or forward with one call; optimistic concurrency stops lost updates.</p></div>
-        <div class="feature">{{ partial "icon.html" "plug" }}<h3>Three ways in</h3><p>An MCP server with twelve tools, a REST API and a CLI, all on one service layer and all returning the same JSON.</p></div>
-        <div class="feature">{{ partial "icon.html" "key" }}<h3>Your sign-in</h3><p>OAuth 2.1 for MCP clients, federated to Microsoft Entra ID, Google Workspace, Okta, Keycloak or any OpenID Connect provider. No passwords stored.</p></div>
-        <div class="feature">{{ partial "icon.html" "shield" }}<h3>Safe defaults</h3><p>An origin per page, a Content-Security-Policy that still allows the common CDNs, no search indexing unless you ask, quotas and rate limits.</p></div>
-        <div class="feature">{{ partial "icon.html" "upload" }}<h3>Small pages and big sites</h3><p>Inline files for a single page, tar.gz bundles for whole sites, resumable chunked uploads for MCP clients without a shell.</p></div>
-        <div class="feature">{{ partial "icon.html" "box" }}<h3>Simple to run</h3><p>One static Go binary or a distroless image. SQLite and a directory of blobs are the only state. Wildcard certificates by ACME DNS-01.</p></div>
-        <div class="feature">{{ partial "icon.html" "activity" }}<h3>Observable</h3><p>Structured request logs, Prometheus metrics, an admin API and an append-only audit log of every change.</p></div>
-        <div class="feature">{{ partial "icon.html" "clock" }}<h3>Tidy by default</h3><p>Pages you no longer need retire themselves on a schedule you set, and every step up to the purge can be undone.</p></div>
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">機能</p>
+      <div>
+        <div class="section-head">
+          <h2 id="features">What a team needs, and little else</h2>
+        </div>
+        <div class="features">
+          <div class="feature">{{ partial "icon.html" "layers" }}<h3>Versions you can trust</h3><p>Every publish is an immutable, content-addressed version. Roll back or forward with one call; optimistic concurrency stops lost updates.</p></div>
+          <div class="feature">{{ partial "icon.html" "plug" }}<h3>Three ways in</h3><p>An MCP server with twelve tools, a REST API and a CLI, all on one service layer and all returning the same JSON.</p></div>
+          <div class="feature">{{ partial "icon.html" "key" }}<h3>Your sign-in</h3><p>OAuth 2.1 for MCP clients, federated to Microsoft Entra ID, Google Workspace, Okta, Keycloak or any OpenID Connect provider. No passwords stored.</p></div>
+          <div class="feature">{{ partial "icon.html" "shield" }}<h3>Safe defaults</h3><p>An origin per page, a Content-Security-Policy that still allows the common CDNs, no search indexing unless you ask, quotas and rate limits.</p></div>
+          <div class="feature">{{ partial "icon.html" "upload" }}<h3>Small pages and big sites</h3><p>Inline files for a single page, tar.gz bundles for whole sites, resumable chunked uploads for MCP clients without a shell.</p></div>
+          <div class="feature">{{ partial "icon.html" "box" }}<h3>Simple to run</h3><p>One static Go binary or a distroless image. SQLite and a directory of blobs are the only state. Wildcard certificates by ACME DNS-01.</p></div>
+          <div class="feature">{{ partial "icon.html" "activity" }}<h3>Observable</h3><p>Structured request logs, Prometheus metrics, an admin API and an append-only audit log of every change.</p></div>
+          <div class="feature">{{ partial "icon.html" "clock" }}<h3>Tidy by default</h3><p>Pages you no longer need retire themselves on a schedule you set, and every step up to the purge can be undone.</p></div>
+        </div>
       </div>
     </div>
   </section>
 
-  <section class="section section-soft" aria-labelledby="lifecycle">
-    <div class="container split">
-      <div class="section-head">
-        <p class="eyebrow">Lifecycle</p>
-        <h2 id="lifecycle">Pages that tidy up after themselves</h2>
-        <p>Generated pages pile up. Mark one stale and it keeps serving through a grace period, then steps out of the way. Each step lands in the audit log, and everything short of the purge can be reversed.</p>
-        <a class="card-link" href="{{ (site.GetPage "/docs/ops").RelPermalink }}#lifecycle">How the lifecycle works {{ partial "icon.html" "arrow" }}</a>
+  <section class="section" aria-labelledby="lifecycle">
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">片付け</p>
+      <div class="split">
+        <div class="section-head">
+          <h2 id="lifecycle">Pages that tidy up after themselves</h2>
+          <p>Generated pages pile up. Mark one stale and it keeps serving through a grace period, then steps out of the way. Each step lands in the audit log, and everything short of the purge can be reversed.</p>
+          <a class="card-link" href="{{ (site.GetPage "/docs/ops").RelPermalink }}#lifecycle">How the lifecycle works {{ partial "icon.html" "arrow" }}</a>
+        </div>
+        <ol class="lifecycle">
+          <li><b>Published</b><span>Serving at its address</span></li>
+          <li><b>Stale</b><span>Still serving for the grace period, 14 days by default</span></li>
+          <li><b>Soft-deleted</b><span>Offline, restorable for 30 days</span></li>
+          <li><b>Purged</b><span>Gone; old links answer 410 for 90 days</span></li>
+          <li><b>Slug free</b><span>The name can be used again</span></li>
+        </ol>
       </div>
-      <ol class="lifecycle">
-        <li><b>Published</b><span>Serving at its address</span></li>
-        <li><b>Stale</b><span>Still serving for the grace period, 14 days by default</span></li>
-        <li><b>Soft-deleted</b><span>Offline, restorable for 30 days</span></li>
-        <li><b>Purged</b><span>Gone; old links answer 410 for 90 days</span></li>
-        <li><b>Slug free</b><span>The name can be used again</span></li>
-      </ol>
     </div>
   </section>
 
   <section class="section" aria-labelledby="run">
-    <div class="container">
-      <div class="section-head">
-        <p class="eyebrow">Self-hosting</p>
-        <h2 id="run">Running in minutes</h2>
-      </div>
-      <div class="run-grid">
-        <article class="card">
-          <h3>Try it on your machine</h3>
-          <p>No domain or certificate needed: browsers resolve <code>*.localhost</code> to your own computer.</p>
-          {{ partial "snippet.html" (dict "lang" "sh" "code" `
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">運用</p>
+      <div>
+        <div class="section-head">
+          <h2 id="run">Running in minutes</h2>
+        </div>
+        <div class="ruled ruled-2">
+          <article>
+            <h3>Try it on your machine</h3>
+            <p>No domain or certificate needed: browsers resolve <code>*.localhost</code> to your own computer.</p>
+            {{ partial "snippet.html" (dict "lang" "sh" "code" `
 git clone https://github.com/PeterBooker/kazari.git
 cd kazari
 docker compose up --build -d
 # pages appear at http://<slug>.localhost:8080/` ) }}
-          <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
-        </article>
-        <article class="card">
-          <h3>Run it for your team</h3>
-          <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one.</p>
-          {{ partial "snippet.html" (dict "lang" "sh" "code" `
+            <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
+          </article>
+          <article>
+            <h3>Run it for your team</h3>
+            <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one.</p>
+            {{ partial "snippet.html" (dict "lang" "sh" "code" `
 docker run -d --name kazari -p 80:80 -p 443:443 \
   -v /srv/kazari/data:/var/lib/kazari \
   -e KAZARI_BASE_DOMAIN=art.example.com \
@@ -294,20 +280,24 @@ docker run -d --name kazari -p 80:80 -p 443:443 \
   -e KAZARI_TLS_DNS_API_TOKEN=cf-token \
   -e KAZARI_AUTH_ADMIN_TOKEN="$(openssl rand -hex 32)" \
   ghcr.io/peterbooker/kazari:latest serve` ) }}
-          <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Installation guide {{ partial "icon.html" "arrow" }}</a>
-        </article>
+            <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Installation guide {{ partial "icon.html" "arrow" }}</a>
+          </article>
+        </div>
+        <p class="status-note"><strong>Status.</strong> Kazari is heading for v1.0. The server, REST API, MCP server, OAuth sign-in and CLI work today; expect breaking changes until v1.0.0 is tagged.</p>
       </div>
-      <p class="status-note"><strong>Status.</strong> Kazari is heading for v1.0. The server, REST API, MCP server, OAuth sign-in and CLI work today; expect breaking changes until v1.0.0 is tagged.</p>
     </div>
   </section>
 
   <section class="cta-band">
-    <div class="container">
-      <h2>Give your team somewhere to put things.</h2>
-      <p class="cta-row">
-        <a class="button button-primary" href="{{ $quick.RelPermalink }}">Get started {{ partial "icon.html" "arrow" }}</a>
-        <a class="button" href="{{ site.Params.repo }}">{{ partial "github.html" }} View on GitHub</a>
-      </p>
+    <div class="container band">
+      <p class="tate" lang="ja" aria-hidden="true">はじめる</p>
+      <div>
+        <h2>Give your team somewhere to put things.</h2>
+        <p class="cta-row">
+          <a class="button button-primary" href="{{ $quick.RelPermalink }}">Get started {{ partial "icon.html" "arrow" }}</a>
+          <a class="button" href="{{ site.Params.repo }}">{{ partial "github.html" }} View on GitHub</a>
+        </p>
+      </div>
     </div>
   </section>
 

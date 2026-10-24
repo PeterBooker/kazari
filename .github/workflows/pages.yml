@@ -1,7 +1,7 @@
 name: Pages
 
 # Builds the website in site/ (which mounts docs/) with Hugo and publishes it to GitHub Pages.
-# In the repository settings, Pages must use "GitHub Actions" as its source.
+# In the repository settings, Pages must use "GitHub Actions" as its source, with the custom domain kazari.io.
 
 on:
   push:

@@ -1,0 +1,278 @@
+# The 24 solar terms (二十四節気) of the old Japanese calendar, from 立春 (index 0).
+# The site's accent follows the term in force: layouts/baseof.html sets data-sekki on <html> at build
+# time, an inline script in _partials/head.html corrects it from the visitor's date, and
+# assets/css/main.css turns each entry into a :root[data-sekki="N"] block.
+#
+# start   first day, "MM-DD" (the dates move by a day between years; these are the usual ones)
+# kanji   the term, and reading / name its romanisation and English name
+# motif   the flower, plant or creature the colour is named after, and motif_en in English
+# base    the colour itself: the year wheel, and dots, rules and the logo wedge in the light theme
+# light   text-safe on the light theme: 4.6:1 or more on bg, surface and bg-soft, white text on it
+# dark    text-safe on the dark theme: 6.2:1 or more on bg, surface and bg-soft, bg-coloured text on it;
+#         also the dark theme's dots, rules and logo wedge
+#
+# Check new colours with the contrast steps in .claude/skills/site-design/SKILL.md.
+
+[[terms]]
+  start = "02-04"
+  kanji = "立春"
+  reading = "Risshun"
+  name = "Start of spring"
+  motif = "梅"
+  motif_en = "plum blossom"
+  base = "#c25478"
+  light = "#ac4065"
+  dark = "#ed7b9e"
+
+[[terms]]
+  start = "02-19"
+  kanji = "雨水"
+  reading = "Usui"
+  name = "Rain water"
+  motif = "鶯"
+  motif_en = "bush warbler"
+  base = "#7f7a3a"
+  light = "#6e6828"
+  dark = "#a6a261"
+
+[[terms]]
+  start = "03-05"
+  kanji = "啓蟄"
+  reading = "Keichitsu"
+  name = "Insects awaken"
+  motif = "萌黄"
+  motif_en = "new shoots"
+  base = "#7f9a2e"
+  light = "#5a7001"
+  dark = "#8eaa40"
+
+[[terms]]
+  start = "03-20"
+  kanji = "春分"
+  reading = "Shunbun"
+  name = "Spring equinox"
+  motif = "桜"
+  motif_en = "cherry blossom"
+  base = "#e08fa6"
+  light = "#9b5067"
+  dark = "#e08fa6"
+
+[[terms]]
+  start = "04-04"
+  kanji = "清明"
+  reading = "Seimei"
+  name = "Pure and clear"
+  motif = "若竹"
+  motif_en = "young bamboo"
+  base = "#3f9a74"
+  light = "#0b7652"
+  dark = "#56b089"
+
+[[terms]]
+  start = "04-20"
+  kanji = "穀雨"
+  reading = "Kokuu"
+  name = "Grain rain"
+  motif = "藤"
+  motif_en = "wisteria"
+  base = "#8a78c2"
+  light = "#6e5ca3"
+  dark = "#a795e1"
+
+[[terms]]
+  start = "05-05"
+  kanji = "立夏"
+  reading = "Rikka"
+  name = "Start of summer"
+  motif = "若葉"
+  motif_en = "young leaves"
+  base = "#6f9f3f"
+  light = "#467303"
+  dark = "#7cad4d"
+
+[[terms]]
+  start = "05-21"
+  kanji = "小満"
+  reading = "Shōman"
+  name = "Lesser ripening"
+  motif = "菖蒲"
+  motif_en = "iris"
+  base = "#6a4c9c"
+  light = "#6a4c9c"
+  dark = "#ae91e7"
+
+[[terms]]
+  start = "06-05"
+  kanji = "芒種"
+  reading = "Bōshu"
+  name = "Grain in ear"
+  motif = "紫陽花"
+  motif_en = "hydrangea"
+  base = "#5f7fc0"
+  light = "#4766a5"
+  dark = "#7e9fe3"
+
+[[terms]]
+  start = "06-21"
+  kanji = "夏至"
+  reading = "Geshi"
+  name = "Summer solstice"
+  motif = "青竹"
+  motif_en = "green bamboo"
+  base = "#2f8f7f"
+  light = "#017566"
+  dark = "#52ae9d"
+
+[[terms]]
+  start = "07-07"
+  kanji = "小暑"
+  reading = "Shōsho"
+  name = "Lesser heat"
+  motif = "朝顔"
+  motif_en = "morning glory"
+  base = "#3f62b0"
+  light = "#3f62b0"
+  dark = "#769ef1"
+
+[[terms]]
+  start = "07-22"
+  kanji = "大暑"
+  reading = "Taisho"
+  name = "Greater heat"
+  motif = "向日葵"
+  motif_en = "sunflower"
+  base = "#e0a81f"
+  light = "#846104"
+  dark = "#e0a81f"
+
+[[terms]]
+  start = "08-07"
+  kanji = "立秋"
+  reading = "Risshū"
+  name = "Start of autumn"
+  motif = "撫子"
+  motif_en = "pinks"
+  base = "#d77a98"
+  light = "#a24a69"
+  dark = "#e183a1"
+
+[[terms]]
+  start = "08-23"
+  kanji = "処暑"
+  reading = "Shosho"
+  name = "End of heat"
+  motif = "桔梗"
+  motif_en = "bellflower"
+  base = "#5a5aa8"
+  light = "#5a5aa8"
+  dark = "#9598ec"
+
+[[terms]]
+  start = "09-07"
+  kanji = "白露"
+  reading = "Hakuro"
+  name = "White dew"
+  motif = "露草"
+  motif_en = "dayflower"
+  base = "#3a7fc4"
+  light = "#236aad"
+  dark = "#5ea3ea"
+
+[[terms]]
+  start = "09-22"
+  kanji = "秋分"
+  reading = "Shūbun"
+  name = "Autumn equinox"
+  motif = "彼岸花"
+  motif_en = "red spider lily"
+  base = "#c23a3a"
+  light = "#bd3536"
+  dark = "#fe756f"
+
+[[terms]]
+  start = "10-08"
+  kanji = "寒露"
+  reading = "Kanro"
+  name = "Cold dew"
+  motif = "萩"
+  motif_en = "bush clover"
+  base = "#a4628f"
+  light = "#93527e"
+  dark = "#d08ab9"
+
+[[terms]]
+  start = "10-23"
+  kanji = "霜降"
+  reading = "Sōkō"
+  name = "Frost descends"
+  motif = "竜胆"
+  motif_en = "gentian"
+  base = "#5b57a3"
+  light = "#5b57a3"
+  dark = "#9998ea"
+
+[[terms]]
+  start = "11-07"
+  kanji = "立冬"
+  reading = "Rittō"
+  name = "Start of winter"
+  motif = "紅葉"
+  motif_en = "autumn maple"
+  base = "#b4442e"
+  light = "#b2422c"
+  dark = "#f47e65"
+
+[[terms]]
+  start = "11-22"
+  kanji = "小雪"
+  reading = "Shōsetsu"
+  name = "Lesser snow"
+  motif = "銀杏"
+  motif_en = "ginkgo"
+  base = "#cf9f1c"
+  light = "#836304"
+  dark = "#cf9f1c"
+
+[[terms]]
+  start = "12-07"
+  kanji = "大雪"
+  reading = "Taisetsu"
+  name = "Greater snow"
+  motif = "松"
+  motif_en = "pine"
+  base = "#2f5a43"
+  light = "#2f5a43"
+  dark = "#7ca98f"
+
+[[terms]]
+  start = "12-21"
+  kanji = "冬至"
+  reading = "Tōji"
+  name = "Winter solstice"
+  motif = "柚子"
+  motif_en = "yuzu"
+  base = "#e0b21a"
+  light = "#7f6305"
+  dark = "#e0b21a"
+
+[[terms]]
+  start = "01-05"
+  kanji = "小寒"
+  reading = "Shōkan"
+  name = "Lesser cold"
+  motif = "椿"
+  motif_en = "camellia"
+  base = "#b0283f"
+  light = "#b0283f"
+  dark = "#fe727e"
+
+[[terms]]
+  start = "01-20"
+  kanji = "大寒"
+  reading = "Daikan"
+  name = "Greater cold"
+  motif = "葉牡丹"
+  motif_en = "ornamental kale"
+  base = "#7b4f8f"
+  light = "#7b4f8f"
+  dark = "#bd8fd4"
