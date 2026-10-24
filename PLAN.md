@@ -194,7 +194,7 @@ file -> rename` without ever holding a file in memory. Serving uses `http.ServeC
 **Standard library first.** `net/http` (1.22 `ServeMux` host patterns do the host routing),
 `log/slog`, `database/sql`, `archive/tar`, `compress/gzip`, `embed`, `testing`, `httptest`,
 `crypto/*`, `mime`. Third-party only where the stdlib has nothing: MCP SDK, CertMagic, SQLite
-driver, TOML, Prometheus client, `x/time/rate`, `x/sync/errgroup`, `go-cmp` in tests.
+driver, YAML, Prometheus client, `x/time/rate`, `x/sync/errgroup`, `go-cmp` in tests.
 
 **Tests run against real components where they are cheap.** SQLite in a temp dir instead of a fake
 store; a temp dir blob store; in-memory MCP transports; `httptest` with `req.Host` set. Hand-written
@@ -210,7 +210,8 @@ cmd/agalma/                 main: subcommands serve | admin | publish | update |
 internal/
   app/                      wiring and lifecycle: builds every component from config, runs servers,
                             graceful shutdown; end-to-end tests live here
-  config/                   Config struct, Load (TOML file + AGALMA_* env), Validate, defaults
+  config/                   Config struct, Load (YAML file with ${NAME} references, .env, AGALMA_*
+                            env), Validate, defaults
   api/                      wire types only: request/response structs and error codes shared by
                             httpapi, mcpserver and cli. No logic, no imports beyond stdlib
   artifact/                 domain: Artifact, Version, File, Visibility; Service (create, update,
@@ -247,7 +248,8 @@ internal/
   buildinfo/                version, commit, date (ldflags with debug.ReadBuildInfo fallback)
 docs/
   adr/                      architecture decision records
-deploy/                     Dockerfile, agalma.service, example agalma.toml, example Caddyfile
+deploy/                     Dockerfiles, agalma.service, example agalma.yaml and agalma.env, dev.yaml,
+                            example Caddyfile
 ```
 
 **Dependency direction** (an arrow means "imports"):
@@ -820,75 +822,86 @@ organisation. The 2b design does not block it: tokens, clients and the user mode
 
 ## 10. Configuration
 
-One TOML file, every key overridable by `AGALMA_<SECTION>_<KEY>` (for example
-`AGALMA_TLS_DNS_API_TOKEN`), validated at startup with errors that name the key.
+One YAML file, validated at startup with errors that name the key. Secrets stay out of it: a value
+`${NAME}` (or `${NAME:-default}`) is replaced by the environment variable `NAME`, read from the
+process environment or a `.env` file. Every key is also overridable by `AGALMA_<SECTION>_<KEY>` (for
+example `AGALMA_TLS_DNS_API_TOKEN`). `deploy/agalma.yaml` is the annotated example below and
+`docs/configuration.md` the reference.
 
-```toml
-base_domain = "art.example.com"
-data_dir    = "/var/lib/agalma"      # agalma.db, blobs/, certmagic/
+```yaml
+base_domain: art.example.com         # artifacts are served at <slug>.art.example.com
+data_dir: /var/lib/agalma            # agalma.db, blobs/, uploads/, certmagic/
 
-[listen]
-https      = ":443"
-http       = ":80"                   # redirects to https; "" disables
-proxy_mode = false                   # true: plain HTTP on [listen].http, trust X-Forwarded-*
+# Public URL shape. For development behind plain HTTP on a high port use
+# external_scheme: http and external_port: 8080 (http://demo.localhost:8080/).
+external_scheme: https               # https | http
+external_port: 0                     # 0 omits the port from URLs
 
-[tls]
-mode         = "acme"                # acme | files | self-signed
-email        = "ops@example.com"
-ca           = "letsencrypt"         # letsencrypt | letsencrypt-staging | <directory URL>
-dns_provider = "cloudflare"          # cloudflare | route53 | hetzner
-cert_file    = ""                    # mode = files
-key_file     = ""
-[tls.dns]
-api_token = ""                       # provider-specific; prefer the env override
+listen:
+  https: ":443"
+  http: ":80"                        # redirects to https; "" disables
+  proxy_mode: false                  # true: plain HTTP on listen.http, trust X-Forwarded-*
 
-[limits]
-max_version_bytes      = "50MiB"
-max_file_bytes         = "25MiB"
-max_files              = 2000
-metadata_max_pairs     = 64
-write_rate_per_minute  = 60
-default_user_quota     = "2GiB"
-inline_guidance_bytes  = "2MiB"      # quoted in tool descriptions as the point to switch to chunks
-max_chunk_bytes        = "4MiB"      # per upload_chunk call, after base64 decoding
-upload_ttl             = "1h"
-max_open_uploads       = 5           # per user
+tls:
+  mode: acme                         # acme | files | self-signed
+  email: ops@example.com             # ACME account contact
+  ca: letsencrypt                    # letsencrypt | letsencrypt-staging | <https directory URL>
+  dns_provider: cloudflare           # cloudflare | route53 | hetzner
+  cert_file: ""                      # mode: files
+  key_file: ""
+  dns:
+    api_token: ${AGALMA_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
 
-[lifecycle]
-default_grace  = "336h"              # 14 days
-retention      = "720h"              # 30 days
-tombstone      = "2160h"             # 90 days
-sweep_interval = "15m"
-gc_interval    = "1h"
+limits:
+  max_version_bytes: 50MiB
+  max_file_bytes: 25MiB
+  max_files: 2000
+  metadata_max_pairs: 64
+  write_rate_per_minute: 60
+  default_user_quota: 2GiB
+  inline_guidance_bytes: 2MiB        # quoted in tool descriptions as the point to switch to chunks
+  max_chunk_bytes: 4MiB              # per upload_chunk call, after base64 decoding
+  upload_ttl: 1h
+  max_open_uploads: 5                # per user
 
-[serve]
-csp = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
-allow_csp_override = true
-reserved_slugs     = ["api", "mcp", "admin", "www", "mail", "ns1", "ns2", "autoconfig", "autodiscover", "localhost"]
+lifecycle:
+  default_grace: 336h                # 14 days
+  retention: 720h                    # 30 days
+  tombstone: 2160h                   # 90 days
+  sweep_interval: 15m
+  gc_interval: 1h
 
-[auth]
-write_policy = "shared"              # shared | owner
-admin_token  = ""                    # prefer AGALMA_AUTH_ADMIN_TOKEN
+serve:
+  csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
+  allow_csp_override: true           # agalma.csp metadata replaces csp for that artifact
+  reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
 
-[auth.oidc]                          # omit the whole table to fall back to API-key sign-in
-issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"   # or https://accounts.google.com
-client_id       = ""
-client_secret   = ""                 # prefer AGALMA_AUTH_OIDC_CLIENT_SECRET
-allowed_domains = ["example.com"]    # verified email domains that may sign in
-auto_provision  = true               # create a member on first sign-in from an allowed domain
-admin_emails    = []                 # provisioned with the admin role
+auth:
+  write_policy: shared               # shared | owner
+  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
+  # Sign-in through the organisation's OpenID Connect provider. Leave oidc
+  # out entirely to fall back to API-key sign-in on the consent page.
+  # Register https://mcp.<base_domain>/oauth/callback as the redirect URI.
+  #
+  # oidc:
+  #   issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # or https://accounts.google.com
+  #   client_id: ""
+  #   client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+  #   allowed_domains: [example.com]  # verified email domains that may sign in
+  #   auto_provision: true            # create a member on first sign-in from an allowed domain
+  #   admin_emails: []                # provisioned with the admin role
 
-[admin]
-listen = ""                          # optional second listener for the admin host, e.g. "127.0.0.1:9443"
+admin:
+  listen: ""                         # optional second listener for the admin host, e.g. "127.0.0.1:9443"
 
-[log]
-level  = "info"
-format = "text"                      # text | json
+log:
+  level: info                        # debug | info | warn | error
+  format: text                       # text | json
 ```
 
-Development runs with `base_domain = "localhost"` and either `tls.mode = "self-signed"` or
-`proxy_mode = true`; browsers resolve `*.localhost` to loopback, so `http://demo.localhost:8080`
-works with no DNS.
+Development runs with `base_domain: localhost` and either `tls.mode: self-signed` or
+`listen.proxy_mode: true` (`deploy/dev.yaml` uses proxy mode on port 8080); browsers resolve
+`*.localhost` to loopback, so `http://demo.localhost:8080` works with no DNS.
 
 ---
 
@@ -993,7 +1006,8 @@ Rule: a bug fix adds a test at the lowest layer that reproduces it.
 | MCP                       | `github.com/modelcontextprotocol/go-sdk` v1.8+                         | Official SDK; Streamable HTTP, stateless mode, `auth.RequireBearerToken`, in-memory transports |
 | TLS / ACME                | `github.com/caddyserver/certmagic` v0.25.6+, `github.com/libdns/{cloudflare,route53,hetzner}` | DNS-01 wildcard, storage, renewal. Add providers by import                            |
 | SQLite                    | `github.com/ncruces/go-sqlite3` (`driver` + `embed`)                   | CGO-free, tracks upstream SQLite closely, `database/sql`; `modernc.org/sqlite` is a one-line swap |
-| Config                    | `github.com/BurntSushi/toml`                                          |                                                                                             |
+| Config                    | `gopkg.in/yaml.v3`                                                    | `${NAME}` references, `.env` and `AGALMA_*` overrides are Agalma's own code                 |
+| CertMagic logging         | `go.uber.org/zap`                                                     | CertMagic logs through zap; `internal/certs` bridges it to `slog`                           |
 | OIDC relying party        | `github.com/coreos/go-oidc/v3` v3.18+, `golang.org/x/oauth2`           | Discovery, JWKS caching, ID token verification; Phase 2b                                    |
 | Rate limiting             | `golang.org/x/time/rate`                                              |                                                                                             |
 | Concurrency               | `golang.org/x/sync/errgroup`                                          | Server lifecycle in `app`                                                                   |
@@ -1002,20 +1016,20 @@ Rule: a bug fix adds a test at the lowest layer that reproduces it.
 
 Not used, deliberately: cobra (stdlib `flag` with a subcommand switch), chi/gin/echo (`ServeMux`),
 gorm/sqlx/sqlc (hand-written SQL, revisit sqlc if query count passes roughly sixty), testify,
-mockery, wire/fx, uuid (natural keys), cron libraries, zap/logrus (`slog`).
+mockery, wire/fx, uuid (natural keys), cron libraries, zap/logrus for Agalma's own logging (`slog`).
 
 ---
 
 ## 16. Build, release, deploy
 
-- `Makefile` or `Taskfile` targets: `build`, `test`, `lint`, `run-dev` (self-signed on
-  `localhost`), `release` (goreleaser).
+- No `Makefile` or `Taskfile`: the build, test, lint, local run (`deploy/dev.yaml`, or
+  `docker compose up`) and release dry-run commands are written out in `README.md` and `CLAUDE.md`.
 - `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X ...buildinfo.version=..."`.
 - goreleaser builds linux/amd64, linux/arm64, darwin/arm64; attaches SBOM (syft) and cosign
   signatures; publishes a distroless Docker image `ghcr.io/peterbooker/agalma`.
 - `deploy/agalma.service` (systemd, `DynamicUser`, `StateDirectory=agalma`,
-  `AmbientCapabilities=CAP_NET_BIND_SERVICE`), `deploy/agalma.toml` example, `deploy/Caddyfile`
-  example for proxy mode.
+  `AmbientCapabilities=CAP_NET_BIND_SERVICE`), `deploy/agalma.yaml` and `deploy/agalma.env.example`
+  examples, `deploy/Caddyfile` example for proxy mode.
 - Backup is `sqlite3 .backup` of `agalma.db` plus `rsync` of `blobs/`; documented in `docs/ops.md`.
 
 ---
@@ -1057,7 +1071,7 @@ self-signed wildcard, see the page; the e2e test does the same in CI.
    dry run documented; renewal loop.
 4. `cli`: `publish <dir>`, `update`, `get`, `list`, `rm`, `stale`, `unstale`, `visibility`,
    `files cat`, `me`, with `--json`; config from `AGALMA_URL` and `AGALMA_TOKEN` or
-   `~/.config/agalma/config.toml`.
+   `~/.config/agalma/config.yaml`.
 5. `deploy/`: Dockerfile, systemd unit, example config and Caddyfile; `docs/install.md`.
 
 Gate: an artifact published from the CLI on a VPS is live at `<slug>.<base>` with a Let's Encrypt

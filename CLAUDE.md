@@ -3,7 +3,8 @@
 Self-hosted artifact host: one Go binary serves every artifact as a static site at
 `<slug>.<base-domain>` under a wildcard certificate, with a REST API (`api.`), an MCP server plus
 OAuth 2.1 (`mcp.`), an admin API (`admin.`) and a CLI. `PLAN.md` is the design; `docs/` is the
-operator documentation; `docs/adr/` records decisions.
+operator documentation; `docs/adr/` records decisions; `site/` is the Hugo website on GitHub Pages,
+which also publishes `docs/`.
 
 ## Commands
 
@@ -36,7 +37,17 @@ AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... go run ./cmd/agalma pu
 
 # release dry run (real releases run from a v* tag in GitHub Actions)
 goreleaser release --snapshot --clean --skip=publish,sign,sbom
+
+# website: Hugo standard edition at HUGO_VERSION from .github/workflows/pages.yml
+go install github.com/gohugoio/hugo@v0.161.1
+hugo server --source site               # http://localhost:1313/agalma/, live reload
+hugo --source site --gc --minify        # build into site/public/ as CI does; must print no WARN or ERROR
+
+# what is out of date (Go, modules, base images, actions, goreleaser, Hugo); read-only
+.claude/skills/maintenance/check-updates.sh
 ```
+
+Dependency updates follow the `maintenance` skill (`.claude/skills/maintenance/SKILL.md`).
 
 ## Configuration
 
@@ -46,6 +57,27 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
   A `.env` file (`--env-file`, `$AGALMA_ENV_FILE`, else `./.env`) is loaded first; real environment
   variables win over it. `deploy/agalma.env.example` lists the secret variables.
 - Every key is also overridable as `AGALMA_<SECTION>_<KEY>` (lists comma-separated).
+
+## Website (`site/`)
+
+- Hugo, standard edition, no theme and no Node: templates in `site/layouts` (Hugo's current layout
+  names: `baseof.html`, `home.html`, `docs/page.html`, `_partials/`, `_markup/`), plain CSS in
+  `site/assets/css/main.css` (colour tokens with `light-dark()`), plain JS in `site/assets/js/main.js`
+  (theme toggle, docs menu, copy buttons, tabs, search). Published by `.github/workflows/pages.yml`.
+- `site/hugo.toml` mounts `../docs` as `content/docs`, so each `docs/<name>.md` is `/docs/<name>/`.
+  Those files stay GitHub-readable Markdown: no front matter, the first `# ` heading is the title
+  (`_partials/title.html`), links between them are relative `.md` links (`install.md#tls-modes`).
+  `_markup/render-link.html` resolves them, sends `README.md` to GitHub, and fails the build on a
+  missing page. It does not check `#fragments`: keep anchors matching GitHub-style heading ids.
+- `site/content/` holds what is not in `docs/`: `_index.md` (front matter only; the landing page is
+  `layouts/home.html`) and the guides in `site/content/docs/` (`_index.md`, `quickstart.md`,
+  `publish-with-claude.md`, `publish-from-code.md`), which may use GitHub alerts (`> [!NOTE]`).
+- `site/data/nav.toml` is the sidebar, previous/next order and search index (`layouts/home.json`
+  becomes `index.json`). A new docs page goes there; an entry without a page fails the build.
+- The site is served under `/agalma/`: link with `.RelPermalink`, `relURL` or `site.GetPage`,
+  never a path starting with `/`.
+- A change in behaviour (commands, flags, limits, tools, defaults) updates `docs/`, the guides in
+  `site/content/docs/` and any claim on the landing page (`layouts/home.html`).
 
 ## Layout and conventions
 
