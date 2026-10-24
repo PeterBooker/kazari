@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/artifact"
-	"agalma/internal/blob"
-	"agalma/internal/sqlite"
+	"kazari/internal/artifact"
+	"kazari/internal/blob"
+	"kazari/internal/sqlite"
 )
 
 // parkBlobs parks the first Put after the blob is stored (or found already

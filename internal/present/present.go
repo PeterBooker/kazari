@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"strings"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/scheduler"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/scheduler"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 // Links builds public URLs. URL takes a host label ("demo" or "demo--v3")

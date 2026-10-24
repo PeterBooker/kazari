@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/artifact"
-	"agalma/internal/audit"
-	"agalma/internal/blob"
-	"agalma/internal/sqlite"
+	"kazari/internal/artifact"
+	"kazari/internal/audit"
+	"kazari/internal/blob"
+	"kazari/internal/sqlite"
 )
 
 var start = time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
@@ -58,7 +58,7 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestCreateValidation(t *testing.T) {
 		{"reserved slug", artifact.Actor{}, artifact.CreateRequest{Slug: "admin", Files: files("a", "a")}, artifact.ErrInvalidSlug},
 		{"version separator", artifact.Actor{}, artifact.CreateRequest{Slug: "demo--v2", Files: files("a", "a")}, artifact.ErrInvalidSlug},
 		{"bad visibility", artifact.Actor{}, artifact.CreateRequest{Slug: "demo", Visibility: "secret", Files: files("a", "a")}, artifact.ErrInvalidArgument},
-		{"bad metadata", artifact.Actor{}, artifact.CreateRequest{Slug: "demo", Metadata: map[string]string{"agalma.nope": "x"}, Files: files("a", "a")}, artifact.ErrInvalidMetadata},
+		{"bad metadata", artifact.Actor{}, artifact.CreateRequest{Slug: "demo", Metadata: map[string]string{"kazari.nope": "x"}, Files: files("a", "a")}, artifact.ErrInvalidMetadata},
 		{"no files", artifact.Actor{}, artifact.CreateRequest{Slug: "demo"}, artifact.ErrInvalidArgument},
 		{"bad path", artifact.Actor{}, artifact.CreateRequest{Slug: "demo", Files: files("../etc/passwd", "x")}, artifact.ErrInvalidPath},
 		{"duplicate path", artifact.Actor{}, artifact.CreateRequest{Slug: "demo", Files: files("a/b", "1", "a//b", "2")}, artifact.ErrInvalidArgument},
@@ -540,8 +540,8 @@ func TestMetadataMerge(t *testing.T) {
 	if diff := cmp.Diff(map[string]string{"a": "1", "c": "3"}, a.Metadata); diff != "" {
 		t.Fatalf("merged metadata (-want +got):\n%s", diff)
 	}
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"agalma.x": ptr("1")}})
-	wantErr(t, "unknown agalma key", err, artifact.ErrInvalidMetadata)
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"kazari.x": ptr("1")}})
+	wantErr(t, "unknown kazari key", err, artifact.ErrInvalidMetadata)
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"d": ptr("4"), "e": ptr("5")}})
 	wantErr(t, "pair cap", err, artifact.ErrInvalidMetadata)
 	a, _, _ = e.svc.Get(e.ctx, alice, "demo")
@@ -1242,7 +1242,7 @@ func (failingRecorder) Record(context.Context, audit.Event) error { return error
 func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1493,7 +1493,7 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 func TestAuditRecordsCredential(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	e.user(t, "alice")
-	alice := artifact.Actor{Handle: "alice", Credential: "api_key:agk_abc123"}
+	alice := artifact.Actor{Handle: "alice", Credential: "api_key:kzk_abc123"}
 	steps := []func() error{
 		func() error {
 			_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "demo", Files: files("a", "a")})
@@ -1520,7 +1520,7 @@ func TestAuditRecordsCredential(t *testing.T) {
 		t.Fatalf("events = %v", e.actions())
 	}
 	for _, ev := range e.rec.Events[:len(steps)] {
-		if ev.Details["credential"] != "api_key:agk_abc123" {
+		if ev.Details["credential"] != "api_key:kzk_abc123" {
 			t.Errorf("%s event details = %v, want the credential", ev.Action, ev.Details)
 		}
 	}

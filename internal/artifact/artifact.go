@@ -26,9 +26,9 @@ const Unpublished = "unpublished"
 
 // Metadata keys interpreted by the server. Every other key is opaque.
 const (
-	MetaSPA       = "agalma.spa"       // "true" serves index.html for any extension-less miss
-	MetaIndexable = "agalma.indexable" // "true" drops the X-Robots-Tag: noindex header
-	MetaCSP       = "agalma.csp"       // replaces the instance Content-Security-Policy
+	MetaSPA       = "kazari.spa"       // "true" serves index.html for any extension-less miss
+	MetaIndexable = "kazari.indexable" // "true" drops the X-Robots-Tag: noindex header
+	MetaCSP       = "kazari.csp"       // replaces the instance Content-Security-Policy
 )
 
 // Artifact is the record behind a slug.

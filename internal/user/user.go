@@ -17,8 +17,8 @@ const (
 	RoleMember Role = "member"
 )
 
-// KeyPrefix starts every API key: agk_<8-char prefix>_<secret>.
-const KeyPrefix = "agk_"
+// KeyPrefix starts every API key: kzk_<8-char prefix>_<secret>.
+const KeyPrefix = "kzk_"
 
 // Errors. Compare with errors.Is.
 var (

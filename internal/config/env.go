@@ -10,11 +10,11 @@ import (
 )
 
 // envPrefix starts every environment override.
-const envPrefix = "AGALMA"
+const envPrefix = "KAZARI"
 
 // applyEnv overrides cfg from the environment. It walks the struct by its
 // yaml tags, so every leaf key, including ones added later, gets a variable
-// named AGALMA_<PATH> with the YAML path upper-cased and joined by "_".
+// named KAZARI_<PATH> with the YAML path upper-cased and joined by "_".
 func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
 	_, err := applyEnvStruct(reflect.ValueOf(cfg).Elem(), envPrefix, lookup)
 	return err

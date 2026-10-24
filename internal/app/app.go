@@ -1,4 +1,4 @@
-// Package app wires every Agalma component from a config.Config, routes the
+// Package app wires every Kazari component from a config.Config, routes the
 // public hosts to their handlers, runs the listeners, the scheduler and the
 // certificate source, and shuts them down gracefully.
 package app
@@ -15,24 +15,24 @@ import (
 	"sync"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/blob"
-	"agalma/internal/certs"
-	"agalma/internal/config"
-	"agalma/internal/httpapi"
-	"agalma/internal/mcpserver"
-	"agalma/internal/metrics"
-	"agalma/internal/oauth"
-	"agalma/internal/oidc"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/scheduler"
-	"agalma/internal/site"
-	"agalma/internal/sqlite"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/blob"
+	"kazari/internal/certs"
+	"kazari/internal/config"
+	"kazari/internal/httpapi"
+	"kazari/internal/mcpserver"
+	"kazari/internal/metrics"
+	"kazari/internal/oauth"
+	"kazari/internal/oidc"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/scheduler"
+	"kazari/internal/site"
+	"kazari/internal/sqlite"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 // Fixed job intervals; sweep and gc come from the lifecycle config.

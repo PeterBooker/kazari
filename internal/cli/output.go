@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"agalma/internal/api"
+	"kazari/internal/api"
 )
 
 // printJSON writes v pretty-printed.

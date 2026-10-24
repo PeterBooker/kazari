@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/buildinfo"
+	"kazari/internal/api"
+	"kazari/internal/buildinfo"
 )
 
 // commandFunc runs one subcommand with the arguments after its name.
@@ -519,10 +519,10 @@ func cmdRollback(r *runner, args []string) error {
 func cmdFiles(r *runner, args []string) error {
 	if len(args) == 0 || args[0] != "cat" {
 		if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
-			fmt.Fprintln(r.stderr, "usage: agalma files cat <slug> <path> [--version N]")
+			fmt.Fprintln(r.stderr, "usage: kazari files cat <slug> <path> [--version N]")
 			return nil
 		}
-		return usagef("usage: agalma files cat <slug> <path> [--version N]")
+		return usagef("usage: kazari files cat <slug> <path> [--version N]")
 	}
 	fs := r.newFlags("files cat", "files cat <slug> <path> [--version N]")
 	version := fs.Int("version", 0, "read from version `N` instead of the published one")
@@ -608,7 +608,7 @@ func cmdVersion(r *runner, args []string) error {
 	if r.g.json {
 		return r.printJSON(info)
 	}
-	fmt.Fprintf(r.stdout, "agalma %s\n", info)
+	fmt.Fprintf(r.stdout, "kazari %s\n", info)
 	return nil
 }
 

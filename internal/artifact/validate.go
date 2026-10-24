@@ -90,7 +90,7 @@ func ValidatePath(p string) (string, error) {
 }
 
 // ValidateMetadata checks keys, values and pair count, and restricts
-// server-interpreted "agalma." keys to the known set with valid values.
+// server-interpreted "kazari." keys to the known set with valid values.
 // maxPairs <= 0 means DefaultMaxPairs.
 func ValidateMetadata(m map[string]string, maxPairs int) error {
 	if maxPairs <= 0 {
@@ -115,7 +115,7 @@ func ValidateMetadataPair(k, v string) error {
 	if len(v) > MetaValueMaxLen {
 		return Errorf(ErrInvalidMetadata, "metadata value for %q longer than %d bytes", k, MetaValueMaxLen)
 	}
-	if !strings.HasPrefix(k, "agalma.") {
+	if !strings.HasPrefix(k, "kazari.") {
 		return nil
 	}
 	switch k {

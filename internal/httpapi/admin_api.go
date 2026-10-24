@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/buildinfo"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/scheduler"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/buildinfo"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/scheduler"
+	"kazari/internal/user"
 )
 
 // codeJobRunning answers POST /v1/jobs/{name}/run while the job runs.

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/httpapi"
-	"agalma/internal/scheduler"
+	"kazari/internal/api"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/httpapi"
+	"kazari/internal/scheduler"
 )
 
 func TestAdminUsersAndKeys(t *testing.T) {

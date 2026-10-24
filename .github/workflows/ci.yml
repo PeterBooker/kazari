@@ -73,4 +73,4 @@ jobs:
       - env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/agalma
+        run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/kazari

@@ -1,47 +1,41 @@
 # Configuration
 
-Agalma reads one YAML file plus environment variables, validates the result at startup and refuses
-to start with a list of every problem it found, each named by its key. There are no settings stored
-in the database: to change a limit, edit the file and restart (it takes under a second).
-`agalma admin settings` (or `GET /v1/settings` on the admin API) prints the effective configuration
-with secrets redacted.
+Kazari reads one YAML file plus environment variables, validates the result at startup and refuses to start with a list of every problem it found, each named by its key. There are no settings stored in the database: to change a limit, edit the file and restart (it takes under a second). `kazari admin settings` (or `GET /v1/settings` on the admin API) prints the effective configuration with secrets redacted.
 
-`deploy/agalma.yaml` is a complete example with every default, `deploy/dev.yaml` the local
-development setup and `deploy/agalma.env.example` the template for secrets.
+`deploy/kazari.yaml` is a complete example with every default, `deploy/dev.yaml` the local development setup and `deploy/kazari.env.example` the template for secrets.
 
 ## Where the file comes from
 
-`agalma serve` uses the first of:
+`kazari serve` uses the first of:
 
 1. `--config PATH` (the file must exist);
-2. `$AGALMA_CONFIG`;
-3. `/etc/agalma/agalma.yaml`, if it exists;
+2. `$KAZARI_CONFIG`;
+3. `/etc/kazari/kazari.yaml`, if it exists;
 4. no file: defaults plus environment variables.
 
 A key the server does not know is an error, so a typo fails loudly rather than being ignored.
 
 ## Format
 
-Sections are nested mappings; the keys and their nesting are those in [Keys](#keys). Sizes and
-durations are written as plain strings (`50MiB`, `336h`), lists as YAML sequences.
+Sections are nested mappings; the keys and their nesting are those in [Keys](#keys). Sizes and durations are written as plain strings (`50MiB`, `336h`), lists as YAML sequences.
 
 ```yaml
 base_domain: art.example.com
-data_dir: /var/lib/agalma
+data_dir: /var/lib/kazari
 
 tls:
   mode: acme
   email: ops@example.com
   dns_provider: cloudflare
   dns:
-    api_token: ${AGALMA_TLS_DNS_API_TOKEN}
+    api_token: ${KAZARI_TLS_DNS_API_TOKEN}
 
 auth:
-  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
+  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
   oidc:
     issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
     client_id: 00000000-0000-0000-0000-000000000000
-    client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+    client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
     allowed_domains: [example.com]
 ```
 
@@ -55,36 +49,31 @@ Any value may refer to an environment variable:
 | `${NAME:-default}`  | The value of `NAME`, falling back to `default`              |
 | `$$`                | A literal `$`                                               |
 
-A reference to a variable that is not set and has no default stops startup with an error naming the
-variable. `deploy/dev.yaml` uses a default so that development needs no secrets:
+A reference to a variable that is not set and has no default stops startup with an error naming the variable. `deploy/dev.yaml` uses a default so that development needs no secrets:
 
 ```yaml
 auth:
-  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN:-dev-admin-token}
+  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN:-dev-admin-token}
 ```
 
 ### The `.env` file
 
-`agalma serve` also loads variables from a dotenv file, the first of:
+`kazari serve` also loads variables from a dotenv file, the first of:
 
 1. `--env-file PATH`;
-2. `$AGALMA_ENV_FILE`;
+2. `$KAZARI_ENV_FILE`;
 3. `./.env` in the working directory, if it exists.
 
-One `KEY=VALUE` per line; `#` starts a comment, `export ` before the key is allowed, and a value may
-be wrapped in single or double quotes:
+One `KEY=VALUE` per line; `#` starts a comment, `export ` before the key is allowed, and a value may be wrapped in single or double quotes:
 
 ```sh
 # .env
-AGALMA_AUTH_ADMIN_TOKEN=3f9c2e...
-export AGALMA_TLS_DNS_API_TOKEN="your-cloudflare-token"
-AGALMA_LISTEN_PROXY_MODE=true
+KAZARI_AUTH_ADMIN_TOKEN=3f9c2e...
+export KAZARI_TLS_DNS_API_TOKEN="your-cloudflare-token"
+KAZARI_LISTEN_PROXY_MODE=true
 ```
 
-A variable already set in the process environment wins over the file. Variables from the file feed
-both `${NAME}` references and the `AGALMA_*` overrides below. The file holds secrets: keep it mode
-`0600` and out of version control. Under systemd the unit reads `/etc/agalma/agalma.env` with
-`EnvironmentFile=`, so those variables arrive as process environment.
+A variable already set in the process environment wins over the file. Variables from the file feed both `${NAME}` references and the `KAZARI_*` overrides below. The file holds secrets: keep it mode `0600` and out of version control. Under systemd the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=`, so those variables arrive as process environment.
 
 The CLI reads `./.env` too, for its own variables ([cli.md](cli.md#configuration)).
 
@@ -94,45 +83,35 @@ From lowest to highest:
 
 1. built-in defaults;
 2. the YAML file, after `${}` references are expanded;
-3. `AGALMA_*` overrides, from the process environment or the `.env` file.
+3. `KAZARI_*` overrides, from the process environment or the `.env` file.
 
 Validation then checks the result.
 
 ## Environment overrides
 
-Every key has an environment variable: `AGALMA_` followed by the key's full path, upper-cased, with
-dots replaced by underscores. An override wins over the file, whether or not the file mentions the
-key, so a deployment configured entirely from the environment needs no file at all.
+Every key has an environment variable: `KAZARI_` followed by the key's full path, upper-cased, with dots replaced by underscores. An override wins over the file, whether or not the file mentions the key, so a deployment configured entirely from the environment needs no file at all.
 
 | Key                        | Variable                          |
 | -------------------------- | --------------------------------- |
-| `base_domain`              | `AGALMA_BASE_DOMAIN`              |
-| `listen.proxy_mode`        | `AGALMA_LISTEN_PROXY_MODE`        |
-| `tls.dns_provider`         | `AGALMA_TLS_DNS_PROVIDER`         |
-| `tls.dns.api_token`        | `AGALMA_TLS_DNS_API_TOKEN`        |
-| `limits.max_version_bytes` | `AGALMA_LIMITS_MAX_VERSION_BYTES` |
-| `auth.oidc.allowed_domains`| `AGALMA_AUTH_OIDC_ALLOWED_DOMAINS`|
+| `base_domain`              | `KAZARI_BASE_DOMAIN`              |
+| `listen.proxy_mode`        | `KAZARI_LISTEN_PROXY_MODE`        |
+| `tls.dns_provider`         | `KAZARI_TLS_DNS_PROVIDER`         |
+| `tls.dns.api_token`        | `KAZARI_TLS_DNS_API_TOKEN`        |
+| `limits.max_version_bytes` | `KAZARI_LIMITS_MAX_VERSION_BYTES` |
+| `auth.oidc.allowed_domains`| `KAZARI_AUTH_OIDC_ALLOWED_DOMAINS`|
 
-The secrets in `deploy/agalma.yaml` use the same names in their `${}` references, so one variable
-serves either way.
+The secrets in `deploy/kazari.yaml` use the same names in their `${}` references, so one variable serves either way.
 
 Value formats:
 
 - **Booleans**: `true`, `false`, `1`, `0` (anything Go's `strconv.ParseBool` takes).
-- **Lists**: comma-separated, spaces trimmed: `AGALMA_AUTH_OIDC_ALLOWED_DOMAINS=example.com,example.org`.
-  A variable replaces the whole list.
-- **Sizes**: an integer with an optional unit, case-insensitive, optional space: `B`, `KiB`, `MiB`,
-  `GiB`, `TiB` (powers of 1024) or `KB`, `MB`, `GB`, `TB` (powers of 1000). `"50MiB"`, `"2 GiB"`,
-  `52428800`.
-- **Durations**: Go durations (`"15m"`, `"336h"`, `"1h30m"`) with an optional leading whole number
-  of days: `"14d"`, `"1d12h"`.
+- **Lists**: comma-separated, spaces trimmed: `KAZARI_AUTH_OIDC_ALLOWED_DOMAINS=example.com,example.org`. A variable replaces the whole list.
+- **Sizes**: an integer with an optional unit, case-insensitive, optional space: `B`, `KiB`, `MiB`, `GiB`, `TiB` (powers of 1024) or `KB`, `MB`, `GB`, `TB` (powers of 1000). `"50MiB"`, `"2 GiB"`, `52428800`.
+- **Durations**: Go durations (`"15m"`, `"336h"`, `"1h30m"`) with an optional leading whole number of days: `"14d"`, `"1d12h"`.
 
-Setting any `AGALMA_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults,
-even when the file has none.
+Setting any `KAZARI_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults, even when the file has none.
 
-Do not confuse the server's variables with the CLI's: `AGALMA_URL`, `AGALMA_TOKEN`,
-`AGALMA_ADMIN_URL` and `AGALMA_ADMIN_TOKEN` configure the client ([cli.md](cli.md)); the server's
-admin token is `AGALMA_AUTH_ADMIN_TOKEN`.
+Do not confuse the server's variables with the CLI's: `KAZARI_URL`, `KAZARI_TOKEN`, `KAZARI_ADMIN_URL` and `KAZARI_ADMIN_TOKEN` configure the client ([cli.md](cli.md)); the server's admin token is `KAZARI_AUTH_ADMIN_TOKEN`.
 
 ## Keys
 
@@ -141,12 +120,11 @@ admin token is `AGALMA_AUTH_ADMIN_TOKEN`.
 | Key               | Type    | Default  | Meaning                                                                                                    |
 | ----------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `base_domain`     | string  | none     | Domain artifacts live under, as `<slug>.<base_domain>`. Lower-case host name, no scheme, port or trailing dot. Required. |
-| `data_dir`        | string  | none     | Holds `agalma.db`, `blobs/`, `uploads/` and `certmagic/`. Required. The systemd unit and the Docker image set `/var/lib/agalma`. |
-| `external_scheme` | string  | `https`  | Scheme of the public URLs Agalma prints and returns: `https` or `http`.                                    |
+| `data_dir`        | string  | none     | Holds `kazari.db`, `blobs/`, `uploads/` and `certmagic/`. Required. The systemd unit and the Docker image set `/var/lib/kazari`. |
+| `external_scheme` | string  | `https`  | Scheme of the public URLs Kazari prints and returns: `https` or `http`.                                    |
 | `external_port`   | integer | `0`      | Port appended to public URLs when not the scheme's default; `0` omits it. `8080` gives `http://demo.localhost:8080/`. |
 
-`external_scheme` and `external_port` only shape the URLs in responses; they do not change what
-Agalma listens on.
+`external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
 
 ### `listen`
 
@@ -205,7 +183,7 @@ See [ops.md](ops.md#lifecycle) for how these combine.
 | Key                  | Type        | Default       | Meaning                                                                                       |
 | -------------------- | ----------- | ------------- | --------------------------------------------------------------------------------------------- |
 | `csp`                | string      | see below     | `Content-Security-Policy` sent with every artifact response; `""` sends none.                 |
-| `allow_csp_override` | bool        | `true`        | Let an artifact's `agalma.csp` metadata replace `csp` for its own files.                      |
+| `allow_csp_override` | bool        | `true`        | Let an artifact's `kazari.csp` metadata replace `csp` for its own files.                      |
 | `reserved_slugs`     | string list | see below     | Slugs no artifact may take. Each must be non-empty and lower-case.                            |
 
 The default CSP allows inline scripts and styles plus the common CDNs:
@@ -214,11 +192,9 @@ The default CSP allows inline scripts and styles plus the common CDNs:
 default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'
 ```
 
-The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2`, `autoconfig`,
-`autodiscover` and `localhost`. If you replace the list, keep `api`, `mcp` and `admin`.
+The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2`, `autoconfig`, `autodiscover` and `localhost`. If you replace the list, keep `api`, `mcp` and `admin`.
 
-Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors;
-on a multi-tenant instance consider `allow_csp_override: false`.
+Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors; on a multi-tenant instance consider `allow_csp_override: false`.
 
 ### `auth`
 
@@ -229,8 +205,7 @@ on a multi-tenant instance consider `allow_csp_override: false`.
 
 ### `auth.oidc`
 
-Present means "users sign in through this OpenID Connect provider"; absent means the OAuth consent
-page asks for an API key instead. See [identity.md](identity.md).
+Present means "users sign in through this OpenID Connect provider"; absent means the OAuth consent page asks for an API key instead. See [identity.md](identity.md).
 
 | Key               | Type        | Default | Meaning                                                                                            |
 | ----------------- | ----------- | ------- | -------------------------------------------------------------------------------------------------- |
@@ -258,36 +233,22 @@ page asks for an API key instead. See [identity.md](identity.md).
 
 All of these are checked together; the error lists every failure as `key: problem`.
 
-- `base_domain` is required, lower-case, without scheme, port or trailing dot, and made of labels of
-  letters, digits and hyphens.
+- `base_domain` is required, lower-case, without scheme, port or trailing dot, and made of labels of letters, digits and hyphens.
 - `data_dir` is required.
 - `external_scheme` is `http` or `https`; `external_port` is 0 to 65535.
 - Outside proxy mode `listen.https` is required; in proxy mode `listen.http` is required.
 - `tls.mode` is one of the three modes. Outside proxy mode:
-  - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`,
-    `tls.dns.api_token`;
+  - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`;
   - `files` needs `tls.cert_file` and `tls.key_file`.
-- Every number and duration in `limits` and `lifecycle` must be greater than 0. In particular
-  `write_rate_per_minute` cannot be set to 0 to disable rate limiting, and `default_user_quota` cannot
-  be 0; give individual users an unlimited quota through the admin API instead
-  (`agalma admin users update <handle> --quota 0`).
+- Every number and duration in `limits` and `lifecycle` must be greater than 0. In particular `write_rate_per_minute` cannot be set to 0 to disable rate limiting, and `default_user_quota` cannot be 0; give individual users an unlimited quota through the admin API instead (`kazari admin users update <handle> --quota 0`).
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` must not exceed `limits.max_version_bytes`.
 - `auth.write_policy` is `shared` or `owner`.
-- `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or
-  ends in `.localhost` (a development instance that only its own machine can reach).
+- `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost` (a development instance that only its own machine can reach).
 - With `auth.oidc`: `issuer` is an `https` URL, `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.
 
 ## Secrets
 
-Three keys are secrets: `tls.dns.api_token`, `auth.admin_token` and `auth.oidc.client_secret`. They are
-shown as `"***"` by the settings endpoint. Never write them into the YAML file, which under systemd
-must be world-readable: refer to them as `${NAME}` (or leave them out and set the `AGALMA_*`
-override) and supply the variables through `/etc/agalma/agalma.env` (mode `0600`, read by systemd as
-root) for the unit, `.env` in development, `--env-file` for Docker, or your secret manager's
-equivalent.
+Three keys are secrets: `tls.dns.api_token`, `auth.admin_token` and `auth.oidc.client_secret`. They are shown as `"***"` by the settings endpoint. Never write them into the YAML file, which under systemd must be world-readable: refer to them as `${NAME}` (or leave them out and set the `KAZARI_*` override) and supply the variables through `/etc/kazari/kazari.env` (mode `0600`, read by systemd as root) for the unit, `.env` in development, `--env-file` for Docker, or your secret manager's equivalent.
 
-Generate the admin token with `openssl rand -hex 32`; a token shorter than 32 characters stops
-startup. Once an admin user has an API key with the
-`admin` scope, you can retire the token: delete the `admin_token` line from the file (a `${}`
-reference to a variable that is no longer set stops startup) and unset `AGALMA_AUTH_ADMIN_TOKEN`.
+Generate the admin token with `openssl rand -hex 32`; a token shorter than 32 characters stops startup. Once an admin user has an API key with the `admin` scope, you can retire the token: delete the `admin_token` line from the file (a `${}` reference to a variable that is no longer set stops startup) and unset `KAZARI_AUTH_ADMIN_TOKEN`.

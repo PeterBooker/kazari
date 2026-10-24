@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/auth"
+	"kazari/internal/auth"
 )
 
 // stub is an Authenticator returning a fixed result and counting calls.

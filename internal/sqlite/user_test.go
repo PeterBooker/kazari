@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/user"
+	"kazari/internal/user"
 )
 
 var userT0 = time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)
@@ -17,7 +17,7 @@ var userT0 = time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)
 // userTestStore opens a fresh database and returns a user store over it.
 func userTestStore(t *testing.T) *UserStore {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

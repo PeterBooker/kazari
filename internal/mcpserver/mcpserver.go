@@ -1,4 +1,4 @@
-// Package mcpserver is the MCP surface of Agalma: twelve tools, two resource
+// Package mcpserver is the MCP surface of Kazari: twelve tools, two resource
 // templates and one prompt over the Streamable HTTP transport, running
 // stateless. Each request builds a fresh server whose tool handlers close
 // over the authenticated principal, so no session state exists anywhere.
@@ -17,13 +17,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/buildinfo"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/upload"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/buildinfo"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/upload"
 )
 
 // Defaults applied to zero Options fields.
@@ -148,7 +148,7 @@ func NewServer(d Deps, o Options, p auth.Principal) *mcp.Server {
 
 func (b *builder) server(p auth.Principal) *mcp.Server {
 	s := mcp.NewServer(
-		&mcp.Implementation{Name: "agalma", Title: "Agalma", Version: buildinfo.Get().Version},
+		&mcp.Implementation{Name: "kazari", Title: "Kazari", Version: buildinfo.Get().Version},
 		&mcp.ServerOptions{
 			Instructions: b.text.instructions,
 			Logger:       b.sdkLog,

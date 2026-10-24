@@ -20,17 +20,17 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/blob"
-	"agalma/internal/httpapi"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/scheduler"
-	"agalma/internal/sqlite"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/blob"
+	"kazari/internal/httpapi"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/scheduler"
+	"kazari/internal/sqlite"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -67,7 +67,7 @@ func newEnv(t *testing.T, c config) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func newEnv(t *testing.T, c config) *env {
 		Grants:    c.grants,
 		Settings:  func() map[string]any { return map[string]any{"base_domain": "art.test", "admin_token": "***"} },
 		Metrics: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			io.WriteString(w, "agalma_up 1\n")
+			io.WriteString(w, "kazari_up 1\n")
 		}),
 		Links: links,
 	}, c.admin))

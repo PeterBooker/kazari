@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/api"
+	"kazari/internal/api"
 )
 
 // captured is what a fake server saw.
@@ -287,11 +287,11 @@ func TestClientEndpoints(t *testing.T) {
 			call: func(ctx context.Context, c *Client) (any, error) {
 				return c.IssueKey(ctx, "ann", api.IssueKeyRequest{Label: "ci", Scopes: []string{"read"}, ExpiresIn: "720h"})
 			},
-			reply:   `{"key":"agk_abc_secret","api_key":` + mustJSON(t, keys[0]) + `}`,
+			reply:   `{"key":"kzk_abc_secret","api_key":` + mustJSON(t, keys[0]) + `}`,
 			method:  "POST",
 			path:    "/v1/users/ann/keys",
 			reqBody: `{"label":"ci","scopes":["read"],"expires_in":"720h"}`,
-			want:    &api.IssuedKey{Key: "agk_abc_secret", APIKey: keys[0]},
+			want:    &api.IssuedKey{Key: "kzk_abc_secret", APIKey: keys[0]},
 		},
 		{
 			name:   "revoke key",
@@ -402,7 +402,7 @@ func TestClientEndpoints(t *testing.T) {
 			if h := got.header.Get("Accept"); h != "application/json" {
 				t.Errorf("Accept = %q", h)
 			}
-			if h := got.header.Get("User-Agent"); !strings.HasPrefix(h, "agalma-cli/") {
+			if h := got.header.Get("User-Agent"); !strings.HasPrefix(h, "kazari-cli/") {
 				t.Errorf("User-Agent = %q", h)
 			}
 			for k, v := range tt.header {

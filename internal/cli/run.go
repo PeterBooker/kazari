@@ -50,7 +50,7 @@ type settings struct {
 	URL, Token, AdminURL, AdminToken string
 }
 
-// fileConfig is ~/.config/agalma/config.yaml.
+// fileConfig is ~/.config/kazari/config.yaml.
 type fileConfig struct {
 	URL        string `yaml:"url"`
 	Token      string `yaml:"token"`
@@ -70,7 +70,7 @@ type runner struct {
 	g         globals
 }
 
-// Run executes one agalma client command and returns the process exit code:
+// Run executes one kazari client command and returns the process exit code:
 // 0 on success, 1 when the command or the server fails, 2 for usage and
 // configuration errors. args excludes the program name, for example
 // []string{"--json", "get", "my-slug"}. lookupEnv is normally os.LookupEnv.
@@ -88,13 +88,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv fun
 }
 
 func (r *runner) run(args []string) error {
-	fs := flag.NewFlagSet("agalma", flag.ContinueOnError)
+	fs := flag.NewFlagSet("kazari", flag.ContinueOnError)
 	fs.SetOutput(r.stderr)
-	fs.StringVar(&r.g.url, "url", "", "user API URL, e.g. https://api.art.example.com (env AGALMA_URL)")
-	fs.StringVar(&r.g.token, "token", "", "API key (env AGALMA_TOKEN)")
-	fs.StringVar(&r.g.adminURL, "admin-url", "", "admin API URL (env AGALMA_ADMIN_URL)")
-	fs.StringVar(&r.g.adminToken, "admin-token", "", "admin token (env AGALMA_ADMIN_TOKEN)")
-	fs.StringVar(&r.g.config, "config", "", "config file (default $XDG_CONFIG_HOME/agalma/config.yaml or ~/.config/agalma/config.yaml)")
+	fs.StringVar(&r.g.url, "url", "", "user API URL, e.g. https://api.art.example.com (env KAZARI_URL)")
+	fs.StringVar(&r.g.token, "token", "", "API key (env KAZARI_TOKEN)")
+	fs.StringVar(&r.g.adminURL, "admin-url", "", "admin API URL (env KAZARI_ADMIN_URL)")
+	fs.StringVar(&r.g.adminToken, "admin-token", "", "admin token (env KAZARI_ADMIN_TOKEN)")
+	fs.StringVar(&r.g.config, "config", "", "config file (default $XDG_CONFIG_HOME/kazari/config.yaml or ~/.config/kazari/config.yaml)")
 	fs.BoolVar(&r.g.json, "json", false, "print JSON responses")
 	fs.Usage = func() {
 		fmt.Fprint(r.stderr, topUsage)
@@ -118,7 +118,7 @@ func (r *runner) run(args []string) error {
 	}
 	cmd, ok := commands()[name]
 	if !ok {
-		return usagef("unknown command %q (run agalma help)", name)
+		return usagef("unknown command %q (run kazari help)", name)
 	}
 	return cmd(r, rest)
 }
@@ -133,13 +133,13 @@ func (r *runner) exit(err error) int {
 	case errors.Is(err, errUsagePrinted):
 		return exitUsage
 	case errors.As(err, &ue):
-		fmt.Fprintf(r.stderr, "agalma: %s\n", ue.msg)
+		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
 		return exitUsage
 	case errors.As(err, &he):
-		fmt.Fprintf(r.stderr, "agalma: %s: %s\n", he.Err.Code, he.Err.Message)
+		fmt.Fprintf(r.stderr, "kazari: %s: %s\n", he.Err.Code, he.Err.Message)
 		return exitError
 	default:
-		fmt.Fprintf(r.stderr, "agalma: %v\n", err)
+		fmt.Fprintf(r.stderr, "kazari: %v\n", err)
 		return exitError
 	}
 }
@@ -160,10 +160,10 @@ func (r *runner) configPath() (string, bool) {
 		return r.g.config, true
 	}
 	if x := r.env("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "agalma", "config.yaml"), false
+		return filepath.Join(x, "kazari", "config.yaml"), false
 	}
 	if h := r.env("HOME"); h != "" {
-		return filepath.Join(h, ".config", "agalma", "config.yaml"), false
+		return filepath.Join(h, ".config", "kazari", "config.yaml"), false
 	}
 	return "", false
 }
@@ -210,10 +210,10 @@ func (r *runner) settings() (settings, error) {
 		return fileVal
 	}
 	s := settings{
-		URL:        pick(r.g.url, "AGALMA_URL", fc.URL),
-		Token:      pick(r.g.token, "AGALMA_TOKEN", fc.Token),
-		AdminURL:   pick(r.g.adminURL, "AGALMA_ADMIN_URL", fc.AdminURL),
-		AdminToken: pick(r.g.adminToken, "AGALMA_ADMIN_TOKEN", fc.AdminToken),
+		URL:        pick(r.g.url, "KAZARI_URL", fc.URL),
+		Token:      pick(r.g.token, "KAZARI_TOKEN", fc.Token),
+		AdminURL:   pick(r.g.adminURL, "KAZARI_ADMIN_URL", fc.AdminURL),
+		AdminToken: pick(r.g.adminToken, "KAZARI_ADMIN_TOKEN", fc.AdminToken),
 	}
 	if s.AdminToken == "" {
 		s.AdminToken = s.Token
@@ -241,10 +241,10 @@ func (r *runner) userClient() (*Client, error) {
 		return nil, err
 	}
 	if s.URL == "" {
-		return nil, usagef("no API URL: set --url, AGALMA_URL or url in %s", r.configHint())
+		return nil, usagef("no API URL: set --url, KAZARI_URL or url in %s", r.configHint())
 	}
 	if s.Token == "" {
-		return nil, usagef("no API token: set --token, AGALMA_TOKEN or token in %s", r.configHint())
+		return nil, usagef("no API token: set --token, KAZARI_TOKEN or token in %s", r.configHint())
 	}
 	return NewClient(s.URL, s.Token, r.hc), nil
 }
@@ -256,10 +256,10 @@ func (r *runner) adminClient() (*Client, error) {
 		return nil, err
 	}
 	if s.AdminURL == "" {
-		return nil, usagef("no admin API URL: set --admin-url, AGALMA_ADMIN_URL or admin_url in %s", r.configHint())
+		return nil, usagef("no admin API URL: set --admin-url, KAZARI_ADMIN_URL or admin_url in %s", r.configHint())
 	}
 	if s.AdminToken == "" {
-		return nil, usagef("no admin token: set --admin-token, AGALMA_ADMIN_TOKEN or admin_token in %s", r.configHint())
+		return nil, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
 	}
 	return NewClient(s.AdminURL, s.AdminToken, r.hc), nil
 }
@@ -268,17 +268,17 @@ func (r *runner) configHint() string {
 	if p, _ := r.configPath(); p != "" {
 		return p
 	}
-	return "~/.config/agalma/config.yaml"
+	return "~/.config/kazari/config.yaml"
 }
 
 // newFlags returns a flag set for a subcommand. usage is the synopsis after
-// "agalma ". Every subcommand also accepts --json after its name.
+// "kazari ". Every subcommand also accepts --json after its name.
 func (r *runner) newFlags(name, usage string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(r.stderr)
 	fs.BoolVar(&r.g.json, "json", r.g.json, "print the JSON response")
 	fs.Usage = func() {
-		fmt.Fprintf(r.stderr, "usage: agalma %s\n", usage)
+		fmt.Fprintf(r.stderr, "usage: kazari %s\n", usage)
 		var hasFlags bool
 		fs.VisitAll(func(*flag.Flag) { hasFlags = true })
 		if hasFlags {
@@ -360,7 +360,7 @@ func (m metaFlag) Set(v string) error {
 	return nil
 }
 
-const topUsage = `usage: agalma [global flags] <command> [arguments]
+const topUsage = `usage: kazari [global flags] <command> [arguments]
 
 Commands:
   publish <dir> --slug <slug>   publish a directory as a new artifact (--update to add a version)
@@ -379,5 +379,5 @@ Commands:
   admin <command>               admin API: users, keys, artifacts, transfer, hide,
                                 settings, jobs, audit, health
 
-Run "agalma <command> -h" for a command's flags.
+Run "kazari <command> -h" for a command's flags.
 `

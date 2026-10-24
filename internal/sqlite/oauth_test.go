@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/oauth"
-	"agalma/internal/user"
+	"kazari/internal/oauth"
+	"kazari/internal/user"
 )
 
 var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -21,7 +21,7 @@ var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 func oauthTestStores(t *testing.T) *OAuthStore {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

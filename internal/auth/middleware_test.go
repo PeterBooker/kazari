@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/auth"
+	"kazari/internal/auth"
 )
 
 var (

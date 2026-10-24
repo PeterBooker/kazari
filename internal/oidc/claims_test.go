@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/auth"
+	"kazari/internal/auth"
 )
 
 func TestIdentityMapping(t *testing.T) {

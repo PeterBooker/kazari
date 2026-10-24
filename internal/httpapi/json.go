@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/present"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/present"
+	"kazari/internal/user"
 )
 
 // jsonLimit caps plain JSON bodies. Bodies that may carry inline files are

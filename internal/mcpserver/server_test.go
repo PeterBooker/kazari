@@ -17,15 +17,15 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/blob"
-	"agalma/internal/mcpserver"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/sqlite"
-	"agalma/internal/upload"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/blob"
+	"kazari/internal/mcpserver"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/sqlite"
+	"kazari/internal/upload"
 )
 
 const testCSP = "default-src 'self'; " +
@@ -54,7 +54,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestListTools(t *testing.T) {
 	create := byName["create_artifact"].Description
 	for _, s := range []string{"https://<slug>.art.test/", "3 to 63", "\"--\"", "api, mcp, admin", "25 MiB", "50 MiB",
 		"2000 files", "index.html", "relative links", "https://cdn.jsdelivr.net", "https://fonts.gstatic.com",
-		"agalma.spa", "agalma.indexable", "agalma.csp", "2 MiB", "begin_upload"} {
+		"kazari.spa", "kazari.indexable", "kazari.csp", "2 MiB", "begin_upload"} {
 		if !strings.Contains(create, s) {
 			t.Errorf("create_artifact description lacks %q", s)
 		}
@@ -265,7 +265,7 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Errorf("read_file logo = %+v", rf)
 	}
 	er, isRes := res.Content[0].(*mcp.EmbeddedResource)
-	if !isRes || !bytes.Equal(er.Resource.Blob, pngBytes) || er.Resource.URI != "agalma://artifacts/demo/files/assets/logo.png" {
+	if !isRes || !bytes.Equal(er.Resource.Blob, pngBytes) || er.Resource.URI != "kazari://artifacts/demo/files/assets/logo.png" {
 		t.Errorf("read_file logo content = %#v", res.Content[0])
 	}
 
@@ -508,11 +508,11 @@ func TestResourcesAndPrompt(t *testing.T) {
 		uris = append(uris, rt.URITemplate)
 	}
 	slices.Sort(uris)
-	if !slices.Equal(uris, []string{"agalma://artifacts/{slug}", "agalma://artifacts/{slug}/files/{+path}"}) {
+	if !slices.Equal(uris, []string{"kazari://artifacts/{slug}", "kazari://artifacts/{slug}/files/{+path}"}) {
 		t.Errorf("templates = %v", uris)
 	}
 
-	rr, err := cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "agalma://artifacts/demo"})
+	rr, err := cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "kazari://artifacts/demo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,21 +524,21 @@ func TestResourcesAndPrompt(t *testing.T) {
 		t.Errorf("artifact resource detail = %+v", d)
 	}
 
-	rr, err = cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "agalma://artifacts/demo/files/assets/logo.png"})
+	rr, err = cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "kazari://artifacts/demo/files/assets/logo.png"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c := rr.Contents[0]; c.MIMEType != "image/png" || !bytes.Equal(c.Blob, pngBytes) || c.Text != "" {
 		t.Errorf("logo resource = %+v", c)
 	}
-	rr, err = cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "agalma://artifacts/demo/files/index.html"})
+	rr, err = cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "kazari://artifacts/demo/files/index.html"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c := rr.Contents[0]; !strings.HasPrefix(c.MIMEType, "text/html") || c.Text != "<h1>hi</h1>" {
 		t.Errorf("index resource = %+v", c)
 	}
-	if _, err := cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "agalma://artifacts/demo/files/missing.html"}); err == nil {
+	if _, err := cs.ReadResource(e.ctx, &mcp.ReadResourceParams{URI: "kazari://artifacts/demo/files/missing.html"}); err == nil {
 		t.Errorf("missing file resource: no error")
 	}
 

@@ -20,10 +20,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/app"
-	"agalma/internal/cli"
-	"agalma/internal/config"
+	"kazari/internal/api"
+	"kazari/internal/app"
+	"kazari/internal/cli"
+	"kazari/internal/config"
 )
 
 const adminToken = "test-admin"
@@ -114,7 +114,7 @@ func start(t *testing.T, cfg config.Config) *instance {
 }
 
 func testLogger() *slog.Logger {
-	if os.Getenv("AGALMA_TEST_LOG") != "" {
+	if os.Getenv("KAZARI_TEST_LOG") != "" {
 		return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 	return slog.New(slog.DiscardHandler)
@@ -391,7 +391,7 @@ func TestEndToEnd(t *testing.T) {
 
 	// Authentication.
 	wantStatus(t, do(t, hc, http.MethodPost, "http://api.localhost/v1/artifacts", "", ""), http.StatusUnauthorized, "unauthenticated create")
-	wantStatus(t, do(t, hc, http.MethodGet, "http://api.localhost/v1/artifacts", "agk_bogus", ""), http.StatusUnauthorized, "bogus key")
+	wantStatus(t, do(t, hc, http.MethodGet, "http://api.localhost/v1/artifacts", "kzk_bogus", ""), http.StatusUnauthorized, "bogus key")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://admin.localhost/v1/users", "", ""), http.StatusUnauthorized, "admin without token")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://admin.localhost/v1/users", key, ""), http.StatusForbidden, "admin with member key")
 
@@ -417,7 +417,7 @@ func TestEndToEnd(t *testing.T) {
 	// Metrics on the admin host, open.
 	metrics := get(t, hc, "http://admin.localhost/metrics")
 	wantStatus(t, metrics, http.StatusOK, "metrics")
-	for _, want := range []string{"agalma_http_requests_total", `surface="site"`, `surface="mcp"`, `job="sweep"`} {
+	for _, want := range []string{"kazari_http_requests_total", `surface="site"`, `surface="mcp"`, `job="sweep"`} {
 		if !strings.Contains(metrics.body, want) {
 			t.Errorf("metrics lack %s", want)
 		}

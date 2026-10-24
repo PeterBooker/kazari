@@ -1,20 +1,20 @@
-# Agalma configuration.
+# Kazari configuration.
 #
 # Every key is shown with its default except base_domain, data_dir and
 # tls.email, which have none. Secrets are never written here: a value of the
 # form ${NAME} (or ${NAME:-default}) is replaced by the environment variable
 # NAME, read from the process environment or from a .env file in the
-# working directory (or the file named by --env-file / $AGALMA_ENV_FILE).
+# working directory (or the file named by --env-file / $KAZARI_ENV_FILE).
 # A reference to an unset variable without a default is an error.
 #
 # Any key can also be overridden directly by an environment variable named
-# AGALMA_ plus the key's path upper-cased with dots as underscores, e.g.
-# listen.proxy_mode -> AGALMA_LISTEN_PROXY_MODE. Lists are comma-separated.
+# KAZARI_ plus the key's path upper-cased with dots as underscores, e.g.
+# listen.proxy_mode -> KAZARI_LISTEN_PROXY_MODE. Lists are comma-separated.
 # Sizes take B, KiB, MiB, GiB, TiB, KB, MB, GB or TB; durations are Go
 # durations ("15m", "336h") and may start with whole days ("14d").
 
 base_domain: art.example.com         # artifacts are served at <slug>.art.example.com
-data_dir: /var/lib/agalma            # agalma.db, blobs/, uploads/, certmagic/
+data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/
 
 # Public URL shape. For development behind plain HTTP on a high port use
 # external_scheme: http and external_port: 8080 (http://demo.localhost:8080/).
@@ -34,7 +34,7 @@ tls:
   cert_file: ""                      # mode: files
   key_file: ""
   dns:
-    api_token: ${AGALMA_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
+    api_token: ${KAZARI_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
 
 limits:
   max_version_bytes: 50MiB
@@ -57,12 +57,12 @@ lifecycle:
 
 serve:
   csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
-  allow_csp_override: true           # agalma.csp metadata replaces csp for that artifact
+  allow_csp_override: true           # kazari.csp metadata replaces csp for that artifact
   reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
 
 auth:
   write_policy: shared               # shared | owner
-  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
+  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
   # Sign-in through the organisation's OpenID Connect provider. Leave oidc
   # out entirely to fall back to API-key sign-in on the consent page.
   # Register https://mcp.<base_domain>/oauth/callback as the redirect URI.
@@ -70,7 +70,7 @@ auth:
   # oidc:
   #   issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # or https://accounts.google.com
   #   client_id: ""
-  #   client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+  #   client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
   #   allowed_domains: [example.com]  # verified email domains that may sign in
   #   auto_provision: true            # create a member on first sign-in from an allowed domain
   #   admin_emails: []                # provisioned with the admin role

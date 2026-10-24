@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>{{.}} · Agalma</title>
+<title>{{.}} · Kazari</title>
 <style>
   :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f6f6f4; --card: #fff; --muted: #66666b; --line: #deded9; --accent: #2457c5; --err: #b3261e; }
   @media (prefers-color-scheme: dark) { :root { --fg: #ececea; --bg: #161617; --card: #222224; --muted: #a0a0a6; --line: #38383b; --accent: #7aa2ff; --err: #ff8a80; } }
@@ -41,8 +41,8 @@
 
 {{define "consent"}}{{template "head" "Authorize access"}}
 <h1>Authorize {{.ClientName}}</h1>
-{{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Agalma instance.</p>
-{{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Agalma instance.</p>{{end}}
+{{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Kazari instance.</p>
+{{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Kazari instance.</p>{{end}}
 <p class="muted">Client: {{.ClientID}}<br>Returns to: {{.RedirectHost}}</p>
 <p>It will be allowed to:</p>
 <ul>
@@ -52,7 +52,7 @@
 <form method="post" action="/oauth/consent">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
 {{if .AskKey}}<label for="api_key">API key</label>
-<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="agk_…">
+<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
 <p class="muted">Approving with a key grants at most that key's scopes.</p>{{end}}
 <div class="actions">
 <button type="submit" name="action" value="deny">Deny</button>

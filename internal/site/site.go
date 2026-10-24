@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/artifact"
-	"agalma/internal/blob"
+	"kazari/internal/artifact"
+	"kazari/internal/blob"
 )
 
 // Resolver looks up what to serve for a slug. artifact.Service implements
@@ -41,7 +41,7 @@ type Options struct {
 	// DefaultCSP is the Content-Security-Policy sent with every response.
 	// Empty sends none unless an artifact supplies its own.
 	DefaultCSP string
-	// AllowCSPOverride lets an artifact's agalma.csp metadata replace
+	// AllowCSPOverride lets an artifact's kazari.csp metadata replace
 	// DefaultCSP for its own files.
 	AllowCSPOverride bool
 	// NotFoundPage is the instance 404 page; nil uses a built-in page.

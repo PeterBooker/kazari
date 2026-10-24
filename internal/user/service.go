@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"agalma/internal/audit"
-	"agalma/internal/auth"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
 )
 
 // Handle length limits.

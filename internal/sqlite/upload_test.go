@@ -11,15 +11,15 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/artifact"
-	"agalma/internal/upload"
+	"kazari/internal/artifact"
+	"kazari/internal/upload"
 )
 
 // uploadTestStore opens a fresh database and creates the given users.
 func uploadTestStore(t *testing.T, handles ...string) *UploadStore {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -74,7 +74,7 @@ func selfSignedDER(now time.Time, domains []string) ([]byte, *ecdsa.PrivateKey, 
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: cn, Organization: []string{"Agalma self-signed"}},
+		Subject:               pkix.Name{CommonName: cn, Organization: []string{"Kazari self-signed"}},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(1, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

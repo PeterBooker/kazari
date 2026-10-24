@@ -1,6 +1,6 @@
-// Package cli is the agalma command-line client: an HTTP client for the user
+// Package cli is the kazari command-line client: an HTTP client for the user
 // and admin REST APIs, tar.gz bundling of a directory, and the subcommands
-// that cmd/agalma dispatches to through Run.
+// that cmd/kazari dispatches to through Run.
 package cli
 
 import (
@@ -17,14 +17,14 @@ import (
 	"strconv"
 	"strings"
 
-	"agalma/internal/api"
-	"agalma/internal/buildinfo"
+	"kazari/internal/api"
+	"kazari/internal/buildinfo"
 )
 
 // maxErrorBody caps how much of an error response is read.
 const maxErrorBody = 64 << 10
 
-// Client calls one Agalma API host: the user API (api.<base>) or the admin
+// Client calls one Kazari API host: the user API (api.<base>) or the admin
 // API (admin.<base>). Every method is safe for concurrent use.
 type Client struct {
 	base      string
@@ -44,7 +44,7 @@ func NewClient(baseURL, token string, hc *http.Client) *Client {
 		base:      strings.TrimRight(baseURL, "/"),
 		token:     token,
 		hc:        hc,
-		userAgent: "agalma-cli/" + buildinfo.Get().Version,
+		userAgent: "kazari-cli/" + buildinfo.Get().Version,
 	}
 }
 

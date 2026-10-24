@@ -28,24 +28,24 @@ func New() *Metrics {
 	m := &Metrics{
 		reg: prometheus.NewRegistry(),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "agalma_http_requests_total",
+			Name: "kazari_http_requests_total",
 			Help: "HTTP requests by surface, method and status.",
 		}, []string{"surface", "method", "status"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "agalma_http_request_duration_seconds",
+			Name:    "kazari_http_request_duration_seconds",
 			Help:    "HTTP request duration by surface.",
 			Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 		}, []string{"surface"}),
 		inflight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "agalma_http_requests_in_flight",
+			Name: "kazari_http_requests_in_flight",
 			Help: "HTTP requests currently being served by surface.",
 		}, []string{"surface"}),
 		jobRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "agalma_job_runs_total",
+			Name: "kazari_job_runs_total",
 			Help: "Scheduler job runs by job and result.",
 		}, []string{"job", "result"}),
 		jobTime: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "agalma_job_duration_seconds",
+			Name:    "kazari_job_duration_seconds",
 			Help:    "Scheduler job duration by job.",
 			Buckets: prometheus.ExponentialBuckets(0.01, 4, 8),
 		}, []string{"job"}),

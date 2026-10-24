@@ -1,127 +1,49 @@
-# Agalma implementation plan
+# Kazari implementation plan
 
-Agalma is a self-hosted artifact host: one Go binary that serves every artifact as a static site at
-`<slug>.<base-domain>` under a single wildcard certificate, with a REST API and an MCP server for
-creating and updating artifacts, a separate admin API, and a scheduler that retires stale artifacts.
+Kazari is a self-hosted artifact host: one Go binary that serves every artifact as a static site at `<slug>.<base-domain>` under a single wildcard certificate, with a REST API and an MCP server for creating and updating artifacts, a separate admin API, and a scheduler that retires stale artifacts.
 
-This document turns the build plan in the Claude Docs document "Open-source Artifacts host — build
-plan" (dated 2026-10-23) into an implementation plan for this repository. Section 1 records where this
-plan departs from that document and why. Everything after it is the plan to build against.
+This document turns the build plan in the Claude Docs document "Open-source Artifacts host — build plan" (dated 2026-10-23) into an implementation plan for this repository. Section 1 records where this plan departs from that document and why. Everything after it is the plan to build against.
 
-Module path: `agalma`, as the current `go.mod` declares (Go 1.27.3). Distribution is release
-binaries and a Docker image, so `go install` from source is not a goal. Licence: MIT.
+Module path: `kazari`, as the current `go.mod` declares (Go 1.27.3). Distribution is release binaries and a Docker image, so `go install` from source is not a goal. Licence: MIT.
 
 ---
 
 ## 1. Review of the source plan
 
-The source plan is sound on product shape: subdomain per artifact, one wildcard cert, immutable
-content-addressed versions, reversible lifecycle, MCP and REST sharing one service layer, admin on a
-separate host. All of that stays. The changes below are about reducing surface area for v1, fixing a
-few details that would not survive implementation, and recording decisions the source left open.
+The source plan is sound on product shape: subdomain per artifact, one wildcard cert, immutable content-addressed versions, reversible lifecycle, MCP and REST sharing one service layer, admin on a separate host. All of that stays. The changes below are about reducing surface area for v1, fixing a few details that would not survive implementation, and recording decisions the source left open.
 
 ### Decisions recorded
 
-1. **Language is Go.** The Rust-vs-Go spike (source Phase 0) is dropped; it would cost one to two
-   weeks to confirm a decision already made. The reasons from the source table still hold: official
-   MCP Go SDK, CertMagic plus libdns for DNS-01, team fit. Record it as `docs/adr/0001-language.md`.
-2. **Name is Agalma.** Every `forge.` / `forge://` / `forge` in the source becomes `agalma.`
-   (metadata prefix), `agalma://` (MCP resource scheme) and `agalma` (binary and CLI).
-3. **No DI framework, no web framework, no ORM.** Constructor injection wired in `internal/app`,
-   `net/http` with Go 1.22+ `ServeMux` patterns, `database/sql` with hand-written SQL. See section 3.
-4. **Licence is MIT**, as already in the repo. Apache-2.0's patent grant was considered and not
-   taken; revisit only if a client contract asks for it.
-5. **Default write policy is `shared`**: any member with `artifacts:write` may update any artifact,
-   which is what "list what I created and/or updated" implies for a team. `owner` stays available
-   in config for a multi-tenant instance.
-6. **Users sign in with their organisation's identity provider.** The OAuth consent flow for
-   claude.ai authenticates the person through standard OpenID Connect against the instance's
-   configured provider (Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik or any
-   other OIDC-discoverable issuer). No passwords are stored. An instance with no provider
-   configured falls back to pasting an API key on the consent page. Microsoft Entra ID is the first
-   provider the Phase 2b gate runs against, and `auto_provision` is on by default so a colleague
-   with a verified email in an allowed domain gets an account on first sign-in. Enterprise Managed
-   Auth stays in Phase 4, unscheduled. Details in section 9.
-7. **Large bundles reach the server in chunks.** Inline JSON files in a tool call are fine to a few
-   megabytes; above that, an MCP client with no shell (claude.ai) needs another path. Two tools,
-   `begin_upload` and `upload_chunk`, stage files on the server; `create_artifact` and
-   `update_artifact` then take an `upload_id` instead of, or alongside, inline `files[]`. The REST
-   API gets the same three endpoints so the 1:1 rule holds. Details in sections 5 and 8.
+1. **Language is Go.** The Rust-vs-Go spike (source Phase 0) is dropped; it would cost one to two weeks to confirm a decision already made. The reasons from the source table still hold: official MCP Go SDK, CertMagic plus libdns for DNS-01, team fit. Record it as `docs/adr/0001-language.md`.
+2. **Name is Kazari.** Every `forge.` / `forge://` / `forge` in the source becomes `kazari.` (metadata prefix), `kazari://` (MCP resource scheme) and `kazari` (binary and CLI).
+3. **No DI framework, no web framework, no ORM.** Constructor injection wired in `internal/app`, `net/http` with Go 1.22+ `ServeMux` patterns, `database/sql` with hand-written SQL. See section 3.
+4. **Licence is MIT**, as already in the repo. Apache-2.0's patent grant was considered and not taken; revisit only if a client contract asks for it.
+5. **Default write policy is `shared`**: any member with `artifacts:write` may update any artifact, which is what "list what I created and/or updated" implies for a team. `owner` stays available in config for a multi-tenant instance.
+6. **Users sign in with their organisation's identity provider.** The OAuth consent flow for claude.ai authenticates the person through standard OpenID Connect against the instance's configured provider (Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik or any other OIDC-discoverable issuer). No passwords are stored. An instance with no provider configured falls back to pasting an API key on the consent page. Microsoft Entra ID is the first provider the Phase 2b gate runs against, and `auto_provision` is on by default so a colleague with a verified email in an allowed domain gets an account on first sign-in. Enterprise Managed Auth stays in Phase 4, unscheduled. Details in section 9.
+7. **Large bundles reach the server in chunks.** Inline JSON files in a tool call are fine to a few megabytes; above that, an MCP client with no shell (claude.ai) needs another path. Two tools, `begin_upload` and `upload_chunk`, stage files on the server; `create_artifact` and `update_artifact` then take an `upload_id` instead of, or alongside, inline `files[]`. The REST API gets the same three endpoints so the 1:1 rule holds. Details in sections 5 and 8.
 
 ### Changes to the design
 
-8. **OAuth is still needed for claude.ai, but not for the first MCP gate.** Anthropic's connector docs
-   list a fixed bearer header (`static_headers`) as a beta limited to some organisations, so a
-   self-hosted instance cannot rely on it. Claude Code, however, takes a bearer header today
-   (`claude mcp add --transport http --header`). Phase 2 therefore splits: 2a ships the MCP server
-   with API-key auth and gates on Claude Code; 2b adds the OAuth 2.1 authorization server and gates on
-   claude.ai. The authorization server must support PKCE S256, Dynamic Client Registration *and*
-   Client ID Metadata Documents (Claude Code identifies itself with a CIMD and a port-agnostic loopback
-   redirect; claude.ai uses CIMD when advertised, else DCR), refresh-token rotation, a
-   form-urlencoded token endpoint, and RFC 9728 protected-resource metadata behind a `401`.
-9. **The authorization server federates to an upstream OIDC provider rather than owning
-   credentials.** Agalma is an OAuth 2.1 authorization server towards MCP clients and an OpenID
-   Connect relying party towards the organisation's identity provider. Users are matched by
-   `(issuer, subject)`, linked by verified email to admin-created accounts, or provisioned on first
-   sign-in when their email domain is allow-listed. Enterprise Managed Auth (Claude's silent SSO
-   exchange, RFC 7523) needs a Team or Enterprise plan and a pre-registered client, so it is a
-   Phase 4 item; supporting Client ID Metadata Documents in Phase 2b keeps that door open.
-10. **MCP transport runs stateless.** The Go SDK's `StreamableHTTPOptions{Stateless: true}` builds a
-   server per request and speaks protocol 2026-07-28; our tools hold no session state, so there is
-   nothing to lose and no session store to maintain. The per-request server factory also gives tool
-   handlers the authenticated principal as a plain closure variable.
-11. **The version manifest becomes rows, not JSON.** `version.manifest` (a JSON blob of path to hash)
-   is replaced by a `version_file` table. File lookup on the serving path is one indexed query,
-   blob garbage collection is an anti-join, and no JSON is parsed on the hot path. Artifact
-   `metadata` stays a JSON text column because it is opaque and only needs `json_extract` filters.
-12. **No in-memory slug index in v1.** A SQLite point lookup through the pure-Go driver costs tens of
-   microseconds; it is not the bottleneck for a host serving LLM-written pages. The serving handler
-   depends on a small `Resolver` interface so a caching decorator can be added later without touching
-   handlers. Versions are immutable, so a version's file list is cacheable forever; only
-   slug to published-version needs invalidation. Add the cache when a measurement asks for it.
-13. **Version pinning is by host only.** `<slug>--v3.<base>` stays; `?v=` is dropped. Two mechanisms
-   mean two cache policies on one URL space and relative links that break between them. To keep the
-   host form unambiguous, slugs may not contain `--`.
-14. **Tombstones are a column, not a table.** A purged artifact keeps its `artifact` row with
-    `purged_at` set and no versions; the existing unique index on `slug` keeps the slug reserved
-    until the row is deleted after the tombstone period. One fewer table, one fewer code path.
-15. **Runtime-mutable settings are deferred.** The admin `PATCH /settings` endpoint implies a
-    settings table, a merge with file config, and a cache. v1 reads one config file (plus
-    environment overrides) and `GET /settings` returns the effective config. Changing a limit means
-    editing the file and restarting; the service restarts in under a second.
-16. **Server-side HTML injection is out of v1.** `forge.title`, `forge.og_image` and the stale banner
-    all require rewriting HTML on the serving path, which breaks `http.ServeContent` (ranges, ETags,
-    conditional requests) and content addressing. Authors own their `<head>`. The artifact's `name`
-    and `description` feed the API and the future gallery, not the page. The stale banner moves to
-    Phase 4 as a header-plus-optional-injection feature.
-17. **Per-artifact CSP override is allowed verbatim, behind an instance flag.** Validating that an
-    override only "narrows" a CSP is a parser project. Because each artifact is its own origin, a
-    looser CSP affects only that artifact's visitors. `agalma.csp` replaces the instance default when
-    `serve.allow_csp_override = true` (the default for a private instance).
-18. **`X-Robots-Tag: noindex` is the default regardless of visibility**, overridden only by
-    `agalma.indexable = "true"`. `visibility` then controls listing and future gating, not robots,
-    which keeps the two concerns separate.
-19. **Write policy is one config key and one function.** `shared` (the decided default) lets any
-    member with `artifacts:write` update any artifact; `owner` restricts updates to the owner and
-    admins. Nothing else in the code knows which policy is active.
-20. **The stdio MCP proxy is dropped from v1.** Claude Code and the other target clients speak
-    Streamable HTTP. Anyone who needs stdio can use a generic bridge.
-21. **Binary size target is 25 MB, not 10 MB.** Both pure-Go SQLite options (a Wasm build on wazero,
-    or the transpiled C) add well over 10 MB. The RSS target (under 50 MB idle) stands.
-22. **Tool count is twelve.** `unmark_stale` is its own tool rather than a flag, because separate
-    names are clearer for a model reading tool descriptions; `publish_version` (rollback) gets a
-    tool because the REST API has the endpoint and tools map 1:1 onto endpoints; `begin_upload` and
-    `upload_chunk` carry large bundles. `set_visibility` accepts `unpublished` as a value so
-    unpublish and republish need no extra tools.
-23. **Natural keys externally, integers internally.** Artifacts are addressed by slug, versions by
-    number, users by handle, keys by their public prefix. Tables use `INTEGER PRIMARY KEY`. No UUID
-    dependency, simpler joins, and nothing in the API ever exposes a row id.
+8. **OAuth is still needed for claude.ai, but not for the first MCP gate.** Anthropic's connector docs list a fixed bearer header (`static_headers`) as a beta limited to some organisations, so a self-hosted instance cannot rely on it. Claude Code, however, takes a bearer header today (`claude mcp add --transport http --header`). Phase 2 therefore splits: 2a ships the MCP server with API-key auth and gates on Claude Code; 2b adds the OAuth 2.1 authorization server and gates on claude.ai. The authorization server must support PKCE S256, Dynamic Client Registration *and* Client ID Metadata Documents (Claude Code identifies itself with a CIMD and a port-agnostic loopback redirect; claude.ai uses CIMD when advertised, else DCR), refresh-token rotation, a form-urlencoded token endpoint, and RFC 9728 protected-resource metadata behind a `401`.
+9. **The authorization server federates to an upstream OIDC provider rather than owning credentials.** Kazari is an OAuth 2.1 authorization server towards MCP clients and an OpenID Connect relying party towards the organisation's identity provider. Users are matched by `(issuer, subject)`, linked by verified email to admin-created accounts, or provisioned on first sign-in when their email domain is allow-listed. Enterprise Managed Auth (Claude's silent SSO exchange, RFC 7523) needs a Team or Enterprise plan and a pre-registered client, so it is a Phase 4 item; supporting Client ID Metadata Documents in Phase 2b keeps that door open.
+10. **MCP transport runs stateless.** The Go SDK's `StreamableHTTPOptions{Stateless: true}` builds a server per request and speaks protocol 2026-07-28; our tools hold no session state, so there is nothing to lose and no session store to maintain. The per-request server factory also gives tool handlers the authenticated principal as a plain closure variable.
+11. **The version manifest becomes rows, not JSON.** `version.manifest` (a JSON blob of path to hash) is replaced by a `version_file` table. File lookup on the serving path is one indexed query, blob garbage collection is an anti-join, and no JSON is parsed on the hot path. Artifact `metadata` stays a JSON text column because it is opaque and only needs `json_extract` filters.
+12. **No in-memory slug index in v1.** A SQLite point lookup through the pure-Go driver costs tens of microseconds; it is not the bottleneck for a host serving LLM-written pages. The serving handler depends on a small `Resolver` interface so a caching decorator can be added later without touching handlers. Versions are immutable, so a version's file list is cacheable forever; only slug to published-version needs invalidation. Add the cache when a measurement asks for it.
+13. **Version pinning is by host only.** `<slug>--v3.<base>` stays; `?v=` is dropped. Two mechanisms mean two cache policies on one URL space and relative links that break between them. To keep the host form unambiguous, slugs may not contain `--`.
+14. **Tombstones are a column, not a table.** A purged artifact keeps its `artifact` row with `purged_at` set and no versions; the existing unique index on `slug` keeps the slug reserved until the row is deleted after the tombstone period. One fewer table, one fewer code path.
+15. **Runtime-mutable settings are deferred.** The admin `PATCH /settings` endpoint implies a settings table, a merge with file config, and a cache. v1 reads one config file (plus environment overrides) and `GET /settings` returns the effective config. Changing a limit means editing the file and restarting; the service restarts in under a second.
+16. **Server-side HTML injection is out of v1.** `forge.title`, `forge.og_image` and the stale banner all require rewriting HTML on the serving path, which breaks `http.ServeContent` (ranges, ETags, conditional requests) and content addressing. Authors own their `<head>`. The artifact's `name` and `description` feed the API and the future gallery, not the page. The stale banner moves to Phase 4 as a header-plus-optional-injection feature.
+17. **Per-artifact CSP override is allowed verbatim, behind an instance flag.** Validating that an override only "narrows" a CSP is a parser project. Because each artifact is its own origin, a looser CSP affects only that artifact's visitors. `kazari.csp` replaces the instance default when `serve.allow_csp_override = true` (the default for a private instance).
+18. **`X-Robots-Tag: noindex` is the default regardless of visibility**, overridden only by `kazari.indexable = "true"`. `visibility` then controls listing and future gating, not robots, which keeps the two concerns separate.
+19. **Write policy is one config key and one function.** `shared` (the decided default) lets any member with `artifacts:write` update any artifact; `owner` restricts updates to the owner and admins. Nothing else in the code knows which policy is active.
+20. **The stdio MCP proxy is dropped from v1.** Claude Code and the other target clients speak Streamable HTTP. Anyone who needs stdio can use a generic bridge.
+21. **Binary size target is 25 MB, not 10 MB.** Both pure-Go SQLite options (a Wasm build on wazero, or the transpiled C) add well over 10 MB. The RSS target (under 50 MB idle) stands.
+22. **Tool count is twelve.** `unmark_stale` is its own tool rather than a flag, because separate names are clearer for a model reading tool descriptions; `publish_version` (rollback) gets a tool because the REST API has the endpoint and tools map 1:1 onto endpoints; `begin_upload` and `upload_chunk` carry large bundles. `set_visibility` accepts `unpublished` as a value so unpublish and republish need no extra tools.
+23. **Natural keys externally, integers internally.** Artifacts are addressed by slug, versions by number, users by handle, keys by their public prefix. Tables use `INTEGER PRIMARY KEY`. No UUID dependency, simpler joins, and nothing in the API ever exposes a row id.
 
 ### Kept as written
 
-Slug rules (plus the `--` ban), reserved hosts, the request path for serving, the five lifecycle
-states and their transitions, the audit log, the two-host split for user and admin APIs, the security
-checklist, the size and quota limits, the CLI with `--json`, soft delete with retention, blob GC.
+Slug rules (plus the `--` ban), reserved hosts, the request path for serving, the five lifecycle states and their transitions, the audit log, the two-host split for user and admin APIs, the security checklist, the size and quota limits, the CLI with `--json`, soft delete with retention, blob GC.
 
 ---
 
@@ -129,24 +51,16 @@ checklist, the size and quota limits, the CLI with `--json`, soft delete with re
 
 ### In v1 (Phases 0 to 3)
 
-- Serve artifacts at `<slug>.<base>` and `<slug>--v<N>.<base>` over HTTPS with one wildcard cert
-  (ACME DNS-01 via CertMagic, or cert files with hot reload), or plain HTTP behind a reverse proxy.
-- Create, update, get, list, delete (soft and hard), publish a version (rollback), mark and unmark
-  stale, set visibility (`public`, `unlisted`, `unpublished`), read a file from any version.
-- Multi-file bundles, inline (JSON), streamed (multipart tar.gz) and chunked (staged) uploads,
-  content addressing, optimistic concurrency with `expected_version`.
-- Users and API keys, admin token, admin API, audit log, scheduler (sweep, retention, blob GC),
-  Prometheus metrics, health endpoint, rate limits.
-- MCP server (twelve tools, two resource templates, one prompt) with API-key auth, then OAuth 2.1
-  with sign-in through the organisation's OIDC identity provider.
-- `agalma` CLI client, Docker image, systemd unit, signed release binaries.
+- Serve artifacts at `<slug>.<base>` and `<slug>--v<N>.<base>` over HTTPS with one wildcard cert (ACME DNS-01 via CertMagic, or cert files with hot reload), or plain HTTP behind a reverse proxy.
+- Create, update, get, list, delete (soft and hard), publish a version (rollback), mark and unmark stale, set visibility (`public`, `unlisted`, `unpublished`), read a file from any version.
+- Multi-file bundles, inline (JSON), streamed (multipart tar.gz) and chunked (staged) uploads, content addressing, optimistic concurrency with `expected_version`.
+- Users and API keys, admin token, admin API, audit log, scheduler (sweep, retention, blob GC), Prometheus metrics, health endpoint, rate limits.
+- MCP server (twelve tools, two resource templates, one prompt) with API-key auth, then OAuth 2.1 with sign-in through the organisation's OIDC identity provider.
+- `kazari` CLI client, Docker image, systemd unit, signed release binaries.
 
 ### Deferred (Phase 4)
 
-Gated visibility with access keys, S3 blob backend, Postgres store, idle expiry, stale banner,
-gallery at the apex, runtime-mutable settings, per-artifact custom apex domains, Markdown rendering,
-per-artifact KV or SQLite capability, comments, public-instance hardening checklist, Enterprise
-Managed Auth (RFC 7523 identity assertions), more than one identity provider per instance.
+Gated visibility with access keys, S3 blob backend, Postgres store, idle expiry, stale banner, gallery at the apex, runtime-mutable settings, per-artifact custom apex domains, Markdown rendering, per-artifact KV or SQLite capability, comments, public-instance hardening checklist, Enterprise Managed Auth (RFC 7523 identity assertions), more than one identity provider per instance.
 
 ### Out of scope
 
@@ -158,59 +72,36 @@ Server-side functions or workers, multiplayer editing, connector-backed live dat
 
 These are the rules the code is reviewed against.
 
-**Packages are named for what they provide, not for a layer.** No `models`, `services`, `utils`,
-`handlers`. `artifact` holds the artifact domain and its service; `site` serves artifacts; `sqlite`
-stores things in SQLite.
+**Packages are named for what they provide, not for a layer.** No `models`, `services`, `utils`, `handlers`. `artifact` holds the artifact domain and its service; `site` serves artifacts; `sqlite` stores things in SQLite.
 
-**Interfaces are defined by the consumer and kept small.** `artifact.Store` lives in `artifact`
-because `artifact.Service` consumes it; `sqlite` implements it without importing `artifact`'s
-internals beyond the types. An interface exists only where there is, or will plausibly be, a second
-implementation: storage, blobs, certificate source, authenticator, audit recorder, clock.
-Everything else is a concrete type. HTTP handlers take `*artifact.Service`, not an interface.
+**Interfaces are defined by the consumer and kept small.** `artifact.Store` lives in `artifact` because `artifact.Service` consumes it; `sqlite` implements it without importing `artifact`'s internals beyond the types. An interface exists only where there is, or will plausibly be, a second implementation: storage, blobs, certificate source, authenticator, audit recorder, clock. Everything else is a concrete type. HTTP handlers take `*artifact.Service`, not an interface.
 
-**Constructor injection, wired in one place.** Every package exports `New(deps..., Options)` and
-nothing reads globals or config files. `internal/app` is the only package that knows every other
-package; it builds the graph from `config.Config` and starts the servers. There is no DI container.
+**Constructor injection, wired in one place.** Every package exports `New(deps..., Options)` and nothing reads globals or config files. `internal/app` is the only package that knows every other package; it builds the graph from `config.Config` and starts the servers. There is no DI container.
 
-**Options structs with zero-value defaults.** `artifact.New(store, blobs, artifact.Options{})` works.
-Functional options only if a constructor accumulates many optional knobs (none are expected).
+**Options structs with zero-value defaults.** `artifact.New(store, blobs, artifact.Options{})` works. Functional options only if a constructor accumulates many optional knobs (none are expected).
 
-**Time is injected.** Services that stamp or compare times hold `now func() time.Time` (default
-`time.Now`), set via Options. The scheduler exposes `Trigger(name)` so tests never sleep.
+**Time is injected.** Services that stamp or compare times hold `now func() time.Time` (default `time.Now`), set via Options. The scheduler exposes `Trigger(name)` so tests never sleep.
 
-**Errors carry a code.** `artifact.Error{Code, Message}` plus sentinels (`ErrNotFound`,
-`ErrSlugTaken`, `ErrVersionConflict`, `ErrTooLarge`, `ErrInvalidSlug`, `ErrForbidden`). The HTTP
-layer maps codes to status in one function; the MCP layer maps them to tool errors in one function.
-Nothing below those layers knows about HTTP status codes.
+**Errors carry a code.** `artifact.Error{Code, Message}` plus sentinels (`ErrNotFound`, `ErrSlugTaken`, `ErrVersionConflict`, `ErrTooLarge`, `ErrInvalidSlug`, `ErrForbidden`). The HTTP layer maps codes to status in one function; the MCP layer maps them to tool errors in one function. Nothing below those layers knows about HTTP status codes.
 
-**Stores are coarse-grained.** Each `Store` method is one unit of work and owns its transaction
-(`Create` inserts artifact, version, files and actor row together). Transactions never leak into the
-service, so a Postgres implementation has the same contract.
+**Stores are coarse-grained.** Each `Store` method is one unit of work and owns its transaction (`Create` inserts artifact, version, files and actor row together). Transactions never leak into the service, so a Postgres implementation has the same contract.
 
-**Streams, not buffers.** Uploads flow `multipart -> tar -> counting limit reader -> sha256 -> temp
-file -> rename` without ever holding a file in memory. Serving uses `http.ServeContent` on an
-`io.ReadSeekCloser` from the blob store.
+**Streams, not buffers.** Uploads flow `multipart -> tar -> counting limit reader -> sha256 -> temp file -> rename` without ever holding a file in memory. Serving uses `http.ServeContent` on an `io.ReadSeekCloser` from the blob store.
 
-**Standard library first.** `net/http` (1.22 `ServeMux` host patterns do the host routing),
-`log/slog`, `database/sql`, `archive/tar`, `compress/gzip`, `embed`, `testing`, `httptest`,
-`crypto/*`, `mime`. Third-party only where the stdlib has nothing: MCP SDK, CertMagic, SQLite
-driver, YAML, Prometheus client, `x/time/rate`, `x/sync/errgroup`, `go-cmp` in tests.
+**Standard library first.** `net/http` (1.22 `ServeMux` host patterns do the host routing), `log/slog`, `database/sql`, `archive/tar`, `compress/gzip`, `embed`, `testing`, `httptest`, `crypto/*`, `mime`. Third-party only where the stdlib has nothing: MCP SDK, CertMagic, SQLite driver, YAML, Prometheus client, `x/time/rate`, `x/sync/errgroup`, `go-cmp` in tests.
 
-**Tests run against real components where they are cheap.** SQLite in a temp dir instead of a fake
-store; a temp dir blob store; in-memory MCP transports; `httptest` with `req.Host` set. Hand-written
-fakes only for things that are slow or external (ACME, clock). No mock generators, no assertion
-library.
+**Tests run against real components where they are cheap.** SQLite in a temp dir instead of a fake store; a temp dir blob store; in-memory MCP transports; `httptest` with `req.Host` set. Hand-written fakes only for things that are slow or external (ACME, clock). No mock generators, no assertion library.
 
 ---
 
 ## 4. Package layout
 
 ```
-cmd/agalma/                 main: subcommands serve | admin | publish | update | get | list | ...
+cmd/kazari/                 main: subcommands serve | admin | publish | update | get | list | ...
 internal/
   app/                      wiring and lifecycle: builds every component from config, runs servers,
                             graceful shutdown; end-to-end tests live here
-  config/                   Config struct, Load (YAML file with ${NAME} references, .env, AGALMA_*
+  config/                   Config struct, Load (YAML file with ${NAME} references, .env, KAZARI_*
                             env), Validate, defaults
   api/                      wire types only: request/response structs and error codes shared by
                             httpapi, mcpserver and cli. No logic, no imports beyond stdlib
@@ -248,14 +139,14 @@ internal/
   buildinfo/                version, commit, date (ldflags with debug.ReadBuildInfo fallback)
 docs/
   adr/                      architecture decision records
-deploy/                     Dockerfiles, agalma.service, example agalma.yaml and agalma.env, dev.yaml,
+deploy/                     Dockerfiles, kazari.service, example kazari.yaml and kazari.env, dev.yaml,
                             example Caddyfile
 ```
 
 **Dependency direction** (an arrow means "imports"):
 
 ```
-cmd/agalma -> app -> {config, httpapi, mcpserver, site, certs, scheduler, sqlite, blob, ...}
+cmd/kazari -> app -> {config, httpapi, mcpserver, site, certs, scheduler, sqlite, blob, ...}
 httpapi    -> {api, artifact, upload, user, auth, audit, scheduler}
 mcpserver  -> {api, artifact, upload, auth}
 upload     -> {artifact (FileInput and ValidatePath)}
@@ -267,8 +158,7 @@ sqlite     -> {artifact, upload, user, audit, oauth}   (implements their Store i
 cli        -> {api}
 ```
 
-`artifact`, `user`, `auth`, `blob`, `audit`, `site`, `certs`, `scheduler`, `oidc` never import
-`net/http` handlers, `sqlite`, or each other beyond what is listed. `api` imports nothing of ours.
+`artifact`, `user`, `auth`, `blob`, `audit`, `site`, `certs`, `scheduler`, `oidc` never import `net/http` handlers, `sqlite`, or each other beyond what is listed. `api` imports nothing of ours.
 
 ---
 
@@ -393,13 +283,9 @@ func (s *Service) Sweep(ctx) (SweepReport, error)        // stale -> soft-delete
 func (s *Service) CollectGarbage(ctx) (int, error)        // unreferenced blobs -> deleted
 ```
 
-`Published` carries what the serving path needs and nothing more: slug, version number, version id,
-visibility, `unpublished_at`, `deleted_at`, `purged_at`, and the `agalma.*` keys from metadata
-already parsed into typed fields (`SPA bool`, `Indexable bool`, `CSP string`).
+`Published` carries what the serving path needs and nothing more: slug, version number, version id, visibility, `unpublished_at`, `deleted_at`, `purged_at`, and the `kazari.*` keys from metadata already parsed into typed fields (`SPA bool`, `Indexable bool`, `CSP string`).
 
-Validation lives in `artifact` as plain functions with table-driven tests: `ValidateSlug`,
-`ValidatePath`, `ValidateMetadata`. The service calls them; the HTTP and MCP layers do not
-duplicate them.
+Validation lives in `artifact` as plain functions with table-driven tests: `ValidateSlug`, `ValidatePath`, `ValidateMetadata`. The service calls them; the HTTP and MCP layers do not duplicate them.
 
 ### blob
 
@@ -412,10 +298,7 @@ type Store interface {
 }
 ```
 
-`blob.FS` stores `blobs/<hash[0:2]>/<hash>`; `Put` writes to a temp file in the same directory,
-hashes while writing, then renames (no partial blobs are ever visible). Size limits are enforced by
-the caller (`artifact.Service`) with a counting reader that fails fast, so `blob` stays dumb and an
-S3 implementation needs no limit logic.
+`blob.FS` stores `blobs/<hash[0:2]>/<hash>`; `Put` writes to a temp file in the same directory, hashes while writing, then renames (no partial blobs are ever visible). Size limits are enforced by the caller (`artifact.Service`) with a counting reader that fails fast, so `blob` stays dumb and an S3 implementation needs no limit logic.
 
 ### upload
 
@@ -461,14 +344,7 @@ func (s *Service) Abort(ctx, owner, id string) error
 func (s *Service) ExpireStale(ctx) (int, error) // scheduler job
 ```
 
-Chunks append to a staging file per path under `uploads/<id>/<n>` (an index, never the user's path).
-`offset` makes retries safe: a chunk whose `offset + len` equals the current size is acknowledged
-without writing; any other mismatch returns `upload_offset_mismatch` with the current size so the
-client resumes from there. Paths go through `artifact.ValidatePath` at the first chunk. `Files`
-hands the staged files to `artifact.Service.Create` or `Update` as ordinary `FileInput`s, so the
-artifact code never knows the bytes arrived in pieces; the cleanup function removes the staging
-directory and rows after the publish succeeds or fails. The scheduler removes uploads past their
-TTL.
+Chunks append to a staging file per path under `uploads/<id>/<n>` (an index, never the user's path). `offset` makes retries safe: a chunk whose `offset + len` equals the current size is acknowledged without writing; any other mismatch returns `upload_offset_mismatch` with the current size so the client resumes from there. Paths go through `artifact.ValidatePath` at the first chunk. `Files` hands the staged files to `artifact.Service.Create` or `Update` as ordinary `FileInput`s, so the artifact code never knows the bytes arrived in pieces; the cleanup function removes the staging directory and rows after the publish succeeds or fails. The scheduler removes uploads past their TTL.
 
 ### site
 
@@ -520,8 +396,7 @@ func RequireAdminToken(token string) func(http.Handler) http.Handler
 func FromContext(ctx context.Context) (Principal, bool)
 ```
 
-`BearerOptions.ResourceMetadataURL`, when set (the MCP host), makes a `401` carry
-`WWW-Authenticate: Bearer resource_metadata="..."` as RFC 9728 and Claude's client require.
+`BearerOptions.ResourceMetadataURL`, when set (the MCP host), makes a `401` carry `WWW-Authenticate: Bearer resource_metadata="..."` as RFC 9728 and Claude's client require.
 
 ### oauth and oidc
 
@@ -535,9 +410,7 @@ type IdentityProvider interface {
 func oidc.New(ctx context.Context, cfg oidc.Config) (*oidc.Provider, error) // discovery at startup
 ```
 
-`user.Service.ResolveIdentity(ctx, id auth.Identity) (User, error)` applies the provisioning policy:
-match on `(issuer, subject)`; else link by verified email to an existing user; else create a member
-when `auto_provision` is on and the email domain is allow-listed; else `ErrNotProvisioned`.
+`user.Service.ResolveIdentity(ctx, id auth.Identity) (User, error)` applies the provisioning policy: match on `(issuer, subject)`; else link by verified email to an existing user; else create a member when `auto_provision` is on and the email domain is allow-listed; else `ErrNotProvisioned`.
 
 ### certs
 
@@ -583,62 +456,33 @@ type Recorder interface{ Record(ctx context.Context, e Event) error }
 type Reader interface{ List(ctx context.Context, q Query) ([]Event, error) } // admin API
 ```
 
-Audit rows are written after the store call returns, outside its transaction. A crash in that
-window loses one audit row. This is accepted for v1 and documented here rather than coupling the
-artifact store to the audit table.
+Audit rows are written after the store call returns, outside its transaction. A crash in that window loses one audit row. This is accepted for v1 and documented here rather than coupling the artifact store to the audit table.
 
 ---
 
 ## 6. Request flows
 
-**Publish (REST, multipart).** `httpapi` reads the `manifest` part (JSON: name, description,
-metadata, label, expected_version, deletes), then opens the `bundle` part as `gzip -> tar` and
-yields one `FileInput` per regular entry with the tar reader as `Content`. `artifact.Service.Update`
-validates each path, wraps the reader in a per-file and per-version limit, derives the content type,
-streams it into `blob.Put`, and collects `File` rows. It then builds the new version from the
-previous version's files plus the additions and deletions, and calls `store.AddVersion` with the
-expected version. Finally it records an audit event and returns. The JSON body form does the same
-with inline strings (`encoding: utf8|base64`) decoded into readers. Create is the same without a
-previous version.
+**Publish (REST, multipart).** `httpapi` reads the `manifest` part (JSON: name, description, metadata, label, expected_version, deletes), then opens the `bundle` part as `gzip -> tar` and yields one `FileInput` per regular entry with the tar reader as `Content`. `artifact.Service.Update` validates each path, wraps the reader in a per-file and per-version limit, derives the content type, streams it into `blob.Put`, and collects `File` rows. It then builds the new version from the previous version's files plus the additions and deletions, and calls `store.AddVersion` with the expected version. Finally it records an audit event and returns. The JSON body form does the same with inline strings (`encoding: utf8|base64`) decoded into readers. Create is the same without a previous version.
 
-**Publish (MCP).** The tool handler converts its typed input into the same `CreateRequest` or
-`UpdateRequest` and calls the same service method. Results go back as structured content using
-`api` types plus a one-line text summary containing the URL.
+**Publish (MCP).** The tool handler converts its typed input into the same `CreateRequest` or `UpdateRequest` and calls the same service method. Results go back as structured content using `api` types plus a one-line text summary containing the URL.
 
-**Serve.** `ServeMux` host patterns send `api.`, `mcp.`, `admin.` and the apex to their handlers.
-The host-less `/` pattern catches every other host and hands it to `site`. `site.ParseHost` strips
-the port and base domain and splits `--v<N>`. The handler resolves the slug (published or pinned
-version), returns 404 for unknown, unpublished or soft-deleted, 410 for purged, then loads the
-version's file map, applies the path rules (directory to `index.html`, miss to `404.html`, SPA
-fallback), opens the blob and calls `http.ServeContent` with the ETag set to the content hash.
-Headers: CSP, `Cache-Control` (`no-cache` on the latest host, `public, max-age=31536000, immutable`
-on version hosts), `X-Robots-Tag`, `X-Content-Type-Options: nosniff`.
+**Serve.** `ServeMux` host patterns send `api.`, `mcp.`, `admin.` and the apex to their handlers. The host-less `/` pattern catches every other host and hands it to `site`. `site.ParseHost` strips the port and base domain and splits `--v<N>`. The handler resolves the slug (published or pinned version), returns 404 for unknown, unpublished or soft-deleted, 410 for purged, then loads the version's file map, applies the path rules (directory to `index.html`, miss to `404.html`, SPA fallback), opens the blob and calls `http.ServeContent` with the ETag set to the content hash. Headers: CSP, `Cache-Control` (`no-cache` on the latest host, `public, max-age=31536000, immutable` on version hosts), `X-Robots-Tag`, `X-Content-Type-Options: nosniff`.
 
-**Scheduler.** `app` registers `sweep` (every 15 min), `gc` (hourly) and `uploads-expire` (every
-10 min) jobs that call `artifact.Service.Sweep`, `CollectGarbage` and `upload.Service.ExpireStale`;
-`certs.ACME.Run` manages renewal itself. The admin API exposes `scheduler.Status()` and `Trigger`.
+**Scheduler.** `app` registers `sweep` (every 15 min), `gc` (hourly) and `uploads-expire` (every 10 min) jobs that call `artifact.Service.Sweep`, `CollectGarbage` and `upload.Service.ExpireStale`; `certs.ACME.Run` manages renewal itself. The admin API exposes `scheduler.Status()` and `Trigger`.
 
-**Publish (chunked).** `begin_upload` creates a staging record and returns its id, expiry and the
-chunk limit. Each `upload_chunk` call appends one piece of one file at a stated offset. Finally
-`create_artifact` or `update_artifact` is called with `upload_id`; the handler asks
-`upload.Service.Files` for the staged files as `FileInput`s, merges any inline `files[]` from the
-same call (small files and `delete` entries), and runs the normal publish. Success or failure, the
-staging directory is removed afterwards.
+**Publish (chunked).** `begin_upload` creates a staging record and returns its id, expiry and the chunk limit. Each `upload_chunk` call appends one piece of one file at a stated offset. Finally `create_artifact` or `update_artifact` is called with `upload_id`; the handler asks `upload.Service.Files` for the staged files as `FileInput`s, merges any inline `files[]` from the same call (small files and `delete` entries), and runs the normal publish. Success or failure, the staging directory is removed afterwards.
 
 ---
 
 ## 7. Data model
 
-SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files embedded in `internal/sqlite`
-and applied at startup by a 60-line migrator with a `schema_migration` table. Queries are
-hand-written `database/sql`; keep them ANSI where possible so a Postgres store can reuse most of
-them.
+SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files embedded in `internal/sqlite` and applied at startup by a 60-line migrator with a `schema_migration` table. Queries are hand-written `database/sql`; keep them ANSI where possible so a Postgres store can reuse most of them.
 
 | Table            | Columns (key ones)                                                                                                                                                                    | Notes                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `user`           | id, handle UNIQUE, email UNIQUE NULL, display_name, role (`admin`/`member`), quota_bytes, disabled_at, created_at                                                                     | Created by the admin API or provisioned on first OIDC sign-in from an allowed domain    |
 | `user_identity`  | user_id, issuer, subject, email_at_login, last_login_at; UNIQUE(issuer, subject)                                                                                                      | Phase 2b; links an upstream identity to a user                                          |
-| `api_key`        | id, user_id, prefix UNIQUE, hash, label, scopes, last_used_at, expires_at, revoked_at, created_at                                                                                     | Key shown once as `agk_<prefix>_<secret>`; SHA-256 of the whole key stored               |
+| `api_key`        | id, user_id, prefix UNIQUE, hash, label, scopes, last_used_at, expires_at, revoked_at, created_at                                                                                     | Key shown once as `kzk_<prefix>_<secret>`; SHA-256 of the whole key stored               |
 | `artifact`       | id, slug UNIQUE, name, description, owner_id, visibility, published_version_id, metadata (JSON text), stale_at, expires_at, unpublished_at, deleted_at, purged_at, created_at, updated_at | `purged_at` set means tombstone; row deleted after the tombstone period                 |
 | `version`        | id, artifact_id, number, label, created_by, created_at, size_bytes; UNIQUE(artifact_id, number)                                                                                       | Immutable                                                                               |
 | `version_file`   | version_id, path, blob_hash, size, content_type; PRIMARY KEY(version_id, path)                                                                                                        | Replaces the JSON manifest                                                              |
@@ -652,14 +496,9 @@ them.
 | `oauth_code`     | code_hash, client_id, user_id, scopes, redirect_uri, pkce_challenge, resource, expires_at                                                                                             | Phase 2b; single use                                                                    |
 | `oauth_token`    | id, token_hash UNIQUE, kind (`access`/`refresh`), client_id, user_id, scopes, expires_at, revoked_at, replaced_by                                                                      | Phase 2b; opaque tokens, rotation recorded via `replaced_by`                            |
 
-Indexes: `artifact(owner_id)`, `artifact(expires_at)`, `artifact(deleted_at)`, `version_file(blob_hash)`,
-`artifact_actor(user_id, last_at)`, `audit_event(at)`.
+Indexes: `artifact(owner_id)`, `artifact(expires_at)`, `artifact(deleted_at)`, `version_file(blob_hash)`, `artifact_actor(user_id, last_at)`, `audit_event(at)`.
 
-Metadata rules: keys `[a-zA-Z0-9_.-]{1,64}`, values up to 4 KiB, at most 64 pairs. Keys under
-`agalma.` are server-interpreted and limited to a known set (`agalma.spa`, `agalma.indexable`,
-`agalma.csp`); unknown `agalma.*` keys are rejected. Everything else is opaque and filterable with
-`metadata.<key>=<value>` in list calls (`json_extract(metadata, '$.' || ?) = ?` with the key
-validated against the rule above before it is interpolated).
+Metadata rules: keys `[a-zA-Z0-9_.-]{1,64}`, values up to 4 KiB, at most 64 pairs. Keys under `kazari.` are server-interpreted and limited to a known set (`kazari.spa`, `kazari.indexable`, `kazari.csp`); unknown `kazari.*` keys are rejected. Everything else is opaque and filterable with `metadata.<key>=<value>` in list calls (`json_extract(metadata, '$.' || ?) = ?` with the key validated against the rule above before it is interpolated).
 
 ---
 
@@ -685,8 +524,7 @@ validated against the rule above before it is interpolated).
 | GET    | `/me`                                  | Caller identity and scopes                                                              |
 | GET    | `/me/keys`                             | Own keys (prefix, label, last used)                                                     |
 
-Errors are `{ "error": { "code": "slug_taken", "message": "..." } }` with the matching status
-(404, 409, 412 for version conflict, 413, 422, 403, 401, 429).
+Errors are `{ "error": { "code": "slug_taken", "message": "..." } }` with the matching status (404, 409, 412 for version conflict, 413, 422, 403, 401, 429).
 
 ### Admin API, `https://admin.<base>/v1`, admin token from config or an admin-role key
 
@@ -704,8 +542,7 @@ Errors are `{ "error": { "code": "slug_taken", "message": "..." } }` with the ma
 | GET              | `/audit?since=&slug=&limit=`| Audit log                                                     |
 | GET              | `/health`, `/metrics`       | Liveness (also on the apex), Prometheus                       |
 
-The admin host can also bind a second listener (`admin.listen`, for example `127.0.0.1:9443`) so an
-operator can keep it off the public interface entirely.
+The admin host can also bind a second listener (`admin.listen`, for example `127.0.0.1:9443`) so an operator can keep it off the public interface entirely.
 
 ### MCP, `https://mcp.<base>/`, Streamable HTTP, stateless
 
@@ -724,113 +561,52 @@ operator can keep it off the public interface entirely.
 | `set_visibility`   | slug, visibility (`public|unlisted|unpublished`)                                   | url, artifact                         |
 | `delete_artifact`  | slug, hard?                                                                        | ok                                    |
 
-Tool descriptions state the slug rules, the size limits, the CSP, and what the URL will be, because
-a model reads nothing else. `create_artifact` and `update_artifact` say in their description when to
-switch to `begin_upload` (any single file or bundle over the inline guidance, default 2 MiB), and
-`upload_chunk`'s description states the chunk cap and the offset rule, so a model can recover from a
-dropped call without reading documentation. Resources: `agalma://artifacts/{slug}` and
-`agalma://artifacts/{slug}/files/{path}`. Prompt: `publish-page`, which carries the constraints and
-the conventions an author needs (single `index.html`, relative links, which CDNs the CSP allows).
-A `SKILL.md` for Claude Code ships alongside and says the same things.
+Tool descriptions state the slug rules, the size limits, the CSP, and what the URL will be, because a model reads nothing else. `create_artifact` and `update_artifact` say in their description when to switch to `begin_upload` (any single file or bundle over the inline guidance, default 2 MiB), and `upload_chunk`'s description states the chunk cap and the offset rule, so a model can recover from a dropped call without reading documentation. Resources: `kazari://artifacts/{slug}` and `kazari://artifacts/{slug}/files/{path}`. Prompt: `publish-page`, which carries the constraints and the conventions an author needs (single `index.html`, relative links, which CDNs the CSP allows). A `SKILL.md` for Claude Code ships alongside and says the same things.
 
-Tool handlers are closures over the request's `auth.Principal`: the Streamable HTTP handler is built
-with a per-request server factory (`func(*http.Request) *mcp.Server`) that reads the principal
-`auth.RequireBearer` placed in the context. Per-request server construction is the SDK's documented
-stateless pattern and costs microseconds for twelve tools.
+Tool handlers are closures over the request's `auth.Principal`: the Streamable HTTP handler is built with a per-request server factory (`func(*http.Request) *mcp.Server`) that reads the principal `auth.RequireBearer` placed in the context. Per-request server construction is the SDK's documented stateless pattern and costs microseconds for twelve tools.
 
 ---
 
 ## 9. Authentication
 
-**API keys.** Format `agk_<8-char prefix>_<32 random bytes base32>`. The prefix is stored in clear
-for lookup and display; the SHA-256 of the whole key is compared in constant time. Scopes:
-`artifacts:read`, `artifacts:write`, `artifacts:delete`, `admin`. `last_used_at` is written at most
-once per minute per key.
+**API keys.** Format `kzk_<8-char prefix>_<32 random bytes base32>`. The prefix is stored in clear for lookup and display; the SHA-256 of the whole key is compared in constant time. Scopes: `artifacts:read`, `artifacts:write`, `artifacts:delete`, `admin`. `last_used_at` is written at most once per minute per key.
 
-**Admin token.** A single string in config (or `AGALMA_ADMIN_TOKEN`). Accepted only on the admin
-host. Admin-role API keys are also accepted there, so the config token can be rotated out once a
-real admin user exists.
+**Admin token.** A single string in config (or `KAZARI_ADMIN_TOKEN`). Accepted only on the admin host. Admin-role API keys are also accepted there, so the config token can be rotated out once a real admin user exists.
 
-**OAuth 2.1 authorization server (Phase 2b).** Issuer is `https://mcp.<base>` so one `/.well-known/`
-set serves both the protected-resource and authorization-server metadata:
+**OAuth 2.1 authorization server (Phase 2b).** Issuer is `https://mcp.<base>` so one `/.well-known/` set serves both the protected-resource and authorization-server metadata:
 
-- `GET /.well-known/oauth-protected-resource`: `resource` = the MCP URL exactly as entered,
-  `authorization_servers` = the issuer, `scopes_supported`.
-- `GET /.well-known/oauth-authorization-server`: endpoints, `code_challenge_methods_supported:
-  ["S256"]`, `client_id_metadata_document_supported: true`, `token_endpoint_auth_methods_supported:
-  ["none"]`, `grant_types_supported: ["authorization_code","refresh_token"]`.
+- `GET /.well-known/oauth-protected-resource`: `resource` = the MCP URL exactly as entered, `authorization_servers` = the issuer, `scopes_supported`.
+- `GET /.well-known/oauth-authorization-server`: endpoints, `code_challenge_methods_supported: ["S256"]`, `client_id_metadata_document_supported: true`, `token_endpoint_auth_methods_supported: ["none"]`, `grant_types_supported: ["authorization_code","refresh_token"]`.
 - `POST /oauth/register` (DCR, JSON): stores a public client with its redirect URIs.
-- CIMD: a `client_id` that is an `https` URL is fetched (10 s timeout, cached, size-capped) and its
-  `redirect_uris` used. Claude Code's loopback URIs (`http://localhost/callback`,
-  `http://127.0.0.1/callback`) are matched with the port ignored; every other redirect URI must
-  match exactly.
-- `GET /oauth/authorize`: validates client, redirect URI, PKCE (S256 required) and the `resource`
-  parameter, stores the pending request as an `oauth_request` row with a ten-minute expiry, sets a
-  cookie holding that row's id (`Secure; HttpOnly; SameSite=Lax`, scoped to the `mcp.` host), and
-  redirects the browser to the identity provider with its own `state`, `nonce` and PKCE pair.
-- `GET /oauth/callback`: exchanges the upstream code, verifies the ID token (signature against the
-  provider's JWKS, issuer, audience, nonce, expiry), builds an `auth.Identity`, resolves it to a
-  user through `user.Service.ResolveIdentity`, and shows a one-click consent page (plain HTML from
-  `embed`, no JavaScript) naming the client and the scopes. Approval issues a code bound to that
-  user and to the intersection of the requested scopes and the scopes the user's role allows
-  (members: `artifacts:read artifacts:write artifacts:delete`; admins add `admin`). A person the
-  policy does not admit sees a page telling them to ask their administrator, and nothing is issued.
-- No identity provider configured: the authorize endpoint renders the consent page directly with an
-  API-key field instead of redirecting; the grant is bound to that key's user and capped at the
-  key's scopes. This keeps a one-person instance usable with zero identity setup.
-- No separate "remember me" session in v1: every authorize request goes through the provider,
-  whose own SSO session makes the round trip silent. MCP clients hold refresh tokens, so the flow
-  runs once per connection, not per call.
-- `POST /oauth/token` (form-urlencoded): `authorization_code` with `code_verifier`;
-  `refresh_token` with rotation (old token marked `replaced_by`). Access tokens live one hour,
-  refresh tokens thirty days; both opaque, stored hashed. Errors use RFC 6749 codes
-  (`invalid_grant` for a dead refresh token, as Claude's client expects).
+- CIMD: a `client_id` that is an `https` URL is fetched (10 s timeout, cached, size-capped) and its `redirect_uris` used. Claude Code's loopback URIs (`http://localhost/callback`, `http://127.0.0.1/callback`) are matched with the port ignored; every other redirect URI must match exactly.
+- `GET /oauth/authorize`: validates client, redirect URI, PKCE (S256 required) and the `resource` parameter, stores the pending request as an `oauth_request` row with a ten-minute expiry, sets a cookie holding that row's id (`Secure; HttpOnly; SameSite=Lax`, scoped to the `mcp.` host), and redirects the browser to the identity provider with its own `state`, `nonce` and PKCE pair.
+- `GET /oauth/callback`: exchanges the upstream code, verifies the ID token (signature against the provider's JWKS, issuer, audience, nonce, expiry), builds an `auth.Identity`, resolves it to a user through `user.Service.ResolveIdentity`, and shows a one-click consent page (plain HTML from `embed`, no JavaScript) naming the client and the scopes. Approval issues a code bound to that user and to the intersection of the requested scopes and the scopes the user's role allows (members: `artifacts:read artifacts:write artifacts:delete`; admins add `admin`). A person the policy does not admit sees a page telling them to ask their administrator, and nothing is issued.
+- No identity provider configured: the authorize endpoint renders the consent page directly with an API-key field instead of redirecting; the grant is bound to that key's user and capped at the key's scopes. This keeps a one-person instance usable with zero identity setup.
+- No separate "remember me" session in v1: every authorize request goes through the provider, whose own SSO session makes the round trip silent. MCP clients hold refresh tokens, so the flow runs once per connection, not per call.
+- `POST /oauth/token` (form-urlencoded): `authorization_code` with `code_verifier`; `refresh_token` with rotation (old token marked `replaced_by`). Access tokens live one hour, refresh tokens thirty days; both opaque, stored hashed. Errors use RFC 6749 codes (`invalid_grant` for a dead refresh token, as Claude's client expects).
 - Unauthenticated MCP requests get `401` with `WWW-Authenticate: Bearer resource_metadata="..."`.
 
-`oauth.Service` implements `auth.Authenticator`; `app` chains it with the API-key authenticator so
-every surface accepts either credential.
+`oauth.Service` implements `auth.Authenticator`; `app` chains it with the API-key authenticator so every surface accepts either credential.
 
-**Identity providers (Phase 2b).** One OIDC provider per instance, configured under `[auth.oidc]`
-and discovered at startup from `<issuer>/.well-known/openid-configuration`. The redirect URI to
-register at the provider is `https://mcp.<base>/oauth/callback`. Requested scopes are
-`openid email profile`. Provider notes:
+**Identity providers (Phase 2b).** One OIDC provider per instance, configured under `[auth.oidc]` and discovered at startup from `<issuer>/.well-known/openid-configuration`. The redirect URI to register at the provider is `https://mcp.<base>/oauth/callback`. Requested scopes are `openid email profile`. Provider notes:
 
-- **Microsoft Entra ID** (the first provider tested live): register a single-tenant web app; issuer is
-  `https://login.microsoftonline.com/<tenant-id>/v2.0`. The multi-tenant `common` endpoint is not
-  supported in v1 because its issuer varies per tenant and defeats strict issuer checking. Entra
-  omits `email` unless it is added as an optional claim, so `preferred_username` is the fallback.
-- **Google Workspace**: issuer `https://accounts.google.com`; `email_verified` is honoured and the
-  `hd` claim must match an allowed domain when one is configured.
+- **Microsoft Entra ID** (the first provider tested live): register a single-tenant web app; issuer is `https://login.microsoftonline.com/<tenant-id>/v2.0`. The multi-tenant `common` endpoint is not supported in v1 because its issuer varies per tenant and defeats strict issuer checking. Entra omits `email` unless it is added as an optional claim, so `preferred_username` is the fallback.
+- **Google Workspace**: issuer `https://accounts.google.com`; `email_verified` is honoured and the `hd` claim must match an allowed domain when one is configured.
 - **Okta, Keycloak, Authentik, Zitadel, Auth0**: standard discovery; nothing provider-specific.
 
-Provisioning policy, all in config: `allowed_domains` (verified email domains that may sign in),
-`auto_provision` (create a member on first sign-in from an allowed domain; off means only
-admin-created users with a matching email can sign in), `admin_emails` (provisioned as admins).
-Handles for provisioned users derive from the email local part and are made unique with a numeric
-suffix. Admins can also create users with an email ahead of time, link or unlink identities, and
-disable a user, which revokes every token and key.
+Provisioning policy, all in config: `allowed_domains` (verified email domains that may sign in), `auto_provision` (create a member on first sign-in from an allowed domain; off means only admin-created users with a matching email can sign in), `admin_emails` (provisioned as admins). Handles for provisioned users derive from the email local part and are made unique with a numeric suffix. Admins can also create users with an email ahead of time, link or unlink identities, and disable a user, which revokes every token and key.
 
-**Enterprise Managed Auth (Phase 4).** Claude's silent SSO path sends a signed identity assertion
-from the customer's identity provider to the token endpoint using the RFC 7523 JWT bearer grant
-(`urn:ietf:params:oauth:grant-type:jwt-bearer`). It is available on Claude Team and Enterprise
-plans, needs the client pre-registered (CIMD or Anthropic-held credentials, not DCR), a per-tenant
-allow-list of trusted issuers verified against their JWKS, and the grant advertised in
-`grant_types_supported`. Okta's cross-app-access playground can exercise it without a Claude
-organisation. The 2b design does not block it: tokens, clients and the user model are the same.
+**Enterprise Managed Auth (Phase 4).** Claude's silent SSO path sends a signed identity assertion from the customer's identity provider to the token endpoint using the RFC 7523 JWT bearer grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`). It is available on Claude Team and Enterprise plans, needs the client pre-registered (CIMD or Anthropic-held credentials, not DCR), a per-tenant allow-list of trusted issuers verified against their JWKS, and the grant advertised in `grant_types_supported`. Okta's cross-app-access playground can exercise it without a Claude organisation. The 2b design does not block it: tokens, clients and the user model are the same.
 
 ---
 
 ## 10. Configuration
 
-One YAML file, validated at startup with errors that name the key. Secrets stay out of it: a value
-`${NAME}` (or `${NAME:-default}`) is replaced by the environment variable `NAME`, read from the
-process environment or a `.env` file. Every key is also overridable by `AGALMA_<SECTION>_<KEY>` (for
-example `AGALMA_TLS_DNS_API_TOKEN`). `deploy/agalma.yaml` is the annotated example below and
-`docs/configuration.md` the reference.
+One YAML file, validated at startup with errors that name the key. Secrets stay out of it: a value `${NAME}` (or `${NAME:-default}`) is replaced by the environment variable `NAME`, read from the process environment or a `.env` file. Every key is also overridable by `KAZARI_<SECTION>_<KEY>` (for example `KAZARI_TLS_DNS_API_TOKEN`). `deploy/kazari.yaml` is the annotated example below and `docs/configuration.md` the reference.
 
 ```yaml
 base_domain: art.example.com         # artifacts are served at <slug>.art.example.com
-data_dir: /var/lib/agalma            # agalma.db, blobs/, uploads/, certmagic/
+data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/
 
 # Public URL shape. For development behind plain HTTP on a high port use
 # external_scheme: http and external_port: 8080 (http://demo.localhost:8080/).
@@ -850,7 +626,7 @@ tls:
   cert_file: ""                      # mode: files
   key_file: ""
   dns:
-    api_token: ${AGALMA_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
+    api_token: ${KAZARI_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
 
 limits:
   max_version_bytes: 50MiB
@@ -873,12 +649,12 @@ lifecycle:
 
 serve:
   csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
-  allow_csp_override: true           # agalma.csp metadata replaces csp for that artifact
+  allow_csp_override: true           # kazari.csp metadata replaces csp for that artifact
   reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
 
 auth:
   write_policy: shared               # shared | owner
-  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
+  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
   # Sign-in through the organisation's OpenID Connect provider. Leave oidc
   # out entirely to fall back to API-key sign-in on the consent page.
   # Register https://mcp.<base_domain>/oauth/callback as the redirect URI.
@@ -886,7 +662,7 @@ auth:
   # oidc:
   #   issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # or https://accounts.google.com
   #   client_id: ""
-  #   client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+  #   client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
   #   allowed_domains: [example.com]  # verified email domains that may sign in
   #   auto_provision: true            # create a member on first sign-in from an allowed domain
   #   admin_emails: []                # provisioned with the admin role
@@ -899,57 +675,34 @@ log:
   format: text                       # text | json
 ```
 
-Development runs with `base_domain: localhost` and either `tls.mode: self-signed` or
-`listen.proxy_mode: true` (`deploy/dev.yaml` uses proxy mode on port 8080); browsers resolve
-`*.localhost` to loopback, so `http://demo.localhost:8080` works with no DNS.
+Development runs with `base_domain: localhost` and either `tls.mode: self-signed` or `listen.proxy_mode: true` (`deploy/dev.yaml` uses proxy mode on port 8080); browsers resolve `*.localhost` to loopback, so `http://demo.localhost:8080` works with no DNS.
 
 ---
 
 ## 11. Serving semantics
 
-- Slug: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, 3 to 63 chars, no `--`, not in `reserved_slugs`.
-  Immutable after create.
-- Host parsing: lower-case, strip port, require the base-domain suffix, split on the last `--v`
-  followed by digits. Anything else is a 404 with the instance page (never a redirect, never a
-  different status for "exists but unpublished").
-- Path: `path.Clean`, reject `..`, absolute, NUL, control characters, segments over 255 bytes,
-  totals over 1024 bytes, more than `max_files` entries. A request for a directory serves
-  `index.html` under it; a miss serves the artifact's own `404.html` if present, else the instance
-  page; `agalma.spa = "true"` serves `index.html` for any miss without an extension.
-- Content type: from the manifest if given, else `mime.TypeByExtension`, else sniffed from the first
-  512 bytes at upload. Never from the request. Always `X-Content-Type-Options: nosniff`.
-- Caching: `ETag: "<sha256>"` everywhere. Latest host: `Cache-Control: no-cache` (revalidate every
-  time; cheap with a strong ETag). Version host: `public, max-age=31536000, immutable`.
-- Visibility and state: `public` and `unlisted` both serve; `unpublished_at`, `deleted_at` give 404;
-  `purged_at` gives 410 until the tombstone row is removed. `X-Robots-Tag: noindex` unless
-  `agalma.indexable = "true"`.
-- Control-plane hosts set `Cross-Origin-Opener-Policy: same-origin` and never set cookies with a
-  `Domain` attribute. The only cookie in the system is the OAuth consent session, scoped to the
-  `mcp.` host, `Secure; HttpOnly; SameSite=Lax`, ten-minute lifetime.
+- Slug: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, 3 to 63 chars, no `--`, not in `reserved_slugs`. Immutable after create.
+- Host parsing: lower-case, strip port, require the base-domain suffix, split on the last `--v` followed by digits. Anything else is a 404 with the instance page (never a redirect, never a different status for "exists but unpublished").
+- Path: `path.Clean`, reject `..`, absolute, NUL, control characters, segments over 255 bytes, totals over 1024 bytes, more than `max_files` entries. A request for a directory serves `index.html` under it; a miss serves the artifact's own `404.html` if present, else the instance page; `kazari.spa = "true"` serves `index.html` for any miss without an extension.
+- Content type: from the manifest if given, else `mime.TypeByExtension`, else sniffed from the first 512 bytes at upload. Never from the request. Always `X-Content-Type-Options: nosniff`.
+- Caching: `ETag: "<sha256>"` everywhere. Latest host: `Cache-Control: no-cache` (revalidate every time; cheap with a strong ETag). Version host: `public, max-age=31536000, immutable`.
+- Visibility and state: `public` and `unlisted` both serve; `unpublished_at`, `deleted_at` give 404; `purged_at` gives 410 until the tombstone row is removed. `X-Robots-Tag: noindex` unless `kazari.indexable = "true"`.
+- Control-plane hosts set `Cross-Origin-Opener-Policy: same-origin` and never set cookies with a `Domain` attribute. The only cookie in the system is the OAuth consent session, scoped to the `mcp.` host, `Secure; HttpOnly; SameSite=Lax`, ten-minute lifetime.
 
 ---
 
 ## 12. Lifecycle
 
-States and transitions, as in the source diagram: Published, Unpublished, Stale (grace running),
-Soft-deleted, Purged (blobs gone).
+States and transitions, as in the source diagram: Published, Unpublished, Stale (grace running), Soft-deleted, Purged (blobs gone).
 
-- `mark_stale` sets `stale_at = now`, `expires_at = now + grace` (default from config, per-call
-  override, capped by a per-user maximum the admin can set). The page keeps serving.
-- `unmark_stale` clears both. An `update_artifact` that adds a version also clears them unless
-  `keep_stale` is set.
-- `set_visibility unpublished` sets `unpublished_at`; `public` or `unlisted` clears it. Reversible at
-  any time before purge.
-- `delete_artifact` sets `deleted_at`; the slug stays reserved; an admin or the owner can restore
-  through `PATCH` until retention elapses.
-- `Sweep`: stale past `expires_at` becomes soft-deleted; soft-deleted past `retention` is purged
-  (versions and files deleted, `purged_at` set); tombstones past `tombstone` are removed, freeing the
-  slug. Each transition writes an audit event.
-- `CollectGarbage`: blobs with no `version_file` reference are deleted from the blob store and the
-  `blob` table, in batches, with the DB row removed only after the file is gone.
+- `mark_stale` sets `stale_at = now`, `expires_at = now + grace` (default from config, per-call override, capped by a per-user maximum the admin can set). The page keeps serving.
+- `unmark_stale` clears both. An `update_artifact` that adds a version also clears them unless `keep_stale` is set.
+- `set_visibility unpublished` sets `unpublished_at`; `public` or `unlisted` clears it. Reversible at any time before purge.
+- `delete_artifact` sets `deleted_at`; the slug stays reserved; an admin or the owner can restore through `PATCH` until retention elapses.
+- `Sweep`: stale past `expires_at` becomes soft-deleted; soft-deleted past `retention` is purged (versions and files deleted, `purged_at` set); tombstones past `tombstone` are removed, freeing the slug. Each transition writes an audit event.
+- `CollectGarbage`: blobs with no `version_file` reference are deleted from the blob store and the `blob` table, in batches, with the DB row removed only after the file is gone.
 
-Every list and get response carries `stale_at`, `expires_at`, `unpublished_at`, `deleted_at` so an
-agent can tell its user what is about to vanish.
+Every list and get response carries `stale_at`, `expires_at`, `unpublished_at`, `deleted_at` so an agent can tell its user what is about to vanish.
 
 ---
 
@@ -957,22 +710,15 @@ agent can tell its user what is about to vanish.
 
 Carried from the source plan and made concrete for the code:
 
-- Origin split enforced by the host router; `site` never handles a reserved host, and the control
-  plane never handles a wildcard host.
-- Path normalisation and limits in `artifact.ValidatePath`, tested with the usual traversal and
-  encoding cases. Tar entries that are not regular files are skipped; absolute and `..` names
-  rejected.
-- Upload limits: per file, per version, per user quota, file count; `http.MaxBytesReader` on every
-  body; gzip and tar are decoded through a counting reader that aborts at the cap.
+- Origin split enforced by the host router; `site` never handles a reserved host, and the control plane never handles a wildcard host.
+- Path normalisation and limits in `artifact.ValidatePath`, tested with the usual traversal and encoding cases. Tar entries that are not regular files are skipped; absolute and `..` names rejected.
+- Upload limits: per file, per version, per user quota, file count; `http.MaxBytesReader` on every body; gzip and tar are decoded through a counting reader that aborts at the cap.
 - Keys and tokens hashed with SHA-256; comparisons through `crypto/subtle`; keys shown exactly once.
-- MCP endpoint checks `Origin` (must be absent or match an allow-list) and rejects unknown
-  `MCP-Protocol-Version` values, as the spec requires against DNS rebinding.
-- Rate limits: per key for writes (`x/time/rate`), per IP for unauthenticated requests on the
-  control plane; `429` with `Retry-After`.
+- MCP endpoint checks `Origin` (must be absent or match an allow-list) and rejects unknown `MCP-Protocol-Version` values, as the spec requires against DNS rebinding.
+- Rate limits: per key for writes (`x/time/rate`), per IP for unauthenticated requests on the control plane; `429` with `Retry-After`.
 - `X-Robots-Tag: noindex` default, `frame-ancestors 'none'` in the default CSP, admin hide endpoint.
 - Builds with `-trimpath`, `CGO_ENABLED=0`; releases carry an SBOM and cosign signatures (Phase 3).
-- A security review of `site` and `artifact` validation before v1.0, with a written threat model in
-  `docs/security.md`.
+- A security review of `site` and `artifact` validation before v1.0, with a written threat model in `docs/security.md`.
 
 ---
 
@@ -1006,7 +752,7 @@ Rule: a bug fix adds a test at the lowest layer that reproduces it.
 | MCP                       | `github.com/modelcontextprotocol/go-sdk` v1.8+                         | Official SDK; Streamable HTTP, stateless mode, `auth.RequireBearerToken`, in-memory transports |
 | TLS / ACME                | `github.com/caddyserver/certmagic` v0.25.6+, `github.com/libdns/{cloudflare,route53,hetzner}` | DNS-01 wildcard, storage, renewal. Add providers by import                            |
 | SQLite                    | `github.com/ncruces/go-sqlite3` (`driver` + `embed`)                   | CGO-free, tracks upstream SQLite closely, `database/sql`; `modernc.org/sqlite` is a one-line swap |
-| Config                    | `gopkg.in/yaml.v3`                                                    | `${NAME}` references, `.env` and `AGALMA_*` overrides are Agalma's own code                 |
+| Config                    | `gopkg.in/yaml.v3`                                                    | `${NAME}` references, `.env` and `KAZARI_*` overrides are Kazari's own code                 |
 | CertMagic logging         | `go.uber.org/zap`                                                     | CertMagic logs through zap; `internal/certs` bridges it to `slog`                           |
 | OIDC relying party        | `github.com/coreos/go-oidc/v3` v3.18+, `golang.org/x/oauth2`           | Discovery, JWKS caching, ID token verification; Phase 2b                                    |
 | Rate limiting             | `golang.org/x/time/rate`                                              |                                                                                             |
@@ -1014,23 +760,17 @@ Rule: a bug fix adds a test at the lowest layer that reproduces it.
 | Metrics                   | `github.com/prometheus/client_golang`                                 | Phase 3                                                                                     |
 | Tests                     | `github.com/google/go-cmp`                                            | Diffs only; no assertion framework                                                          |
 
-Not used, deliberately: cobra (stdlib `flag` with a subcommand switch), chi/gin/echo (`ServeMux`),
-gorm/sqlx/sqlc (hand-written SQL, revisit sqlc if query count passes roughly sixty), testify,
-mockery, wire/fx, uuid (natural keys), cron libraries, zap/logrus for Agalma's own logging (`slog`).
+Not used, deliberately: cobra (stdlib `flag` with a subcommand switch), chi/gin/echo (`ServeMux`), gorm/sqlx/sqlc (hand-written SQL, revisit sqlc if query count passes roughly sixty), testify, mockery, wire/fx, uuid (natural keys), cron libraries, zap/logrus for Kazari's own logging (`slog`).
 
 ---
 
 ## 16. Build, release, deploy
 
-- No `Makefile` or `Taskfile`: the build, test, lint, local run (`deploy/dev.yaml`, or
-  `docker compose up`) and release dry-run commands are written out in `README.md` and `CLAUDE.md`.
+- No `Makefile` or `Taskfile`: the build, test, lint, local run (`deploy/dev.yaml`, or `docker compose up`) and release dry-run commands are written out in `README.md` and `CLAUDE.md`.
 - `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X ...buildinfo.version=..."`.
-- goreleaser builds linux/amd64, linux/arm64, darwin/arm64; attaches SBOM (syft) and cosign
-  signatures; publishes a distroless Docker image `ghcr.io/peterbooker/agalma`.
-- `deploy/agalma.service` (systemd, `DynamicUser`, `StateDirectory=agalma`,
-  `AmbientCapabilities=CAP_NET_BIND_SERVICE`), `deploy/agalma.yaml` and `deploy/agalma.env.example`
-  examples, `deploy/Caddyfile` example for proxy mode.
-- Backup is `sqlite3 .backup` of `agalma.db` plus `rsync` of `blobs/`; documented in `docs/ops.md`.
+- goreleaser builds linux/amd64, linux/arm64, darwin/arm64; attaches SBOM (syft) and cosign signatures; publishes a distroless Docker image `ghcr.io/peterbooker/kazari`.
+- `deploy/kazari.service` (systemd, `DynamicUser`, `StateDirectory=kazari`, `AmbientCapabilities=CAP_NET_BIND_SERVICE`), `deploy/kazari.yaml` and `deploy/kazari.env.example` examples, `deploy/Caddyfile` example for proxy mode.
+- Backup is `sqlite3 .backup` of `kazari.db` plus `rsync` of `blobs/`; documented in `docs/ops.md`.
 
 ---
 
@@ -1040,102 +780,62 @@ Each phase ends at a gate that is a demonstration. Effort assumes one engineer p
 
 ### Phase 0: Foundation and first page (about 1 week)
 
-Goal: a page published with `curl` is served at `demo.localhost` from a single `agalma serve`.
+Goal: a page published with `curl` is served at `demo.localhost` from a single `kazari serve`.
 
-1. `go.mod` and an empty `cmd/agalma/agalma.go` already exist. Add the `serve` subcommand
-   dispatch, `buildinfo`, `config` with Load and Validate and tests, `docs/adr/0001-language.md`
-   and `0002-storage.md`.
-2. `sqlite`: Open with pragmas (WAL, busy timeout, foreign keys), migrator, `0001_init.sql` with the
-   artifact, version, version_file, blob, user, api_key, artifact_actor, audit_event tables.
+1. `go.mod` and an empty `cmd/kazari/kazari.go` already exist. Add the `serve` subcommand dispatch, `buildinfo`, `config` with Load and Validate and tests, `docs/adr/0001-language.md` and `0002-storage.md`.
+2. `sqlite`: Open with pragmas (WAL, busy timeout, foreign keys), migrator, `0001_init.sql` with the artifact, version, version_file, blob, user, api_key, artifact_actor, audit_event tables.
 3. `blob`: interface, `FS`, `blobtest`.
-4. `artifact`: types, validation (slug, path, metadata) with tables of cases, errors, `Store`
-   interface, `storetest`, `Service.Create`/`Update`/`Get`/`List`/`ResolvePublished`/`Files`.
+4. `artifact`: types, validation (slug, path, metadata) with tables of cases, errors, `Store` interface, `storetest`, `Service.Create`/`Update`/`Get`/`List`/`ResolvePublished`/`Files`.
 5. `sqlite` implements `artifact.Store`; passes `storetest`.
 6. `site`: `ParseHost`, handler, headers, 404 pages; tests with a fake resolver.
 7. `certs`: `SelfSigned`, `Files`, `TLSConfig`.
-8. `middleware`; `httpapi` user routes for create (JSON and multipart), get, list, update, files;
-   bearer auth with a single bootstrap API key read from config for now.
-9. `app`: wiring, `ServeMux` host routing, HTTPS and HTTP listeners, proxy mode, graceful shutdown;
-   first end-to-end test.
+8. `middleware`; `httpapi` user routes for create (JSON and multipart), get, list, update, files; bearer auth with a single bootstrap API key read from config for now.
+9. `app`: wiring, `ServeMux` host routing, HTTPS and HTTP listeners, proxy mode, graceful shutdown; first end-to-end test.
 
-Gate: `curl -T` a tar.gz to `api.localhost`, open `https://demo.localhost:8443/` with the
-self-signed wildcard, see the page; the e2e test does the same in CI.
+Gate: `curl -T` a tar.gz to `api.localhost`, open `https://demo.localhost:8443/` with the self-signed wildcard, see the page; the e2e test does the same in CI.
 
 ### Phase 1: Core host (2 to 3 weeks)
 
-1. `user`: users, keys, verification; `sqlite` implements `user.Store`; `auth` package replaces the
-   bootstrap key; admin token middleware; admin API users and keys routes.
-2. Remaining user API: PATCH, publish (rollback), delete, stale/unstale, `/me`; `If-Match`;
-   `expected_version` conflict path; per-user quota.
-3. `certs.ACME` with CertMagic and libdns providers (cloudflare, route53, hetzner); staging-CA
-   dry run documented; renewal loop.
-4. `cli`: `publish <dir>`, `update`, `get`, `list`, `rm`, `stale`, `unstale`, `visibility`,
-   `files cat`, `me`, with `--json`; config from `AGALMA_URL` and `AGALMA_TOKEN` or
-   `~/.config/agalma/config.yaml`.
+1. `user`: users, keys, verification; `sqlite` implements `user.Store`; `auth` package replaces the bootstrap key; admin token middleware; admin API users and keys routes.
+2. Remaining user API: PATCH, publish (rollback), delete, stale/unstale, `/me`; `If-Match`; `expected_version` conflict path; per-user quota.
+3. `certs.ACME` with CertMagic and libdns providers (cloudflare, route53, hetzner); staging-CA dry run documented; renewal loop.
+4. `cli`: `publish <dir>`, `update`, `get`, `list`, `rm`, `stale`, `unstale`, `visibility`, `files cat`, `me`, with `--json`; config from `KAZARI_URL` and `KAZARI_TOKEN` or `~/.config/kazari/config.yaml`.
 5. `deploy/`: Dockerfile, systemd unit, example config and Caddyfile; `docs/install.md`.
 
-Gate: an artifact published from the CLI on a VPS is live at `<slug>.<base>` with a Let's Encrypt
-wildcard certificate; a second publish creates version 2 and `<slug>--v1.<base>` still serves the
-first.
+Gate: an artifact published from the CLI on a VPS is live at `<slug>.<base>` with a Let's Encrypt wildcard certificate; a second publish creates version 2 and `<slug>--v1.<base>` still serves the first.
 
 ### Phase 2a: MCP server with API keys (1 to 2 weeks)
 
-1. `api` wire types shared with `httpapi`; `mcpserver` with the ten core tools, two resource
-   templates, `publish-page` prompt; stateless Streamable HTTP handler; principal from the bearer
-   middleware.
-2. `upload` package, its `sqlite` store and the `uploads-expire` job; REST `POST /uploads`,
-   `PATCH /uploads/{id}/files/{path}`, `DELETE /uploads/{id}`; `upload_id` accepted by the REST
-   create and update handlers; `begin_upload` and `upload_chunk` tools; `upload_id` on the create
-   and update tools.
-3. In-memory transport tests for every tool, including a chunked publish of a multi-megabyte
-   bundle; HTTP test for the `401` shape; Origin and protocol version checks.
-4. `SKILL.md` for Claude Code and `docs/mcp.md` with `claude mcp add` instructions and the chunked
-   upload recipe.
+1. `api` wire types shared with `httpapi`; `mcpserver` with the ten core tools, two resource templates, `publish-page` prompt; stateless Streamable HTTP handler; principal from the bearer middleware.
+2. `upload` package, its `sqlite` store and the `uploads-expire` job; REST `POST /uploads`, `PATCH /uploads/{id}/files/{path}`, `DELETE /uploads/{id}`; `upload_id` accepted by the REST create and update handlers; `begin_upload` and `upload_chunk` tools; `upload_id` on the create and update tools.
+3. In-memory transport tests for every tool, including a chunked publish of a multi-megabyte bundle; HTTP test for the `401` shape; Origin and protocol version checks.
+4. `SKILL.md` for Claude Code and `docs/mcp.md` with `claude mcp add` instructions and the chunked upload recipe.
 
-Gate: from Claude Code, with `claude mcp add --transport http --header "Authorization: Bearer ..."`,
-create a page, read it back, update it, list it, mark it stale, and publish a bundle larger than the
-inline guidance through `begin_upload` and `upload_chunk`; verify with the MCP Inspector.
+Gate: from Claude Code, with `claude mcp add --transport http --header "Authorization: Bearer ..."`, create a page, read it back, update it, list it, mark it stale, and publish a bundle larger than the inline guidance through `begin_upload` and `upload_chunk`; verify with the MCP Inspector.
 
 ### Phase 2b: OAuth for claude.ai (1 to 2 weeks)
 
-1. `oauth` package: metadata endpoints, DCR, CIMD fetch and cache, authorize with pending
-   `oauth_request` rows, token with PKCE and refresh rotation, `oauth.Store` in `sqlite`;
-   `auth.Chain` wires it in. API-key fallback consent page first, so the flow is testable end to
-   end before any identity provider exists.
-2. `oidc` package over go-oidc; `user` gains email, identities and `ResolveIdentity` with the
-   provisioning policy; migration adds `user.email`, `user_identity`, `oauth_request`; the
-   callback and the one-click consent page.
+1. `oauth` package: metadata endpoints, DCR, CIMD fetch and cache, authorize with pending `oauth_request` rows, token with PKCE and refresh rotation, `oauth.Store` in `sqlite`; `auth.Chain` wires it in. API-key fallback consent page first, so the flow is testable end to end before any identity provider exists.
+2. `oidc` package over go-oidc; `user` gains email, identities and `ResolveIdentity` with the provisioning policy; migration adds `user.email`, `user_identity`, `oauth_request`; the callback and the one-click consent page.
 3. Protected-resource metadata on the MCP host; `401` with `resource_metadata`.
 4. Admin API: create users with email, link and unlink identities, list and revoke OAuth grants.
-5. `docs/identity.md`: registering the redirect URI in Entra ID and Google Workspace, the claims
-   each sends, and the provisioning policy.
+5. `docs/identity.md`: registering the redirect URI in Entra ID and Google Workspace, the claims each sends, and the provisioning policy.
 
-Gate: add `https://mcp.<base>/` as a claude.ai custom connector, sign in through Microsoft Entra
-ID, approve the consent page, publish a page from claude.ai, then update it from Claude Code with no
-manual file copying. Verify Claude Code's own OAuth flow (CIMD plus loopback)
-works as well as the bearer path, and that the API-key fallback works on an instance with no
-provider configured.
+Gate: add `https://mcp.<base>/` as a claude.ai custom connector, sign in through Microsoft Entra ID, approve the consent page, publish a page from claude.ai, then update it from Claude Code with no manual file copying. Verify Claude Code's own OAuth flow (CIMD plus loopback) works as well as the bearer path, and that the API-key fallback works on an instance with no provider configured.
 
 ### Phase 3: Lifecycle, admin, release (2 to 3 weeks)
 
-1. `scheduler`; `Sweep` and `CollectGarbage`; tombstones; audit events on every transition; admin
-   jobs routes.
+1. `scheduler`; `Sweep` and `CollectGarbage`; tombstones; audit events on every transition; admin jobs routes.
 2. Rate limits, Prometheus metrics, structured request logs, `/health`.
 3. Admin: artifacts listing with sizes, transfer, hide, settings, audit query.
 4. Security review of `site` and `artifact` validation; `docs/security.md`; `govulncheck` in CI.
 5. goreleaser, SBOM, cosign, Docker image; `docs/` complete (install, ops, API, MCP, CLI).
 
-Gate: v1.0.0 tagged with signed binaries for linux/amd64, linux/arm64, darwin/arm64; the e2e test
-drives an artifact from published to stale to soft-deleted to purged to tombstone with a fast clock.
+Gate: v1.0.0 tagged with signed binaries for linux/amd64, linux/arm64, darwin/arm64; the e2e test drives an artifact from published to stale to soft-deleted to purged to tombstone with a fast clock.
 
 ### Phase 4: Beyond v1 (unscheduled)
 
-Gated visibility with access keys exchanged for a host-scoped cookie; S3 blob store (same `blob.Store`
-interface, `blobtest` suite); Postgres store (`storetest` suite); idle expiry from a per-slug
-last-hit day; stale banner; gallery and landing page at the apex (signed in through the same OIDC
-provider); runtime-mutable settings; custom apex domains via on-demand TLS; Markdown-to-page
-rendering; Enterprise Managed Auth (RFC 7523 jwt-bearer grant with per-tenant trusted issuers);
-several identity providers per instance; public-instance hardening checklist.
+Gated visibility with access keys exchanged for a host-scoped cookie; S3 blob store (same `blob.Store` interface, `blobtest` suite); Postgres store (`storetest` suite); idle expiry from a per-slug last-hit day; stale banner; gallery and landing page at the apex (signed in through the same OIDC provider); runtime-mutable settings; custom apex domains via on-demand TLS; Markdown-to-page rendering; Enterprise Managed Auth (RFC 7523 jwt-bearer grant with per-tenant trusted issuers); several identity providers per instance; public-instance hardening checklist.
 
 ---
 
@@ -1147,7 +847,7 @@ Decided on 2026-10-24 and recorded in section 1:
 | --------------------------------- | ---------------------------------------------------------------------- |
 | Licence                           | MIT                                                                    |
 | Default write policy              | `shared`                                                               |
-| Module path                       | `agalma` (binaries and Docker image, not `go install`)                 |
+| Module path                       | `kazari` (binaries and Docker image, not `go install`)                 |
 | Sign-in for the OAuth consent flow| Organisation's OIDC provider; API-key fallback when none is configured |
 | First provider tested live        | Microsoft Entra ID                                                     |
 | Provisioning default              | `auto_provision = true` within `allowed_domains`                       |
@@ -1156,11 +856,7 @@ Decided on 2026-10-24 and recorded in section 1:
 
 Nothing is waiting on a decision. Items to verify during the build rather than decide now:
 
-- **Inline guidance value.** `inline_guidance_bytes` defaults to 2 MiB; measure what claude.ai and
-  Claude Code actually send comfortably in one tool call in Phase 2a and adjust the default.
-- **Claude Code OAuth.** Claude Code supports both a bearer header and its own OAuth client (CIMD
-  with loopback redirects). 2a gates on the header; 2b verifies the OAuth path too.
-- **Entra claims.** Confirm whether the tenant's app registration emits `email` or only
-  `preferred_username`, and document the optional-claim setting in `docs/identity.md`.
-- **Google Workspace** gets a live run after Entra, before v1.0, since the fake provider cannot
-  exercise the `hd` claim handling against real tokens.
+- **Inline guidance value.** `inline_guidance_bytes` defaults to 2 MiB; measure what claude.ai and Claude Code actually send comfortably in one tool call in Phase 2a and adjust the default.
+- **Claude Code OAuth.** Claude Code supports both a bearer header and its own OAuth client (CIMD with loopback redirects). 2a gates on the header; 2b verifies the OAuth path too.
+- **Entra claims.** Confirm whether the tenant's app registration emits `email` or only `preferred_username`, and document the optional-claim setting in `docs/identity.md`.
+- **Google Workspace** gets a live run after Entra, before v1.0, since the fake provider cannot exercise the `hd` claim handling against real tokens.

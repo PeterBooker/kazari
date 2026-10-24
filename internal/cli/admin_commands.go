@@ -8,10 +8,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"agalma/internal/api"
+	"kazari/internal/api"
 )
 
-const adminUsage = `usage: agalma admin <command>
+const adminUsage = `usage: kazari admin <command>
 
 Commands:
   users list
@@ -58,7 +58,7 @@ func cmdAdmin(r *runner, args []string) error {
 	}
 	g, ok := groups[args[0]]
 	if !ok {
-		return usagef("admin: unknown command %q (run agalma admin help)", args[0])
+		return usagef("admin: unknown command %q (run kazari admin help)", args[0])
 	}
 	if len(args) < 2 {
 		return usagef("admin %s: want one of %s", args[0], strings.Join(slices.Sorted(maps.Keys(g)), ", "))

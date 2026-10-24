@@ -15,11 +15,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
 )
 
 // FileInput is an inline file of create_artifact.
@@ -44,7 +44,7 @@ type CreateInput struct {
 	Slug        string            `json:"slug" jsonschema:"permanent URL name: 3-63 of a-z 0-9 and -, no leading/trailing hyphen, no --"`
 	Name        string            `json:"name" jsonschema:"human-readable title"`
 	Description string            `json:"description" jsonschema:"one or two sentences on what the page is"`
-	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; agalma.spa, agalma.indexable and agalma.csp are interpreted by the server"`
+	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable and kazari.csp are interpreted by the server"`
 	Visibility  string            `json:"visibility,omitempty" jsonschema:"public (default) or unlisted"`
 	Label       string            `json:"label,omitempty" jsonschema:"optional note on this version"`
 	Files       []FileInput       `json:"files,omitempty" jsonschema:"inline files; index.html is served at the root URL"`

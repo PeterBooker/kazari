@@ -7,7 +7,7 @@ import (
 )
 
 func TestOpenMigratesIdempotently(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agalma.db")
+	path := filepath.Join(t.TempDir(), "kazari.db")
 	ctx := context.Background()
 	db, err := Open(ctx, path)
 	if err != nil {

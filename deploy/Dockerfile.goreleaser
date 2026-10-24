@@ -4,12 +4,12 @@ FROM --platform=$BUILDPLATFORM busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4
 RUN mkdir /data
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-COPY agalma /usr/local/bin/agalma
+COPY kazari /usr/local/bin/kazari
 # An empty data directory owned by nonroot (65532): Docker initialises a new
 # named volume mounted here from the image, so the server can write to it.
-COPY --from=data --chown=65532:65532 /data /var/lib/agalma
-VOLUME /var/lib/agalma
+COPY --from=data --chown=65532:65532 /data /var/lib/kazari
+VOLUME /var/lib/kazari
 EXPOSE 80 443
-ENV AGALMA_DATA_DIR=/var/lib/agalma
-ENTRYPOINT ["/usr/local/bin/agalma"]
-CMD ["serve", "--config", "/etc/agalma/agalma.yaml"]
+ENV KAZARI_DATA_DIR=/var/lib/kazari
+ENTRYPOINT ["/usr/local/bin/kazari"]
+CMD ["serve", "--config", "/etc/kazari/kazari.yaml"]

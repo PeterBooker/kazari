@@ -39,8 +39,8 @@ func TestLoadEnvFile(t *testing.T) {
 		{"later wins", "A=1\nA=2\n", map[string]string{"A": "2"}},
 		{"crlf", "A=1\r\nB='2'\r\n", map[string]string{"A": "1", "B": "2"}},
 		{"bom and no newline", "\xef\xbb\xbfA=1", map[string]string{"A": "1"}},
-		{"example file", "AGALMA_AUTH_ADMIN_TOKEN=change-me\nAGALMA_TLS_DNS_API_TOKEN=\n# AGALMA_AUTH_OIDC_CLIENT_SECRET=\n",
-			map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": "change-me", "AGALMA_TLS_DNS_API_TOKEN": ""}},
+		{"example file", "KAZARI_AUTH_ADMIN_TOKEN=change-me\nKAZARI_TLS_DNS_API_TOKEN=\n# KAZARI_AUTH_OIDC_CLIENT_SECRET=\n",
+			map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": "change-me", "KAZARI_TLS_DNS_API_TOKEN": ""}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,38 +88,38 @@ func TestLoadEnvFileMissing(t *testing.T) {
 }
 
 func TestEnvLookup(t *testing.T) {
-	t.Setenv("AGALMA_TEST_PROCESS", "process")
-	t.Setenv("AGALMA_TEST_EMPTY", "")
+	t.Setenv("KAZARI_TEST_PROCESS", "process")
+	t.Setenv("KAZARI_TEST_EMPTY", "")
 	dotenv := map[string]string{
-		"AGALMA_TEST_PROCESS": "dotenv",
-		"AGALMA_TEST_EMPTY":   "dotenv",
-		"AGALMA_TEST_DOTENV":  "dotenv",
+		"KAZARI_TEST_PROCESS": "dotenv",
+		"KAZARI_TEST_EMPTY":   "dotenv",
+		"KAZARI_TEST_DOTENV":  "dotenv",
 	}
 	lookup := EnvLookup(dotenv)
-	dotenv["AGALMA_TEST_LATER"] = "added after EnvLookup"
+	dotenv["KAZARI_TEST_LATER"] = "added after EnvLookup"
 	tests := []struct {
 		key    string
 		want   string
 		wantOK bool
 	}{
-		{"AGALMA_TEST_PROCESS", "process", true},
-		{"AGALMA_TEST_EMPTY", "", true},
-		{"AGALMA_TEST_DOTENV", "dotenv", true},
-		{"AGALMA_TEST_LATER", "", false},
-		{"AGALMA_TEST_NOWHERE", "", false},
+		{"KAZARI_TEST_PROCESS", "process", true},
+		{"KAZARI_TEST_EMPTY", "", true},
+		{"KAZARI_TEST_DOTENV", "dotenv", true},
+		{"KAZARI_TEST_LATER", "", false},
+		{"KAZARI_TEST_NOWHERE", "", false},
 	}
 	for _, tt := range tests {
 		if got, ok := lookup(tt.key); got != tt.want || ok != tt.wantOK {
 			t.Errorf("lookup(%s) = %q, %v; want %q, %v", tt.key, got, ok, tt.want, tt.wantOK)
 		}
 	}
-	if _, ok := EnvLookup(nil)("AGALMA_TEST_NOWHERE"); ok {
+	if _, ok := EnvLookup(nil)("KAZARI_TEST_NOWHERE"); ok {
 		t.Error("nil dotenv: lookup found a value")
 	}
 }
 
 const loadTestYAML = `
-base_domain: ${AGALMA_TEST_DOMAIN}
+base_domain: ${KAZARI_TEST_DOMAIN}
 data_dir: /d
 tls:
   mode: self-signed
@@ -128,13 +128,13 @@ tls:
 func TestLoadEnvFileOption(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeYAML(t, loadTestYAML)
-	envPath := filepath.Join(dir, "agalma.env")
-	if err := os.WriteFile(envPath, []byte("AGALMA_TEST_DOMAIN=from.envfile\nAGALMA_AUTH_ADMIN_TOKEN=adm-0123456789abcdef0123456789ab\n"), 0o600); err != nil {
+	envPath := filepath.Join(dir, "kazari.env")
+	if err := os.WriteFile(envPath, []byte("KAZARI_TEST_DOMAIN=from.envfile\nKAZARI_AUTH_ADMIN_TOKEN=adm-0123456789abcdef0123456789ab\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A ./.env in the working directory is ignored when envFile is named.
 	t.Chdir(t.TempDir())
-	writeEnvFile(t, ".", "AGALMA_TEST_DOMAIN=from.dotenv\n")
+	writeEnvFile(t, ".", "KAZARI_TEST_DOMAIN=from.dotenv\n")
 
 	c, err := Load(cfgPath, envPath)
 	if err != nil {
@@ -144,10 +144,10 @@ func TestLoadEnvFileOption(t *testing.T) {
 		t.Errorf("BaseDomain = %q, want from.envfile", c.BaseDomain)
 	}
 	if c.Auth.AdminToken != testAdminToken {
-		t.Errorf("AdminToken = %q, want %s from the AGALMA_* override in the env file", c.Auth.AdminToken, testAdminToken)
+		t.Errorf("AdminToken = %q, want %s from the KAZARI_* override in the env file", c.Auth.AdminToken, testAdminToken)
 	}
 
-	t.Setenv("AGALMA_TEST_DOMAIN", "from.process")
+	t.Setenv("KAZARI_TEST_DOMAIN", "from.process")
 	if c, err := Load(cfgPath, envPath); err != nil || c.BaseDomain != "from.process" {
 		t.Errorf("with process env: BaseDomain = %q, %v; want from.process", c.BaseDomain, err)
 	}
@@ -164,11 +164,11 @@ func TestLoadDefaultEnvFile(t *testing.T) {
 
 	// No ./.env: skipped silently, so the reference is unset.
 	_, err := Load(cfgPath, "")
-	if want := "${AGALMA_TEST_DOMAIN} is not set"; err == nil || !strings.Contains(err.Error(), want) {
+	if want := "${KAZARI_TEST_DOMAIN} is not set"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("without .env: err = %v, want %q", err, want)
 	}
 
-	writeEnvFile(t, ".", "AGALMA_TEST_DOMAIN=from.dotenv\n")
+	writeEnvFile(t, ".", "KAZARI_TEST_DOMAIN=from.dotenv\n")
 	c, err := Load(cfgPath, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)

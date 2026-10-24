@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 // maxVersionDigits bounds the version suffix so it always fits in an int.

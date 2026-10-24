@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 func TestValidateSlug(t *testing.T) {
@@ -134,8 +134,8 @@ func TestValidateMetadata(t *testing.T) {
 		{"indexable TRUE", map[string]string{artifact.MetaIndexable: "TRUE"}, 0, false},
 		{"csp", map[string]string{artifact.MetaCSP: "default-src 'self'"}, 0, true},
 		{"csp with newline", map[string]string{artifact.MetaCSP: "default-src 'self'\r\nX-Evil: 1"}, 0, false},
-		{"unknown agalma key", map[string]string{"agalma.theme": "dark"}, 0, false},
-		{"agalma prefix lookalike", map[string]string{"agalmax.theme": "dark"}, 0, true},
+		{"unknown kazari key", map[string]string{"kazari.theme": "dark"}, 0, false},
+		{"kazari prefix lookalike", map[string]string{"kazarix.theme": "dark"}, 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -201,7 +201,7 @@ func TestValidateText(t *testing.T) {
 }
 
 func TestValidateMetadataKey(t *testing.T) {
-	for k, ok := range map[string]bool{"team": true, "agalma.spa": true, "a'b": false, "": false} {
+	for k, ok := range map[string]bool{"team": true, "kazari.spa": true, "a'b": false, "": false} {
 		if err := artifact.ValidateMetadataKey(k); (err == nil) != ok {
 			t.Errorf("ValidateMetadataKey(%q) = %v, want ok=%v", k, err, ok)
 		}
@@ -248,7 +248,7 @@ func TestErrorIs(t *testing.T) {
 	}
 }
 
-// agalma.csp is sent verbatim as a header: only printable ASCII is allowed.
+// kazari.csp is sent verbatim as a header: only printable ASCII is allowed.
 func TestValidateMetadataCSP(t *testing.T) {
 	tests := []struct {
 		name string

@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/oauth"
-	"agalma/internal/sqlite"
-	"agalma/internal/user"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/oauth"
+	"kazari/internal/sqlite"
+	"kazari/internal/user"
 )
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -133,7 +133,7 @@ type envOptions struct {
 func newEnv(t *testing.T, eo envOptions) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

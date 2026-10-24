@@ -1,6 +1,6 @@
-// Package config loads, validates and describes Agalma's configuration: one
+// Package config loads, validates and describes Kazari's configuration: one
 // YAML file whose ${NAME} references are filled from the environment, an
-// optional .env file, and AGALMA_* environment overrides. Nothing else in
+// optional .env file, and KAZARI_* environment overrides. Nothing else in
 // the code reads files or the environment for settings; internal/app passes
 // the loaded Config to every constructor.
 package config
@@ -39,13 +39,13 @@ var defaultReservedSlugs = []string{
 }
 
 // Config is the effective configuration. Field tags give the YAML key; the
-// environment variable for a key is AGALMA_ followed by the key's full path,
+// environment variable for a key is KAZARI_ followed by the key's full path,
 // upper-cased and joined with underscores (see LoadWith).
 type Config struct {
 	// BaseDomain is the domain every artifact is served under, as
 	// <slug>.<base_domain>. Lower-case, no scheme, port or trailing dot.
 	BaseDomain string `yaml:"base_domain"`
-	// DataDir holds agalma.db, blobs/, uploads/ and certmagic/.
+	// DataDir holds kazari.db, blobs/, uploads/ and certmagic/.
 	DataDir string `yaml:"data_dir"`
 	// ExternalScheme is the scheme used when building public URLs:
 	// "https" (default) or "http" for a plain-HTTP development setup.
@@ -126,7 +126,7 @@ type Lifecycle struct {
 type Serve struct {
 	// CSP is the instance default Content-Security-Policy; empty sends none.
 	CSP string `yaml:"csp"`
-	// AllowCSPOverride lets agalma.csp metadata replace CSP per artifact.
+	// AllowCSPOverride lets kazari.csp metadata replace CSP per artifact.
 	AllowCSPOverride bool `yaml:"allow_csp_override"`
 	// ReservedSlugs may not be used as artifact slugs.
 	ReservedSlugs []string `yaml:"reserved_slugs"`
@@ -232,7 +232,7 @@ func Default() Config {
 const DefaultEnvFile = ".env"
 
 // Load reads the configuration from path (skipped when empty), with ${NAME}
-// references and AGALMA_* overrides resolved from the process environment
+// references and KAZARI_* overrides resolved from the process environment
 // and a dotenv file, then validates it.
 //
 // The dotenv file is envFile when it is not empty, and then it must exist;
@@ -268,11 +268,11 @@ func loadDotenv(envFile string) (map[string]string, error) {
 // scalar values are replaced through lookup (see expandNode); decoding is
 // strict, so an unknown key is an error naming it.
 //
-// Every leaf key has an override named AGALMA_ plus its YAML path
-// upper-cased with "." replaced by "_", for example AGALMA_LISTEN_PROXY_MODE
-// for listen.proxy_mode and AGALMA_TLS_DNS_API_TOKEN for tls.dns.api_token.
+// Every leaf key has an override named KAZARI_ plus its YAML path
+// upper-cased with "." replaced by "_", for example KAZARI_LISTEN_PROXY_MODE
+// for listen.proxy_mode and KAZARI_TLS_DNS_API_TOKEN for tls.dns.api_token.
 // Overrides are read through lookup too. Lists are comma-separated. Setting
-// any AGALMA_AUTH_OIDC_* variable enables the auth.oidc mapping.
+// any KAZARI_AUTH_OIDC_* variable enables the auth.oidc mapping.
 func LoadWith(path string, lookup func(key string) (string, bool)) (Config, error) {
 	cfg := Default()
 	if path != "" {
@@ -357,7 +357,7 @@ func withoutLines(err error) error {
 }
 
 // DBPath is the SQLite database file.
-func (c Config) DBPath() string { return filepath.Join(c.DataDir, "agalma.db") }
+func (c Config) DBPath() string { return filepath.Join(c.DataDir, "kazari.db") }
 
 // BlobDir is the content-addressed blob store root.
 func (c Config) BlobDir() string { return filepath.Join(c.DataDir, "blobs") }

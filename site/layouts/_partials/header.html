@@ -6,7 +6,7 @@
     {{- if $inDocs }}
     <button class="icon-button nav-toggle" type="button" aria-controls="docs-nav" aria-expanded="false" aria-label="Open the documentation menu">{{ partial "icon.html" "menu" }}</button>
     {{- end }}
-    <a class="brand" href="{{ site.Home.RelPermalink }}">{{ partial "logo.html" }}<span>Agalma</span></a>
+    <a class="brand" href="{{ site.Home.RelPermalink }}">{{ partial "logo.html" }}<span>Kazari</span></a>
     <nav class="header-nav" aria-label="Main">
       <a href="{{ $docs.RelPermalink }}"{{ if $inDocs }} aria-current="true"{{ end }}>Docs</a>
       <a href="{{ $quick.RelPermalink }}" class="hide-sm">Quick start</a>
@@ -19,7 +19,7 @@
       <button class="icon-button" type="button" data-theme-toggle aria-label="Switch colour theme">
         <span class="theme-icon-light">{{ partial "icon.html" "sun" }}</span><span class="theme-icon-dark">{{ partial "icon.html" "moon" }}</span>
       </button>
-      <a class="icon-button" href="{{ site.Params.repo }}" aria-label="Agalma on GitHub">{{ partial "github.html" }}</a>
+      <a class="icon-button" href="{{ site.Params.repo }}" aria-label="Kazari on GitHub">{{ partial "github.html" }}</a>
     </div>
   </div>
 </header>

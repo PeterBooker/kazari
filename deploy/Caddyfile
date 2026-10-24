@@ -1,5 +1,5 @@
-# Agalma behind Caddy in proxy mode. Caddy owns the wildcard certificate
-# (DNS-01 through its own DNS plugin) and forwards every host to Agalma,
+# Kazari behind Caddy in proxy mode. Caddy owns the wildcard certificate
+# (DNS-01 through its own DNS plugin) and forwards every host to Kazari,
 # which runs with listen.proxy_mode: true and listen.http: ":8080".
 #
 # Replace art.example.com and the DNS provider block with your own.

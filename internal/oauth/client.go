@@ -31,7 +31,7 @@ const (
 // could not be used. The message is safe to show.
 var errInvalidClient = errors.New("unknown client")
 
-// clientMetadata is the subset of RFC 7591 client metadata Agalma reads,
+// clientMetadata is the subset of RFC 7591 client metadata Kazari reads,
 // both from a registration request and from a client ID metadata document.
 type clientMetadata struct {
 	ClientID                string   `json:"client_id,omitempty"`

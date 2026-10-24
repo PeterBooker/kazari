@@ -28,7 +28,7 @@ func TestExpandValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := expander{path: "agalma.yaml", lookup: vars, unset: map[string]bool{}}
+			e := expander{path: "kazari.yaml", lookup: vars, unset: map[string]bool{}}
 			got, _ := e.expand(tt.in, 1)
 			if len(e.errs) > 0 {
 				t.Fatalf("expand(%q): %v", tt.in, e.errs)
@@ -47,7 +47,7 @@ func expandYAML(t *testing.T, doc string, vars map[string]string) (map[string]an
 	if err := yaml.Unmarshal([]byte(doc), &n); err != nil {
 		t.Fatal(err)
 	}
-	if err := expandNode(&n, "agalma.yaml", env(vars)); err != nil {
+	if err := expandNode(&n, "kazari.yaml", env(vars)); err != nil {
 		return nil, err
 	}
 	out, err := yaml.Marshal(&n)
@@ -117,10 +117,10 @@ func TestExpandErrors(t *testing.T) {
 		name, doc string
 		want      []string
 	}{
-		{"unset", "tls:\n  dns:\n    api_token: ${AGALMA_TLS_DNS_API_TOKEN}\n", []string{"config: agalma.yaml: ${AGALMA_TLS_DNS_API_TOKEN} is not set"}},
-		{"every unset once", "a: ${A}\nb: ${B} ${A}\nc: [\"${A}\"]\n", []string{"config: agalma.yaml: ${A} is not set", "config: agalma.yaml: ${B} is not set"}},
-		{"unterminated", "a: 1\nb: ${A\n", []string{`config: agalma.yaml: line 2: unterminated variable reference "${A"`}},
-		{"empty name", "a: 1\nb: ${}\n", []string{"config: agalma.yaml: line 2: invalid variable reference ${}"}},
+		{"unset", "tls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n", []string{"config: kazari.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"}},
+		{"every unset once", "a: ${A}\nb: ${B} ${A}\nc: [\"${A}\"]\n", []string{"config: kazari.yaml: ${A} is not set", "config: kazari.yaml: ${B} is not set"}},
+		{"unterminated", "a: 1\nb: ${A\n", []string{`config: kazari.yaml: line 2: unterminated variable reference "${A"`}},
+		{"empty name", "a: 1\nb: ${}\n", []string{"config: kazari.yaml: line 2: invalid variable reference ${}"}},
 		{"bad name", "a: ${1A}\n", []string{"line 1: invalid variable reference ${1A}"}},
 		{"other operator", "a: ${A-x}\n", []string{"invalid variable reference ${A-x}"}},
 		{"space in name", "a: \"${ A }\"\n", []string{"invalid variable reference ${ A }"}},
@@ -144,7 +144,7 @@ func TestExpandErrors(t *testing.T) {
 }
 
 func TestIsEnvName(t *testing.T) {
-	for _, s := range []string{"A", "_", "a_b", "AGALMA_TLS_DNS_API_TOKEN", "_1", "x9"} {
+	for _, s := range []string{"A", "_", "a_b", "KAZARI_TLS_DNS_API_TOKEN", "_1", "x9"} {
 		if !isEnvName(s) {
 			t.Errorf("isEnvName(%q) = false", s)
 		}
@@ -160,7 +160,7 @@ func TestLoadExpands(t *testing.T) {
 	path := writeYAML(t, `
 # admin_token: ${NOT_SET_ANYWHERE}
 base_domain: ${DOMAIN}
-data_dir: ${DATA_DIR:-/var/lib/agalma}
+data_dir: ${DATA_DIR:-/var/lib/kazari}
 external_port: ${PORT:-8080}
 tls:
   mode: self-signed
@@ -194,7 +194,7 @@ auth:
 		got, want any
 	}{
 		{"base_domain", c.BaseDomain, "art.example.com"},
-		{"data_dir", c.DataDir, "/var/lib/agalma"},
+		{"data_dir", c.DataDir, "/var/lib/kazari"},
 		{"external_port", c.ExternalPort, 8080},
 		{"tls.dns.api_token", c.TLS.DNS.APIToken, "12345"},
 		{"limits.max_chunk_bytes", c.Limits.MaxChunkBytes, MiB},

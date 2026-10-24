@@ -1,4 +1,4 @@
-# Agalma for local development and testing: the image built from
+# Kazari for local development and testing: the image built from
 # deploy/Dockerfile, configured by deploy/dev.yaml (proxy mode, plain HTTP on
 # port 8080, base_domain localhost, admin token dev-admin-token), with its
 # data in a named volume.
@@ -9,35 +9,35 @@
 #   docker compose down               # stop; add -v to discard the data too
 #
 # Then, from the host, create a user and a key and publish as usual:
-#   go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
-#   go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
-#   AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... go run ./cmd/agalma publish ./site --slug demo
+#   go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
+#   go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
+#   KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari publish ./site --slug demo
 #
-# The image sets AGALMA_DATA_DIR=/var/lib/agalma, which overrides the ./.data
-# in dev.yaml. A ./.env (start from deploy/agalma.env.example) is passed into
-# the container, so AGALMA_AUTH_ADMIN_TOKEN set there replaces the admin token
+# The image sets KAZARI_DATA_DIR=/var/lib/kazari, which overrides the ./.data
+# in dev.yaml. A ./.env (start from deploy/kazari.env.example) is passed into
+# the container, so KAZARI_AUTH_ADMIN_TOKEN set there replaces the admin token
 # here as well as under go run.
 
 services:
-  agalma:
+  kazari:
     build:
       context: .
       dockerfile: deploy/Dockerfile
-    image: agalma:dev
+    image: kazari:dev
     ports:
       # Loopback only: *.localhost resolves to both 127.0.0.1 and ::1.
       - "127.0.0.1:8080:8080"
       - "[::1]:8080:8080"
     volumes:
-      - ./deploy/dev.yaml:/etc/agalma/agalma.yaml:ro
-      - data:/var/lib/agalma
+      - ./deploy/dev.yaml:/etc/kazari/kazari.yaml:ro
+      - data:/var/lib/kazari
     env_file:
       - path: .env
         required: false
     environment:
       # dev.yaml binds loopback; inside the container the published port
       # must listen on every interface (the ports above stay on loopback).
-      AGALMA_LISTEN_HTTP: ":8080"
+      KAZARI_LISTEN_HTTP: ":8080"
     extra_hosts:
       # Lets the health check reach the admin host from inside the container.
       - "admin.localhost:127.0.0.1"
@@ -46,7 +46,7 @@ services:
       # merely insists on an admin token being set.
       test:
         - CMD
-        - /usr/local/bin/agalma
+        - /usr/local/bin/kazari
         - --admin-url
         - http://admin.localhost:8080
         - --admin-token

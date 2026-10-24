@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 type tarEntry struct {

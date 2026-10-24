@@ -3,7 +3,7 @@
 .data
 .env
 .env.*
-agalma
+kazari
 dist
 docs
 *.md

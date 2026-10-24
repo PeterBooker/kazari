@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/oauth"
-	"agalma/internal/user"
+	"kazari/internal/oauth"
+	"kazari/internal/user"
 )
 
 // OAuthStore implements oauth.Store.

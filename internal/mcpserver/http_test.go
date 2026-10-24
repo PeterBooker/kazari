@@ -10,9 +10,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/auth"
-	"agalma/internal/mcpserver"
+	"kazari/internal/api"
+	"kazari/internal/auth"
+	"kazari/internal/mcpserver"
 )
 
 const metadataURL = "https://mcp.art.test/.well-known/oauth-protected-resource"

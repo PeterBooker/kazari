@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"testing"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 func TestError(t *testing.T) {
@@ -56,7 +56,7 @@ func TestActorCredential(t *testing.T) {
 		p    auth.Principal
 		want string
 	}{
-		{auth.Principal{Handle: "alice", Source: auth.SourceAPIKey, KeyID: "agk_abc123"}, "api_key:agk_abc123"},
+		{auth.Principal{Handle: "alice", Source: auth.SourceAPIKey, KeyID: "kzk_abc123"}, "api_key:kzk_abc123"},
 		{auth.Principal{Handle: "alice", Source: auth.SourceOAuth, KeyID: "oauth:42"}, "oauth:42"},
 		{auth.Principal{Handle: "alice", Source: auth.SourceOAuth, KeyID: "grant-7"}, "oauth:grant-7"},
 		{auth.Principal{Handle: "admin", Admin: true, Source: auth.SourceAdminToken}, "admin_token"},

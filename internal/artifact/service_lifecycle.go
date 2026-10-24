@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"agalma/internal/audit"
+	"kazari/internal/audit"
 )
 
 // List limits applied by Service.List.

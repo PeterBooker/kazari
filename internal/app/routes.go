@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"agalma/internal/config"
-	"agalma/internal/httpapi"
-	"agalma/internal/metrics"
-	"agalma/internal/middleware"
+	"kazari/internal/config"
+	"kazari/internal/httpapi"
+	"kazari/internal/metrics"
+	"kazari/internal/middleware"
 )
 
 //go:embed apex.html

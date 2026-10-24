@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"agalma/internal/api"
+	"kazari/internal/api"
 )
 
 // The methods in this file call the admin API; use a Client whose base URL

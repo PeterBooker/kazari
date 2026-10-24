@@ -18,7 +18,7 @@ import (
 func valid() Config {
 	c := Default()
 	c.BaseDomain = "art.example.com"
-	c.DataDir = "/var/lib/agalma"
+	c.DataDir = "/var/lib/kazari"
 	c.Auth.AdminToken = "admin-secret-0123456789abcdef0123"
 	c.TLS.Email = "ops@example.com"
 	c.TLS.DNS.APIToken = "dns-secret"
@@ -37,7 +37,7 @@ func env(m map[string]string) func(string) (string, bool) {
 
 func writeYAML(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "agalma.yaml")
+	path := filepath.Join(t.TempDir(), "kazari.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestDefaultNotShared(t *testing.T) {
 }
 
 func TestExampleFile(t *testing.T) {
-	const path = "../../deploy/agalma.yaml"
-	got, err := LoadWith(path, env(map[string]string{"AGALMA_TLS_DNS_API_TOKEN": "tok", "AGALMA_AUTH_ADMIN_TOKEN": testAdminToken}))
+	const path = "../../deploy/kazari.yaml"
+	got, err := LoadWith(path, env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok", "KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestExampleFile(t *testing.T) {
 	// Apart from the keys that have no default, the example is the defaults.
 	want := Default()
 	want.BaseDomain = "art.example.com"
-	want.DataDir = "/var/lib/agalma"
+	want.DataDir = "/var/lib/kazari"
 	want.TLS.Email = "ops@example.com"
 	want.TLS.DNS.APIToken = "tok"
 	want.Auth.AdminToken = testAdminToken
@@ -113,8 +113,8 @@ func TestExampleFile(t *testing.T) {
 }
 
 func TestExampleFileUnsetSecret(t *testing.T) {
-	_, err := LoadWith("../../deploy/agalma.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": testAdminToken}))
-	want := "config: ../../deploy/agalma.yaml: ${AGALMA_TLS_DNS_API_TOKEN} is not set"
+	_, err := LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
+	want := "config: ../../deploy/kazari.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
@@ -144,7 +144,7 @@ func TestDevFile(t *testing.T) {
 		}
 	}
 
-	got, err = LoadWith("../../deploy/dev.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": "mine"}))
+	got, err = LoadWith("../../deploy/dev.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": "mine"}))
 	if err != nil || got.Auth.AdminToken != "mine" {
 		t.Errorf("admin token from env = %q, %v; want mine", got.Auth.AdminToken, err)
 	}
@@ -307,7 +307,7 @@ serve:
 
 func TestLoadEmptyFile(t *testing.T) {
 	c, err := LoadWith(writeYAML(t, "# nothing but a comment\n"), env(map[string]string{
-		"AGALMA_BASE_DOMAIN": "localhost", "AGALMA_DATA_DIR": "/d", "AGALMA_TLS_MODE": "self-signed",
+		"KAZARI_BASE_DOMAIN": "localhost", "KAZARI_DATA_DIR": "/d", "KAZARI_TLS_MODE": "self-signed",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
@@ -327,20 +327,20 @@ func TestLoadBadYAML(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	vars := map[string]string{
-		"AGALMA_BASE_DOMAIN":              "demo.test",
-		"AGALMA_DATA_DIR":                 "/srv/agalma",
-		"AGALMA_LISTEN_PROXY_MODE":        "true",
-		"AGALMA_LISTEN_HTTP":              "127.0.0.1:8080",
-		"AGALMA_LIMITS_MAX_FILES":         "10",
-		"AGALMA_LIMITS_MAX_VERSION_BYTES": "1GiB",
-		"AGALMA_LIFECYCLE_DEFAULT_GRACE":  "7d",
-		"AGALMA_SERVE_RESERVED_SLUGS":     "api, mcp ,admin",
-		"AGALMA_TLS_DNS_API_TOKEN":        "dns",
-		"AGALMA_AUTH_ADMIN_TOKEN":         testAdminToken,
-		"AGALMA_AUTH_OIDC_ISSUER":         "https://accounts.google.com",
-		"AGALMA_AUTH_OIDC_CLIENT_ID":      "cid",
-		"AGALMA_AUTH_OIDC_CLIENT_SECRET":  "csecret",
-		"AGALMA_EXTERNAL_PORT":            "8080",
+		"KAZARI_BASE_DOMAIN":              "demo.test",
+		"KAZARI_DATA_DIR":                 "/srv/kazari",
+		"KAZARI_LISTEN_PROXY_MODE":        "true",
+		"KAZARI_LISTEN_HTTP":              "127.0.0.1:8080",
+		"KAZARI_LIMITS_MAX_FILES":         "10",
+		"KAZARI_LIMITS_MAX_VERSION_BYTES": "1GiB",
+		"KAZARI_LIFECYCLE_DEFAULT_GRACE":  "7d",
+		"KAZARI_SERVE_RESERVED_SLUGS":     "api, mcp ,admin",
+		"KAZARI_TLS_DNS_API_TOKEN":        "dns",
+		"KAZARI_AUTH_ADMIN_TOKEN":         testAdminToken,
+		"KAZARI_AUTH_OIDC_ISSUER":         "https://accounts.google.com",
+		"KAZARI_AUTH_OIDC_CLIENT_ID":      "cid",
+		"KAZARI_AUTH_OIDC_CLIENT_SECRET":  "csecret",
+		"KAZARI_EXTERNAL_PORT":            "8080",
 	}
 	c, err := LoadWith("", env(vars))
 	if err != nil {
@@ -351,7 +351,7 @@ func TestEnvOverrides(t *testing.T) {
 		got, want any
 	}{
 		{"base_domain", c.BaseDomain, "demo.test"},
-		{"data_dir", c.DataDir, "/srv/agalma"},
+		{"data_dir", c.DataDir, "/srv/kazari"},
 		{"listen.proxy_mode", c.Listen.ProxyMode, true},
 		{"listen.http", c.Listen.HTTP, "127.0.0.1:8080"},
 		{"limits.max_files", c.Limits.MaxFiles, 10},
@@ -378,7 +378,7 @@ func TestEnvOverrides(t *testing.T) {
 
 func TestEnvOverridesFile(t *testing.T) {
 	path := writeYAML(t, "base_domain: from.file\ndata_dir: /d\ntls:\n  mode: self-signed\n")
-	c, err := LoadWith(path, env(map[string]string{"AGALMA_BASE_DOMAIN": "from.env"}))
+	c, err := LoadWith(path, env(map[string]string{"KAZARI_BASE_DOMAIN": "from.env"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
@@ -386,17 +386,17 @@ func TestEnvOverridesFile(t *testing.T) {
 		t.Errorf("BaseDomain = %q, want from.env", c.BaseDomain)
 	}
 	if c.Auth.OIDC != nil {
-		t.Errorf("OIDC = %+v, want nil without any AGALMA_AUTH_OIDC_* variable", c.Auth.OIDC)
+		t.Errorf("OIDC = %+v, want nil without any KAZARI_AUTH_OIDC_* variable", c.Auth.OIDC)
 	}
 }
 
 func TestEnvBadValues(t *testing.T) {
 	tests := []struct{ key, value string }{
-		{"AGALMA_LISTEN_PROXY_MODE", "maybe"},
-		{"AGALMA_LIMITS_MAX_FILES", "many"},
-		{"AGALMA_LIMITS_MAX_FILE_BYTES", "5 parsecs"},
-		{"AGALMA_LIFECYCLE_RETENTION", "soon"},
-		{"AGALMA_AUTH_OIDC_AUTO_PROVISION", "yes please"},
+		{"KAZARI_LISTEN_PROXY_MODE", "maybe"},
+		{"KAZARI_LIMITS_MAX_FILES", "many"},
+		{"KAZARI_LIMITS_MAX_FILE_BYTES", "5 parsecs"},
+		{"KAZARI_LIFECYCLE_RETENTION", "soon"},
+		{"KAZARI_AUTH_OIDC_AUTO_PROVISION", "yes please"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
@@ -435,7 +435,7 @@ func TestEnvNamesUnique(t *testing.T) {
 		}
 	}
 	walk(reflect.TypeFor[Config](), envPrefix)
-	for _, k := range []string{"AGALMA_TLS_DNS_API_TOKEN", "AGALMA_TLS_DNS_PROVIDER", "AGALMA_AUTH_OIDC_CLIENT_SECRET"} {
+	for _, k := range []string{"KAZARI_TLS_DNS_API_TOKEN", "KAZARI_TLS_DNS_PROVIDER", "KAZARI_AUTH_OIDC_CLIENT_SECRET"} {
 		if !seen[k] {
 			t.Errorf("missing %s", k)
 		}
@@ -680,7 +680,7 @@ func TestPathsAndURLs(t *testing.T) {
 	c := valid()
 	c.DataDir = "/data"
 	checks := []struct{ name, got, want string }{
-		{"DBPath", c.DBPath(), "/data/agalma.db"},
+		{"DBPath", c.DBPath(), "/data/kazari.db"},
 		{"BlobDir", c.BlobDir(), "/data/blobs"},
 		{"UploadDir", c.UploadDir(), "/data/uploads"},
 		{"CertStorageDir", c.CertStorageDir(), "/data/certmagic"},

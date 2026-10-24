@@ -18,7 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 // Run exercises every artifact.Store method. open returns an empty store
@@ -430,7 +430,7 @@ func testUpdate(t *testing.T, h *harness) {
 	got.Description = "new description"
 	got.OwnerHandle = "bob"
 	got.Visibility = artifact.Unlisted
-	got.Metadata = map[string]string{"k": "v", "agalma.indexable": "true"}
+	got.Metadata = map[string]string{"k": "v", "kazari.indexable": "true"}
 	got.PublishedVersion = 1 // roll back
 	got.StaleAt = ptr(at(time.Hour))
 	got.ExpiresAt = ptr(at(2 * time.Hour))

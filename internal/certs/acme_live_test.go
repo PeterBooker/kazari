@@ -13,22 +13,22 @@ import (
 // TestACMELiveStaging obtains a real wildcard certificate from the Let's
 // Encrypt staging CA. Run it with:
 //
-//	AGALMA_ACME_LIVE_DOMAIN=art.example.com \
-//	AGALMA_ACME_LIVE_DNS_PROVIDER=cloudflare \
-//	AGALMA_ACME_LIVE_DNS_TOKEN=... \
+//	KAZARI_ACME_LIVE_DOMAIN=art.example.com \
+//	KAZARI_ACME_LIVE_DNS_PROVIDER=cloudflare \
+//	KAZARI_ACME_LIVE_DNS_TOKEN=... \
 //	go test -tags acme_live -run TestACMELiveStaging -timeout 10m ./internal/certs/
 func TestACMELiveStaging(t *testing.T) {
-	domain := os.Getenv("AGALMA_ACME_LIVE_DOMAIN")
-	provider := os.Getenv("AGALMA_ACME_LIVE_DNS_PROVIDER")
+	domain := os.Getenv("KAZARI_ACME_LIVE_DOMAIN")
+	provider := os.Getenv("KAZARI_ACME_LIVE_DNS_PROVIDER")
 	if domain == "" || provider == "" {
-		t.Skip("set AGALMA_ACME_LIVE_DOMAIN and AGALMA_ACME_LIVE_DNS_PROVIDER to run")
+		t.Skip("set KAZARI_ACME_LIVE_DOMAIN and KAZARI_ACME_LIVE_DNS_PROVIDER to run")
 	}
-	dns, err := NewDNSProvider(provider, os.Getenv("AGALMA_ACME_LIVE_DNS_TOKEN"))
+	dns, err := NewDNSProvider(provider, os.Getenv("KAZARI_ACME_LIVE_DNS_TOKEN"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a, err := NewACME(ACMEConfig{
-		Email:      os.Getenv("AGALMA_ACME_LIVE_EMAIL"),
+		Email:      os.Getenv("KAZARI_ACME_LIVE_EMAIL"),
 		CA:         "letsencrypt-staging",
 		Domains:    []string{domain, "*." + domain},
 		StorageDir: t.TempDir(),

@@ -1,4 +1,4 @@
--- Agalma schema. Timestamps are INTEGER unix nanoseconds (UTC).
+-- Kazari schema. Timestamps are INTEGER unix nanoseconds (UTC).
 
 CREATE TABLE user (
     id           INTEGER PRIMARY KEY,

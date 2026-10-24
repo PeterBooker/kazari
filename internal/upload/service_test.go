@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/artifact"
-	"agalma/internal/sqlite"
-	"agalma/internal/upload"
+	"kazari/internal/artifact"
+	"kazari/internal/sqlite"
+	"kazari/internal/upload"
 )
 
 // clock is a fixed time that tests advance by hand.
@@ -49,7 +49,7 @@ func newEnv(t *testing.T, opts upload.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	tmp := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(tmp, "agalma.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(tmp, "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

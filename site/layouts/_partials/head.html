@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {{- $title := partial "title.html" . }}
 {{- $full := cond .IsHome (printf "%s: self-hosted publishing for the pages Claude builds" site.Title) (printf "%s · %s" $title site.Title) }}
-{{- $desc := or .Description (cond .IsHome site.Params.description (printf "%s: %s" $title "Agalma documentation")) }}
+{{- $desc := or .Description (cond .IsHome site.Params.description (printf "%s: %s" $title "Kazari documentation")) }}
 <title>{{ $full }}</title>
 <meta name="description" content="{{ $desc }}">
 <link rel="canonical" href="{{ .Permalink }}">

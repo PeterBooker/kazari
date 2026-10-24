@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"agalma/internal/buildinfo"
-	"agalma/internal/certs"
-	"agalma/internal/middleware"
+	"kazari/internal/buildinfo"
+	"kazari/internal/certs"
+	"kazari/internal/middleware"
 )
 
 // Server timeouts. readTimeout bounds reading a whole request and
@@ -58,7 +58,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	}
 	close(a.started)
 	addrs := a.Addrs()
-	a.log.Info("agalma started",
+	a.log.Info("kazari started",
 		"version", buildinfo.Get().Version,
 		"base_domain", a.cfg.BaseDomain,
 		"mode", a.mode,
@@ -105,9 +105,9 @@ func (a *App) Run(ctx context.Context) (err error) {
 
 	err = g.Wait()
 	if err != nil {
-		a.log.Error("agalma stopped", "err", err)
+		a.log.Error("kazari stopped", "err", err)
 	} else {
-		a.log.Info("agalma stopped")
+		a.log.Info("kazari stopped")
 	}
 	return err
 }
@@ -162,7 +162,7 @@ func (a *App) listen() (servers []server, err error) {
 	return servers, nil
 }
 
-// newServer returns an http.Server with Agalma's limits and its error log
+// newServer returns an http.Server with Kazari's limits and its error log
 // bridged to slog.
 func (a *App) newServer(h http.Handler) *http.Server {
 	return &http.Server{

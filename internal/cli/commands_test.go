@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/api"
+	"kazari/internal/api"
 )
 
 func TestMain(m *testing.M) {
@@ -102,10 +102,10 @@ var demo = api.Artifact{
 func TestSettingsPrecedence(t *testing.T) {
 	writeConfig := func(t *testing.T, dir, content string) {
 		t.Helper()
-		if err := os.MkdirAll(filepath.Join(dir, "agalma"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, "kazari"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "agalma", "config.yaml"), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "kazari", "config.yaml"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,7 +116,7 @@ admin_token: file-admin
 `
 	tests := []struct {
 		name    string
-		config  string // written to $XDG_CONFIG_HOME/agalma/config.yaml
+		config  string // written to $XDG_CONFIG_HOME/kazari/config.yaml
 		env     map[string]string
 		flags   globals
 		want    settings
@@ -130,13 +130,13 @@ admin_token: file-admin
 		{
 			name:   "env beats file",
 			config: file,
-			env:    map[string]string{"AGALMA_URL": "https://api.env.test", "AGALMA_TOKEN": "env-token", "AGALMA_ADMIN_TOKEN": "env-admin"},
+			env:    map[string]string{"KAZARI_URL": "https://api.env.test", "KAZARI_TOKEN": "env-token", "KAZARI_ADMIN_TOKEN": "env-admin"},
 			want:   settings{URL: "https://api.env.test", Token: "env-token", AdminURL: "https://admin.file.test", AdminToken: "env-admin"},
 		},
 		{
 			name:   "flag beats env",
 			config: file,
-			env:    map[string]string{"AGALMA_URL": "https://api.env.test", "AGALMA_TOKEN": "env-token"},
+			env:    map[string]string{"KAZARI_URL": "https://api.env.test", "KAZARI_TOKEN": "env-token"},
 			flags:  globals{url: "https://api.flag.test", adminURL: "https://admin.flag.test"},
 			want:   settings{URL: "https://api.flag.test", Token: "env-token", AdminURL: "https://admin.flag.test", AdminToken: "file-admin"},
 		},
@@ -152,8 +152,8 @@ admin_token: file-admin
 		},
 		{
 			name:    "explicit config must exist",
-			flags:   globals{config: "/nonexistent/agalma.yaml"},
-			wantErr: "config /nonexistent/agalma.yaml",
+			flags:   globals{config: "/nonexistent/kazari.yaml"},
+			wantErr: "config /nonexistent/kazari.yaml",
 		},
 		{
 			name:    "unknown key",
@@ -206,7 +206,7 @@ admin_token: file-admin
 
 func TestConfigFromHome(t *testing.T) {
 	home := t.TempDir()
-	dir := filepath.Join(home, ".config", "agalma")
+	dir := filepath.Join(home, ".config", "kazari")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestConfigFromHome(t *testing.T) {
 // The resolved token is what reaches the server.
 func TestRunTokenPrecedence(t *testing.T) {
 	f, srv := newFakeAPI(t, map[string]http.HandlerFunc{"GET /v1/me": replyWith(200, api.Me{Handle: "peter"})})
-	env := map[string]string{"AGALMA_URL": srv.URL, "AGALMA_TOKEN": "env-token"}
+	env := map[string]string{"KAZARI_URL": srv.URL, "KAZARI_TOKEN": "env-token"}
 	if r := runCLI(t, env, "me"); r.code != 0 {
 		t.Fatalf("me: %+v", r)
 	}
@@ -243,27 +243,27 @@ func TestRunUsageErrors(t *testing.T) {
 		wantCode   int
 		wantStderr string
 	}{
-		{"no command", nil, 2, "usage: agalma"},
-		{"unknown command", []string{"frobnicate"}, 2, `agalma: unknown command "frobnicate"`},
+		{"no command", nil, 2, "usage: kazari"},
+		{"unknown command", []string{"frobnicate"}, 2, `kazari: unknown command "frobnicate"`},
 		{"unknown flag", []string{"get", "--bogus", "demo"}, 2, "flag provided but not defined: -bogus"},
-		{"missing positional", []string{"get"}, 2, "usage: agalma get <slug>"},
-		{"too many positionals", []string{"rm", "a", "b"}, 2, "usage: agalma rm <slug>"},
-		{"publish without slug", []string{"publish", dir}, 2, "agalma: publish: --slug is required"},
+		{"missing positional", []string{"get"}, 2, "usage: kazari get <slug>"},
+		{"too many positionals", []string{"rm", "a", "b"}, 2, "usage: kazari rm <slug>"},
+		{"publish without slug", []string{"publish", dir}, 2, "kazari: publish: --slug is required"},
 		{"publish bad visibility", []string{"publish", dir, "--slug", "x", "--visibility", "secret"}, 2, "--visibility must be public or unlisted"},
 		{"bad meta", []string{"publish", dir, "--slug", "x", "--meta", "novalue"}, 2, "want key=value"},
 		{"visibility value", []string{"visibility", "demo", "hidden"}, 2, "want public, unlisted or unpublished"},
 		{"rollback version", []string{"rollback", "demo", "two"}, 2, "version must be a positive integer"},
 		{"stale grace", []string{"stale", "demo", "--grace", "2w"}, 2, "stale: --grace"},
 		{"update nothing", []string{"update", "demo"}, 2, "update: nothing to update"},
-		{"files without cat", []string{"files", "ls"}, 2, "usage: agalma files cat"},
+		{"files without cat", []string{"files", "ls"}, 2, "usage: kazari files cat"},
 		{"admin unknown", []string{"admin", "nuke"}, 2, `admin: unknown command "nuke"`},
 		{"admin users missing action", []string{"admin", "users"}, 2, "want one of create, list, update"},
 		{"admin enable and disable", []string{"admin", "users", "update", "ann", "--enable", "--disable"}, 2, "are exclusive"},
 		{"admin update nothing", []string{"admin", "users", "update", "ann"}, 2, "nothing to change"},
 		{"admin bad quota", []string{"admin", "users", "create", "ann", "--quota", "lots"}, 2, `invalid size "lots"`},
 		{"admin audit since", []string{"admin", "audit", "--since", "yesterday"}, 2, "--since"},
-		{"missing url", []string{"me"}, 2, "agalma: no API URL: set --url, AGALMA_URL or url in"},
-		{"missing token", []string{"--url", "http://x", "me"}, 2, "agalma: no API token"},
+		{"missing url", []string{"me"}, 2, "kazari: no API URL: set --url, KAZARI_URL or url in"},
+		{"missing token", []string{"--url", "http://x", "me"}, 2, "kazari: no API token"},
 		{"help", []string{"help"}, 0, "Commands:"},
 		{"global -h", []string{"-h"}, 0, "Global flags:"},
 		{"command -h", []string{"publish", "-h"}, 0, "-slug"},
@@ -297,9 +297,9 @@ func TestRunHTTPError(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"get", "demo"}, "agalma: not_found: no artifact demo\n"},
-		{[]string{"--json", "get", "demo"}, "agalma: not_found: no artifact demo\n"},
-		{[]string{"rm", "demo"}, "agalma: http_502: upstream down\n"},
+		{[]string{"get", "demo"}, "kazari: not_found: no artifact demo\n"},
+		{[]string{"--json", "get", "demo"}, "kazari: not_found: no artifact demo\n"},
+		{[]string{"rm", "demo"}, "kazari: http_502: upstream down\n"},
 	}
 	for _, tt := range tests {
 		r := runCLI(t, nil, append([]string{"--url", srv.URL, "--token", "t"}, tt.args...)...)
@@ -637,7 +637,7 @@ func TestRunSimpleCommands(t *testing.T) {
 
 func TestRunVersion(t *testing.T) {
 	r := runCLI(t, nil, "version")
-	if r.code != 0 || !strings.HasPrefix(r.stdout, "agalma ") {
+	if r.code != 0 || !strings.HasPrefix(r.stdout, "kazari ") {
 		t.Errorf("%+v", r)
 	}
 	r = runCLI(t, nil, "--json", "version")
@@ -662,7 +662,7 @@ func TestRunAdmin(t *testing.T) {
 		"GET /v1/users":                    record([]api.User{{Handle: "ann", Email: "ann@x.test", Role: "admin", QuotaBytes: 1 << 30, UsedBytes: 2048, DisabledAt: &disabled, CreatedAt: t0}}),
 		"POST /v1/users":                   record(api.User{Handle: "bob", Role: "member", QuotaBytes: 500 << 20, CreatedAt: t0}),
 		"PATCH /v1/users/bob":              record(api.User{Handle: "bob", Role: "admin", CreatedAt: t0}),
-		"POST /v1/users/bob/keys":          record(api.IssuedKey{Key: "agk_pfx_SECRET", APIKey: api.APIKey{Prefix: "pfx", CreatedAt: t0}}),
+		"POST /v1/users/bob/keys":          record(api.IssuedKey{Key: "kzk_pfx_SECRET", APIKey: api.APIKey{Prefix: "pfx", CreatedAt: t0}}),
 		"DELETE /v1/users/bob/keys/pfx":    record(api.OK{OK: true}),
 		"POST /v1/artifacts/demo/transfer": record(demo),
 		"POST /v1/artifacts/demo/hide":     record(demo),
@@ -689,7 +689,7 @@ func TestRunAdmin(t *testing.T) {
 			wantOut:  "handle:   bob\nemail:    -\nrole:     admin\nstorage:  0 B used (no quota)\ncreated:  2026-10-01T14:00:00+02:00\n",
 			wantBody: `{"role":"admin","quota_bytes":0,"disabled":false}`},
 		{args: []string{"keys", "issue", "bob", "--label", "ci", "--scopes", "read, write", "--expires", "720h"},
-			wantOut: "agk_pfx_SECRET\n", wantStderr: "issued key pfx for bob; the key is shown only once\n",
+			wantOut: "kzk_pfx_SECRET\n", wantStderr: "issued key pfx for bob; the key is shown only once\n",
 			wantBody: `{"label":"ci","scopes":["read","write"],"expires_in":"720h"}`},
 		{args: []string{"keys", "revoke", "bob", "pfx"}, wantOut: "revoked pfx\n"},
 		{args: []string{"transfer", "demo", "bob"}, wantOut: "demo now belongs to bob\n", wantBody: `{"owner":"bob"}`},
@@ -748,7 +748,7 @@ func TestRunAdmin(t *testing.T) {
 
 	// The issued key is the only secret printed; --json includes it once.
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "keys", "issue", "bob")
-	if strings.Count(r.stdout, "agk_pfx_SECRET") != 1 || strings.Contains(r.stdout+r.stderr, "adm\"") {
+	if strings.Count(r.stdout, "kzk_pfx_SECRET") != 1 || strings.Contains(r.stdout+r.stderr, "adm\"") {
 		t.Errorf("%+v", r)
 	}
 }

@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"agalma/internal/auth"
-	"agalma/internal/user"
+	"kazari/internal/auth"
+	"kazari/internal/user"
 )
 
 // Names of the cookie that holds the id of the pending authorization
@@ -23,8 +23,8 @@ import (
 // mcp.<base> with Domain=<base>. Over plain http (Options.InsecureCookies)
 // the prefix is unusable and the plain name is used.
 const (
-	CookieName         = "__Host-agalma_oauth"
-	InsecureCookieName = "agalma_oauth"
+	CookieName         = "__Host-kazari_oauth"
+	InsecureCookieName = "kazari_oauth"
 )
 
 // pkceValue matches an S256 challenge or a code verifier (RFC 7636): 43 to
@@ -276,7 +276,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
 		s.message(w, http.StatusForbidden, "No access",
-			"Your account is not allowed to use this Agalma instance. Ask your administrator for access.", id.Email)
+			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", id.Email)
 		return
 	}
 	if err != nil {
@@ -452,7 +452,7 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		}
 		if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
 			s.message(w, http.StatusForbidden, "No access",
-				"Your account is not allowed to use this Agalma instance. Ask your administrator for access.", "")
+				"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", "")
 			return approval{}, false
 		}
 		if err != nil {

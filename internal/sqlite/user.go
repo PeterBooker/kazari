@@ -10,7 +10,7 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 
-	"agalma/internal/user"
+	"kazari/internal/user"
 )
 
 // UserStore implements user.Store.

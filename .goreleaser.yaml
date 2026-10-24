@@ -1,20 +1,20 @@
 version: 2
 
-project_name: agalma
+project_name: kazari
 
 builds:
-  - id: agalma
-    main: ./cmd/agalma
-    binary: agalma
+  - id: kazari
+    main: ./cmd/kazari
+    binary: kazari
     env:
       - CGO_ENABLED=0
     flags:
       - -trimpath
     ldflags:
       - -s -w
-      - -X agalma/internal/buildinfo.version={{.Version}}
-      - -X agalma/internal/buildinfo.commit={{.Commit}}
-      - -X agalma/internal/buildinfo.date={{.Date}}
+      - -X kazari/internal/buildinfo.version={{.Version}}
+      - -X kazari/internal/buildinfo.commit={{.Commit}}
+      - -X kazari/internal/buildinfo.date={{.Date}}
     goos:
       - linux
       - darwin
@@ -32,9 +32,9 @@ archives:
     files:
       - LICENSE
       - README.md
-      - deploy/agalma.yaml
-      - deploy/agalma.env.example
-      - deploy/agalma.service
+      - deploy/kazari.yaml
+      - deploy/kazari.env.example
+      - deploy/kazari.service
       - deploy/Caddyfile
 
 checksum:
@@ -60,10 +60,10 @@ dockers:
     goarch: amd64
     dockerfile: deploy/Dockerfile.goreleaser
     image_templates:
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
     build_flag_templates:
       - --platform=linux/amd64
-      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/agalma
+      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/kazari
       - --label=org.opencontainers.image.version={{ .Version }}
       - --label=org.opencontainers.image.revision={{ .FullCommit }}
       - --label=org.opencontainers.image.licenses=MIT
@@ -73,23 +73,23 @@ dockers:
     goarch: arm64
     dockerfile: deploy/Dockerfile.goreleaser
     image_templates:
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
     build_flag_templates:
       - --platform=linux/arm64
-      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/agalma
+      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/kazari
       - --label=org.opencontainers.image.version={{ .Version }}
       - --label=org.opencontainers.image.revision={{ .FullCommit }}
       - --label=org.opencontainers.image.licenses=MIT
 
 docker_manifests:
-  - name_template: ghcr.io/peterbooker/agalma:{{ .Version }}
+  - name_template: ghcr.io/peterbooker/kazari:{{ .Version }}
     image_templates:
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
-  - name_template: ghcr.io/peterbooker/agalma:latest
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
+  - name_template: ghcr.io/peterbooker/kazari:latest
     image_templates:
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
-      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
+      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
 
 docker_signs:
   - cmd: cosign
@@ -107,6 +107,6 @@ changelog:
 release:
   github:
     owner: PeterBooker
-    name: agalma
+    name: kazari
   draft: false
   prerelease: auto

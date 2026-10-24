@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/audit"
+	"kazari/internal/audit"
 )
 
 // AuditStore implements audit.Recorder and audit.Reader over the

@@ -12,7 +12,7 @@ type clientIPKey struct{}
 
 // RealIP stores the client IP in the request context for ClientIP. In
 // proxy mode it trusts the last X-Forwarded-For entry, which is the one the
-// proxy in front of Agalma added (proxies that append keep whatever the
+// proxy in front of Kazari added (proxies that append keep whatever the
 // client sent to the left of it), then X-Real-IP. Only enable it behind
 // exactly one proxy that sets, overwrites or appends to those headers.
 // Otherwise, and when the headers hold no valid address, it uses the host

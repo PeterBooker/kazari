@@ -10,12 +10,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"agalma/internal/audit"
+	"kazari/internal/audit"
 )
 
 func auditTestStore(t *testing.T) *AuditStore {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"agalma/internal/blob"
+	"kazari/internal/blob"
 )
 
 // Run exercises a blob.Store. newStore must return an empty store; it is
@@ -63,7 +63,7 @@ func readAll(t *testing.T, s blob.Store, hash string) []byte {
 }
 
 func testRoundTrip(t *testing.T, s blob.Store) {
-	content := []byte(strings.Repeat("hello, agalma\n", 10000))
+	content := []byte(strings.Repeat("hello, kazari\n", 10000))
 	hash := put(t, s, content)
 	if got := readAll(t, s, hash); !bytes.Equal(got, content) {
 		t.Fatalf("content mismatch: got %d bytes, want %d", len(got), len(content))
@@ -89,8 +89,8 @@ func testRoundTrip(t *testing.T, s blob.Store) {
 	if _, err := io.ReadFull(rc, buf); err != nil {
 		t.Fatal(err)
 	}
-	if string(buf) != "agalma" {
-		t.Fatalf("read after seek = %q, want %q", buf, "agalma")
+	if string(buf) != "kazari" {
+		t.Fatalf("read after seek = %q, want %q", buf, "kazari")
 	}
 }
 

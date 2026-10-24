@@ -29,9 +29,9 @@ func TestHTTPAndJob(t *testing.T) {
 	m.Handler().ServeHTTP(out, httptest.NewRequest("GET", "/metrics", nil))
 	body := out.Body.String()
 	for _, want := range []string{
-		`agalma_http_requests_total{method="GET",status="418",surface="api"} 1`,
-		`agalma_job_runs_total{job="sweep",result="error"} 1`,
-		`agalma_http_requests_in_flight{surface="api"} 0`,
+		`kazari_http_requests_total{method="GET",status="418",surface="api"} 1`,
+		`kazari_job_runs_total{job="sweep",result="error"} 1`,
+		`kazari_http_requests_in_flight{surface="api"} 0`,
 		"go_goroutines",
 	} {
 		if !strings.Contains(body, want) {
@@ -58,13 +58,13 @@ func TestHTTPMethodLabelBounded(t *testing.T) {
 	m.Handler().ServeHTTP(out, httptest.NewRequest("GET", "/metrics", nil))
 	var series []string
 	for line := range strings.SplitSeq(out.Body.String(), "\n") {
-		if strings.HasPrefix(line, "agalma_http_requests_total{") {
+		if strings.HasPrefix(line, "kazari_http_requests_total{") {
 			series = append(series, line)
 		}
 	}
 	want := []string{
-		`agalma_http_requests_total{method="DELETE",status="405",surface="site"} 1`,
-		`agalma_http_requests_total{method="other",status="405",surface="site"} 100`,
+		`kazari_http_requests_total{method="DELETE",status="405",surface="site"} 1`,
+		`kazari_http_requests_total{method="other",status="405",surface="site"} 100`,
 	}
 	if !slices.Equal(series, want) {
 		t.Errorf("series = %q, want %q", series, want)

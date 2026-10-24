@@ -9,7 +9,7 @@
       <div class="hero-copy">
         <p class="eyebrow">Open source · Self-hosted · MIT licensed</p>
         <h1>Ask Claude for a page.<br>Share it on <em>your</em> domain.</h1>
-        <p class="lede">Agalma is a small, self-hosted home for what Claude builds: prototypes, reports, dashboards and demos. Every page gets its own address, every change is kept as a version, and people can sign in with the work account they already have.</p>
+        <p class="lede">Kazari is a small, self-hosted home for what Claude builds: prototypes, reports, dashboards and demos. Every page gets its own address, every change is kept as a version, and people can sign in with the work account they already have.</p>
         <p class="cta-row">
           <a class="button button-primary" href="{{ $quick.RelPermalink }}">Get started {{ partial "icon.html" "arrow" }}</a>
           <a class="button" href="{{ $docs.RelPermalink }}">Read the docs</a>
@@ -25,9 +25,9 @@
         <div class="chat">
           <div class="msg msg-user">
             <span class="who">You</span>
-            <p>Build a clickable prototype of the new onboarding flow and publish it to Agalma.</p>
+            <p>Build a clickable prototype of the new onboarding flow and publish it to Kazari.</p>
           </div>
-          <div class="tool-call"><span class="pulse"></span>agalma <span>·</span> create_artifact</div>
+          <div class="tool-call"><span class="pulse"></span>kazari <span>·</span> create_artifact</div>
           <div class="msg msg-claude">
             <span class="who">Claude</span>
             <p>Published <span class="link">https://onboarding.art.example.com/</span> (version 1)</p>
@@ -60,12 +60,12 @@
         <li>
           <span class="step-n">1</span>
           <h3>Connect</h3>
-          <p>Add Agalma to claude.ai as a custom connector, or to Claude Code with one command, and sign in with your work account or an API key.</p>
+          <p>Add Kazari to claude.ai as a custom connector, or to Claude Code with one command, and sign in with your work account or an API key.</p>
         </li>
         <li>
           <span class="step-n">2</span>
           <h3>Ask</h3>
-          <p>Describe what you want. Claude writes the page, publishes it with Agalma's tools and replies with the link.</p>
+          <p>Describe what you want. Claude writes the page, publishes it with Kazari's tools and replies with the link.</p>
         </li>
         <li>
           <span class="step-n">3</span>
@@ -137,7 +137,7 @@
       <div class="section-head">
         <p class="eyebrow">Addresses</p>
         <h2 id="origins">Every page is its own site</h2>
-        <p>Agalma serves each artifact from its own subdomain under one wildcard certificate. Each is a separate browser origin, so one page can't read another's cookies or storage.</p>
+        <p>Kazari serves each artifact from its own subdomain under one wildcard certificate. Each is a separate browser origin, so one page can't read another's cookies or storage.</p>
         <p>Versions never change. Put a version link in a review thread and it will always show what the reviewer saw.</p>
       </div>
       <div class="hosts">
@@ -182,7 +182,7 @@
           </div>
           <div class="prompt-demo">
             <p class="connector"><span>Connector URL</span><code>https://mcp.art.example.com/</code></p>
-            <div class="msg msg-user"><span class="who">You</span><p>Turn the attached CSV into a dashboard with a chart per region and publish it to Agalma as q3-dashboard.</p></div>
+            <div class="msg msg-user"><span class="who">You</span><p>Turn the attached CSV into a dashboard with a chart per region and publish it to Kazari as q3-dashboard.</p></div>
             <div class="msg msg-claude"><span class="who">Claude</span><p>Published <span class="link">https://q3-dashboard.art.example.com/</span> (version 1)</p></div>
           </div>
         </div>
@@ -192,11 +192,11 @@
             <a class="card-link" href="{{ (site.GetPage "/docs/mcp").RelPermalink }}">MCP server reference {{ partial "icon.html" "arrow" }}</a>
           </div>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
-claude mcp add --transport http agalma https://mcp.art.example.com/
+claude mcp add --transport http kazari https://mcp.art.example.com/
 
 # or with an API key instead of OAuth
-claude mcp add --transport http agalma https://mcp.art.example.com/ \
-  --header "Authorization: Bearer agk_..."` ) }}
+claude mcp add --transport http kazari https://mcp.art.example.com/ \
+  --header "Authorization: Bearer kzk_..."` ) }}
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
           <div class="panel-text">
@@ -204,11 +204,11 @@ claude mcp add --transport http agalma https://mcp.art.example.com/ \
             <a class="card-link" href="{{ (site.GetPage "/docs/cli").RelPermalink }}">CLI reference {{ partial "icon.html" "arrow" }}</a>
           </div>
           {{ partial "snippet.html" (dict "lang" "console" "code" `
-$ agalma publish ./site --slug q3-report --name "Q3 report"
+$ kazari publish ./site --slug q3-report --name "Q3 report"
 https://q3-report.art.example.com/
-$ agalma update q3-report ./site --label "fix chart"
-$ agalma rollback q3-report 1
-$ agalma stale q3-report --grace 72h` ) }}
+$ kazari update q3-report ./site --label "fix chart"
+$ kazari rollback q3-report 1
+$ kazari stale q3-report --grace 72h` ) }}
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-rest" aria-labelledby="tab-rest" hidden>
           <div class="panel-text">
@@ -217,7 +217,7 @@ $ agalma stale q3-report --grace 72h` ) }}
           </div>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
 curl https://api.art.example.com/v1/artifacts \
-  -H "Authorization: Bearer $AGALMA_TOKEN" \
+  -H "Authorization: Bearer $KAZARI_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"slug": "hello",
        "files": [{"path": "index.html", "content": "<h1>Hello</h1>"}]}'
@@ -276,8 +276,8 @@ curl https://api.art.example.com/v1/artifacts \
           <h3>Try it on your machine</h3>
           <p>No domain or certificate needed: browsers resolve <code>*.localhost</code> to your own computer.</p>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
-git clone https://github.com/PeterBooker/agalma.git
-cd agalma
+git clone https://github.com/PeterBooker/kazari.git
+cd kazari
 docker compose up --build -d
 # pages appear at http://<slug>.localhost:8080/` ) }}
           <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
@@ -286,18 +286,18 @@ docker compose up --build -d
           <h3>Run it for your team</h3>
           <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one.</p>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
-docker run -d --name agalma -p 80:80 -p 443:443 \
-  -v /srv/agalma/data:/var/lib/agalma \
-  -e AGALMA_BASE_DOMAIN=art.example.com \
-  -e AGALMA_TLS_EMAIL=ops@example.com \
-  -e AGALMA_TLS_DNS_PROVIDER=cloudflare \
-  -e AGALMA_TLS_DNS_API_TOKEN=cf-token \
-  -e AGALMA_AUTH_ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  ghcr.io/peterbooker/agalma:latest serve` ) }}
+docker run -d --name kazari -p 80:80 -p 443:443 \
+  -v /srv/kazari/data:/var/lib/kazari \
+  -e KAZARI_BASE_DOMAIN=art.example.com \
+  -e KAZARI_TLS_EMAIL=ops@example.com \
+  -e KAZARI_TLS_DNS_PROVIDER=cloudflare \
+  -e KAZARI_TLS_DNS_API_TOKEN=cf-token \
+  -e KAZARI_AUTH_ADMIN_TOKEN="$(openssl rand -hex 32)" \
+  ghcr.io/peterbooker/kazari:latest serve` ) }}
           <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Installation guide {{ partial "icon.html" "arrow" }}</a>
         </article>
       </div>
-      <p class="status-note"><strong>Status.</strong> Agalma is heading for v1.0. The server, REST API, MCP server, OAuth sign-in and CLI work today; expect breaking changes until v1.0.0 is tagged.</p>
+      <p class="status-note"><strong>Status.</strong> Kazari is heading for v1.0. The server, REST API, MCP server, OAuth sign-in and CLI work today; expect breaking changes until v1.0.0 is tagged.</p>
     </div>
   </section>
 

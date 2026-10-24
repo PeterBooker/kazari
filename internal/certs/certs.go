@@ -1,4 +1,4 @@
-// Package certs provides the TLS certificate sources Agalma can serve from:
+// Package certs provides the TLS certificate sources Kazari can serve from:
 // a self-signed certificate for development, certificate files on disk
 // reloaded when they change, and ACME (DNS-01, wildcard) through CertMagic.
 package certs

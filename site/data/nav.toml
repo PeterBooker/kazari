@@ -16,7 +16,7 @@
     path = "/docs/publish-from-code"
 
 [[sections]]
-  title = "Run Agalma"
+  title = "Run Kazari"
   [[sections.pages]]
     title = "Install"
     path = "/docs/install"

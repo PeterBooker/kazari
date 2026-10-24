@@ -18,7 +18,7 @@ import (
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"agalma/internal/auth"
+	"kazari/internal/auth"
 )
 
 // DefaultScopes are requested when Config.Scopes is empty.
@@ -153,7 +153,7 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 	return p.identity(idt.Issuer, idt.Subject, c), nil
 }
 
-// claims are the ID token claims Agalma reads.
+// claims are the ID token claims Kazari reads.
 type claims struct {
 	Email             string    `json:"email"`
 	EmailVerified     *flexBool `json:"email_verified"`

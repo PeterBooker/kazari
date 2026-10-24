@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"regexp"
 
-	"agalma/internal/auth"
+	"kazari/internal/auth"
 )
 
 //go:embed templates/pages.html

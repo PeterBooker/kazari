@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/user"
+	"kazari/internal/user"
 )
 
 // tokenResponse is the RFC 6749 section 5.1 success body.

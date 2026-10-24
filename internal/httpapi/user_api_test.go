@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/httpapi"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/httpapi"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 func TestCreateJSON(t *testing.T) {
@@ -531,7 +531,7 @@ func TestAuthAndRouting(t *testing.T) {
 	ro := e.member("alice", readOnly)
 	e.create(e.alice, "demo")
 
-	for _, token := range []string{"", "agk_bogus"} {
+	for _, token := range []string{"", "kzk_bogus"} {
 		resp := e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts"), token: token})
 		e.apiErr(resp, http.StatusUnauthorized, api.CodeUnauthorized)
 		if !strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "Bearer") {

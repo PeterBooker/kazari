@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 // Defaults applied by New to zero Options fields.
@@ -36,7 +36,7 @@ const (
 
 // Options configures a Service. Zero fields take the defaults above.
 type Options struct {
-	Dir             string // staging root, data_dir/uploads; default os.TempDir()/agalma-uploads
+	Dir             string // staging root, data_dir/uploads; default os.TempDir()/kazari-uploads
 	MaxChunkBytes   int64  // largest single chunk, after any transport decoding
 	MaxTotalBytes   int64  // all files of one upload together
 	MaxFiles        int    // files per upload
@@ -55,7 +55,7 @@ type Service struct {
 // New returns a Service. The staging directory is created on first use.
 func New(store Store, opts Options) *Service {
 	if opts.Dir == "" {
-		opts.Dir = filepath.Join(os.TempDir(), "agalma-uploads")
+		opts.Dir = filepath.Join(os.TempDir(), "kazari-uploads")
 	}
 	if opts.MaxChunkBytes <= 0 {
 		opts.MaxChunkBytes = DefaultMaxChunkBytes

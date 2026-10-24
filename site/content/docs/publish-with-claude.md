@@ -1,62 +1,53 @@
 ---
 title: Publish with Claude
-description: Connect claude.ai or Claude Code to Agalma, ask for pages, change and roll them back, share them safely and tidy them away.
+description: Connect claude.ai or Claude Code to Kazari, ask for pages, change and roll them back, share them safely and tidy them away.
 ---
 
 # Publish with Claude
 
-Ask Claude for a prototype, a report, a dashboard or a small site, and Agalma gives it an address on
-your organisation's domain. You do not need a repository, a build step or a hosting account. This
-guide is for anyone who works with Claude, whether you write code or not.
+Ask Claude for a prototype, a report, a dashboard or a small site, and Kazari gives it an address on your organisation's domain. You do not need a repository, a build step or a hosting account. This guide is for anyone who works with Claude, whether you write code or not.
 
-You need an Agalma instance. Your administrator will give you its address, which looks like
-`art.example.com` in the examples below. If you are the administrator, start with [Install](install.md).
+You need an Kazari instance. Your administrator will give you its address, which looks like `art.example.com` in the examples below. If you are the administrator, start with [Install](install.md).
 
 ## Connect Claude
 
 ### claude.ai
 
-Add Agalma as a custom connector:
+Add Kazari as a custom connector:
 
 1. In claude.ai, open **Settings → Connectors** and add a custom connector.
 2. Enter the address `https://mcp.art.example.com/` (your instance's `mcp.` address) and connect.
-3. Claude.ai sends you to sign in. If your organisation has set up single sign-on, use your work
-   account; otherwise Agalma asks for an API key, which your administrator can issue for you.
-4. Agalma shows a consent page naming claude.ai, your account and what it may do. Approve it once.
+3. Claude.ai sends you to sign in. If your organisation has set up single sign-on, use your work account; otherwise Kazari asks for an API key, which your administrator can issue for you.
+4. Kazari shows a consent page naming claude.ai, your account and what it may do. Approve it once.
 
-On Team and Enterprise plans, an owner may need to add the connector for the organisation before
-members can connect it.
+On Team and Enterprise plans, an owner may need to add the connector for the organisation before members can connect it.
 
 ### Claude Code
 
 ```sh
-claude mcp add --transport http agalma https://mcp.art.example.com/
+claude mcp add --transport http kazari https://mcp.art.example.com/
 ```
 
-The first time Claude Code uses the server it opens your browser to sign in, exactly as above. To use
-an API key instead, add `--header "Authorization: Bearer agk_..."` to the command.
+The first time Claude Code uses the server it opens your browser to sign in, exactly as above. To use an API key instead, add `--header "Authorization: Bearer kzk_..."` to the command.
 
-Agalma's repository also ships a Claude Code skill with its conventions and recipes. Install it for
-all your projects with:
+Kazari's repository also ships a Claude Code skill with its conventions and recipes. Install it for all your projects with:
 
 ```sh
-mkdir -p ~/.claude/skills/agalma
-curl -fsSL https://raw.githubusercontent.com/PeterBooker/agalma/main/skills/agalma/SKILL.md \
-  -o ~/.claude/skills/agalma/SKILL.md
+mkdir -p ~/.claude/skills/kazari
+curl -fsSL https://raw.githubusercontent.com/PeterBooker/kazari/main/skills/kazari/SKILL.md \
+  -o ~/.claude/skills/kazari/SKILL.md
 ```
 
 ### Other MCP clients
 
-Any client that speaks MCP over Streamable HTTP can connect to `https://mcp.art.example.com/`, either
-by signing in through OAuth or with an `Authorization: Bearer agk_...` header. Many clients take a
-JSON entry along these lines; check your client's documentation for where it goes:
+Any client that speaks MCP over Streamable HTTP can connect to `https://mcp.art.example.com/`, either by signing in through OAuth or with an `Authorization: Bearer kzk_...` header. Many clients take a JSON entry along these lines; check your client's documentation for where it goes:
 
 ```json
 {
   "mcpServers": {
-    "agalma": {
+    "kazari": {
       "url": "https://mcp.art.example.com/",
-      "headers": { "Authorization": "Bearer agk_..." }
+      "headers": { "Authorization": "Bearer kzk_..." }
     }
   }
 }
@@ -64,12 +55,11 @@ JSON entry along these lines; check your client's documentation for where it goe
 
 ## Ask for a page
 
-Say what you want and that it should go on Agalma. Naming a slug is optional, but it decides the
-address and cannot be changed later.
+Say what you want and that it should go on Kazari. Naming a slug is optional, but it decides the address and cannot be changed later.
 
 | You say | What Claude does |
 | ------- | ---------------- |
-| "Build a clickable prototype of a three-step signup flow and publish it to Agalma as `signup-flow`." | Writes the page and calls `create_artifact`. |
+| "Build a clickable prototype of a three-step signup flow and publish it to Kazari as `signup-flow`." | Writes the page and calls `create_artifact`. |
 | "Turn this CSV into a dashboard with a chart per region and publish it." | Builds the page with the data in it, picks a slug, publishes. |
 | "Make the buttons larger on `signup-flow`. Keep everything else." | Calls `update_artifact` with only the changed files: a new version. |
 | "What versions of `signup-flow` are there?" | Calls `get_artifact` and lists them with their addresses. |
@@ -77,8 +67,7 @@ address and cannot be changed later.
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
 | "We're done with `signup-flow`. Retire it in a week." | Calls `mark_stale` with a seven-day grace period. |
 
-Claude always replies with the address, for example
-`Published https://signup-flow.art.example.com/ (version 1)`.
+Claude always replies with the address, for example `Published https://signup-flow.art.example.com/ (version 1)`.
 
 ## Versions and addresses
 
@@ -87,59 +76,40 @@ Every publish creates a new version, and old versions are never changed or throw
 - `https://signup-flow.art.example.com/` shows the **published** version, usually the newest.
 - `https://signup-flow--v2.art.example.com/` shows **version 2**, always.
 
-Share the main address with people who should see the latest work. Put a version address in
-feedback, sign-off or a ticket when it matters exactly what someone looked at.
+Share the main address with people who should see the latest work. Put a version address in feedback, sign-off or a ticket when it matters exactly what someone looked at.
 
 ## Share safely
 
 > [!IMPORTANT]
-> Anyone who has the link can open a page. Agalma has no per-page passwords or sign-in for viewers
-> yet, so do not publish passwords, personal data or anything confidential.
+> Anyone who has the link can open a page. Kazari has no per-page passwords or sign-in for viewers yet, so do not publish passwords, personal data or anything confidential.
 
-- **Public** pages appear in the listings that other Agalma users see. **Unlisted** pages are left
-  out of other people's listings but are still open to anyone with the link.
-- **Unpublished** takes a page offline at once (visitors get "not found") without deleting anything.
-  Ask Claude to make it public or unlisted again to bring it back.
+- **Public** pages appear in the listings that other Kazari users see. **Unlisted** pages are left out of other people's listings but are still open to anyone with the link.
+- **Unpublished** takes a page offline at once (visitors get "not found") without deleting anything. Ask Claude to make it public or unlisted again to bring it back.
 - Search engines are told not to index pages unless you ask for the page to be indexable.
 
 ## Tidy up
 
-Pages you no longer need can retire themselves. Ask Claude to mark a page stale with a grace period
-("retire it in two weeks"). The page keeps working until the grace period ends, then:
+Pages you no longer need can retire themselves. Ask Claude to mark a page stale with a grace period ("retire it in two weeks"). The page keeps working until the grace period ends, then:
 
-1. it is **soft-deleted**: offline, but it can be restored for 30 days (by default; ask your
-   administrator);
+1. it is **soft-deleted**: offline, but it can be restored for 30 days (by default; ask your administrator);
 2. it is **purged**: the files are gone, and old links say "gone" for 90 days;
 3. the **slug is freed** and can be used again.
 
-Changed your mind during the grace period? Ask Claude to unmark it, or publish a new version, which
-clears the mark too. Deleting a page outright is possible too; Claude should check with you before a
-permanent delete.
+Changed your mind during the grace period? Ask Claude to unmark it, or publish a new version, which clears the mark too. Deleting a page outright is possible too; Claude should check with you before a permanent delete.
 
 ## What works in a page
 
-Agalma serves static files: HTML, CSS, JavaScript, images, fonts and data files. Claude knows these
-rules from the tool descriptions, but they help when you ask for something ambitious:
+Kazari serves static files: HTML, CSS, JavaScript, images, fonts and data files. Claude knows these rules from the tool descriptions, but they help when you ask for something ambitious:
 
-- **One `index.html` is enough.** It is served at the root address. Extra files (styles, scripts,
-  images, JSON data) are fine, and links between them should be relative (`about.html`, not
-  `/about.html`) so they also work on version addresses.
-- **Libraries from the common CDNs work.** By default scripts may load from cdnjs, jsDelivr and
-  unpkg, styles from Google Fonts, and images from any `https` address. Other sources are blocked by
-  the browser.
-- **Data travels with the page.** A page can `fetch` its own files, such as `data.json`, but not
-  other websites or APIs. Put the data in the page or next to it.
-- **No server-side code.** There is nowhere to run PHP, an API route or a database, and forms cannot
-  save anything on the server. For a prototype, fake the behaviour in JavaScript.
-- **Each page is its own site.** `localStorage` and cookies are private to the page, so a prototype
-  can remember state without seeing anyone else's.
-- **Single-page apps** that route in the browser need a setting so that every path serves
-  `index.html`: ask Claude to set the metadata `agalma.spa` to `true`.
-- **Size.** By default a version can hold up to 50 MiB and 2,000 files, and one file up to 25 MiB.
-  Above about 2 MiB, Claude is told to send files in chunks, so large pages work too.
+- **One `index.html` is enough.** It is served at the root address. Extra files (styles, scripts, images, JSON data) are fine, and links between them should be relative (`about.html`, not `/about.html`) so they also work on version addresses.
+- **Libraries from the common CDNs work.** By default scripts may load from cdnjs, jsDelivr and unpkg, styles from Google Fonts, and images from any `https` address. Other sources are blocked by the browser.
+- **Data travels with the page.** A page can `fetch` its own files, such as `data.json`, but not other websites or APIs. Put the data in the page or next to it.
+- **No server-side code.** There is nowhere to run PHP, an API route or a database, and forms cannot save anything on the server. For a prototype, fake the behaviour in JavaScript.
+- **Each page is its own site.** `localStorage` and cookies are private to the page, so a prototype can remember state without seeing anyone else's.
+- **Single-page apps** that route in the browser need a setting so that every path serves `index.html`: ask Claude to set the metadata `kazari.spa` to `true`.
+- **Size.** By default a version can hold up to 50 MiB and 2,000 files, and one file up to 25 MiB. Above about 2 MiB, Claude is told to send files in chunks, so large pages work too.
 
-Your instance's limits and allowed sources may differ; the tool descriptions Claude sees always
-state the real ones.
+Your instance's limits and allowed sources may differ; the tool descriptions Claude sees always state the real ones.
 
 ## When something goes wrong
 

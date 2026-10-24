@@ -33,11 +33,11 @@ func TestParseFileURI(t *testing.T) {
 		uri, slug, path string
 		ok              bool
 	}{
-		{"agalma://artifacts/demo/files/index.html", "demo", "index.html", true},
-		{"agalma://artifacts/demo/files/assets/a%20b.png", "demo", "assets/a b.png", true},
-		{"agalma://artifacts/demo/files/assets%2Fapp.js", "demo", "assets/app.js", true},
-		{"agalma://artifacts/demo", "", "", false},
-		{"agalma://artifacts/demo/files/", "", "", false},
+		{"kazari://artifacts/demo/files/index.html", "demo", "index.html", true},
+		{"kazari://artifacts/demo/files/assets/a%20b.png", "demo", "assets/a b.png", true},
+		{"kazari://artifacts/demo/files/assets%2Fapp.js", "demo", "assets/app.js", true},
+		{"kazari://artifacts/demo", "", "", false},
+		{"kazari://artifacts/demo/files/", "", "", false},
 		{"https://example.com/demo/files/x", "", "", false},
 	}
 	for _, c := range cases {

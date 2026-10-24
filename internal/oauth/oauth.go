@@ -29,9 +29,9 @@ import (
 	"syscall"
 	"time"
 
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/user"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/user"
 )
 
 // Token kinds.

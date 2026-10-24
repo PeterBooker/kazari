@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"agalma/internal/audit"
-	"agalma/internal/blob"
+	"kazari/internal/audit"
+	"kazari/internal/blob"
 )
 
 // Write policies for Options.WritePolicy.

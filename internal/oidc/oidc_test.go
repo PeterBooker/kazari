@@ -19,12 +19,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/auth"
-	"agalma/internal/oidc"
+	"kazari/internal/auth"
+	"kazari/internal/oidc"
 )
 
 const (
-	clientID = "agalma-test"
+	clientID = "kazari-test"
 	verifier = "the-pkce-verifier-the-pkce-verifier-0123456789"
 	nonce    = "nonce-123"
 )

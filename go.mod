@@ -1,4 +1,4 @@
-module agalma
+module kazari
 
 go 1.27.3
 

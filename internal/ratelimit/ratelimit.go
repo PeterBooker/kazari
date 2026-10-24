@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"agalma/internal/api"
-	"agalma/internal/auth"
-	"agalma/internal/middleware"
+	"kazari/internal/api"
+	"kazari/internal/auth"
+	"kazari/internal/middleware"
 )
 
 // DefaultIPPerMinute is the per-IP request rate the control-plane hosts
@@ -140,7 +140,7 @@ func Middleware(l *Limiter, key func(*http.Request) string, reject func(http.Res
 }
 
 // WriteTooMany answers 429 with Retry-After and the JSON error body every
-// Agalma API uses.
+// Kazari API uses.
 func WriteTooMany(w http.ResponseWriter, _ *http.Request, retryAfter time.Duration) {
 	w.Header().Set("Retry-After", RetryAfter(retryAfter))
 	w.Header().Set("Content-Type", "application/json")

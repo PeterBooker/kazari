@@ -1,4 +1,4 @@
-// Agalma site: theme toggle, docs menu, copy buttons, tabs, table of contents highlight and search.
+// Kazari site: theme toggle, docs menu, copy buttons, tabs, table of contents highlight and search.
 
 const root = document.documentElement;
 

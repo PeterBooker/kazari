@@ -1,4 +1,4 @@
-// Command agalma is the Agalma server (agalma serve) and its client CLI.
+// Command kazari is the Kazari server (kazari serve) and its client CLI.
 package main
 
 import (
@@ -11,30 +11,30 @@ import (
 	"os/signal"
 	"syscall"
 
-	"agalma/internal/app"
-	"agalma/internal/buildinfo"
-	"agalma/internal/cli"
-	"agalma/internal/config"
+	"kazari/internal/app"
+	"kazari/internal/buildinfo"
+	"kazari/internal/cli"
+	"kazari/internal/config"
 )
 
 // defaultConfigPath is read by serve when neither --config nor
-// $AGALMA_CONFIG names a file and it exists.
-const defaultConfigPath = "/etc/agalma/agalma.yaml"
+// $KAZARI_CONFIG names a file and it exists.
+const defaultConfigPath = "/etc/kazari/kazari.yaml"
 
-// defaultEnvFile is loaded when neither --env-file nor $AGALMA_ENV_FILE
+// defaultEnvFile is loaded when neither --env-file nor $KAZARI_ENV_FILE
 // names a file and it exists in the working directory.
 const defaultEnvFile = ".env"
 
-const usage = `usage: agalma <command> [arguments]
+const usage = `usage: kazari <command> [arguments]
 
 Server:
   serve [--config PATH] [--env-file PATH]
-                          run the server (config: --config, $AGALMA_CONFIG,
-                          /etc/agalma/agalma.yaml, else environment only;
-                          secrets: --env-file, $AGALMA_ENV_FILE, else ./.env)
+                          run the server (config: --config, $KAZARI_CONFIG,
+                          /etc/kazari/kazari.yaml, else environment only;
+                          secrets: --env-file, $KAZARI_ENV_FILE, else ./.env)
   version                 print the version
 
-Client (run "agalma help" for the full list and global flags):
+Client (run "kazari help" for the full list and global flags):
   publish, update, get, list, rm, stale, unstale, visibility, rollback,
   files, me, keys, admin
 `
@@ -49,7 +49,7 @@ func main() {
 		os.Exit(serve(os.Args[2:]))
 	case "version", "--version":
 		i := buildinfo.Get()
-		fmt.Printf("agalma %s (%s, %s, %s)\n", i.Version, i.Commit, i.Date, i.Go)
+		fmt.Printf("kazari %s (%s, %s, %s)\n", i.Version, i.Commit, i.Date, i.Go)
 	case "-h", "--help":
 		fmt.Print(usage)
 	case "help":
@@ -65,8 +65,8 @@ func main() {
 // error, 1 for a runtime error.
 func serve(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	path := fs.String("config", "", "config file (default $AGALMA_CONFIG, then "+defaultConfigPath+" if it exists)")
-	envFile := fs.String("env-file", "", "dotenv file with secrets (default $AGALMA_ENV_FILE, then ./"+defaultEnvFile+" if it exists)")
+	path := fs.String("config", "", "config file (default $KAZARI_CONFIG, then "+defaultConfigPath+" if it exists)")
+	envFile := fs.String("env-file", "", "dotenv file with secrets (default $KAZARI_ENV_FILE, then ./"+defaultEnvFile+" if it exists)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -74,13 +74,13 @@ func serve(args []string) int {
 		return 2
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "agalma: serve: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintf(os.Stderr, "kazari: serve: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
 
 	cfg, err := config.Load(configPath(*path), envFilePath(*envFile))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
+		fmt.Fprintf(os.Stderr, "kazari: %v\n", err)
 		return 2
 	}
 	logger := cfg.Logger(os.Stderr)
@@ -90,23 +90,23 @@ func serve(args []string) int {
 
 	a, err := app.New(ctx, cfg, app.Options{Logger: logger})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
+		fmt.Fprintf(os.Stderr, "kazari: %v\n", err)
 		return 1
 	}
 	if err := a.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
+		fmt.Fprintf(os.Stderr, "kazari: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// configPath picks the config file: the flag, then $AGALMA_CONFIG, then
+// configPath picks the config file: the flag, then $KAZARI_CONFIG, then
 // the default path if it exists, else none (environment only).
 func configPath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	if p := os.Getenv("AGALMA_CONFIG"); p != "" {
+	if p := os.Getenv("KAZARI_CONFIG"); p != "" {
 		return p
 	}
 	if _, err := os.Stat(defaultConfigPath); err == nil {
@@ -115,27 +115,27 @@ func configPath(flagValue string) string {
 	return ""
 }
 
-// envFilePath picks the dotenv file: the flag, then $AGALMA_ENV_FILE, else
+// envFilePath picks the dotenv file: the flag, then $KAZARI_ENV_FILE, else
 // "" which lets config.Load use ./.env when it exists.
 func envFilePath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	return os.Getenv("AGALMA_ENV_FILE")
+	return os.Getenv("KAZARI_ENV_FILE")
 }
 
 // clientEnv is the environment lookup for client commands: the process
-// environment first, then ./.env (or $AGALMA_ENV_FILE) when it exists, so a
-// local .env can hold AGALMA_URL and AGALMA_TOKEN.
+// environment first, then ./.env (or $KAZARI_ENV_FILE) when it exists, so a
+// local .env can hold KAZARI_URL and KAZARI_TOKEN.
 func clientEnv() func(string) (string, bool) {
-	path := os.Getenv("AGALMA_ENV_FILE")
+	path := os.Getenv("KAZARI_ENV_FILE")
 	if path == "" {
 		path = defaultEnvFile
 	}
 	dotenv, err := config.LoadEnvFile(path)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "agalma: %v\n", err)
+			fmt.Fprintf(os.Stderr, "kazari: %v\n", err)
 		}
 		return os.LookupEnv
 	}

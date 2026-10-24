@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/artifact"
-	"agalma/internal/artifact/storetest"
-	"agalma/internal/sqlite"
+	"kazari/internal/artifact"
+	"kazari/internal/artifact/storetest"
+	"kazari/internal/sqlite"
 )
 
 // openArtifactTestDB opens a migrated database in a temp dir.
 func openArtifactTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
-	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/present"
-	"agalma/internal/ratelimit"
-	"agalma/internal/upload"
-	"agalma/internal/user"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/present"
+	"kazari/internal/ratelimit"
+	"kazari/internal/upload"
+	"kazari/internal/user"
 )
 
 // DefaultIPRatePerMinute is the per-IP request rate of the user API when

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"agalma/internal/artifact"
-	"agalma/internal/present"
+	"kazari/internal/artifact"
+	"kazari/internal/present"
 )
 
 // texts are the descriptions, instructions and prompt conventions, all
@@ -78,7 +78,7 @@ func newTexts(links present.Links, o Options) texts {
 		"the error says current=<n>: resume that path from offset n.",
 		size(o.MaxChunkBytes), size(o.MaxTotalBytes))
 
-	t.instructions = fmt.Sprintf("Agalma hosts static web pages (HTML artifacts). Each artifact has a slug and is "+
+	t.instructions = fmt.Sprintf("Kazari hosts static web pages (HTML artifacts). Each artifact has a slug and is "+
 		"served at %s (the published version) and %s (a pinned version). Publish a new page with create_artifact and "+
 		"change it with update_artifact; for content above %s use begin_upload and upload_chunk, then pass upload_id. "+
 		"Inspect with get_artifact, read_file and list_artifacts. publish_version rolls back or forward, "+
@@ -178,9 +178,9 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 func (t texts) promptText(o Options, topic string) string {
 	var b strings.Builder
 	if topic != "" {
-		fmt.Fprintf(&b, "Create a web page about: %s\n\nThen publish it to Agalma with the create_artifact tool.\n\n", topic)
+		fmt.Fprintf(&b, "Create a web page about: %s\n\nThen publish it to Kazari with the create_artifact tool.\n\n", topic)
 	} else {
-		b.WriteString("Create a web page and publish it to Agalma with the create_artifact tool.\n\n")
+		b.WriteString("Create a web page and publish it to Kazari with the create_artifact tool.\n\n")
 	}
 	b.WriteString("Conventions:\n")
 	fmt.Fprintf(&b, "- Build a single self-contained index.html; it is served at %s. Extra files (CSS, JavaScript, images) "+
@@ -188,7 +188,7 @@ func (t texts) promptText(o Options, topic string) string {
 		"page also works on pinned version URLs (%s).\n", t.pageURL, t.versionURL)
 	fmt.Fprintf(&b, "- Put CSS and JavaScript inline, or load libraries only from the CDNs the Content-Security-Policy "+
 		"allows. %s\n", t.csp)
-	b.WriteString("- No server-side code: Agalma serves static files only. There is no PHP, no API route, no database and " +
+	b.WriteString("- No server-side code: Kazari serves static files only. There is no PHP, no API route, no database and " +
 		"no build step on the server; ship the built output.\n")
 	fmt.Fprintf(&b, "- Pick a short, descriptive slug from the topic, e.g. \"q3-roadmap\". %s If create_artifact fails "+
 		"with slug_taken, choose another slug.\n", t.slugRules)

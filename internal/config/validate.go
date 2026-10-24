@@ -39,7 +39,7 @@ func (c *Config) Validate() error {
 			}
 			if v.oneOf("tls.dns_provider", c.TLS.DNSProvider, "cloudflare", "route53", "hetzner") &&
 				c.TLS.DNSProvider != "route53" && c.TLS.DNS.APIToken == "" {
-				v.add("tls.dns.api_token", "required for dns_provider "+c.TLS.DNSProvider+" (or set AGALMA_TLS_DNS_API_TOKEN)")
+				v.add("tls.dns.api_token", "required for dns_provider "+c.TLS.DNSProvider+" (or set KAZARI_TLS_DNS_API_TOKEN)")
 			}
 		case "files":
 			v.required("tls.cert_file", c.TLS.CertFile)
@@ -72,7 +72,7 @@ func (c *Config) Validate() error {
 		}
 		v.required("auth.oidc.client_id", o.ClientID)
 		if o.ClientSecret == "" {
-			v.add("auth.oidc.client_secret", "required (or set AGALMA_AUTH_OIDC_CLIENT_SECRET)")
+			v.add("auth.oidc.client_secret", "required (or set KAZARI_AUTH_OIDC_CLIENT_SECRET)")
 		}
 	}
 

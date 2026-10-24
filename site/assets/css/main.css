@@ -1,4 +1,4 @@
-/* Agalma site. Plain CSS, no build step beyond Hugo's fingerprinting.
+/* Kazari site. Plain CSS, no build step beyond Hugo's fingerprinting.
    Colours are tokens with light-dark(); data-theme on <html> forces one scheme. */
 
 @font-face {

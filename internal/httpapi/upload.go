@@ -17,15 +17,15 @@ import (
 	"strings"
 	"time"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
 )
 
 // manifestLimit caps the manifest part of a multipart publish.
 const manifestLimit = 64 << 10
 
 // spillPrefix names the temporary files bundles are spilled to.
-const spillPrefix = "agalma-bundle-"
+const spillPrefix = "kazari-bundle-"
 
 // inlineFiles converts the files[] of a JSON body. Delete entries are only
 // allowed on update.

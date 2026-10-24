@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/audit"
-	"agalma/internal/auth"
-	"agalma/internal/sqlite"
-	"agalma/internal/user"
+	"kazari/internal/audit"
+	"kazari/internal/auth"
+	"kazari/internal/sqlite"
+	"kazari/internal/user"
 )
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -51,7 +51,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, opts user.Options) *fixture {
 	t.Helper()
-	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "agalma.db"))
+	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestKeyStatus(t *testing.T) {
 	}
 }
 
-var keyRE = regexp.MustCompile(`^agk_([a-z2-7]{8})_[a-z2-7]{52}$`)
+var keyRE = regexp.MustCompile(`^kzk_([a-z2-7]{8})_[a-z2-7]{52}$`)
 
 func TestIssueKey(t *testing.T) {
 	ctx := context.Background()
@@ -572,19 +572,19 @@ func TestAuthenticateFailures(t *testing.T) {
 	}
 	f.clock.Advance(time.Hour) // the expiring key expires exactly now
 
-	_, secretOfLive, _ := strings.Cut(strings.TrimPrefix(liveKey, "agk_"), "_")
-	wrongSecret := "agk_" + live.Prefix + "_" + strings.Repeat("a", 52)
-	unknownPrefix := "agk_zzzzzzzz_" + secretOfLive
+	_, secretOfLive, _ := strings.Cut(strings.TrimPrefix(liveKey, "kzk_"), "_")
+	wrongSecret := "kzk_" + live.Prefix + "_" + strings.Repeat("a", 52)
+	unknownPrefix := "kzk_zzzzzzzz_" + secretOfLive
 
 	tests := []struct {
 		name  string
 		token string
 	}{
 		{"empty", ""},
-		{"no agk prefix", strings.TrimPrefix(liveKey, "agk_")},
-		{"other scheme", "xyz_" + strings.TrimPrefix(liveKey, "agk_")},
+		{"no kzk prefix", strings.TrimPrefix(liveKey, "kzk_")},
+		{"other scheme", "xyz_" + strings.TrimPrefix(liveKey, "kzk_")},
 		{"upper case", strings.ToUpper(liveKey)},
-		{"short prefix", "agk_abc_" + secretOfLive},
+		{"short prefix", "kzk_abc_" + secretOfLive},
 		{"short secret", liveKey[:len(liveKey)-1]},
 		{"long secret", liveKey + "a"},
 		{"no separator", strings.Replace(liveKey, "_", "", 2)},

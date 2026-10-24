@@ -13,7 +13,7 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 
-	"agalma/internal/artifact"
+	"kazari/internal/artifact"
 )
 
 // ArtifactStore implements artifact.Store.
@@ -563,7 +563,7 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifac
 		if err := artifact.ValidateMetadataKey(k); err != nil {
 			return artifact.ListPage{}, err
 		}
-		// Quote the key so a dotted key such as agalma.spa is one member
+		// Quote the key so a dotted key such as kazari.spa is one member
 		// rather than a nested path. The key charset excludes quotes.
 		where = append(where, `json_extract(a.metadata, '$."' || ? || '"') = ?`)
 		args = append(args, k, q.Metadata[k])

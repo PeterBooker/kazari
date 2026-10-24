@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"agalma/internal/artifact"
-	"agalma/internal/blob"
+	"kazari/internal/artifact"
+	"kazari/internal/blob"
 )
 
 const (

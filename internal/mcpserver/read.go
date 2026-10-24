@@ -13,16 +13,16 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"agalma/internal/api"
-	"agalma/internal/artifact"
-	"agalma/internal/auth"
-	"agalma/internal/present"
+	"kazari/internal/api"
+	"kazari/internal/artifact"
+	"kazari/internal/auth"
+	"kazari/internal/present"
 )
 
 // Resource URIs. The file template uses reserved expansion ({+path}) so a
-// path may contain slashes, e.g. agalma://artifacts/demo/files/assets/app.js.
+// path may contain slashes, e.g. kazari://artifacts/demo/files/assets/app.js.
 const (
-	resourcePrefix       = "agalma://artifacts/"
+	resourcePrefix       = "kazari://artifacts/"
 	artifactTemplate     = resourcePrefix + "{slug}"
 	fileTemplate         = resourcePrefix + "{slug}/files/{+path}"
 	filesSegment         = "/files/"
@@ -229,7 +229,7 @@ func (b *builder) resourceError(ctx context.Context, uri string, err error) erro
 	return b.toolError(ctx, "resource", err)
 }
 
-// parseFileURI splits agalma://artifacts/<slug>/files/<path>; the path may
+// parseFileURI splits kazari://artifacts/<slug>/files/<path>; the path may
 // be percent-encoded.
 func parseFileURI(uri string) (slug, path string, ok bool) {
 	rest, ok := strings.CutPrefix(uri, resourcePrefix)
@@ -251,7 +251,7 @@ func (b *builder) addPrompt(s *mcp.Server) {
 	s.AddPrompt(&mcp.Prompt{
 		Name:        "publish-page",
 		Title:       "Publish a page",
-		Description: "Write a static web page and publish it to Agalma, following the hosting conventions (single index.html, relative links, allowed CDNs, size limits).",
+		Description: "Write a static web page and publish it to Kazari, following the hosting conventions (single index.html, relative links, allowed CDNs, size limits).",
 		Arguments: []*mcp.PromptArgument{{
 			Name:        "topic",
 			Description: "what the page is about (optional)",
@@ -259,7 +259,7 @@ func (b *builder) addPrompt(s *mcp.Server) {
 	}, func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		topic := strings.TrimSpace(req.Params.Arguments["topic"])
 		return &mcp.GetPromptResult{
-			Description: "Agalma publishing conventions",
+			Description: "Kazari publishing conventions",
 			Messages: []*mcp.PromptMessage{{
 				Role:    "user",
 				Content: &mcp.TextContent{Text: b.text.promptText(b.o, topic)},

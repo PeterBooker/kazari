@@ -132,7 +132,7 @@ func isEnvName(s string) bool {
 
 // checkKeys reports every mapping key in the document n from the file at
 // path that has no field in Config, by its dotted path and its line in the
-// file, as "config: agalma.yaml: line 3: unknown key listen.htps". The
+// file, as "config: kazari.yaml: line 3: unknown key listen.htps". The
 // strict decoder rejects the same keys, but it runs on re-encoded YAML
 // whose line numbers no longer match the file.
 func checkKeys(n *yaml.Node, path string) error {

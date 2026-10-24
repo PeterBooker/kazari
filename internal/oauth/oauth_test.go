@@ -15,9 +15,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"agalma/internal/auth"
-	"agalma/internal/oauth"
-	"agalma/internal/user"
+	"kazari/internal/auth"
+	"kazari/internal/oauth"
+	"kazari/internal/user"
 )
 
 func TestMetadata(t *testing.T) {
@@ -386,7 +386,7 @@ func TestFullFlow(t *testing.T) {
 
 func TestAuthenticateUnknownTokens(t *testing.T) {
 	e := newEnv(t, envOptions{})
-	for _, tok := range []string{"", "agk_abcdefgh_x", strings.Repeat("a", 43)} {
+	for _, tok := range []string{"", "kzk_abcdefgh_x", strings.Repeat("a", 43)} {
 		if _, err := e.svc.Authenticate(context.Background(), tok); !errors.Is(err, auth.ErrInvalidToken) {
 			t.Errorf("Authenticate(%q) err = %v, want ErrInvalidToken", tok, err)
 		}
@@ -757,7 +757,7 @@ func TestAPIKeyFallback(t *testing.T) {
 	}
 
 	// A bad key re-renders the page with an error.
-	resp, body := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}, "api_key": {"agk_wrong"}})
+	resp, body := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}, "api_key": {"kzk_wrong"}})
 	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "not accepted") || !strings.Contains(body, `name="api_key"`) {
 		t.Errorf("bad key: status %d:\n%s", resp.StatusCode, body)
 	}

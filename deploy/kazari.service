@@ -1,24 +1,24 @@
 [Unit]
-Description=Agalma artifact host
-Documentation=https://github.com/PeterBooker/agalma
+Description=Kazari artifact host
+Documentation=https://github.com/PeterBooker/kazari
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/agalma serve --config /etc/agalma/agalma.yaml
+ExecStart=/usr/local/bin/kazari serve --config /etc/kazari/kazari.yaml
 Restart=on-failure
 RestartSec=2s
 
-# Secrets belong in agalma.env (mode 0600), not in agalma.yaml, which
-# refers to them as ${AGALMA_AUTH_ADMIN_TOKEN}, ${AGALMA_TLS_DNS_API_TOKEN}
-# and ${AGALMA_AUTH_OIDC_CLIENT_SECRET}. Start from deploy/agalma.env.example:
-#   install -m 0600 deploy/agalma.env.example /etc/agalma/agalma.env
-EnvironmentFile=-/etc/agalma/agalma.env
+# Secrets belong in kazari.env (mode 0600), not in kazari.yaml, which
+# refers to them as ${KAZARI_AUTH_ADMIN_TOKEN}, ${KAZARI_TLS_DNS_API_TOKEN}
+# and ${KAZARI_AUTH_OIDC_CLIENT_SECRET}. Start from deploy/kazari.env.example:
+#   install -m 0600 deploy/kazari.env.example /etc/kazari/kazari.env
+EnvironmentFile=-/etc/kazari/kazari.env
 
 DynamicUser=yes
-StateDirectory=agalma
-Environment=AGALMA_DATA_DIR=/var/lib/agalma
+StateDirectory=kazari
+Environment=KAZARI_DATA_DIR=/var/lib/kazari
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 

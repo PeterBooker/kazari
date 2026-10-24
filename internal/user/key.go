@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Key format: agk_<prefix>_<secret>, both lower-case unpadded base32.
+// Key format: kzk_<prefix>_<secret>, both lower-case unpadded base32.
 const (
 	prefixBytes = 5  // 40 bits encode to exactly 8 characters
 	secretBytes = 32 // 256 bits encode to 52 characters
@@ -36,7 +36,7 @@ func newKey() (key, prefix string, err error) {
 }
 
 // ParseKey splits a key string into its prefix and secret. ok is false
-// unless token has the exact agk_<prefix>_<secret> shape.
+// unless token has the exact kzk_<prefix>_<secret> shape.
 func ParseKey(token string) (prefix, secret string, ok bool) {
 	rest, found := strings.CutPrefix(token, KeyPrefix)
 	if !found {

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"agalma/internal/artifact"
-	"agalma/internal/upload"
+	"kazari/internal/artifact"
+	"kazari/internal/upload"
 )
 
 // UploadStore implements upload.Store against the upload and upload_file

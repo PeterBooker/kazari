@@ -1,5 +1,5 @@
 // Package buildinfo reports the version, commit and build date, set with
-// -ldflags "-X agalma/internal/buildinfo.version=..." and falling back to
+// -ldflags "-X kazari/internal/buildinfo.version=..." and falling back to
 // the module's own build information.
 package buildinfo
 
