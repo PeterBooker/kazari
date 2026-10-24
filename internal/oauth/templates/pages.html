@@ -1,0 +1,62 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.}} · Agalma</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f6f6f4; --card: #fff; --muted: #66666b; --line: #deded9; --accent: #2457c5; --err: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #ececea; --bg: #161617; --card: #222224; --muted: #a0a0a6; --line: #38383b; --accent: #7aa2ff; --err: #ff8a80; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 48px 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 440px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+  h1 { font-size: 1.3rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+  .error { color: var(--err); }
+  ul { margin: 0 0 16px; padding-left: 20px; }
+  code { font-size: .9em; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  .actions { display: flex; gap: 12px; margin-top: 20px; }
+  button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+{{end}}
+
+{{define "foot"}}</main>
+</body>
+</html>
+{{end}}
+
+{{define "message"}}{{template "head" .Title}}
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+{{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
+{{template "foot"}}{{end}}
+
+{{define "consent"}}{{template "head" "Authorize access"}}
+<h1>Authorize {{.ClientName}}</h1>
+{{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Agalma instance.</p>
+{{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Agalma instance.</p>{{end}}
+<p class="muted">Client: {{.ClientID}}<br>Returns to: {{.RedirectHost}}</p>
+<p>It will be allowed to:</p>
+<ul>
+{{range .Scopes}}<li>{{.Description}} <span class="muted">(<code>{{.Name}}</code>)</span></li>
+{{end}}</ul>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/oauth/consent">
+<input type="hidden" name="request_id" value="{{.RequestID}}">
+{{if .AskKey}}<label for="api_key">API key</label>
+<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="agk_…">
+<p class="muted">Approving with a key grants at most that key's scopes.</p>{{end}}
+<div class="actions">
+<button type="submit" name="action" value="deny">Deny</button>
+<button type="submit" name="action" value="approve" class="primary">Approve</button>
+</div>
+</form>
+{{template "foot"}}{{end}}
