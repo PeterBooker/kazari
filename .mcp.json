@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "kazari-dev": {
+      "type": "http",
+      "url": "http://mcp.localhost:8080/",
+      "headers": {
+        "Authorization": "Bearer ${KAZARI_DEV_TOKEN}"
+      }
+    }
+  }
+}

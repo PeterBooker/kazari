@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(CGO_ENABLED=0 go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go list *)",
+      "Bash(go doc *)",
+      "Bash(go env *)",
+      "Bash(go version)",
+      "Bash(go mod tidy *)",
+      "Bash(go mod edit -json)",
+      "Bash(gofmt -l *)",
+      "Bash(go run honnef.co/go/tools/cmd/staticcheck@latest *)",
+      "Bash(go run golang.org/x/vuln/cmd/govulncheck@latest *)",
+      "Bash(hugo --source site *)",
+      "Bash(hugo server --source site *)",
+      "Bash(hugo version)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)"
+    ]
+  },
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/go.sh format"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/go.sh vet"
+          }
+        ]
+      }
+    ]
+  }
+}
