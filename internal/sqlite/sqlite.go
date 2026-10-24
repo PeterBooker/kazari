@@ -15,7 +15,6 @@ import (
 	"net/url"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // DB is an open, migrated database.
