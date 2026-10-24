@@ -1,0 +1,148 @@
+package certs
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"sync"
+	"sync/atomic"
+
+	"github.com/caddyserver/certmagic"
+)
+
+// ACMEConfig configures an ACME source.
+type ACMEConfig struct {
+	// Email is the ACME account contact address. Optional.
+	Email string
+	// CA is "letsencrypt" (the default when empty), "letsencrypt-staging",
+	// or an ACME directory URL.
+	CA string
+	// Domains are the names to manage, normally the base domain and its
+	// wildcard ("art.example.com", "*.art.example.com").
+	Domains []string
+	// StorageDir holds the ACME account, certificates and locks.
+	StorageDir string
+	// Sync makes Run obtain or renew every certificate before it starts
+	// waiting, and return the error if that fails. By default certificates
+	// are obtained in the background and failures are only logged.
+	Sync bool
+	// Logger receives CertMagic's logs. Nil means slog.Default().
+	Logger *slog.Logger
+}
+
+// ACME obtains and renews certificates from an ACME CA using the DNS-01
+// challenge, which is what wildcard certificates require.
+type ACME struct {
+	magic      *certmagic.Config
+	cache      *certmagic.Cache
+	stopOnce   sync.Once
+	domains    []string
+	manageSync bool
+}
+
+var _ Source = (*ACME)(nil)
+
+// NewACME configures CertMagic with file storage in cfg.StorageDir and an
+// ACME issuer that solves DNS-01 challenges through dns. It does no network
+// I/O; certificates are obtained when Run starts.
+func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
+	if dns == nil {
+		return nil, errors.New("certs: acme: a DNS provider is required")
+	}
+	if len(cfg.Domains) == 0 {
+		return nil, errors.New("certs: acme: at least one domain is required")
+	}
+	if cfg.StorageDir == "" {
+		return nil, errors.New("certs: acme: storage dir is required")
+	}
+	ca, err := caURL(cfg.CA)
+	if err != nil {
+		return nil, err
+	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	zl := newZapLogger(logger.With("component", "certmagic"))
+
+	// The cache asks for the config of each certificate it maintains; there
+	// is only one. The pointer is set after the cache exists, hence atomic.
+	var current atomic.Pointer[certmagic.Config]
+	cache := certmagic.NewCache(certmagic.CacheOptions{
+		GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) {
+			return current.Load(), nil
+		},
+		Logger: zl,
+	})
+	magic := certmagic.New(cache, certmagic.Config{
+		Storage: &certmagic.FileStorage{Path: cfg.StorageDir},
+		Logger:  zl,
+	})
+	issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{
+		CA:     ca,
+		Email:  cfg.Email,
+		Agreed: true,
+		DNS01Solver: &certmagic.DNS01Solver{
+			DNSManager: certmagic.DNSManager{DNSProvider: dns, Logger: zl},
+		},
+		Logger: zl,
+	})
+	magic.Issuers = []certmagic.Issuer{issuer}
+	current.Store(magic)
+
+	return &ACME{
+		magic:      magic,
+		cache:      cache,
+		domains:    append([]string(nil), cfg.Domains...),
+		manageSync: cfg.Sync,
+	}, nil
+}
+
+// GetCertificate returns the managed certificate matching the handshake.
+func (a *ACME) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return a.magic.GetCertificate(hello)
+}
+
+// Run starts managing the configured domains (loading certificates from
+// storage, obtaining or renewing them as needed) and blocks until ctx is
+// done, renewing in the background. It stops CertMagic's maintenance on
+// return. With ACMEConfig.Sync it returns an error if the initial obtain
+// fails.
+func (a *ACME) Run(ctx context.Context) error {
+	defer a.stop()
+	manage := a.magic.ManageAsync
+	if a.manageSync {
+		manage = a.magic.ManageSync
+	}
+	if err := manage(ctx, a.domains); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("certs: acme: manage %v: %w", a.domains, err)
+	}
+	<-ctx.Done()
+	return nil
+}
+
+// stop ends CertMagic's cache maintenance goroutine; safe to call twice.
+func (a *ACME) stop() {
+	a.stopOnce.Do(a.cache.Stop)
+}
+
+// caURL maps the configured CA name to an ACME directory URL.
+func caURL(ca string) (string, error) {
+	switch ca {
+	case "", "letsencrypt":
+		return certmagic.LetsEncryptProductionCA, nil
+	case "letsencrypt-staging":
+		return certmagic.LetsEncryptStagingCA, nil
+	}
+	u, err := url.Parse(ca)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return "", fmt.Errorf("certs: acme: CA %q is not letsencrypt, letsencrypt-staging or a directory URL", ca)
+	}
+	return ca, nil
+}
