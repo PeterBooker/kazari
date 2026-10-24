@@ -1,2 +1,3 @@
-# agalma
-Self hosted artifacts system replacing Claude Artifacts.
+# Agalma
+
+Self hosted artifacts system alternative to Claude Artifacts.
