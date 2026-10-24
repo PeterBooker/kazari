@@ -42,12 +42,10 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 go install github.com/gohugoio/hugo@v0.161.1
 hugo server --source site               # http://localhost:1313/agalma/, live reload
 hugo --source site --gc --minify        # build into site/public/ as CI does; must print no WARN or ERROR
-
-# what is out of date (Go, modules, base images, actions, goreleaser, Hugo); read-only
-.claude/skills/maintenance/check-updates.sh
 ```
 
-Dependency updates follow the `maintenance` skill (`.claude/skills/maintenance/SKILL.md`).
+Dependency updates, and the commands that check what is out of date, are in the `maintenance` skill
+(`.claude/skills/maintenance/SKILL.md`).
 
 ## Configuration
 

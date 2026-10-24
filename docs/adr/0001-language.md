@@ -1,6 +1,7 @@
 # ADR 0001: Go as the implementation language
 
-Status: accepted (2026-10-24)
+Status: accepted (2026-10-24). Dependency list amended: the configuration file is YAML, not TOML,
+and CertMagic's zap logger is bridged to `log/slog`.
 
 ## Context
 
@@ -28,11 +29,13 @@ and the spike would spend one to two weeks confirming them.
 Keep the dependency set small and standard-library first: `net/http` with `ServeMux` host
 patterns, `log/slog`, `database/sql`, `archive/tar`, `embed`, `testing`. Third-party code only
 where the standard library has nothing: the MCP SDK, CertMagic and libdns, a pure-Go SQLite driver,
-BurntSushi TOML, `coreos/go-oidc` with `x/oauth2` (Phase 2b), `x/time/rate`, `x/sync/errgroup`, the
-Prometheus client (Phase 3) and `go-cmp` in tests.
+`gopkg.in/yaml.v3` for the configuration file, `coreos/go-oidc` with `x/oauth2` (Phase 2b),
+`x/time/rate`, `x/sync/errgroup`, the Prometheus client (Phase 3) and `go-cmp` in tests. CertMagic
+logs through zap, so `go.uber.org/zap` is required too; `internal/certs` hands CertMagic a zap logger
+that writes to `slog`.
 
 Deliberately not used: cobra, chi/gin/echo, gorm/sqlx/sqlc, testify, mockery, wire/fx, uuid, cron
-libraries, zap/logrus.
+libraries, and zap or logrus for Agalma's own logging.
 
 ## Consequences
 
