@@ -1,8 +1,9 @@
-# Used by goreleaser: the binary is built outside the image.
-FROM --platform=$BUILDPLATFORM busybox:1.37 AS data
+# Used by goreleaser: the binary is built outside the image. Base images
+# are pinned by digest; .claude/skills/maintenance/SKILL.md updates them.
+FROM --platform=$BUILDPLATFORM busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e AS data
 RUN mkdir /data
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY agalma /usr/local/bin/agalma
 # An empty data directory owned by nonroot (65532): Docker initialises a new
 # named volume mounted here from the image, so the server can write to it.

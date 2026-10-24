@@ -19,10 +19,14 @@ import (
 	"agalma/internal/middleware"
 )
 
-// Server timeouts. There is deliberately no WriteTimeout: downloads and
-// uploads of large artifacts may take long.
+// Server timeouts. readTimeout bounds reading a whole request and
+// writeTimeout a whole response, so a client that stalls cannot hold a
+// connection for ever; both leave room for a full-size upload or download
+// at well under 1 Mbit/s.
 const (
 	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 10 * time.Minute
+	writeTimeout      = 15 * time.Minute
 	idleTimeout       = 120 * time.Second
 	maxHeaderBytes    = 64 << 10
 	shutdownTimeout   = 10 * time.Second
@@ -164,6 +168,8 @@ func (a *App) newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
 		ErrorLog:          log.New(errorLogWriter{a.log}, "", 0),

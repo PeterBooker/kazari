@@ -63,6 +63,9 @@ func (c *Config) Validate() error {
 	}
 
 	v.oneOf("auth.write_policy", c.Auth.WritePolicy, "shared", "owner")
+	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !isLocalhost(c.BaseDomain) {
+		v.add("auth.admin_token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
+	}
 	if o := c.Auth.OIDC; o != nil {
 		if !isHTTPSURL(o.Issuer) {
 			v.add("auth.oidc.issuer", "must be an https URL")
@@ -77,6 +80,14 @@ func (c *Config) Validate() error {
 	v.oneOf("log.format", c.Log.Format, "text", "json")
 
 	return errors.Join(v.errs...)
+}
+
+// MinAdminTokenLen is the shortest auth.admin_token accepted, except under
+// a localhost base domain, which only serves the machine it runs on.
+const MinAdminTokenLen = 32
+
+func isLocalhost(base string) bool {
+	return base == "localhost" || strings.HasSuffix(base, ".localhost")
 }
 
 // validator collects problems keyed by YAML path.

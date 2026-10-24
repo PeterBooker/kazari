@@ -19,11 +19,14 @@ func valid() Config {
 	c := Default()
 	c.BaseDomain = "art.example.com"
 	c.DataDir = "/var/lib/agalma"
-	c.Auth.AdminToken = "admin-secret"
+	c.Auth.AdminToken = "admin-secret-0123456789abcdef0123"
 	c.TLS.Email = "ops@example.com"
 	c.TLS.DNS.APIToken = "dns-secret"
 	return c
 }
+
+// testAdminToken is long enough for auth.admin_token outside localhost.
+const testAdminToken = "adm-0123456789abcdef0123456789ab"
 
 func env(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) {
@@ -73,7 +76,7 @@ func TestDefaultNotShared(t *testing.T) {
 
 func TestExampleFile(t *testing.T) {
 	const path = "../../deploy/agalma.yaml"
-	got, err := LoadWith(path, env(map[string]string{"AGALMA_TLS_DNS_API_TOKEN": "tok", "AGALMA_AUTH_ADMIN_TOKEN": "adm"}))
+	got, err := LoadWith(path, env(map[string]string{"AGALMA_TLS_DNS_API_TOKEN": "tok", "AGALMA_AUTH_ADMIN_TOKEN": testAdminToken}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
@@ -103,14 +106,14 @@ func TestExampleFile(t *testing.T) {
 	want.DataDir = "/var/lib/agalma"
 	want.TLS.Email = "ops@example.com"
 	want.TLS.DNS.APIToken = "tok"
-	want.Auth.AdminToken = "adm"
+	want.Auth.AdminToken = testAdminToken
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("example differs from Default:\n got %+v\nwant %+v", got, want)
 	}
 }
 
 func TestExampleFileUnsetSecret(t *testing.T) {
-	_, err := LoadWith("../../deploy/agalma.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": "adm"}))
+	_, err := LoadWith("../../deploy/agalma.yaml", env(map[string]string{"AGALMA_AUTH_ADMIN_TOKEN": testAdminToken}))
 	want := "config: ../../deploy/agalma.yaml: ${AGALMA_TLS_DNS_API_TOKEN} is not set"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -129,7 +132,7 @@ func TestDevFile(t *testing.T) {
 		{"base_domain", got.BaseDomain, "localhost"},
 		{"external_scheme", got.ExternalScheme, "http"},
 		{"external_port", got.ExternalPort, 8080},
-		{"listen.http", got.Listen.HTTP, ":8080"},
+		{"listen.http", got.Listen.HTTP, "127.0.0.1:8080"},
 		{"listen.proxy_mode", got.Listen.ProxyMode, true},
 		{"tls.mode", got.TLS.Mode, "self-signed"},
 		{"auth.admin_token", got.Auth.AdminToken, "dev-admin-token"},
@@ -333,7 +336,7 @@ func TestEnvOverrides(t *testing.T) {
 		"AGALMA_LIFECYCLE_DEFAULT_GRACE":  "7d",
 		"AGALMA_SERVE_RESERVED_SLUGS":     "api, mcp ,admin",
 		"AGALMA_TLS_DNS_API_TOKEN":        "dns",
-		"AGALMA_AUTH_ADMIN_TOKEN":         "adm",
+		"AGALMA_AUTH_ADMIN_TOKEN":         testAdminToken,
 		"AGALMA_AUTH_OIDC_ISSUER":         "https://accounts.google.com",
 		"AGALMA_AUTH_OIDC_CLIENT_ID":      "cid",
 		"AGALMA_AUTH_OIDC_CLIENT_SECRET":  "csecret",
@@ -356,7 +359,7 @@ func TestEnvOverrides(t *testing.T) {
 		{"lifecycle.default_grace", c.Lifecycle.DefaultGrace, Duration(7 * 24 * time.Hour)},
 		{"serve.reserved_slugs", c.Serve.ReservedSlugs, []string{"api", "mcp", "admin"}},
 		{"tls.dns.api_token", c.TLS.DNS.APIToken, "dns"},
-		{"auth.admin_token", c.Auth.AdminToken, "adm"},
+		{"auth.admin_token", c.Auth.AdminToken, testAdminToken},
 		{"external_port", c.ExternalPort, 8080},
 	}
 	for _, ch := range checks {
@@ -726,6 +729,34 @@ func TestLogger(t *testing.T) {
 		}
 		if strings.HasPrefix(out, "{") != (tt.format == "json") {
 			t.Errorf("format %s: output %q", tt.format, out)
+		}
+	}
+}
+
+// The admin host answers anyone who can reach it, so a short admin token
+// is refused, except under a localhost base domain.
+func TestAdminTokenLength(t *testing.T) {
+	tests := []struct {
+		base, token string
+		ok          bool
+	}{
+		{"art.example.com", "change-me", false},
+		{"art.example.com", testAdminToken[:MinAdminTokenLen-1], false},
+		{"art.example.com", testAdminToken, true},
+		{"art.example.com", "", true},
+		{"localhost", "dev-admin-token", true},
+		{"dev.localhost", "dev-admin-token", true},
+		{"localhost.example.com", "dev-admin-token", false},
+	}
+	for _, tt := range tests {
+		c := valid()
+		c.BaseDomain, c.Auth.AdminToken = tt.base, tt.token
+		err := c.Validate()
+		if tt.ok != (err == nil) {
+			t.Errorf("base %s, token %q: Validate = %v, want ok %v", tt.base, tt.token, err, tt.ok)
+		}
+		if err != nil && !strings.Contains(err.Error(), "auth.admin_token: must be at least 32 characters") {
+			t.Errorf("base %s, token %q: error %q does not name auth.admin_token", tt.base, tt.token, err)
 		}
 	}
 }

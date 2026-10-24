@@ -51,7 +51,15 @@ type Options struct {
 	GonePage []byte
 	// Logger receives serving errors; nil uses slog.Default().
 	Logger *slog.Logger
+	// ImmutableMaxAge is how long browsers and caches may keep a pinned
+	// version's responses; zero means MaxImmutableAge. Keep it no longer
+	// than the tombstone period: once a slug is freed, another owner's
+	// <slug>--v1 must not be answered from a cache of the old one.
+	ImmutableMaxAge time.Duration
 }
+
+// MaxImmutableAge is the longest, and the default, ImmutableMaxAge.
+const MaxImmutableAge = 365 * 24 * time.Hour
 
 var (
 	//go:embed pages/404.html
@@ -60,19 +68,18 @@ var (
 	defaultGonePage []byte
 )
 
-// Cache-Control values.
-const (
-	cacheLatest    = "no-cache"
-	cacheImmutable = "public, max-age=31536000, immutable"
-)
+// cacheLatest is the Cache-Control value of the latest host; pinned
+// versions get "public, max-age=<ImmutableMaxAge>, immutable".
+const cacheLatest = "no-cache"
 
 const indexFile = "index.html"
 
 type handler struct {
-	resolver Resolver
-	blobs    blob.Store
-	opts     Options
-	log      *slog.Logger
+	resolver  Resolver
+	blobs     blob.Store
+	opts      Options
+	log       *slog.Logger
+	immutable string // Cache-Control of pinned versions
 }
 
 // NewHandler returns the artifact-serving handler.
@@ -87,10 +94,21 @@ func NewHandler(r Resolver, blobs blob.Store, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &handler{resolver: r, blobs: blobs, opts: opts, log: log}
+	age := opts.ImmutableMaxAge
+	if age <= 0 || age > MaxImmutableAge {
+		age = MaxImmutableAge
+	}
+	immutable := "public, max-age=" + strconv.FormatInt(int64(age/time.Second), 10) + ", immutable"
+	return &handler{resolver: r, blobs: blobs, opts: opts, log: log, immutable: immutable}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength != 0 {
+		// GET and HEAD carry no body. Closing after the reply stops
+		// net/http from waiting, without a deadline, to discard a body
+		// that a client announces and never sends.
+		w.Header().Set("Connection", "close")
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		h.writeError(w, r, http.StatusMethodNotAllowed)
@@ -293,7 +311,7 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 		hdr.Set("Content-Security-Policy", csp)
 	}
 	if pinned {
-		hdr.Set("Cache-Control", cacheImmutable)
+		hdr.Set("Cache-Control", h.immutable)
 	} else {
 		hdr.Set("Cache-Control", cacheLatest)
 	}

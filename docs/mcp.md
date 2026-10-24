@@ -101,11 +101,14 @@ codes as the REST API:
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |
 | `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`) or the write policy denies the change. |
-| `internal` | Server error; details are in the server log. |
+| `rate_limited` | The credential used up its write budget, `limits.write_rate_per_minute` shared with the REST API (`rate_limited: too many writes; retry in 12s`). Applies to the write and delete tools only. |
+| `internal` | Server error, including a handler that crashed; details are in the server log. |
 
 ## HTTP checks
 
-Before authentication the endpoint applies two checks the MCP specification requires against DNS
+Before authentication the `mcp.` host applies a per-client-IP limit of 120 requests a minute,
+shared by the MCP endpoint and the OAuth endpoints; beyond it requests get `429 rate_limited` with
+`Retry-After`. The endpoint then applies two checks the MCP specification requires against DNS
 rebinding and version confusion:
 
 - **Origin.** A request with an `Origin` header is rejected with `403` and a JSON error unless the

@@ -50,6 +50,10 @@ type Options struct {
 	AutoProvision bool
 	// AdminEmails are provisioned as admins.
 	AdminEmails []string
+	// OnDisable, when set, runs after a user is disabled and their keys are
+	// revoked, to revoke credentials held elsewhere (OAuth grants). An error
+	// fails the update; the user stays disabled.
+	OnDisable func(ctx context.Context, handle string) error
 	// Now is the clock (default time.Now).
 	Now func() time.Time
 }
@@ -155,8 +159,9 @@ type UpdateUserRequest struct {
 	Disabled    *bool
 }
 
-// UpdateUser applies req to the user. Disabling a user stamps DisabledAt and
-// revokes every key; enabling clears DisabledAt (revoked keys stay revoked).
+// UpdateUser applies req to the user. Disabling a user stamps DisabledAt,
+// revokes every key and runs Options.OnDisable; enabling clears DisabledAt
+// (revoked keys and grants stay revoked).
 func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (*User, error) {
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
@@ -199,6 +204,11 @@ func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserR
 	if req.Disabled != nil && *req.Disabled {
 		if err := s.store.RevokeAllKeys(ctx, handle, now); err != nil {
 			return nil, fmt.Errorf("user: disable %q: %w", handle, err)
+		}
+		if s.opts.OnDisable != nil {
+			if err := s.opts.OnDisable(ctx, handle); err != nil {
+				return nil, fmt.Errorf("user: disable %q: %w", handle, err)
+			}
 		}
 	}
 	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, details)
@@ -307,7 +317,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	now := s.now()
-	if k.RevokedAt != nil || (k.ExpiresAt != nil && !now.Before(*k.ExpiresAt)) || u.DisabledAt != nil {
+	if !keyActive(k, u, now) {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	s.touch(ctx, k, now)
@@ -327,6 +337,23 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		KeyID:      k.Prefix,
 		QuotaBytes: u.QuotaBytes,
 	}, nil
+}
+
+// KeyStatus reports on the key with prefix without its secret, for a
+// credential derived from the key: an OAuth grant approved with it lives
+// only while the key is active. ErrKeyNotFound.
+func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, error) {
+	k, u, err := s.store.GetKey(ctx, prefix)
+	if err != nil {
+		return KeyStatus{}, err
+	}
+	return KeyStatus{Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt}, nil
+}
+
+// keyActive reports whether k is neither revoked nor expired at now and its
+// owner u is not disabled.
+func keyActive(k *APIKey, u *User, now time.Time) bool {
+	return k.RevokedAt == nil && (k.ExpiresAt == nil || now.Before(*k.ExpiresAt)) && u.DisabledAt == nil
 }
 
 // touch writes last_used_at at most once per touchInterval per key. A

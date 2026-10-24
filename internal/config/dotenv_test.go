@@ -129,7 +129,7 @@ func TestLoadEnvFileOption(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeYAML(t, loadTestYAML)
 	envPath := filepath.Join(dir, "agalma.env")
-	if err := os.WriteFile(envPath, []byte("AGALMA_TEST_DOMAIN=from.envfile\nAGALMA_AUTH_ADMIN_TOKEN=adm\n"), 0o600); err != nil {
+	if err := os.WriteFile(envPath, []byte("AGALMA_TEST_DOMAIN=from.envfile\nAGALMA_AUTH_ADMIN_TOKEN=adm-0123456789abcdef0123456789ab\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A ./.env in the working directory is ignored when envFile is named.
@@ -143,8 +143,8 @@ func TestLoadEnvFileOption(t *testing.T) {
 	if c.BaseDomain != "from.envfile" {
 		t.Errorf("BaseDomain = %q, want from.envfile", c.BaseDomain)
 	}
-	if c.Auth.AdminToken != "adm" {
-		t.Errorf("AdminToken = %q, want adm from the AGALMA_* override in the env file", c.Auth.AdminToken)
+	if c.Auth.AdminToken != testAdminToken {
+		t.Errorf("AdminToken = %q, want %s from the AGALMA_* override in the env file", c.Auth.AdminToken, testAdminToken)
 	}
 
 	t.Setenv("AGALMA_TEST_DOMAIN", "from.process")

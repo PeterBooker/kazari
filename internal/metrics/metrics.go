@@ -76,11 +76,24 @@ func (m *Metrics) HTTP(surface string) func(http.Handler) http.Handler {
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			defer func() {
 				m.inflight.WithLabelValues(surface).Dec()
-				m.requests.WithLabelValues(surface, r.Method, strconv.Itoa(sw.status)).Inc()
+				m.requests.WithLabelValues(surface, methodLabel(r.Method), strconv.Itoa(sw.status)).Inc()
 				m.duration.WithLabelValues(surface).Observe(time.Since(start).Seconds())
 			}()
 			next.ServeHTTP(sw, r)
 		})
+	}
+}
+
+// methodLabel maps a request method to a fixed set of label values. net/http
+// accepts any token as a method, so using it as given would let a client
+// create a new series, which is never freed, with every request.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return method
+	default:
+		return "other"
 	}
 }
 

@@ -4,9 +4,11 @@
 // code flow with PKCE (S256 only) and refresh-token rotation.
 //
 // People sign in at an upstream IdentityProvider (an OpenID Connect provider,
-// see package oidc); without one, the consent page asks for an API key.
-// Access and refresh tokens are opaque random strings stored as SHA-256
-// hashes. Service implements auth.Authenticator for access tokens.
+// see package oidc); without one, the consent page asks for an API key, and
+// the grant then lives only as long as that key. The admin scope is never
+// offered or granted. Access and refresh tokens are opaque random strings
+// stored as SHA-256 hashes. Service implements auth.Authenticator for access
+// tokens.
 package oauth
 
 import (
@@ -21,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"syscall"
@@ -84,6 +87,7 @@ type Code struct {
 	RedirectURI   string
 	CodeChallenge string
 	Resource      string
+	KeyPrefix     string // the API key that approved it; "" after an identity-provider sign-in
 	ExpiresAt     time.Time
 	UsedAt        *time.Time
 }
@@ -97,6 +101,7 @@ type Token struct {
 	UserHandle string
 	Scopes     []string
 	Resource   string
+	KeyPrefix  string // the API key that approved the grant; "" after an identity-provider sign-in
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	RevokedAt  *time.Time
@@ -163,6 +168,17 @@ type IdentityProvider interface {
 	Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error)
 }
 
+// Keys checks API keys for grants approved without an identity provider:
+// Authenticate verifies the key typed on the consent page, and KeyStatus
+// reports later whether the key that approved a grant is still active.
+// user.Service implements it.
+type Keys interface {
+	auth.Authenticator
+	// KeyStatus returns the state of the key with prefix.
+	// user.ErrKeyNotFound.
+	KeyStatus(ctx context.Context, prefix string) (user.KeyStatus, error)
+}
+
 // Options configures a Service.
 type Options struct {
 	// Issuer is the authorization server, e.g. https://mcp.art.example.com.
@@ -172,7 +188,9 @@ type Options struct {
 	Resource string
 	// Lifetimes; zero means 1h, 30 days, 10m and 5m.
 	AccessTTL, RefreshTTL, RequestTTL, CodeTTL time.Duration
-	// Scopes offered to clients (default auth.AllScopes).
+	// Scopes offered to clients (default auth.MemberScopes). auth.ScopeAdmin
+	// is dropped: a client an admin approves must not get a token that opens
+	// the admin host.
 	Scopes []string
 	// Now is the clock (default time.Now).
 	Now func() time.Time
@@ -182,8 +200,8 @@ type Options struct {
 	// 10 s timeout and refuses to connect to loopback, private and
 	// link-local addresses.
 	HTTPClient *http.Client
-	// InsecureCookies drops the Secure cookie attribute, for development
-	// over plain http.
+	// InsecureCookies drops the Secure cookie attribute and the __Host-
+	// cookie name prefix, for development over plain http.
 	InsecureCookies bool
 }
 
@@ -199,10 +217,11 @@ const (
 type Service struct {
 	store  Store
 	users  *user.Service
-	keys   auth.Authenticator
+	keys   Keys
 	idp    IdentityProvider
 	audit  audit.Recorder
 	opts   Options
+	origin string // of the issuer, e.g. https://mcp.art.example.com
 	now    func() time.Time
 	log    *slog.Logger
 	client *http.Client
@@ -211,9 +230,10 @@ type Service struct {
 
 var _ auth.Authenticator = (*Service)(nil)
 
-// New returns a Service. keys is the API-key authenticator used on the
-// consent page when idp is nil; either may be nil. rec may be nil.
-func New(store Store, users *user.Service, keys auth.Authenticator, idp IdentityProvider, rec audit.Recorder, opts Options) *Service {
+// New returns a Service. keys checks the API key on the consent page when
+// idp is nil; either may be nil (without keys, grants approved with a key
+// stop working). rec may be nil.
+func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec audit.Recorder, opts Options) *Service {
 	if rec == nil {
 		rec = audit.Nop{}
 	}
@@ -230,8 +250,9 @@ func New(store Store, users *user.Service, keys auth.Authenticator, idp Identity
 	if opts.CodeTTL <= 0 {
 		opts.CodeTTL = DefaultCodeTTL
 	}
+	opts.Scopes = slices.DeleteFunc(slices.Clone(opts.Scopes), func(sc string) bool { return sc == auth.ScopeAdmin })
 	if len(opts.Scopes) == 0 {
-		opts.Scopes = slices.Clone(auth.AllScopes)
+		opts.Scopes = slices.Clone(auth.MemberScopes)
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -242,8 +263,12 @@ func New(store Store, users *user.Service, keys auth.Authenticator, idp Identity
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = defaultHTTPClient()
 	}
+	var origin string
+	if u, err := url.Parse(opts.Issuer); err == nil && u.Host != "" {
+		origin = strings.ToLower(u.Scheme + "://" + u.Host)
+	}
 	return &Service{
-		store: store, users: users, keys: keys, idp: idp, audit: rec, opts: opts,
+		store: store, users: users, keys: keys, idp: idp, audit: rec, opts: opts, origin: origin,
 		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(),
 	}
 }
@@ -312,10 +337,12 @@ func publicAddr(host string) bool {
 	return true
 }
 
-// Authenticate resolves an access token. Unknown, revoked or expired tokens
-// and disabled users yield auth.ErrInvalidToken, so auth.Chain moves on.
-// The principal's scopes are the token's capped at what the user's role
-// allows now.
+// Authenticate resolves an access token. Unknown, revoked or expired tokens,
+// disabled users and grants whose approving API key is no longer active
+// yield auth.ErrInvalidToken, so auth.Chain moves on. The principal's scopes
+// are the token's capped at the offered scopes and at what the user's role
+// allows now; it is never an admin. KeyID names the grant, so it stays the
+// same across refreshes.
 func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principal, error) {
 	if len(token) != tokenLen {
 		return auth.Principal{}, auth.ErrInvalidToken
@@ -340,17 +367,45 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	if u.DisabledAt != nil {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
-	scopes := intersect(t.Scopes, user.ScopesFor(u))
-	// Admin powers travel with the admin scope, so a grant the user narrowed
-	// on the consent page stays narrow.
+	_, live, err := s.approvingKey(ctx, t.KeyPrefix, t.UserHandle)
+	if err != nil {
+		return auth.Principal{}, fmt.Errorf("oauth: authenticate: %w", err)
+	}
+	if !live {
+		return auth.Principal{}, auth.ErrInvalidToken
+	}
+	// Options.Scopes never holds admin, so neither does a token issued
+	// before that rule once capped here: an OAuth principal is never an
+	// admin.
 	return auth.Principal{
 		Handle:     u.Handle,
-		Admin:      u.Role == user.RoleAdmin && slices.Contains(scopes, auth.ScopeAdmin),
-		Scopes:     scopes,
+		Scopes:     intersect(intersect(t.Scopes, s.opts.Scopes), user.ScopesFor(u)),
 		Source:     auth.SourceOAuth,
-		KeyID:      fmt.Sprintf("oauth:%d", t.ID),
+		KeyID:      fmt.Sprintf("oauth:%d", t.FamilyID),
 		QuotaBytes: u.QuotaBytes,
 	}, nil
+}
+
+// approvingKey checks the API key that approved a grant; prefix "" (a
+// grant approved after an identity-provider sign-in) always passes. live is
+// false when the key is unknown, revoked or expired, belongs to someone
+// other than handle, or its owner is disabled. expires is the key's expiry,
+// nil when it has none.
+func (s *Service) approvingKey(ctx context.Context, prefix, handle string) (expires *time.Time, live bool, err error) {
+	if prefix == "" {
+		return nil, true, nil
+	}
+	if s.keys == nil {
+		return nil, false, nil
+	}
+	st, err := s.keys.KeyStatus(ctx, prefix)
+	if errors.Is(err, user.ErrKeyNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return st.ExpiresAt, st.Active && st.Handle == handle, nil
 }
 
 // GetClient returns a registered or cached client, e.g. to name the client
@@ -374,8 +429,8 @@ func (s *Service) RevokeGrant(ctx context.Context, id int64) error {
 	return nil
 }
 
-// RevokeAllForUser revokes every token of the user, e.g. when the user is
-// disabled.
+// RevokeAllForUser revokes every token of the user. It is wired to
+// user.Options.OnDisable, so disabling a user ends their grants for good.
 func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 	if err := s.store.RevokeAllForUser(ctx, handle, s.now()); err != nil {
 		return err

@@ -301,6 +301,89 @@ func TestDisableRevokesKeys(t *testing.T) {
 	}
 }
 
+// Regression: disabling a user revoked their keys but nothing else, so
+// enabling them again revived their OAuth grants. OnDisable lets the
+// holder of other credentials revoke them.
+func TestDisableRunsOnDisable(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	var fail error
+	f := newFixture(t, user.Options{OnDisable: func(_ context.Context, handle string) error {
+		calls = append(calls, handle)
+		return fail
+	}})
+	f.mustCreate(t, "alice", "", "")
+
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{DisplayName: ptr("Alice")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"alice"}, calls); diff != "" {
+		t.Errorf("OnDisable calls (-want +got):\n%s", diff)
+	}
+
+	// A failed hook fails the update; the user is disabled all the same.
+	fail = errors.New("grants unavailable")
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)}); !errors.Is(err, fail) {
+		t.Errorf("UpdateUser with failing OnDisable = %v, want its error", err)
+	}
+	if u, _ := f.svc.GetUser(ctx, "alice"); u.DisabledAt == nil {
+		t.Error("user not disabled after a failed OnDisable")
+	}
+}
+
+func TestKeyStatus(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, user.Options{})
+	f.mustCreate(t, "alice", "", "")
+	f.mustCreate(t, "bob", "", "")
+	live, _ := f.mustIssue(t, "alice", nil, 0)
+	expiring, _ := f.mustIssue(t, "alice", nil, time.Hour)
+	revoked, _ := f.mustIssue(t, "alice", nil, 0)
+	if err := f.svc.RevokeKey(ctx, "alice", revoked.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	// Disabled in the store directly, so bob's key itself stays unrevoked.
+	bobs, _ := f.mustIssue(t, "bob", nil, 0)
+	if err := f.store.UpdateUser(ctx, &user.User{Handle: "bob", Role: user.RoleMember, DisabledAt: ptr(t0)}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		prefix  string
+		advance time.Duration
+		want    user.KeyStatus
+	}{
+		{"live", live.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true}},
+		{"before expiry", expiring.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true, ExpiresAt: expiring.ExpiresAt}},
+		{"revoked", revoked.Prefix, 0, user.KeyStatus{Handle: "alice"}},
+		{"disabled owner", bobs.Prefix, 0, user.KeyStatus{Handle: "bob"}},
+		{"at expiry", expiring.Prefix, time.Hour, user.KeyStatus{Handle: "alice", ExpiresAt: expiring.ExpiresAt}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f.clock.Advance(tt.advance)
+			defer f.clock.Advance(-tt.advance)
+			got, err := f.svc.KeyStatus(ctx, tt.prefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("KeyStatus (-want +got):\n%s", diff)
+			}
+		})
+	}
+	if _, err := f.svc.KeyStatus(ctx, "zzzzzzzz"); !errors.Is(err, user.ErrKeyNotFound) {
+		t.Errorf("KeyStatus(unknown) = %v, want ErrKeyNotFound", err)
+	}
+}
+
 var keyRE = regexp.MustCompile(`^agk_([a-z2-7]{8})_[a-z2-7]{52}$`)
 
 func TestIssueKey(t *testing.T) {

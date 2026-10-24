@@ -276,3 +276,19 @@ func httpapiAdmin(t *testing.T, d httpapi.AdminDeps) string {
 	t.Helper()
 	return httptestServer(t, httpapi.NewAdminAPI(d, httpapi.AdminOptions{AdminToken: adminToken}))
 }
+
+// Wrong admin tokens are throttled per client IP, so a token cannot be
+// guessed at speed; the health checks stay open.
+func TestAdminIPRateLimit(t *testing.T) {
+	e := newEnv(t, config{admin: httpapi.AdminOptions{IPRatePerMinute: 2}})
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "guess-1"}), http.StatusUnauthorized, api.CodeUnauthorized)
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "guess-2"}), http.StatusUnauthorized, api.CodeUnauthorized)
+	resp := e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: adminToken})
+	e.apiErr(resp, http.StatusTooManyRequests, api.CodeRateLimited)
+	if ra := resp.Header.Get("Retry-After"); ra != "30" {
+		t.Errorf("Retry-After = %q, want 30", ra)
+	}
+	for _, p := range []string{"/health", "/v1/health"} {
+		e.call(http.MethodGet, e.a(p), "", nil, http.StatusOK, nil)
+	}
+}

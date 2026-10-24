@@ -48,7 +48,6 @@ var scopeDescriptions = map[string]string{
 	auth.ScopeRead:   "List and read your artifacts",
 	auth.ScopeWrite:  "Create and update artifacts",
 	auth.ScopeDelete: "Delete artifacts",
-	auth.ScopeAdmin:  "Administer the instance",
 }
 
 func scopeViews(scopes []string) []scopeView {

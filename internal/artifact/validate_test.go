@@ -150,6 +150,56 @@ func TestValidateMetadata(t *testing.T) {
 	}
 }
 
+// Names, descriptions and labels are returned by every listing and shown
+// in terminals and pages: short, UTF-8, and without characters that
+// change how the text around them reads.
+func TestValidateText(t *testing.T) {
+	tests := []struct {
+		name     string
+		validate func(string) error
+		in       string
+		msg      string // part of the error; "" means accepted
+	}{
+		{"name at limit", artifact.ValidateName, strings.Repeat("n", artifact.NameMaxBytes), ""},
+		{"name over limit", artifact.ValidateName, strings.Repeat("n", artifact.NameMaxBytes+1), "name is longer than 256 bytes"},
+		{"name multi-byte", artifact.ValidateName, "Démo ✓ 日本語", ""},
+		{"name empty", artifact.ValidateName, "", ""},
+		{"name newline", artifact.ValidateName, "a\nb", "name contains the control character U+000A"},
+		{"name tab", artifact.ValidateName, "a\tb", "U+0009"},
+		{"name NUL", artifact.ValidateName, "a\x00b", "U+0000"},
+		{"name DEL", artifact.ValidateName, "a\x7fb", "U+007F"},
+		{"name C1", artifact.ValidateName, "a\u0085b", "U+0085"},
+		{"name bidi override", artifact.ValidateName, "a\u202eb", "U+202E"},
+		{"name bidi embedding", artifact.ValidateName, "a\u202ab", "U+202A"},
+		{"name bidi isolate", artifact.ValidateName, "a\u2066b", "U+2066"},
+		{"name pop isolate", artifact.ValidateName, "a\u2069b", "U+2069"},
+		{"name invalid UTF-8", artifact.ValidateName, "a\xffb", "name is not valid UTF-8"},
+		{"description at limit", artifact.ValidateDescription, strings.Repeat("d", artifact.DescriptionMaxBytes), ""},
+		{"description over limit", artifact.ValidateDescription, strings.Repeat("d", artifact.DescriptionMaxBytes+1), "description is longer than 4096 bytes"},
+		{"description lines and tabs", artifact.ValidateDescription, "line one\n\tline two\n", ""},
+		{"description carriage return", artifact.ValidateDescription, "a\r\nb", "U+000D"},
+		{"description escape", artifact.ValidateDescription, "\x1b[31mred", "U+001B"},
+		{"description bidi", artifact.ValidateDescription, "x\u202ey", "U+202E"},
+		{"label at limit", artifact.ValidateLabel, strings.Repeat("l", artifact.LabelMaxBytes), ""},
+		{"label over limit", artifact.ValidateLabel, strings.Repeat("l", artifact.LabelMaxBytes+1), "label is longer than 256 bytes"},
+		{"label newline", artifact.ValidateLabel, "v1\n", "label contains"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.validate(tt.in)
+			if tt.msg == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, artifact.ErrInvalidArgument) || !strings.Contains(err.Error(), tt.msg) {
+				t.Fatalf("err = %v, want invalid_argument containing %q", err, tt.msg)
+			}
+		})
+	}
+}
+
 func TestValidateMetadataKey(t *testing.T) {
 	for k, ok := range map[string]bool{"team": true, "agalma.spa": true, "a'b": false, "": false} {
 		if err := artifact.ValidateMetadataKey(k); (err == nil) != ok {

@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // ErrInvalidHash is returned for a hash that is not 64 lower-case hex
@@ -40,7 +42,7 @@ func NewFS(dir string) (*FS, error) {
 // its content address. If the blob already exists the temp file is removed
 // and the existing blob is kept.
 func (f *FS) Put(ctx context.Context, r io.Reader) (string, int64, error) {
-	tmp, err := os.CreateTemp(f.dir, ".put-*")
+	tmp, err := os.CreateTemp(f.dir, tempPrefix+"*")
 	if err != nil {
 		return "", 0, fmt.Errorf("blob: put: %w", err)
 	}
@@ -123,6 +125,45 @@ func (f *FS) Delete(_ context.Context, hash string) error {
 		return fmt.Errorf("blob: delete: %w", err)
 	}
 	return nil
+}
+
+// tempPrefix names the files Put writes before renaming them into place.
+const tempPrefix = ".put-"
+
+// RemoveStaleTemp removes Put's temporary files last written before the
+// given time. Put removes its own on every path but a crash, so these are
+// what a crash left behind. It returns how many it removed and carries on
+// past errors.
+func (f *FS) RemoveStaleTemp(before time.Time) (int, error) {
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		return 0, fmt.Errorf("blob: remove stale temp: %w", err)
+	}
+	var (
+		n    int
+		errs []error
+	)
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), tempPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err == nil && !info.ModTime().Before(before) {
+			continue
+		}
+		if err == nil {
+			err = os.Remove(filepath.Join(f.dir, e.Name()))
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			continue // committed or removed by its Put meanwhile
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("blob: remove stale temp: %w", err))
+			continue
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
 }
 
 func (f *FS) path(hash string) string {

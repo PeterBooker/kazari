@@ -183,6 +183,52 @@ func TestOAuthStoreConsumeCodeConcurrent(t *testing.T) {
 	}
 }
 
+// The approving API key travels from the code to every token of the grant,
+// so the service can end the grant with the key.
+func TestOAuthStoreKeyPrefix(t *testing.T) {
+	ctx := context.Background()
+	s := oauthTestStores(t)
+	c := &oauth.Code{Hash: "hk", ClientID: "dcr_test", UserHandle: "alice", RedirectURI: "https://app.example/cb",
+		CodeChallenge: "chal", KeyPrefix: "abcdefgh", ExpiresAt: oauthT0.Add(5 * time.Minute)}
+	if err := s.CreateCode(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ConsumeCode(ctx, "hk", oauthT0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KeyPrefix != "abcdefgh" {
+		t.Errorf("code KeyPrefix = %q, want abcdefgh", got.KeyPrefix)
+	}
+
+	a1, r1 := oauthPair("alice", nil, oauthT0, 0)
+	a1.KeyPrefix, r1.KeyPrefix = "abcdefgh", "abcdefgh"
+	if err := s.CreateTokens(ctx, a1, r1); err != nil {
+		t.Fatal(err)
+	}
+	a2, r2 := oauthPair("alice", nil, oauthT0, 1)
+	a2.KeyPrefix, r2.KeyPrefix = "abcdefgh", "abcdefgh"
+	if err := s.Rotate(ctx, r1.ID, oauthT0, a2, r2); err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range []*oauth.Token{a1, a2, r2} {
+		got, err := s.GetToken(ctx, tok.Hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.KeyPrefix != "abcdefgh" {
+			t.Errorf("%s token %d KeyPrefix = %q, want abcdefgh", got.Kind, got.ID, got.KeyPrefix)
+		}
+	}
+	grants, err := s.ListGrants(ctx, "alice", oauthT0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 1 || grants[0].KeyPrefix != "abcdefgh" {
+		t.Errorf("ListGrants = %+v, want one grant with the key prefix", grants)
+	}
+}
+
 func oauthPair(handle string, scopes []string, now time.Time, n int) (*oauth.Token, *oauth.Token) {
 	mk := func(kind string, ttl time.Duration) *oauth.Token {
 		return &oauth.Token{Hash: kind + "-" + handle + "-" + string(rune('a'+n)), Kind: kind, ClientID: "dcr_test",

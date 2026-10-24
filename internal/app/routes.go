@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"agalma/internal/buildinfo"
 	"agalma/internal/config"
 	"agalma/internal/httpapi"
 	"agalma/internal/metrics"
@@ -97,20 +96,21 @@ func hostname(host string) string {
 }
 
 // apexHandler serves the base domain: /health and a static page naming
-// the instance at /; everything else is a plain 404.
+// the instance at /; everything else is a plain 404. Neither discloses the
+// version.
 func apexHandler(cfg config.Config) (http.Handler, error) {
 	t, err := template.New("apex").Parse(apexPage)
 	if err != nil {
 		return nil, fmt.Errorf("app: apex page: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, struct{ BaseDomain, Version string }{cfg.BaseDomain, buildinfo.Get().Version}); err != nil {
+	if err := t.Execute(&buf, struct{ BaseDomain string }{cfg.BaseDomain}); err != nil {
 		return nil, fmt.Errorf("app: apex page: %w", err)
 	}
 	page := buf.Bytes()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", httpapi.Health)
+	mux.HandleFunc("GET /health", httpapi.Liveness)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Length", strconv.Itoa(len(page)))
@@ -131,7 +131,7 @@ func redirectHandler(cfg config.Config) http.Handler {
 		port = ":" + strconv.Itoa(p)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", httpapi.Health)
+	mux.HandleFunc("GET /health", httpapi.Liveness)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		host := hostname(r.Host)
 		if host != cfg.BaseDomain && !strings.HasSuffix(host, "."+cfg.BaseDomain) {

@@ -1,6 +1,7 @@
 package site
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -704,4 +706,52 @@ func TestBlobsClosed(t *testing.T) {
 		t.Errorf("opened %d blobs, want 5", fx.blobs.opens)
 	}
 	checkClosed(t, fx)
+}
+
+// Pinned versions are cached no longer than ImmutableMaxAge, so a slug
+// freed after its tombstone is not answered from a cache of the old owner's
+// content; values above a year are capped.
+func TestImmutableMaxAge(t *testing.T) {
+	fx := newFixture(t)
+	for _, tt := range []struct {
+		age  time.Duration
+		want string
+	}{
+		{0, "public, max-age=31536000, immutable"},
+		{90 * 24 * time.Hour, "public, max-age=7776000, immutable"},
+		{10 * 365 * 24 * time.Hour, "public, max-age=31536000, immutable"},
+	} {
+		rec := do(t, fx.handler(Options{ImmutableMaxAge: tt.age}), http.MethodGet, "demo--v1.art.test", "/", nil)
+		if got := rec.Header().Get("Cache-Control"); got != tt.want {
+			t.Errorf("ImmutableMaxAge %v: Cache-Control = %q, want %q", tt.age, got, tt.want)
+		}
+	}
+}
+
+// A GET that announces a body it never sends is answered at once and the
+// connection closed, instead of net/http waiting without a deadline to
+// discard the body.
+func TestAnnouncedBodyDoesNotHold(t *testing.T) {
+	fx := newFixture(t)
+	srv := httptest.NewServer(fx.handler(Options{}))
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: demo.art.test\r\nContent-Length: 10\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !resp.Close {
+		t.Errorf("status = %d, close = %v; want 200 and Connection: close", resp.StatusCode, resp.Close)
+	}
 }

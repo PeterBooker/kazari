@@ -15,6 +15,7 @@ type texts struct {
 	versionURL string // https://<slug>--v<N>.<base>/
 	slugRules  string
 	limits     string
+	text       string
 	serving    string
 	csp        string
 	metadata   string
@@ -42,6 +43,10 @@ func newTexts(links present.Links, o Options) texts {
 
 	t.limits = fmt.Sprintf("Limits: each file at most %s, each version at most %s in total, at most %d files per version.",
 		size(o.MaxFileBytes), size(o.MaxVersionBytes), o.MaxFiles)
+
+	t.text = fmt.Sprintf("Text fields: name at most %d bytes and label at most %d bytes, each on one line; description "+
+		"at most %d bytes (line breaks allowed); none may contain other control characters.",
+		artifact.NameMaxBytes, artifact.LabelMaxBytes, artifact.DescriptionMaxBytes)
 
 	t.serving = fmt.Sprintf("Serving: index.html is served at %s; a directory path serves the index.html inside it; "+
 		"a missing path serves the artifact's own 404.html when it has one. Every version also stays reachable at %s, "+
@@ -97,6 +102,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			t.slugRules, t.limits, t.serving, t.csp, t.metadata, t.inline,
 			"visibility is \"public\" (default, appears in listings) or \"unlisted\" (served to anyone with the URL, not listed). " +
 				"label is an optional note on the version.",
+			t.text,
 		}, "\n\n"),
 
 		"update_artifact": strings.Join([]string{
@@ -110,7 +116,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
 			"A new version clears a pending stale mark unless keep_stale is true.",
-			t.limits, t.csp, t.metadata, t.inline,
+			t.text, t.limits, t.csp, t.metadata, t.inline,
 		}, "\n\n"),
 
 		"begin_upload": strings.Join([]string{

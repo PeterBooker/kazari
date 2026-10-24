@@ -102,16 +102,9 @@ func (e *OffsetMismatchError) Is(target error) bool { return target == artifact.
 // error.
 func (e *OffsetMismatchError) Unwrap() error { return artifact.ErrOffsetMismatch }
 
-// Begin starts an upload for owner.
+// Begin starts an upload for owner. The store enforces MaxOpenPerOwner in
+// the same transaction as the insert, so concurrent Begins cannot pass it.
 func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
-	n, err := s.store.CountOpen(ctx, owner)
-	if err != nil {
-		return nil, fmt.Errorf("upload: begin: %w", err)
-	}
-	if n >= s.opts.MaxOpenPerOwner {
-		return nil, artifact.Errorf(artifact.ErrTooManyUploads,
-			"%d uploads already open (limit %d)", n, s.opts.MaxOpenPerOwner)
-	}
 	b := make([]byte, idBytes)
 	if _, err := rand.Read(b); err != nil {
 		return nil, fmt.Errorf("upload: begin: %w", err)
@@ -125,7 +118,10 @@ func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
 	}
 	// The row comes first, so the orphan sweep in ExpireStale never sees a
 	// directory whose row is still being written.
-	if err := s.store.Create(ctx, u); err != nil {
+	if err := s.store.Create(ctx, u, s.opts.MaxOpenPerOwner); err != nil {
+		if errors.Is(err, artifact.ErrTooManyUploads) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("upload: begin: %w", err)
 	}
 	if err := os.MkdirAll(s.dir(u.ID), 0o700); err != nil {
@@ -145,13 +141,17 @@ func (s *Service) Get(ctx context.Context, owner, id string) (*Upload, error) {
 // An offset equal to the staged size appends. A chunk that ends exactly at
 // the staged size is a retry of one already written and is acknowledged
 // without writing. Any other offset returns an *OffsetMismatchError. The
-// content type is taken from the first chunk of a path.
+// content type is taken from the first chunk of a path; on every chunk it
+// must pass the check the publish applies, so nothing invalid is staged.
 func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offset int64, r io.Reader, contentType string) (StagedFile, error) {
 	if offset < 0 {
 		return StagedFile{}, artifact.Errorf(artifact.ErrInvalidArgument, "negative offset %d", offset)
 	}
 	clean, err := artifact.ValidatePath(path)
 	if err != nil {
+		return StagedFile{}, err
+	}
+	if err := artifact.ValidateContentType(contentType); err != nil {
 		return StagedFile{}, err
 	}
 	chunk, err := io.ReadAll(io.LimitReader(r, s.opts.MaxChunkBytes+1))

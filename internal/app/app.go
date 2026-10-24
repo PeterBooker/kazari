@@ -27,6 +27,7 @@ import (
 	"agalma/internal/oauth"
 	"agalma/internal/oidc"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/scheduler"
 	"agalma/internal/site"
 	"agalma/internal/sqlite"
@@ -38,6 +39,7 @@ import (
 const (
 	uploadsExpireEvery = 10 * time.Minute
 	oauthCleanupEvery  = time.Hour
+	staleTempAge       = time.Hour // temp files older than this are crash leftovers
 )
 
 // Options are the process-level inputs that do not belong in the config.
@@ -67,7 +69,7 @@ type App struct {
 	sched   *scheduler.Scheduler
 	certs   certs.Source // nil in proxy mode
 	router  http.Handler
-	admin   http.Handler // the admin host chain, also served on cfg.Admin.Listen
+	admin   http.Handler // the admin host chain: on cfg.Admin.Listen when set, else on the router
 	oidcOn  bool
 	started chan struct{}
 
@@ -153,6 +155,12 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		userOpts.AutoProvision = o.AutoProvision
 		userOpts.AdminEmails = o.AdminEmails
 	}
+	// Disabling a user ends their OAuth grants, so enabling them again does
+	// not bring the grants back. oauthSvc is set below, before any request.
+	var oauthSvc *oauth.Service
+	userOpts.OnDisable = func(ctx context.Context, handle string) error {
+		return oauthSvc.RevokeAllForUser(ctx, handle)
+	}
 	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
 
 	mcpURL := cfg.ExternalURL("mcp")
@@ -170,7 +178,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		idp = p
 		a.oidcOn = true
 	}
-	oauthSvc := oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauth.Options{
+	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauth.Options{
 		Issuer:          strings.TrimSuffix(mcpURL, "/"),
 		Resource:        mcpURL,
 		Now:             now,
@@ -180,6 +188,8 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
 	m := metrics.New()
+	// One write budget per credential across the user API and MCP.
+	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, now)
 
 	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now},
 		job(m, "sweep", cfg.Lifecycle.SweepInterval.Std(), func(ctx context.Context) error {
@@ -194,7 +204,14 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			if n > 0 {
 				log.InfoContext(ctx, "gc", "blobs_deleted", n)
 			}
-			return err
+			// Temporary files a crash left in the blob and spill directories.
+			cutoff := now().Add(-staleTempAge)
+			puts, perr := blobs.RemoveStaleTemp(cutoff)
+			spills, serr := httpapi.RemoveStaleSpills(tempDir(cfg), cutoff)
+			if puts+spills > 0 {
+				log.InfoContext(ctx, "gc", "temp_files_removed", puts+spills)
+			}
+			return errors.Join(err, perr, serr)
 		}),
 		job(m, "uploads-expire", uploadsExpireEvery, func(ctx context.Context) error {
 			n, err := uploads.ExpireStale(ctx)
@@ -213,14 +230,13 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	)
 
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
-		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log,
+		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes,
 	}, httpapi.UserOptions{
-		MaxBodyBytes:       int64(cfg.Limits.MaxVersionBytes) + 1<<20,
-		MaxChunkBytes:      int64(cfg.Limits.MaxChunkBytes),
-		MaxTotalBytes:      int64(cfg.Limits.MaxVersionBytes),
-		WriteRatePerMinute: cfg.Limits.WriteRatePerMinute,
-		Now:                now,
-		TempDir:            tempDir(cfg),
+		MaxBodyBytes:  int64(cfg.Limits.MaxVersionBytes) + 1<<20,
+		MaxChunkBytes: int64(cfg.Limits.MaxChunkBytes),
+		MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
+		Now:           now,
+		TempDir:       tempDir(cfg),
 	})
 	adminH := httpapi.NewAdminAPI(httpapi.AdminDeps{
 		Artifacts: arts,
@@ -235,7 +251,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Logger:    log,
 	}, httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now})
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
-		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log,
+		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes,
 	}, mcpserver.Options{
 		BaseDomain:          cfg.BaseDomain,
 		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
@@ -254,6 +270,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		BaseDomain:       cfg.BaseDomain,
 		DefaultCSP:       cfg.Serve.CSP,
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
+		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
 	})
 	apexH, err := apexHandler(cfg)
@@ -262,10 +279,18 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}
 
 	a.admin = a.surface(m, "admin", true, adminH)
+	publicAdmin := a.admin
+	if cfg.Admin.Listen != "" {
+		// The admin host is served on its own listener only.
+		publicAdmin = a.surface(m, "admin", true, http.NotFoundHandler())
+	}
+	// The OAuth endpoints and the MCP endpoint share one per-IP budget,
+	// applied before authentication, like the user API's.
+	mcpLimit := ratelimit.Middleware(ratelimit.New(ratelimit.DefaultIPPerMinute, now), ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
 		api:   a.surface(m, "api", true, apiH),
-		mcp:   a.surface(m, "mcp", true, mcpMux(oauthSvc.Handler(), mcpH)),
-		admin: a.admin,
+		mcp:   a.surface(m, "mcp", true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		admin: publicAdmin,
 		apex:  a.surface(m, "apex", true, apexH),
 		site:  a.surface(m, "site", false, siteH),
 	})

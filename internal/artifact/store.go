@@ -15,8 +15,10 @@ type Store interface {
 	// Create inserts the artifact, its first version with files, the blob
 	// rows the files reference, and the actor row for a.OwnerHandle.
 	// It sets v.ID and v.Number (1). ErrSlugTaken when the slug exists,
-	// including as a tombstone.
-	Create(ctx context.Context, a *Artifact, v *Version) error
+	// including as a tombstone. When quota > 0 and the owner's usage plus
+	// v.SizeBytes would exceed it, nothing is written and ErrQuotaExceeded
+	// is returned; the check and the insert are one transaction.
+	Create(ctx context.Context, a *Artifact, v *Version, quota int64) error
 
 	// Get returns the artifact (including tombstones) or ErrNotFound.
 	Get(ctx context.Context, slug string) (*Artifact, error)
@@ -27,19 +29,31 @@ type Store interface {
 	// ListVersions returns every version, newest first, without Files.
 	ListVersions(ctx context.Context, slug string) ([]Version, error)
 
-	// AddVersion inserts v (setting v.ID and v.Number = latest+1), points
-	// the published version at it, writes a's mutable fields (name,
+	// AddVersion reads the artifact, passes it to fn and, when fn returns
+	// nil, inserts v (setting v.ID and v.Number = latest+1), points the
+	// published version at it, writes the fields fn may change (name,
 	// description, visibility, metadata, stale/expires/unpublished/deleted
 	// timestamps, updated_at), records the blobs, and marks v.CreatedBy as
-	// an updater in the actor table. When expected != 0 and the current
+	// an updater in the actor table. The read, fn and the writes are one
+	// transaction, so fn decides on the row it changes. An error from fn
+	// writes nothing and is returned. When expected != 0 and the current
 	// latest number differs, nothing is written and ErrVersionConflict is
-	// returned.
-	AddVersion(ctx context.Context, a *Artifact, v *Version, expected int) error
+	// returned. When quota > 0 and the owner's usage plus v.SizeBytes would
+	// exceed it, nothing is written and ErrQuotaExceeded is returned.
+	AddVersion(ctx context.Context, slug string, v *Version, expected int, quota int64, fn func(a *Artifact) error) error
 
-	// Update writes a's mutable fields, including OwnerHandle and
+	// Update reads the artifact, passes it to fn and, when fn returns nil,
+	// writes its mutable fields, including OwnerHandle and
 	// PublishedVersion (by number), and marks `by` as an updater when it is
-	// not empty.
-	Update(ctx context.Context, a *Artifact, by string) error
+	// not empty. The read, fn and the write are one transaction, so a
+	// concurrent change to a field fn leaves alone is kept. An error from
+	// fn writes nothing and is returned.
+	Update(ctx context.Context, slug, by string, fn func(a *Artifact) error) error
+
+	// Involved reports whether the handle created or updated the artifact
+	// (the actor rows behind ListQuery.Mine). An unknown slug or handle is
+	// false.
+	Involved(ctx context.Context, slug, handle string) (bool, error)
 
 	// List applies q and returns one page. Tombstones are never listed.
 	List(ctx context.Context, q ListQuery) (ListPage, error)

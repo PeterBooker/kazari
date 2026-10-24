@@ -145,6 +145,8 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		AllowedDomains: []string{"example.com"},
 		AutoProvision:  true,
 		AdminEmails:    []string{"boss@example.com"},
+		// As internal/app wires it.
+		OnDisable: func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
 	})
 	var idp oauth.IdentityProvider
 	if !eo.noIDP {
@@ -272,7 +274,7 @@ func location(t *testing.T, resp *http.Response) *url.URL {
 func (e *env) requestCookie() string {
 	u, _ := url.Parse(e.url("/oauth/consent"))
 	for _, c := range e.jar.Cookies(u) {
-		if c.Name == oauth.CookieName {
+		if c.Name == oauth.InsecureCookieName {
 			return c.Value
 		}
 	}
@@ -304,11 +306,26 @@ func (e *env) signIn(params url.Values) string {
 // approve posts Approve on the consent page and returns the code.
 func (e *env) approve(extra url.Values) string {
 	e.t.Helper()
+	return e.approveWith(nil, extra)
+}
+
+// approveWith is approve with extra request headers, such as the Origin a
+// browser sends.
+func (e *env) approveWith(header http.Header, extra url.Values) string {
+	e.t.Helper()
 	v := url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}}
 	for k, vs := range extra {
 		v[k] = vs
 	}
-	resp, body := e.postForm("/oauth/consent", v)
+	req, err := http.NewRequest(http.MethodPost, e.url("/oauth/consent"), strings.NewReader(v.Encode()))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, vs := range header {
+		req.Header[k] = vs
+	}
+	resp, body := e.do(req)
 	if resp.StatusCode != http.StatusFound {
 		e.t.Fatalf("consent: status %d: %s", resp.StatusCode, body)
 	}

@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -17,8 +18,8 @@ const (
 )
 
 // Get returns an artifact and its versions (newest first, without files).
-// Soft-deleted artifacts are returned so their state can be shown;
-// tombstones are ErrGone.
+// Unpublished and soft-deleted artifacts are returned, so their state can
+// be shown, to the actors checkReadable allows; tombstones are ErrGone.
 func (s *Service) Get(ctx context.Context, actor Actor, slug string) (*Artifact, []Version, error) {
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
@@ -27,11 +28,37 @@ func (s *Service) Get(ctx context.Context, actor Actor, slug string) (*Artifact,
 	if a.PurgedAt != nil {
 		return nil, nil, ErrGone
 	}
+	if err := s.checkReadable(ctx, actor, a); err != nil {
+		return nil, nil, err
+	}
 	versions, err := s.store.ListVersions(ctx, slug)
 	if err != nil {
 		return nil, nil, err
 	}
 	return a, versions, nil
+}
+
+// checkReadable hides an unpublished or soft-deleted artifact from everyone
+// but admins, its owner and the users who created or updated it, the rule
+// the listing applies. A live artifact, listed or not, is served to anyone
+// and so is readable by any actor.
+func (s *Service) checkReadable(ctx context.Context, actor Actor, a *Artifact) error {
+	if a.UnpublishedAt == nil && a.DeletedAt == nil {
+		return nil
+	}
+	if actor.Admin || (actor.Handle != "" && actor.Handle == a.OwnerHandle) {
+		return nil
+	}
+	if actor.Handle != "" {
+		ok, err := s.store.Involved(ctx, a.Slug, actor.Handle)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // List returns one page of artifacts visible to actor. Only admins may set
@@ -69,43 +96,37 @@ func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (ListPage,
 // Publish points the served version at an existing version, for rollback
 // or roll-forward.
 func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version int) (*Artifact, error) {
-	a, err := s.loadWritable(ctx, actor, slug, false)
-	if err != nil {
-		return nil, err
-	}
-	// Versions are numbered 1..LatestVersion and only removed all at once
-	// by a purge, so the range check is exact.
-	if version < 1 || version > a.LatestVersion {
-		return nil, Errorf(ErrVersionNotFound, "version %d does not exist", version)
-	}
-	a.PublishedVersion = version
-	return s.save(ctx, actor, a, audit.ArtifactPublish, map[string]string{"version": strconv.Itoa(version)})
+	return s.modify(ctx, actor, slug, false, audit.ArtifactPublish, func(a *Artifact) (map[string]string, error) {
+		// Versions are numbered 1..LatestVersion and only removed all at
+		// once by a purge, so the range check is exact.
+		if version < 1 || version > a.LatestVersion {
+			return nil, Errorf(ErrVersionNotFound, "version %d does not exist", version)
+		}
+		a.PublishedVersion = version
+		return map[string]string{"version": strconv.Itoa(version)}, nil
+	})
 }
 
 // MarkStale starts the grace period after which Sweep soft-deletes the
 // artifact. grace <= 0 uses Options.DefaultGrace. The page keeps serving.
 func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace time.Duration) (*Artifact, error) {
-	a, err := s.loadWritable(ctx, actor, slug, false)
-	if err != nil {
-		return nil, err
-	}
 	if grace <= 0 {
 		grace = s.opts.DefaultGrace
 	}
 	now := s.now()
 	expires := now.Add(grace)
-	a.StaleAt, a.ExpiresAt = &now, &expires
-	return s.save(ctx, actor, a, audit.ArtifactStale, map[string]string{"expires_at": expires.Format(time.RFC3339)})
+	return s.modify(ctx, actor, slug, false, audit.ArtifactStale, func(a *Artifact) (map[string]string, error) {
+		a.StaleAt, a.ExpiresAt = &now, &expires
+		return map[string]string{"expires_at": expires.Format(time.RFC3339)}, nil
+	})
 }
 
 // UnmarkStale cancels a pending expiry.
 func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
-	a, err := s.loadWritable(ctx, actor, slug, false)
-	if err != nil {
-		return nil, err
-	}
-	a.StaleAt, a.ExpiresAt = nil, nil
-	return s.save(ctx, actor, a, audit.ArtifactUnstale, nil)
+	return s.modify(ctx, actor, slug, false, audit.ArtifactUnstale, func(a *Artifact) (map[string]string, error) {
+		a.StaleAt, a.ExpiresAt = nil, nil
+		return nil, nil
+	})
 }
 
 // SetVisibility sets "public" or "unlisted" (which also re-publishes an
@@ -117,20 +138,18 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 	default:
 		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Unpublished)
 	}
-	a, err := s.loadWritable(ctx, actor, slug, false)
-	if err != nil {
-		return nil, err
-	}
-	if v == Unpublished {
-		if a.UnpublishedAt == nil {
-			now := s.now()
-			a.UnpublishedAt = &now
+	return s.modify(ctx, actor, slug, false, audit.ArtifactVisibility, func(a *Artifact) (map[string]string, error) {
+		if v == Unpublished {
+			if a.UnpublishedAt == nil {
+				now := s.now()
+				a.UnpublishedAt = &now
+			}
+		} else {
+			a.Visibility = Visibility(v)
+			a.UnpublishedAt = nil
 		}
-	} else {
-		a.Visibility = Visibility(v)
-		a.UnpublishedAt = nil
-	}
-	return s.save(ctx, actor, a, audit.ArtifactVisibility, map[string]string{"visibility": v})
+		return map[string]string{"visibility": v}, nil
+	})
 }
 
 // Transfer gives the artifact to newOwner. Only admins and the current
@@ -141,45 +160,51 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 	if newOwner == "" {
 		return nil, Errorf(ErrInvalidArgument, "a new owner is required")
 	}
-	a, err := s.loadWritable(ctx, actor, slug, true)
-	if err != nil {
-		return nil, err
-	}
-	if !actor.Admin && actor.Handle != a.OwnerHandle {
-		return nil, Errorf(ErrForbidden, "only the owner or an admin may transfer %q", slug)
-	}
-	from := a.OwnerHandle
-	a.OwnerHandle = newOwner
-	return s.save(ctx, actor, a, audit.ArtifactTransfer, map[string]string{"from": from, "to": newOwner})
+	return s.modify(ctx, actor, slug, true, audit.ArtifactTransfer, func(a *Artifact) (map[string]string, error) {
+		if !actor.Admin && actor.Handle != a.OwnerHandle {
+			return nil, Errorf(ErrForbidden, "only the owner or an admin may transfer %q", slug)
+		}
+		from := a.OwnerHandle
+		a.OwnerHandle = newOwner
+		return map[string]string{"from": from, "to": newOwner}, nil
+	})
 }
 
 // Delete soft-deletes the artifact (restorable until the retention period
 // ends) or, with hard, purges it now. A hard delete leaves the blobs for
 // CollectGarbage.
 func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) error {
-	a, err := s.loadWritable(ctx, actor, slug, true)
-	if err != nil {
-		return err
-	}
 	if hard {
+		a, err := s.store.Get(ctx, slug)
+		if err != nil {
+			return err
+		}
+		if err := s.checkWritable(actor, a, true); err != nil {
+			return err
+		}
 		if err := s.store.Purge(ctx, slug, s.now()); err != nil {
 			return err
 		}
 		s.record(ctx, actor, audit.ArtifactPurge, slug, nil)
 		return nil
 	}
-	if a.DeletedAt != nil {
+	_, err := s.modify(ctx, actor, slug, true, audit.ArtifactDelete, func(a *Artifact) (map[string]string, error) {
+		if a.DeletedAt != nil {
+			return nil, errUnchanged
+		}
+		now := s.now()
+		a.DeletedAt = &now
+		return nil, nil
+	})
+	if errors.Is(err, errUnchanged) {
 		return nil
 	}
-	now := s.now()
-	a.DeletedAt = &now
-	_, err = s.save(ctx, actor, a, audit.ArtifactDelete, nil)
 	return err
 }
 
 // OpenFile opens one file of a version; version 0 means the published one.
-// It works on soft-deleted artifacts for actors allowed to write them, so an
-// owner can recover content before the purge.
+// It works on unpublished and soft-deleted artifacts for the actors
+// checkReadable allows, so an owner can recover content before the purge.
 func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, version int) (File, io.ReadSeekCloser, error) {
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
@@ -188,8 +213,8 @@ func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, ver
 	if a.PurgedAt != nil {
 		return File{}, nil, ErrGone
 	}
-	if a.DeletedAt != nil && !s.canWrite(actor, a) {
-		return File{}, nil, ErrNotFound
+	if err := s.checkReadable(ctx, actor, a); err != nil {
+		return File{}, nil, err
 	}
 	clean, err := ValidatePath(p)
 	if err != nil {
@@ -260,11 +285,21 @@ func (s *Service) Sweep(ctx context.Context) (SweepReport, error) {
 	if err != nil {
 		fail(err)
 	}
-	for i := range expired {
-		a := &expired[i]
-		a.DeletedAt = &now
-		a.UpdatedAt = now
-		if err := s.store.Update(ctx, a, ""); err != nil {
+	for _, a := range expired {
+		err := s.store.Update(ctx, a.Slug, "", func(cur *Artifact) error {
+			// The row may have changed since the listing: unmarked, given
+			// a later expiry, or deleted.
+			if cur.ExpiresAt == nil || cur.ExpiresAt.After(now) || cur.DeletedAt != nil || cur.PurgedAt != nil {
+				return errUnchanged
+			}
+			cur.DeletedAt = &now
+			cur.UpdatedAt = now
+			return nil
+		})
+		if errors.Is(err, errUnchanged) {
+			continue
+		}
+		if err != nil {
 			fail(fmt.Errorf("artifact: sweep expire %s: %w", a.Slug, err))
 			continue
 		}
@@ -302,46 +337,53 @@ func (s *Service) Sweep(ctx context.Context) (SweepReport, error) {
 
 // CollectGarbage deletes blobs that no version references and that were
 // last recorded before the BlobGrace window. The file goes first and the row
-// second, so a crash leaves a row that the next run retries. It returns the
-// number of blobs deleted.
+// second, so a crash leaves a row that the next run retries. Each batch
+// holds blobMu exclusively from the query to the last delete, so no publish
+// can reuse a blob the batch selected. It returns the number of blobs
+// deleted.
 func (s *Service) CollectGarbage(ctx context.Context) (int, error) {
 	before := s.now().Add(-s.opts.BlobGrace)
+	var n int
+	for {
+		deleted, more, err := s.collectBatch(ctx, before)
+		n += deleted
+		if err != nil || !more {
+			return n, err
+		}
+	}
+}
+
+// collectBatch deletes up to gcBatch blobs and reports whether another
+// batch may follow. It stops at a failing batch, so a persistent error
+// does not loop forever, and returns the first error.
+func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool, error) {
+	s.blobMu.Lock()
+	defer s.blobMu.Unlock()
+	hashes, err := s.store.UnreferencedBlobs(ctx, before, gcBatch)
+	if err != nil {
+		return 0, false, err
+	}
 	var (
 		n        int
 		firstErr error
 	)
-	for {
-		hashes, err := s.store.UnreferencedBlobs(ctx, before, gcBatch)
-		if err != nil {
-			if firstErr != nil {
-				return n, firstErr
+	for _, h := range hashes {
+		if err := s.blobs.Delete(ctx, h); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("artifact: gc blob %s: %w", h, err)
 			}
-			return n, err
+			continue
 		}
-		failed := false
-		for _, h := range hashes {
-			if err := s.blobs.Delete(ctx, h); err != nil {
-				failed = true
-				if firstErr == nil {
-					firstErr = fmt.Errorf("artifact: gc blob %s: %w", h, err)
-				}
-				continue
+		if err := s.store.DeleteBlob(ctx, h); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("artifact: gc blob row %s: %w", h, err)
 			}
-			if err := s.store.DeleteBlob(ctx, h); err != nil {
-				failed = true
-				if firstErr == nil {
-					firstErr = fmt.Errorf("artifact: gc blob row %s: %w", h, err)
-				}
-				continue
-			}
-			n++
+			continue
 		}
-		// A short batch is the last; stop after a failing batch too, so a
-		// persistent error does not loop forever.
-		if len(hashes) < gcBatch || failed {
-			return n, firstErr
-		}
+		n++
 	}
+	// A short batch is the last.
+	return n, len(hashes) == gcBatch, firstErr
 }
 
 // Usage returns the total size of every version owned by the handle, for

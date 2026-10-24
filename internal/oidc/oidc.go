@@ -162,20 +162,22 @@ type claims struct {
 	HostedDomain      string    `json:"hd"`
 }
 
-// identity maps verified claims to an Identity. preferred_username stands
-// in for a missing email when it looks like one (Entra). A missing
-// email_verified counts as verified only for Entra.
+// identity maps verified claims to an Identity. For Entra only,
+// preferred_username stands in for a missing email when it looks like one,
+// and a missing email_verified counts as verified. OpenID Connect promises
+// nothing about preferred_username (it may be any string, often one the
+// person chose), so for other providers it never stands in for an email.
 func (p *Provider) identity(issuer, subject string, c claims) auth.Identity {
 	id := auth.Identity{Issuer: issuer, Subject: subject, Email: c.Email, Name: c.Name}
-	if id.Email == "" && strings.Contains(c.PreferredUsername, "@") {
+	entra := issuerHost(issuer, entraHost)
+	if id.Email == "" && entra && strings.Contains(c.PreferredUsername, "@") {
 		id.Email = c.PreferredUsername
 	}
 	switch {
 	case c.EmailVerified != nil:
 		id.EmailVerified = bool(*c.EmailVerified)
 	default:
-		u, err := url.Parse(issuer)
-		id.EmailVerified = err == nil && strings.EqualFold(u.Hostname(), entraHost)
+		id.EmailVerified = entra
 	}
 	if id.Email == "" {
 		id.EmailVerified = false

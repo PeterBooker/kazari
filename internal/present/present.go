@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"agalma/internal/api"
 	"agalma/internal/artifact"
@@ -184,7 +185,23 @@ func Me(p auth.Principal, used int64) api.Me {
 
 // Actor converts a principal to the artifact service's caller.
 func Actor(p auth.Principal) artifact.Actor {
-	return artifact.Actor{Handle: p.Handle, Admin: p.Admin, QuotaBytes: p.QuotaBytes}
+	return artifact.Actor{Handle: p.Handle, Admin: p.Admin, QuotaBytes: p.QuotaBytes, Credential: credential(p)}
+}
+
+// credential names the credential behind p for the audit trail: the source
+// and the key id, "api_key:<prefix>", "oauth:<id>", or the source alone
+// ("admin_token") when there is no key id. A key id that already starts
+// with the source is used as it is.
+func credential(p auth.Principal) string {
+	switch {
+	case p.Source == "":
+		return p.KeyID
+	case p.KeyID == "":
+		return p.Source
+	case strings.HasPrefix(p.KeyID, p.Source+":"):
+		return p.KeyID
+	}
+	return p.Source + ":" + p.KeyID
 }
 
 // Job converts a scheduler status.

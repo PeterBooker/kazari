@@ -313,5 +313,5 @@ type OAuthGrant struct {
 // Health is GET /health.
 type Health struct {
 	Status  string `json:"status"`
-	Version string `json:"version"`
+	Version string `json:"version,omitempty"` // admin host only
 }

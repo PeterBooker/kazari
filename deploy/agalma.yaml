@@ -76,7 +76,7 @@ auth:
   #   admin_emails: []                # provisioned with the admin role
 
 admin:
-  listen: ""                         # optional second listener for the admin host, e.g. "127.0.0.1:9443"
+  listen: ""                         # e.g. "127.0.0.1:9443": serve the admin host here only, not publicly
 
 log:
   level: info                        # debug | info | warn | error

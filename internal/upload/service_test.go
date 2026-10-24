@@ -142,6 +142,37 @@ func TestBegin(t *testing.T) {
 	}
 }
 
+// Concurrent Begins cannot pass the per-owner limit between counting and
+// inserting.
+func TestBeginConcurrentLimit(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, upload.Options{MaxOpenPerOwner: 5})
+	const tries = 30
+	errs := make([]error, tries)
+	var wg sync.WaitGroup
+	for i := range tries {
+		wg.Go(func() { _, errs[i] = e.svc.Begin(ctx, "alice") })
+	}
+	wg.Wait()
+	wins := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, artifact.ErrTooManyUploads):
+		default:
+			t.Errorf("concurrent Begin: %v", err)
+		}
+	}
+	n, err := e.store.CountOpen(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wins != 5 || n != 5 {
+		t.Fatalf("%d concurrent Begins succeeded and %d uploads are open, want 5 and 5", wins, n)
+	}
+}
+
 func TestAppendChunk(t *testing.T) {
 	type step struct {
 		owner       string        // default alice
@@ -269,6 +300,21 @@ func TestAppendChunk(t *testing.T) {
 				{path: "a", offset: 1, data: "b", contentType: "text/html",
 					want: upload.StagedFile{Path: "a", Bytes: 2, ContentType: "text/plain"}},
 			},
+		},
+		{
+			// The type is replayed as a Content-Type header at publish, so
+			// it is checked before anything is staged.
+			name: "invalid content types are refused",
+			steps: []step{
+				{path: "a", data: "a", contentType: "text/html\r\nSet-Cookie: a=b", wantErr: artifact.ErrInvalidArgument},
+				{path: "a", data: "a", contentType: "text/html; charset=é", wantErr: artifact.ErrInvalidArgument},
+				{path: "a", data: "a", contentType: "no slash here;;", wantErr: artifact.ErrInvalidArgument},
+				{path: "a", data: "a", contentType: "text/" + strings.Repeat("a", artifact.ContentTypeMaxLen), wantErr: artifact.ErrInvalidArgument},
+				{path: "a", data: "a", contentType: "text/plain; charset=utf-8",
+					want: upload.StagedFile{Path: "a", Bytes: 1, ContentType: "text/plain; charset=utf-8"}},
+				{path: "a", offset: 1, data: "b", contentType: "text/html\x00", wantErr: artifact.ErrInvalidArgument},
+			},
+			wantFiles: map[string]string{"a": "a"},
 		},
 		{
 			name: "wrong owner, unknown and malformed ids are not found",

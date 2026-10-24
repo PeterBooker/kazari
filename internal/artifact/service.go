@@ -2,10 +2,12 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"strconv"
+	"sync"
 	"time"
 
 	"agalma/internal/audit"
@@ -93,6 +95,13 @@ type Service struct {
 	blobs blob.Store
 	rec   audit.Recorder
 	opts  Options
+
+	// blobMu orders publishes against the garbage collector. A Put of
+	// content that is already stored writes nothing, so between that Put
+	// and the commit of the version that references it the blob looks
+	// unreferenced. Publishes hold the read side over that window (see
+	// holdBlobs); CollectGarbage holds the write side over each batch.
+	blobMu sync.RWMutex
 }
 
 // New returns a Service. rec may be nil, which discards audit events.
@@ -113,9 +122,17 @@ func (s *Service) canWrite(actor Actor, a *Artifact) bool {
 	return actor.Admin || actor.Handle == a.OwnerHandle
 }
 
-// record writes an audit event. The store change it describes has already
-// happened, so a failure is logged rather than returned.
+// record writes an audit event, adding the actor's credential to the
+// details. The store change it describes has already happened, so a
+// failure is logged rather than returned.
 func (s *Service) record(ctx context.Context, actor Actor, action, slug string, details map[string]string) {
+	if actor.Credential != "" {
+		details = maps.Clone(details)
+		if details == nil {
+			details = map[string]string{}
+		}
+		details["credential"] = actor.Credential
+	}
 	e := audit.Event{At: s.now(), Actor: actor.Handle, Action: action, Slug: slug, Details: details}
 	if err := s.rec.Record(ctx, e); err != nil {
 		s.opts.Logger.ErrorContext(ctx, "audit record failed", "action", action, "slug", slug, "err", err)
@@ -128,6 +145,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 		return nil, nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
 	if err := ValidateSlug(req.Slug, s.opts.ReservedSlugs); err != nil {
+		return nil, nil, err
+	}
+	if err := validateTexts(req.Name, req.Description, req.Label); err != nil {
 		return nil, nil, err
 	}
 	vis, err := ParseVisibility(string(req.Visibility))
@@ -153,11 +173,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 		return nil, nil, err
 	}
 
+	// The early quota check stops an upload that cannot fit; the store
+	// repeats it inside the transaction that inserts the version.
 	quota, err := s.quotaLeft(ctx, actor)
-	if err != nil {
-		return nil, nil, err
-	}
-	files, size, err := s.buildFiles(ctx, nil, req.Files, quota)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -176,14 +194,16 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 	if a.Metadata == nil {
 		a.Metadata = map[string]string{}
 	}
-	v := &Version{
-		Label:     req.Label,
-		CreatedBy: actor.Handle,
-		CreatedAt: now,
-		SizeBytes: size,
-		Files:     files,
-	}
-	if err := s.store.Create(ctx, a, v); err != nil {
+	v := &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	err = s.holdBlobs(func() error {
+		files, size, err := s.buildFiles(ctx, nil, req.Files, quota)
+		if err != nil {
+			return err
+		}
+		v.Files, v.SizeBytes = files, size
+		return s.store.Create(ctx, a, v, actor.QuotaBytes)
+	})
+	if err != nil {
 		return nil, nil, err
 	}
 	s.record(ctx, actor, audit.ArtifactCreate, a.Slug, versionDetails(v))
@@ -192,6 +212,29 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 		return nil, nil, err
 	}
 	return got, v, nil
+}
+
+// holdBlobs runs fn, which puts blobs and commits the version that
+// references them, under the read side of blobMu, so CollectGarbage cannot
+// delete a blob that fn found already stored before fn's commit makes it
+// referenced. Every content reader the service is given is local (memory,
+// a spilled bundle or a staged upload), so the hold is bounded by disk
+// speed, not by a client.
+func (s *Service) holdBlobs(fn func() error) error {
+	s.blobMu.RLock()
+	defer s.blobMu.RUnlock()
+	return fn()
+}
+
+// validateTexts checks the free-text fields of a create.
+func validateTexts(name, description, label string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	if err := ValidateDescription(description); err != nil {
+		return err
+	}
+	return ValidateLabel(label)
 }
 
 func versionDetails(v *Version) map[string]string {
@@ -219,46 +262,64 @@ func (s *Service) quotaLeft(ctx context.Context, actor Actor) (*int64, error) {
 // adds a version built from the latest version's files plus the changes.
 // The returned version is nil for a fields-only update.
 func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*Artifact, *Version, error) {
-	a, err := s.store.Get(ctx, req.Slug)
-	if err != nil {
+	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
-	}
-	if a.PurgedAt != nil {
-		return nil, nil, ErrGone
-	}
-	restoring := a.DeletedAt != nil
-	if restoring && !req.Restore {
-		return nil, nil, ErrNotFound
-	}
-	if !s.canWrite(actor, a) {
-		return nil, nil, ErrForbidden
-	}
-	if err := s.applyFields(a, req); err != nil {
-		return nil, nil, err
-	}
-	if restoring {
-		a.DeletedAt = nil
 	}
 	now := s.now()
-	a.UpdatedAt = now
+	// apply checks and changes a; the store calls it on the row it writes,
+	// inside the write's transaction, so a concurrent change to another
+	// field (a transfer, a delete) is neither lost nor ignored.
+	var restoring bool
+	apply := func(a *Artifact) error {
+		if a.PurgedAt != nil {
+			return ErrGone
+		}
+		restoring = a.DeletedAt != nil
+		if restoring && !req.Restore {
+			return ErrNotFound
+		}
+		if !s.canWrite(actor, a) {
+			return ErrForbidden
+		}
+		if err := s.applyFields(a, req); err != nil {
+			return err
+		}
+		a.DeletedAt = nil
+		a.UpdatedAt = now
+		return nil
+	}
 
 	if len(req.Files) == 0 {
-		if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
-			return nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
-		}
-		if err := s.store.Update(ctx, a, actor.Handle); err != nil {
+		err := s.store.Update(ctx, req.Slug, actor.Handle, func(a *Artifact) error {
+			if err := apply(a); err != nil {
+				return err
+			}
+			if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
+				return Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
+			}
+			return nil
+		})
+		if err != nil {
 			return nil, nil, err
 		}
-		s.recordUpdate(ctx, actor, a.Slug, nil, restoring)
-		got, err := s.store.Get(ctx, a.Slug)
+		s.recordUpdate(ctx, actor, req.Slug, nil, restoring)
+		got, err := s.store.Get(ctx, req.Slug)
 		if err != nil {
 			return nil, nil, err
 		}
 		return got, nil, nil
 	}
 
-	// Cheap early check so a stale client does not upload for nothing; the
-	// store repeats it inside its transaction.
+	// Run the checks on a first read, so a request that will fail does not
+	// upload for nothing, and take the base files and quota from it. The
+	// store repeats the checks inside its transaction.
+	a, err := s.store.Get(ctx, req.Slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := apply(a); err != nil {
+		return nil, nil, err
+	}
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	}
@@ -275,31 +336,38 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 	// The quota is the acting user's; it applies when they add to their
 	// own artifact. Under the shared policy another user's version is
 	// charged to the owner, whose quota the actor does not carry.
-	var quota *int64
+	var (
+		quota      *int64
+		quotaBytes int64
+	)
 	if actor.Handle == a.OwnerHandle {
 		if quota, err = s.quotaLeft(ctx, actor); err != nil {
 			return nil, nil, err
 		}
+		quotaBytes = actor.QuotaBytes
 	}
-	files, size, err := s.buildFiles(ctx, base, req.Files, quota)
+	v := &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	err = s.holdBlobs(func() error {
+		files, size, err := s.buildFiles(ctx, base, req.Files, quota)
+		if err != nil {
+			return err
+		}
+		v.Files, v.SizeBytes = files, size
+		return s.store.AddVersion(ctx, req.Slug, v, req.ExpectedVersion, quotaBytes, func(a *Artifact) error {
+			if err := apply(a); err != nil {
+				return err
+			}
+			if !req.KeepStale {
+				a.StaleAt, a.ExpiresAt = nil, nil
+			}
+			return nil
+		})
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	v := &Version{
-		Label:     req.Label,
-		CreatedBy: actor.Handle,
-		CreatedAt: now,
-		SizeBytes: size,
-		Files:     files,
-	}
-	if !req.KeepStale {
-		a.StaleAt, a.ExpiresAt = nil, nil
-	}
-	if err := s.store.AddVersion(ctx, a, v, req.ExpectedVersion); err != nil {
-		return nil, nil, err
-	}
-	s.recordUpdate(ctx, actor, a.Slug, v, restoring)
-	got, err := s.store.Get(ctx, a.Slug)
+	s.recordUpdate(ctx, actor, req.Slug, v, restoring)
+	got, err := s.store.Get(ctx, req.Slug)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -320,9 +388,15 @@ func (s *Service) recordUpdate(ctx context.Context, actor Actor, slug string, v 
 // applyFields copies the requested field changes onto a and validates them.
 func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 	if req.Name != nil {
+		if err := ValidateName(*req.Name); err != nil {
+			return err
+		}
 		a.Name = *req.Name
 	}
 	if req.Description != nil {
+		if err := ValidateDescription(*req.Description); err != nil {
+			return err
+		}
 		a.Description = *req.Description
 	}
 	if req.Visibility != nil {
@@ -352,36 +426,52 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 	return nil
 }
 
-// loadWritable fetches an artifact for a lifecycle mutation: tombstones are
-// gone, soft-deleted artifacts are not found unless allowDeleted, and the
-// write policy applies.
-func (s *Service) loadWritable(ctx context.Context, actor Actor, slug string, allowDeleted bool) (*Artifact, error) {
-	a, err := s.store.Get(ctx, slug)
-	if err != nil {
-		return nil, err
-	}
+// checkWritable is the gate of a lifecycle mutation: tombstones are gone,
+// soft-deleted artifacts are not found unless allowDeleted, and the write
+// policy applies.
+func (s *Service) checkWritable(actor Actor, a *Artifact, allowDeleted bool) error {
 	if a.PurgedAt != nil {
-		return nil, ErrGone
+		return ErrGone
 	}
 	if a.DeletedAt != nil && !allowDeleted {
-		return nil, ErrNotFound
+		return ErrNotFound
 	}
 	if !s.canWrite(actor, a) {
-		return nil, ErrForbidden
+		return ErrForbidden
 	}
-	return a, nil
+	return nil
 }
 
-// save writes a's fields, records the event and returns the stored state.
-func (s *Service) save(ctx context.Context, actor Actor, a *Artifact, action string, details map[string]string) (*Artifact, error) {
-	a.UpdatedAt = s.now()
-	if err := s.store.Update(ctx, a, actor.Handle); err != nil {
+// errUnchanged is returned by a change func to skip the write and the
+// audit event.
+var errUnchanged = errors.New("artifact: unchanged")
+
+// modify runs checkWritable and change on the current row of slug inside
+// the store's write transaction, writes the result, records action with
+// the details change returns and returns the stored state. A change that
+// returns errUnchanged writes and records nothing.
+func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDeleted bool, action string,
+	change func(a *Artifact) (map[string]string, error)) (*Artifact, error) {
+	var details map[string]string
+	err := s.store.Update(ctx, slug, actor.Handle, func(a *Artifact) error {
+		if err := s.checkWritable(actor, a, allowDeleted); err != nil {
+			return err
+		}
+		d, err := change(a)
+		if err != nil {
+			return err
+		}
+		details = d
+		a.UpdatedAt = s.now()
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	s.record(ctx, actor, action, a.Slug, details)
-	got, err := s.store.Get(ctx, a.Slug)
+	s.record(ctx, actor, action, slug, details)
+	got, err := s.store.Get(ctx, slug)
 	if err != nil {
-		return nil, fmt.Errorf("artifact: reload %s: %w", a.Slug, err)
+		return nil, fmt.Errorf("artifact: reload %s: %w", slug, err)
 	}
 	return got, nil
 }

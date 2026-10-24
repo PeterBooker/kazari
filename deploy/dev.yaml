@@ -12,7 +12,10 @@ external_scheme: http
 external_port: 8080
 
 listen:
-  http: ":8080"
+  # Loopback only: the admin token below is public knowledge, so nothing
+  # else on the network may reach this port. compose.yml listens on every
+  # interface inside the container and publishes the port on loopback.
+  http: "127.0.0.1:8080"
   proxy_mode: true
 
 tls:

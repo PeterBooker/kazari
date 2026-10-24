@@ -3,7 +3,9 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,7 +44,7 @@ func TestUploadStoreCreateGet(t *testing.T) {
 	ctx := context.Background()
 	s := uploadTestStore(t, "alice")
 	want := uploadAt("u1", "alice", uploadT0.Add(time.Hour))
-	if err := s.Create(ctx, want); err != nil {
+	if err := s.Create(ctx, want, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(ctx, "u1")
@@ -57,7 +59,7 @@ func TestUploadStoreCreateGet(t *testing.T) {
 func TestUploadStoreCreateErrors(t *testing.T) {
 	ctx := context.Background()
 	s := uploadTestStore(t, "alice")
-	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0)); err != nil {
+	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0), 0); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
@@ -69,7 +71,7 @@ func TestUploadStoreCreateErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := s.Create(ctx, tt.u); err == nil {
+			if err := s.Create(ctx, tt.u, 0); err == nil {
 				t.Fatal("Create succeeded, want error")
 			}
 		})
@@ -104,7 +106,7 @@ func TestUploadStoreNotFound(t *testing.T) {
 func TestUploadStoreUpsertFile(t *testing.T) {
 	ctx := context.Background()
 	s := uploadTestStore(t, "alice")
-	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0.Add(time.Hour))); err != nil {
+	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0.Add(time.Hour)), 0); err != nil {
 		t.Fatal(err)
 	}
 	steps := []struct {
@@ -138,7 +140,7 @@ func TestUploadStoreUpsertFile(t *testing.T) {
 func TestUploadStoreDelete(t *testing.T) {
 	ctx := context.Background()
 	s := uploadTestStore(t, "alice")
-	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0)); err != nil {
+	if err := s.Create(ctx, uploadAt("u1", "alice", uploadT0), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertFile(ctx, "u1", upload.StagedFile{Path: "a", Bytes: 1}, 1); err != nil {
@@ -170,7 +172,7 @@ func TestUploadStoreListExpired(t *testing.T) {
 		uploadAt("early", "bob", uploadT0.Add(-time.Hour)),
 		uploadAt("exact", "alice", uploadT0),
 	} {
-		if err := s.Create(ctx, u); err != nil {
+		if err := s.Create(ctx, u, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -221,7 +223,7 @@ func TestUploadStoreCountOpen(t *testing.T) {
 		uploadAt("a2", "alice", uploadT0),
 		uploadAt("b1", "bob", uploadT0),
 	} {
-		if err := s.Create(ctx, u); err != nil {
+		if err := s.Create(ctx, u, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -243,5 +245,43 @@ func TestUploadStoreCountOpen(t *testing.T) {
 				t.Errorf("CountOpen = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// The open-upload limit is checked in the transaction that inserts, so
+// concurrent creates never take an owner past it.
+func TestUploadStoreCreateLimit(t *testing.T) {
+	ctx := context.Background()
+	s := uploadTestStore(t, "alice", "bob")
+	if err := s.Create(ctx, uploadAt("b1", "bob", uploadT0), 1); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Create(ctx, uploadAt("b2", "bob", uploadT0), 1)
+	if !errors.Is(err, artifact.ErrTooManyUploads) {
+		t.Fatalf("Create past the limit: err = %v, want ErrTooManyUploads", err)
+	}
+	if _, err := s.Get(ctx, "b2"); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Fatalf("refused upload was stored: %v", err)
+	}
+
+	const limit, tries = 3, 12
+	errs := make([]error, tries)
+	var wg sync.WaitGroup
+	for i := range tries {
+		wg.Go(func() { errs[i] = s.Create(ctx, uploadAt(fmt.Sprintf("a%d", i), "alice", uploadT0), limit) })
+	}
+	wg.Wait()
+	wins := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, artifact.ErrTooManyUploads):
+		default:
+			t.Errorf("concurrent Create: %v", err)
+		}
+	}
+	if n, err := s.CountOpen(ctx, "alice"); err != nil || wins != limit || n != limit {
+		t.Fatalf("%d concurrent creates succeeded, %d open (%v); want %d", wins, n, err, limit)
 	}
 }

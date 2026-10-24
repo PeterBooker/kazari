@@ -100,13 +100,14 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 		Description: b.text.tools["read_file"],
 		Annotations: annotations("Read file", true, false, true),
 	}
-	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in ReadFileInput) (*mcp.CallToolResult, ReadFileResult, error) {
+	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in ReadFileInput) (res *mcp.CallToolResult, out ReadFileResult, err error) {
+		defer b.recoverTool(ctx, t.Name, func(e error) { res, out, err = nil, ReadFileResult{}, e })
 		if err := requireScope(p, auth.ScopeRead); err != nil {
 			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 		}
 		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, in.Version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
 		f := fc.file
-		out := ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash}
+		out = ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash}
 		switch {
 		case errors.Is(err, errTooLargeToInline):
 			out.Encoding = "url"
@@ -161,8 +162,9 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 		Description: "An artifact's record and versions with their file lists, as JSON (the get_artifact result with include_files).",
 		MIMEType:    artifactResourceMIME,
 		URITemplate: artifactTemplate,
-	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (res *mcp.ReadResourceResult, err error) {
 		uri := req.Params.URI
+		defer b.recoverTool(ctx, uri, func(e error) { res, err = nil, e })
 		if err := requireScope(p, auth.ScopeRead); err != nil {
 			return nil, b.toolError(ctx, "resource", err)
 		}
@@ -188,8 +190,9 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 			"other files as a base64 blob, up to %s; larger files are an error (use read_file for a download URL).",
 			size(b.o.MaxInlineReadBytes)),
 		URITemplate: fileTemplate,
-	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (res *mcp.ReadResourceResult, err error) {
 		uri := req.Params.URI
+		defer b.recoverTool(ctx, uri, func(e error) { res, err = nil, e })
 		if err := requireScope(p, auth.ScopeRead); err != nil {
 			return nil, b.toolError(ctx, "resource", err)
 		}

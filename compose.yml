@@ -34,6 +34,10 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # dev.yaml binds loopback; inside the container the published port
+      # must listen on every interface (the ports above stay on loopback).
+      AGALMA_LISTEN_HTTP: ":8080"
     extra_hosts:
       # Lets the health check reach the admin host from inside the container.
       - "admin.localhost:127.0.0.1"

@@ -91,6 +91,10 @@ type Actor struct {
 	Handle     string
 	Admin      bool
 	QuotaBytes int64 // 0 means unlimited
+	// Credential names what the actor authenticated with, for the audit
+	// trail: "api_key:<prefix>", "oauth:<id>" or "admin_token". Empty for
+	// System.
+	Credential string
 }
 
 // System is the actor used by scheduler jobs.

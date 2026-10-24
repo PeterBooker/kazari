@@ -186,8 +186,31 @@ func markArtifactActor(ctx context.Context, tx *sql.Tx, aid int64, handle string
 	return err
 }
 
+const artifactUsage = `SELECT COALESCE(SUM(v.size_bytes), 0) FROM version v
+	JOIN artifact a ON a.id = v.artifact_id
+	JOIN user u ON u.id = a.owner_id
+	WHERE u.handle = ?`
+
+// checkArtifactQuota fails with ErrQuotaExceeded when size more bytes would
+// take the owner's usage past quota (0 = unlimited). It runs inside the
+// write transaction, which is immediate, so concurrent publishes are
+// checked one after the other.
+func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, size, quota int64) error {
+	if quota <= 0 {
+		return nil
+	}
+	var used int64
+	if err := tx.QueryRowContext(ctx, artifactUsage, owner).Scan(&used); err != nil {
+		return err
+	}
+	if used+size > quota {
+		return artifact.Errorf(artifact.ErrQuotaExceeded, "the new version would exceed the owner's quota")
+	}
+	return nil
+}
+
 // Create implements artifact.Store.
-func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version) error {
+func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) error {
 	meta, err := encodeArtifactMetadata(a.Metadata)
 	if err != nil {
 		return err
@@ -195,6 +218,9 @@ func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *art
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		ownerID, err := artifactUserID(ctx, tx, a.OwnerHandle)
 		if err != nil {
+			return err
+		}
+		if err := checkArtifactQuota(ctx, tx, a.OwnerHandle, v.SizeBytes, quota); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx,
@@ -333,29 +359,38 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) ([]artifa
 	return out, nil
 }
 
-// AddVersion implements artifact.Store.
-func (s *ArtifactStore) AddVersion(ctx context.Context, a *artifact.Artifact, v *artifact.Version, expected int) error {
-	meta, err := encodeArtifactMetadata(a.Metadata)
-	if err != nil {
-		return err
+// readArtifactTx reads the row a write transaction is about to change.
+func readArtifactTx(ctx context.Context, tx *sql.Tx, slug string) (int64, *artifact.Artifact, error) {
+	aid, a, err := scanArtifact(tx.QueryRowContext(ctx, artifactSelect+` WHERE a.slug = ?`, slug))
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, artifact.ErrNotFound
 	}
+	return aid, a, err
+}
+
+// AddVersion implements artifact.Store.
+func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact.Version, expected int, quota int64,
+	fn func(a *artifact.Artifact) error) error {
 	var number int
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		var (
-			aid    int64
-			latest int
-		)
-		err := tx.QueryRowContext(ctx,
-			`SELECT a.id, COALESCE((SELECT MAX(number) FROM version WHERE artifact_id = a.id), 0)
-			 FROM artifact a WHERE a.slug = ?`, a.Slug).Scan(&aid, &latest)
-		if errors.Is(err, sql.ErrNoRows) {
-			return artifact.ErrNotFound
-		}
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		aid, a, err := readArtifactTx(ctx, tx, slug)
 		if err != nil {
+			return err
+		}
+		// fn cannot change the owner or the versions; take them first.
+		latest, owner := a.LatestVersion, a.OwnerHandle
+		if err := fn(a); err != nil {
 			return err
 		}
 		if expected != 0 && latest != expected {
 			return artifact.Errorf(artifact.ErrVersionConflict, "latest version is %d, expected %d", latest, expected)
+		}
+		if err := checkArtifactQuota(ctx, tx, owner, v.SizeBytes, quota); err != nil {
+			return err
+		}
+		meta, err := encodeArtifactMetadata(a.Metadata)
+		if err != nil {
+			return err
 		}
 		number = latest + 1
 		vid, err := insertArtifactVersion(ctx, tx, aid, number, v)
@@ -385,19 +420,20 @@ func (s *ArtifactStore) AddVersion(ctx context.Context, a *artifact.Artifact, v 
 		return artifactErr("add version", err)
 	}
 	v.Number = number
-	a.PublishedVersion, a.LatestVersion = number, number
-	a.SizeBytes += v.SizeBytes
 	return nil
 }
 
 // Update implements artifact.Store.
-func (s *ArtifactStore) Update(ctx context.Context, a *artifact.Artifact, by string) error {
-	meta, err := encodeArtifactMetadata(a.Metadata)
-	if err != nil {
-		return err
-	}
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		aid, err := lookupArtifactID(ctx, tx, a.Slug)
+func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *artifact.Artifact) error) error {
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		aid, a, err := readArtifactTx(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+		meta, err := encodeArtifactMetadata(a.Metadata)
 		if err != nil {
 			return err
 		}
@@ -434,6 +470,20 @@ func (s *ArtifactStore) Update(ctx context.Context, a *artifact.Artifact, by str
 		return nil
 	})
 	return artifactErrOrNil("update", err)
+}
+
+// Involved implements artifact.Store.
+func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM artifact_actor aa
+		   JOIN artifact a ON a.id = aa.artifact_id
+		   JOIN user u ON u.id = aa.user_id
+		   WHERE a.slug = ? AND u.handle = ?)`, slug, handle).Scan(&ok)
+	if err != nil {
+		return false, artifactErr("involved", err)
+	}
+	return ok, nil
 }
 
 func artifactErrOrNil(op string, err error) error {
@@ -652,11 +702,7 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (map[string]
 // Usage implements artifact.Store.
 func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(v.size_bytes), 0) FROM version v
-		 JOIN artifact a ON a.id = v.artifact_id
-		 JOIN user u ON u.id = a.owner_id
-		 WHERE u.handle = ?`, ownerHandle).Scan(&n)
+	err := s.db.QueryRowContext(ctx, artifactUsage, ownerHandle).Scan(&n)
 	if err != nil {
 		return 0, artifactErr("usage", err)
 	}

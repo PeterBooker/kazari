@@ -14,6 +14,7 @@ import (
 	"agalma/internal/auth"
 	"agalma/internal/buildinfo"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/scheduler"
 	"agalma/internal/user"
 )
@@ -48,7 +49,11 @@ type AdminOptions struct {
 	// AdminToken is accepted as a bearer token; empty disables it, leaving
 	// admin-role API keys.
 	AdminToken string
-	// Now is the clock (reserved; the admin API keeps no time state yet).
+	// IPRatePerMinute limits /v1/ requests per client IP before
+	// authentication, so the admin token cannot be guessed at speed.
+	// 0 means DefaultIPRatePerMinute; a negative value disables it.
+	IPRatePerMinute int
+	// Now is the clock of the rate limiter. Default: time.Now.
 	Now func() time.Time
 }
 
@@ -61,6 +66,9 @@ type adminAPI struct {
 // admin token or an admin-role key, and /health and /metrics open.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	h := &adminAPI{base: newBase(d.Logger, d.Links), d: d}
+	if o.IPRatePerMinute == 0 {
+		o.IPRatePerMinute = DefaultIPRatePerMinute
+	}
 
 	v1 := http.NewServeMux()
 	handle := func(pattern string, fn apiFunc) { v1.Handle(pattern, h.serve(fn)) }
@@ -97,13 +105,20 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	if d.Metrics != nil {
 		top.Handle("GET /metrics", d.Metrics)
 	}
-	top.Handle("/v1/", auth.RequireAdmin(o.AdminToken, d.Auth)(jsonFallback(v1, &h.base)))
+	guarded := auth.RequireAdmin(o.AdminToken, d.Auth)(jsonFallback(v1, &h.base))
+	top.Handle("/v1/", h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(guarded))
 	return jsonFallback(top, &h.base)
 }
 
 // Health answers liveness checks with the server version.
 func Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.Health{Status: "ok", Version: buildinfo.Get().Version})
+}
+
+// Liveness answers liveness checks on the public listener without the
+// version, which only the admin host discloses.
+func Liveness(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, api.Health{Status: "ok"})
 }
 
 func (h *adminAPI) listUsers(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {

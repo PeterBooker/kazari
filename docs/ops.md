@@ -80,10 +80,10 @@ journalctl -u agalma -o cat | grep -i certmagic
 
 ## Metrics
 
-Prometheus metrics are served at `https://admin.<base>/metrics`, and at `http://<admin.listen>/metrics`
-when `admin.listen` is set. **The endpoint needs no credential**, so if the admin host is reachable
-from the internet, restrict `/metrics` at your proxy or firewall and scrape the private admin
-listener instead.
+Prometheus metrics are served at `https://admin.<base>/metrics`, or, when `admin.listen` is set,
+only at `http://<admin.listen>/metrics`: the admin host then leaves the public listener. **The
+endpoint needs no credential**, so set `admin.listen` to a private address (or restrict `/metrics`
+at your proxy or firewall) and scrape that.
 
 | Metric                                  | Type      | Labels                       |
 | --------------------------------------- | --------- | ---------------------------- |
@@ -217,13 +217,16 @@ agalma admin jobs run gc
 ```
 
 Blobs written in the last hour survive one more `gc` run. Version hosts are served with
-`Cache-Control: public, max-age=31536000, immutable`, so browsers and any CDN in front may keep
-copies of a pinned version; purge them there if needed.
+`Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable` (90 days by
+default), so browsers and any CDN in front may keep copies of a pinned version for that long;
+purge them there if needed. The same `gc` run also removes temporary files a crash left behind
+(blob writes and spilled bundles older than an hour).
 
 ## Audit log
 
 Every change is recorded with time, actor (a handle, `admin` for the admin token, `scheduler` for
-jobs), action, slug and details:
+jobs), action, slug and details. Artifact events also carry `credential`, the credential that acted:
+`api_key:<prefix>`, `oauth:<grant>` (one id per grant, the same across refreshes) or `admin_token`.
 
 | Action                | When                                                                 |
 | --------------------- | -------------------------------------------------------------------- |
@@ -242,7 +245,7 @@ jobs), action, slug and details:
 | `user.update`         | User changed, identity linked or unlinked                            |
 | `key.issue`           | API key issued (`prefix`, `label`, `scopes`)                         |
 | `key.revoke`          | API key revoked                                                      |
-| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc` or `api_key`)   |
+| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
 | `oauth.revoke`        | OAuth grant revoked                                                  |
 
 ```sh

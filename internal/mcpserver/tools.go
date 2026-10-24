@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"agalma/internal/artifact"
 	"agalma/internal/auth"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 )
 
 // FileInput is an inline file of create_artifact.
@@ -148,10 +150,17 @@ type handler[In, Out any] func(ctx context.Context, in In) (Out, string, error)
 // summary line followed by the JSON of the result.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
 	t.Description = b.text.tools[t.Name]
-	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
+		defer b.recoverTool(ctx, t.Name, func(e error) { res, out, err = nil, zero, e })
 		if err := requireScope(p, scope); err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, err)
+		}
+		if scope == auth.ScopeWrite || scope == auth.ScopeDelete {
+			if d := b.d.Writes.Reserve(ratelimit.CredentialKey(p)); d > 0 {
+				return nil, zero, &toolError{e: api.Error{Code: api.CodeRateLimited,
+					Message: "too many writes; retry in " + ratelimit.RetryAfter(d) + "s"}}
+			}
 		}
 		out, summary, err := h(ctx, in)
 		if err != nil {
@@ -166,6 +175,19 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 			&mcp.TextContent{Text: string(js)},
 		}}, out, nil
 	})
+}
+
+// recoverTool turns a panic in a handler into an internal error passed to
+// fail. The SDK runs handlers on goroutines of its own, outside net/http's
+// and middleware.Recover's reach, so an unrecovered panic would end the
+// process. Call it deferred.
+func (b *builder) recoverTool(ctx context.Context, name string, fail func(error)) {
+	v := recover()
+	if v == nil {
+		return
+	}
+	b.log.ErrorContext(ctx, "mcp handler panicked", "tool", name, "panic", v, "stack", string(debug.Stack()))
+	fail(&toolError{e: api.Error{Code: api.CodeInternal, Message: "internal error"}, cause: fmt.Errorf("panic: %v", v)})
 }
 
 func requireScope(p auth.Principal, scope string) error {

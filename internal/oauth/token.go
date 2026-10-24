@@ -112,10 +112,16 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 	if !s.userActive(w, r, c.UserHandle) {
 		return
 	}
+	keyExpires, ok := s.keyActive(w, r, c.KeyPrefix, c.UserHandle)
+	if !ok {
+		return
+	}
 	if resource == "" {
 		resource = c.Resource
 	}
-	access, refresh := s.newPair(clientID, c.UserHandle, c.Scopes, resource, now)
+	access, refresh := s.newPair(Token{
+		ClientID: clientID, UserHandle: c.UserHandle, Scopes: c.Scopes, Resource: resource, KeyPrefix: c.KeyPrefix,
+	}, keyExpires, now)
 	if err := s.store.CreateTokens(ctx, &access.Token, &refresh.Token); err != nil {
 		s.serverError(w, r, "store tokens", err)
 		return
@@ -164,7 +170,7 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	scopes := old.Scopes
 	if sc := strings.Fields(f.Get("scope")); len(sc) > 0 {
 		for _, x := range sc {
-			if !slices.Contains(old.Scopes, x) {
+			if !slices.Contains(old.Scopes, x) || !slices.Contains(s.opts.Scopes, x) {
 				writeOAuthError(w, http.StatusBadRequest, "invalid_scope", "scope may only narrow the original grant")
 				return
 			}
@@ -174,7 +180,13 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	if !s.userActive(w, r, old.UserHandle) {
 		return
 	}
-	access, refresh := s.newPair(clientID, old.UserHandle, scopes, old.Resource, now)
+	keyExpires, ok := s.keyActive(w, r, old.KeyPrefix, old.UserHandle)
+	if !ok {
+		return
+	}
+	access, refresh := s.newPair(Token{
+		ClientID: clientID, UserHandle: old.UserHandle, Scopes: scopes, Resource: old.Resource, KeyPrefix: old.KeyPrefix,
+	}, keyExpires, now)
 	err = s.store.Rotate(ctx, old.ID, now, &access.Token, &refresh.Token)
 	if errors.Is(err, ErrNotFound) {
 		// Lost a race with a concurrent refresh of the same token.
@@ -202,18 +214,43 @@ func (s *Service) userActive(w http.ResponseWriter, r *http.Request, handle stri
 	return true
 }
 
+// keyActive writes invalid_grant when the grant was approved with an API key
+// that is no longer active. It returns the key's expiry, nil when it has none
+// or the grant has no key.
+func (s *Service) keyActive(w http.ResponseWriter, r *http.Request, prefix, handle string) (*time.Time, bool) {
+	expires, live, err := s.approvingKey(r.Context(), prefix, handle)
+	if err != nil {
+		s.serverError(w, r, "check api key", err)
+		return nil, false
+	}
+	if !live {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the API key that approved this grant is no longer valid")
+		return nil, false
+	}
+	return expires, true
+}
+
 // issued is a token row with its secret, before the secret is thrown away.
 type issued struct {
 	Token
 	secret string
 }
 
-func (s *Service) newPair(clientID, handle string, scopes []string, resource string, now time.Time) (access, refresh issued) {
+// newPair issues an access and a refresh token for grant (client, user,
+// scopes, resource and approving key). Scopes are capped at the offered
+// ones; each token expires after its lifetime, or at notAfter (the
+// approving key's expiry) when that comes first.
+func (s *Service) newPair(grant Token, notAfter *time.Time, now time.Time) (access, refresh issued) {
+	scopes := intersect(grant.Scopes, s.opts.Scopes)
 	mk := func(kind string, ttl time.Duration) issued {
 		secret := randomString(secretBytes)
+		expires := now.Add(ttl)
+		if notAfter != nil && notAfter.Before(expires) {
+			expires = *notAfter
+		}
 		return issued{secret: secret, Token: Token{
-			Hash: hashSecret(secret), Kind: kind, ClientID: clientID, UserHandle: handle,
-			Scopes: scopes, Resource: resource, CreatedAt: now, ExpiresAt: now.Add(ttl),
+			Hash: hashSecret(secret), Kind: kind, ClientID: grant.ClientID, UserHandle: grant.UserHandle,
+			Scopes: scopes, Resource: grant.Resource, KeyPrefix: grant.KeyPrefix, CreatedAt: now, ExpiresAt: expires,
 		}}
 	}
 	return mk(KindAccess, s.opts.AccessTTL), mk(KindRefresh, s.opts.RefreshTTL)
@@ -223,7 +260,7 @@ func (s *Service) writeTokens(w http.ResponseWriter, access, refresh issued) {
 	writeJSON(w, http.StatusOK, tokenResponse{
 		AccessToken:  access.secret,
 		TokenType:    "Bearer",
-		ExpiresIn:    int64(s.opts.AccessTTL / time.Second),
+		ExpiresIn:    int64(access.ExpiresAt.Sub(access.CreatedAt) / time.Second),
 		RefreshToken: refresh.secret,
 		Scope:        strings.Join(access.Scopes, " "),
 	})

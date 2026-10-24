@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Limits that are fixed by the design rather than configured.
@@ -19,6 +20,12 @@ const (
 	DefaultMaxPairs  = 64
 	DefaultMaxFiles  = 2000
 	VersionSeparator = "--v" // <slug>--v<N>.<base>
+
+	// Free-text fields are stored with the artifact and returned by every
+	// listing, so they are short. The limits are bytes of UTF-8.
+	NameMaxBytes        = 256
+	DescriptionMaxBytes = 4096
+	LabelMaxBytes       = 256 // a version's label
 )
 
 var (
@@ -147,15 +154,52 @@ func ParseVisibility(s string) (Visibility, error) {
 	return "", Errorf(ErrInvalidArgument, "visibility must be %q or %q", Public, Unlisted)
 }
 
+// ValidateName checks an artifact's name: valid UTF-8 of at most
+// NameMaxBytes on one line, with no control or bidi control characters.
+func ValidateName(s string) error { return validateText("name", s, NameMaxBytes, false) }
+
+// ValidateDescription checks an artifact's description: the rules of
+// ValidateName with DescriptionMaxBytes, except that newline and tab are
+// allowed.
+func ValidateDescription(s string) error {
+	return validateText("description", s, DescriptionMaxBytes, true)
+}
+
+// ValidateLabel checks a version's label: the rules of ValidateName with
+// LabelMaxBytes.
+func ValidateLabel(s string) error { return validateText("label", s, LabelMaxBytes, false) }
+
+// validateText rejects text that is too long, is not UTF-8, or carries
+// characters that change how the output around it reads: C0 and C1
+// controls, DEL, and the bidi embedding, override and isolate controls.
+// multiline allows newline and tab.
+func validateText(field, s string, maxBytes int, multiline bool) error {
+	if len(s) > maxBytes {
+		return Errorf(ErrInvalidArgument, "%s is longer than %d bytes", field, maxBytes)
+	}
+	if !utf8.ValidString(s) {
+		return Errorf(ErrInvalidArgument, "%s is not valid UTF-8", field)
+	}
+	for _, r := range s {
+		if multiline && (r == '\n' || r == '\t') {
+			continue
+		}
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return Errorf(ErrInvalidArgument, "%s contains the control character U+%04X", field, r)
+		}
+	}
+	return nil
+}
+
 // ContentTypeMaxLen caps a stored content type, which is replayed as a
 // response header.
 const ContentTypeMaxLen = 255
 
-// validateContentType checks a caller-supplied content type before it is
+// ValidateContentType checks a caller-supplied content type before it is
 // stored and later sent as the Content-Type header: printable ASCII, at
 // most ContentTypeMaxLen bytes, and a parseable media type. Empty is fine
 // (the type is then derived).
-func validateContentType(ct string) error {
+func ValidateContentType(ct string) error {
 	if ct == "" {
 		return nil
 	}

@@ -12,8 +12,10 @@ import (
 	"io/fs"
 	"mime/multipart"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"agalma/internal/api"
 	"agalma/internal/artifact"
@@ -22,8 +24,8 @@ import (
 // manifestLimit caps the manifest part of a multipart publish.
 const manifestLimit = 64 << 10
 
-// tarBlock is the size of a tar header block, charged per bundle entry.
-const tarBlock = 512
+// spillPrefix names the temporary files bundles are spilled to.
+const spillPrefix = "agalma-bundle-"
 
 // inlineFiles converts the files[] of a JSON body. Delete entries are only
 // allowed on update.
@@ -159,31 +161,36 @@ type bundle struct {
 
 // readBundle decodes gzip -> tar from r, keeping regular files only
 // (directories, links and anything else are skipped) and stripping "./"
-// prefixes. limit caps the uncompressed total, so a gzip bomb stops at the
-// same size as the request body.
+// prefixes. limit caps the decompressed stream: every byte tar reads,
+// headers, long-name and PAX records and the data of skipped entries
+// included, so a gzip bomb stops at the same size as the request body.
 func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, bodyErr("the bundle is not gzip", err)
 	}
 	defer zr.Close()
-	f, err := os.CreateTemp(dir, "agalma-bundle-*")
+	f, err := os.CreateTemp(dir, spillPrefix+"*")
 	if err != nil {
 		return nil, fmt.Errorf("httpapi: spill bundle: %w", err)
 	}
 	b := &bundle{f: f}
-	if err := b.fill(tar.NewReader(zr), limit); err != nil {
+	capped := &capReader{r: zr, left: limit,
+		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)}
+	if err := b.fill(tar.NewReader(capped)); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
 	// Drain to the end of the gzip stream so its checksum is verified.
-	if _, err := io.Copy(io.Discard, io.LimitReader(zr, limit)); err != nil {
-		return nil, errors.Join(bodyErr("the bundle is corrupt", err), b.Close())
+	if _, err := io.Copy(io.Discard, capped); err != nil {
+		if artifact.CodeOf(err) == "" {
+			err = bodyErr("the bundle is corrupt", err)
+		}
+		return nil, errors.Join(err, b.Close())
 	}
 	return b, nil
 }
 
-func (b *bundle) fill(tr *tar.Reader, limit int64) error {
-	left := limit
+func (b *bundle) fill(tr *tar.Reader) error {
 	var off int64
 	for {
 		hdr, err := tr.Next()
@@ -191,14 +198,7 @@ func (b *bundle) fill(tr *tar.Reader, limit int64) error {
 			return nil
 		}
 		if err != nil {
-			return bodyErr("the bundle is not a valid tar archive", err)
-		}
-		// Every entry, kept or skipped, costs its header block against the
-		// uncompressed cap; otherwise a tiny gzip of empty entries decodes
-		// into an unbounded number of headers and FileInputs.
-		left -= tarBlock
-		if left < 0 {
-			return artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)
+			return tarErr(err)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
@@ -210,26 +210,98 @@ func (b *bundle) fill(tr *tar.Reader, limit int64) error {
 		if name == "" {
 			continue
 		}
-		n, err := io.Copy(b.f, io.LimitReader(tr, left+1))
-		if err != nil {
-			var pe *fs.PathError
-			if errors.As(err, &pe) {
-				return fmt.Errorf("httpapi: spill bundle: %w", err)
-			}
-			return bodyErr("the bundle is not a valid tar archive", err)
+		// Every kept name is held until the service validates the paths,
+		// so one the service would refuse for its length is refused now.
+		if len(name) > artifact.PathMaxBytes {
+			return artifact.Errorf(artifact.ErrInvalidPath, "bundle entry name longer than %d bytes", artifact.PathMaxBytes)
 		}
-		left -= n
-		if left < 0 {
-			return artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)
+		n, err := io.Copy(b.f, tr)
+		if err != nil {
+			return tarErr(err)
 		}
 		b.files = append(b.files, artifact.FileInput{Path: name, Content: io.NewSectionReader(b.f, off, n)})
 		off += n
 	}
 }
 
+// tarErr passes the cap's domain error through, reports a failed spill
+// write as an internal error and anything else as a malformed archive.
+func tarErr(err error) error {
+	var pe *fs.PathError
+	switch {
+	case artifact.CodeOf(err) != "":
+		return err
+	case errors.As(err, &pe):
+		return fmt.Errorf("httpapi: spill bundle: %w", err)
+	}
+	return bodyErr("the bundle is not a valid tar archive", err)
+}
+
+// capReader fails with err once more than left bytes have been read.
+type capReader struct {
+	r    io.Reader
+	left int64
+	err  error
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	if c.left < 0 {
+		return 0, c.err
+	}
+	// Read at most one byte past the cap: enough to detect overflow.
+	if int64(len(p)) > c.left+1 {
+		p = p[:c.left+1]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	if c.left < 0 {
+		return 0, c.err
+	}
+	return n, err
+}
+
 // Close removes the spill file.
 func (b *bundle) Close() error {
 	return errors.Join(b.f.Close(), os.Remove(b.f.Name()))
+}
+
+// RemoveStaleSpills removes the bundle spill files in dir (UserOptions.
+// TempDir) last written before the given time. A request removes its own
+// spill file, so these are what a crash left behind. It returns how many
+// it removed and carries on past errors.
+func RemoveStaleSpills(dir string, before time.Time) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("httpapi: remove stale spills: %w", err)
+	}
+	var (
+		n    int
+		errs []error
+	)
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), spillPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err == nil && !info.ModTime().Before(before) {
+			continue
+		}
+		if err == nil {
+			err = os.Remove(filepath.Join(dir, e.Name()))
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // removed by its request meanwhile
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("httpapi: remove stale spill: %w", err))
+			continue
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
 }
 
 // closeBundle closes b, logging a failure; b may be nil.

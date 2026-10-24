@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -287,12 +288,13 @@ func TestEndToEnd(t *testing.T) {
 	health := get(t, hc, "http://localhost/health")
 	wantStatus(t, health, http.StatusOK, "apex /health")
 	var h api.Health
-	if err := json.Unmarshal([]byte(health.body), &h); err != nil || h.Status != "ok" {
-		t.Errorf("apex health = %q (%v)", health.body, err)
+	if err := json.Unmarshal([]byte(health.body), &h); err != nil || h.Status != "ok" || h.Version != "" {
+		t.Errorf("apex health = %q (%v); want status ok and no version", health.body, err)
 	}
 	apex := get(t, hc, "http://localhost/")
 	wantStatus(t, apex, http.StatusOK, "apex /")
-	if !strings.Contains(apex.body, "localhost") || !strings.HasPrefix(apex.header.Get("Content-Type"), "text/html") {
+	if !strings.Contains(apex.body, "localhost") || !strings.HasPrefix(apex.header.Get("Content-Type"), "text/html") ||
+		strings.Contains(apex.body, "version") {
 		t.Errorf("apex page = %q", truncate(apex.body))
 	}
 	wantStatus(t, get(t, hc, "http://localhost/nope"), http.StatusNotFound, "apex /nope")
@@ -508,6 +510,50 @@ func TestAdminListener(t *testing.T) {
 		if err := in.app.Scheduler().Trigger(context.Background(), name); err != nil {
 			t.Errorf("trigger %s: %v", name, err)
 		}
+	}
+
+	// With its own listener, the admin host is gone from the public one:
+	// neither /metrics nor the admin token works there.
+	pub := client(in.app.Addrs().HTTP)
+	wantStatus(t, get(t, pub, "http://admin.localhost/metrics"), http.StatusNotFound, "public admin /metrics")
+	wantStatus(t, do(t, pub, http.MethodGet, "http://admin.localhost/v1/users", adminToken, ""), http.StatusNotFound, "public admin /v1/users")
+}
+
+// A credential has one write budget across the user API and MCP.
+func TestWriteBudgetShared(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Limits.WriteRatePerMinute = 2
+	in := start(t, cfg)
+	hc := client(in.app.Addrs().HTTP)
+	ctx := context.Background()
+	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := admin.IssueKey(ctx, "peter", api.IssueKeyRequest{Label: "rate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		wantStatus(t, do(t, hc, http.MethodPost, "http://api.localhost/v1/uploads", issued.Key, ""), http.StatusCreated,
+			fmt.Sprintf("REST write %d", i+1))
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "v0"}, nil).Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             "http://mcp.localhost/",
+		HTTPClient:           &http.Client{Transport: bearer{issued.Key, pinnedTransport(in.app.Addrs().HTTP)}},
+		DisableStandaloneSSE: true,
+		MaxRetries:           -1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("mcp connect: %v", err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "begin_upload", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := res.Content[0].(*mcp.TextContent); !res.IsError || text == nil || !strings.HasPrefix(text.Text, "rate_limited: ") {
+		t.Errorf("MCP write over the shared budget = %+v", res.Content)
 	}
 }
 

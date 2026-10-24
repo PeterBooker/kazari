@@ -16,8 +16,16 @@ import (
 	"agalma/internal/user"
 )
 
-// CookieName holds the id of the pending authorization request.
-const CookieName = "agalma_oauth"
+// Names of the cookie that holds the id of the pending authorization
+// request. Browsers accept a __Host- cookie only when it is Secure, has no
+// Domain and has path /, so a page on a sibling host (an artifact at
+// <slug>.<base>, which runs member-authored script) cannot plant one for
+// mcp.<base> with Domain=<base>. Over plain http (Options.InsecureCookies)
+// the prefix is unusable and the plain name is used.
+const (
+	CookieName         = "__Host-agalma_oauth"
+	InsecureCookieName = "agalma_oauth"
+)
 
 // pkceValue matches an S256 challenge or a code verifier (RFC 7636): 43 to
 // 128 characters of [A-Za-z0-9-._~].
@@ -169,15 +177,22 @@ func withQuery(raw string, v url.Values) string {
 	return u.String()
 }
 
+func (s *Service) cookieName() string {
+	if s.opts.InsecureCookies {
+		return InsecureCookieName
+	}
+	return CookieName
+}
+
 func (s *Service) setCookie(w http.ResponseWriter, value string, ttl time.Duration) {
 	maxAge := int(ttl / time.Second)
 	if ttl < 0 {
 		maxAge = -1
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
+		Name:     s.cookieName(),
 		Value:    value,
-		Path:     "/oauth",
+		Path:     "/", // required by the __Host- prefix
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   !s.opts.InsecureCookies,
@@ -190,7 +205,7 @@ func (s *Service) clearCookie(w http.ResponseWriter) { s.setCookie(w, "", -1) }
 // pendingRequest loads the live request named by the cookie. ok is false
 // after a page has been written.
 func (s *Service) pendingRequest(w http.ResponseWriter, r *http.Request) (*Request, bool) {
-	ck, err := r.Cookie(CookieName)
+	ck, err := r.Cookie(s.cookieName())
 	if err != nil || ck.Value == "" {
 		s.message(w, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in is no longer active. Start again from your application.", "")
@@ -318,17 +333,37 @@ func (s *Service) renderConsent(w http.ResponseWriter, status int, c *Client, re
 	}, req.RedirectURI)
 }
 
+// sameOrigin reports whether a browser form post comes from a page of this
+// server. Same-site is not enough: artifacts on sibling hosts run
+// member-authored script. Browsers send Origin on a POST, but "null" from a
+// page with Referrer-Policy no-referrer (the consent page itself), so then
+// Sec-Fetch-Site decides. A request with neither header comes from a
+// non-browser client or a browser too old to send them, where the __Host-
+// cookie still holds.
+func (s *Service) sameOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" && o != "null" {
+		return strings.EqualFold(o, s.origin)
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	return site == "" || site == "same-origin"
+}
+
 // serveConsent handles Approve and Deny on the consent page.
 func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if !s.sameOrigin(r) {
+		s.message(w, http.StatusForbidden, "Request rejected",
+			"This form was not sent from this server's sign-in page. Start again from your application.", "")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := r.ParseForm(); err != nil {
 		s.message(w, http.StatusBadRequest, "Bad request", "The form could not be read.", "")
 		return
 	}
-	// The request id in the form must equal the cookie: a page on another
-	// site cannot read the cookie, so it cannot forge this post.
-	ck, err := r.Cookie(CookieName)
+	// The request id in the form must equal the cookie: another page can
+	// neither read the cookie nor, with the __Host- prefix, set it.
+	ck, err := r.Cookie(s.cookieName())
 	formID := r.PostForm.Get("request_id")
 	if err != nil || formID == "" || subtle.ConstantTimeCompare([]byte(formID), []byte(ck.Value)) != 1 {
 		s.message(w, http.StatusForbidden, "Request rejected",
@@ -352,11 +387,11 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handle, scopes, via, ok := s.approver(w, r, req)
+	a, ok := s.approver(w, r, req)
 	if !ok {
 		return
 	}
-	if len(scopes) == 0 {
+	if len(a.scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
 		redirectError(w, r, req.RedirectURI, req.ClientState, "invalid_scope", "none of the requested scopes is available to this account")
@@ -367,11 +402,12 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	err = s.store.CreateCode(ctx, &Code{
 		Hash:          hashSecret(code),
 		ClientID:      req.ClientID,
-		UserHandle:    handle,
-		Scopes:        scopes,
+		UserHandle:    a.handle,
+		Scopes:        a.scopes,
 		RedirectURI:   req.RedirectURI,
 		CodeChallenge: req.CodeChallenge,
 		Resource:      req.Resource,
+		KeyPrefix:     a.keyPrefix,
 		ExpiresAt:     s.now().Add(s.opts.CodeTTL),
 	})
 	if err != nil {
@@ -383,9 +419,11 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		s.log.WarnContext(ctx, "oauth: delete request", "err", err)
 	}
 	s.clearCookie(w)
-	s.record(ctx, handle, ActionGrant, map[string]string{
-		"client_id": req.ClientID, "scopes": strings.Join(scopes, " "), "via": via,
-	})
+	details := map[string]string{"client_id": req.ClientID, "scopes": strings.Join(a.scopes, " "), "via": a.via}
+	if a.keyPrefix != "" {
+		details["key_prefix"] = a.keyPrefix
+	}
+	s.record(ctx, a.handle, ActionGrant, details)
 	v := url.Values{"code": {code}}
 	if req.ClientState != "" {
 		v.Set("state", req.ClientState)
@@ -393,11 +431,19 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, withQuery(req.RedirectURI, v), http.StatusFound)
 }
 
+// approval is who approved a request and what its code carries.
+type approval struct {
+	handle    string
+	scopes    []string
+	via       string // "oidc" or "api_key"
+	keyPrefix string // the approving API key, "" via oidc
+}
+
 // approver decides who approves the request and which scopes the code
 // carries: the user bound at the callback (capped by role), or the owner of
-// the API key in the form (capped at the key's scopes). ok is false after a
-// page has been written.
-func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request) (handle string, scopes []string, via string, ok bool) {
+// the API key in the form (capped at the key's scopes), whose grant then
+// lives only as long as the key. ok is false after a page has been written.
+func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request) (approval, bool) {
 	ctx := r.Context()
 	if req.UserHandle != "" {
 		u, err := s.users.GetUser(ctx, req.UserHandle)
@@ -407,21 +453,21 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
 			s.message(w, http.StatusForbidden, "No access",
 				"Your account is not allowed to use this Agalma instance. Ask your administrator for access.", "")
-			return "", nil, "", false
+			return approval{}, false
 		}
 		if err != nil {
 			s.log.ErrorContext(ctx, "oauth: load user", "err", err)
 			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
-			return "", nil, "", false
+			return approval{}, false
 		}
-		return u.Handle, intersect(req.Scopes, user.ScopesFor(u)), "oidc", true
+		return approval{handle: u.Handle, scopes: intersect(req.Scopes, user.ScopesFor(u)), via: "oidc"}, true
 	}
 
 	// API-key fallback: only when no identity provider is configured.
 	if s.idp != nil || s.keys == nil {
 		s.message(w, http.StatusForbidden, "Sign-in required",
 			"Sign in at the identity provider first. Start again from your application.", "")
-		return "", nil, "", false
+		return approval{}, false
 	}
 	p, err := s.keys.Authenticate(ctx, strings.TrimSpace(r.PostForm.Get("api_key")))
 	if err != nil {
@@ -431,10 +477,10 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		c, cerr := s.store.GetClient(ctx, req.ClientID)
 		if cerr != nil {
 			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
-			return "", nil, "", false
+			return approval{}, false
 		}
 		s.renderConsent(w, http.StatusUnauthorized, c, req, "", req.Scopes, "That API key was not accepted.")
-		return "", nil, "", false
+		return approval{}, false
 	}
-	return p.Handle, intersect(req.Scopes, p.Scopes), "api_key", true
+	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: "api_key", keyPrefix: p.KeyID}, true
 }

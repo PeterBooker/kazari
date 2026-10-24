@@ -177,11 +177,11 @@ Agalma listens on.
 
 | Key                     | Type     | Default | Meaning                                                                                                   |
 | ----------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| `max_version_bytes`     | size     | `50MiB` | Total size of all files in one version. Also bounds a request body (plus 1 MiB of headroom), a bundle's uncompressed size and one chunked upload. |
+| `max_version_bytes`     | size     | `50MiB` | Total size of all files in one version. Also bounds a request body (plus 1 MiB of headroom), a bundle's decompressed tar stream (the same) and one chunked upload. |
 | `max_file_bytes`        | size     | `25MiB` | Size of one file.                                                                                         |
 | `max_files`             | integer  | `2000`  | Files in one version.                                                                                     |
 | `metadata_max_pairs`    | integer  | `64`    | Metadata key/value pairs per artifact.                                                                    |
-| `write_rate_per_minute` | integer  | `60`    | Write and delete requests per minute per credential on the user API (burst of the same size); `429` beyond it. |
+| `write_rate_per_minute` | integer  | `60`    | Write and delete requests per minute per credential (burst of the same size), one budget across the user API and the MCP write tools; `429` (or an MCP `rate_limited` error) beyond it. |
 | `default_user_quota`    | size     | `2GiB`  | Quota given to users created without one, whether by an admin or by sign-in. See [ops.md](ops.md#quotas). |
 | `inline_guidance_bytes` | size     | `2MiB`  | Quoted in the MCP tool descriptions as the size above which a model should switch to chunked uploads. Advisory; nothing enforces it. |
 | `max_chunk_bytes`       | size     | `4MiB`  | Largest chunk of a chunked upload, after base64 decoding on MCP.                                          |
@@ -245,7 +245,7 @@ page asks for an API key instead. See [identity.md](identity.md).
 
 | Key      | Type   | Default | Meaning                                                                                         |
 | -------- | ------ | ------- | ----------------------------------------------------------------------------------------------- |
-| `listen` | string | `""`    | Optional second listener, plain HTTP, that serves the admin API, `/health` and `/metrics` whatever the `Host` header, for example `127.0.0.1:9443`. The admin host stays reachable on the public listener too. |
+| `listen` | string | `""`    | Optional listener, plain HTTP, that serves the admin API, `/health` and `/metrics` whatever the `Host` header, for example `127.0.0.1:9443`. When it is set, `admin.<base>` is no longer served on the public listener (it answers `404` there), so point the admin CLI at this address. |
 
 ### `log`
 
@@ -273,6 +273,8 @@ All of these are checked together; the error lists every failure as `key: proble
   (`agalma admin users update <handle> --quota 0`).
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` must not exceed `limits.max_version_bytes`.
 - `auth.write_policy` is `shared` or `owner`.
+- `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or
+  ends in `.localhost` (a development instance that only its own machine can reach).
 - With `auth.oidc`: `issuer` is an `https` URL, `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.
 
@@ -285,6 +287,7 @@ override) and supply the variables through `/etc/agalma/agalma.env` (mode `0600`
 root) for the unit, `.env` in development, `--env-file` for Docker, or your secret manager's
 equivalent.
 
-Generate the admin token with `openssl rand -hex 32`. Once an admin user has an API key with the
+Generate the admin token with `openssl rand -hex 32`; a token shorter than 32 characters stops
+startup. Once an admin user has an API key with the
 `admin` scope, you can retire the token: delete the `admin_token` line from the file (a `${}`
 reference to a variable that is no longer set stops startup) and unset `AGALMA_AUTH_ADMIN_TOKEN`.

@@ -23,6 +23,7 @@ import (
 	"agalma/internal/blob"
 	"agalma/internal/mcpserver"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/sqlite"
 	"agalma/internal/upload"
 )
@@ -556,4 +557,40 @@ func TestResourcesAndPrompt(t *testing.T) {
 			t.Errorf("prompt lacks %q", s)
 		}
 	}
+}
+
+// Writes and deletes share the per-credential limiter with the user API;
+// reads are not limited.
+func TestWriteRateLimit(t *testing.T) {
+	e := newEnv(t)
+	now := time.Unix(0, 0)
+	e.deps.Writes = ratelimit.New(1, func() time.Time { return now })
+	p := member
+	p.KeyID = "abcd1234"
+	cs := e.connect(t, p)
+	ok[api.Upload](t, cs, "begin_upload", map[string]any{})
+	if msg := fails(t, cs, "begin_upload", map[string]any{}); msg != "rate_limited: too many writes; retry in 60s" {
+		t.Errorf("second write = %q", msg)
+	}
+	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "nope"}); !strings.HasPrefix(msg, "rate_limited: ") {
+		t.Errorf("delete over the limit = %q", msg)
+	}
+	ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{})
+	// Another credential has its own bucket.
+	other := member
+	other.KeyID = "efgh5678"
+	ok[api.Upload](t, e.connect(t, other), "begin_upload", map[string]any{})
+}
+
+// A panicking handler becomes an internal tool error instead of ending the
+// process: the SDK runs handlers outside net/http's recovery.
+func TestToolPanicRecovered(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Uploads = nil // begin_upload now dereferences a nil service
+	cs := e.connect(t, member)
+	if msg := fails(t, cs, "begin_upload", map[string]any{}); msg != "internal: internal error" {
+		t.Errorf("panicking tool = %q", msg)
+	}
+	// The session still works.
+	ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{})
 }

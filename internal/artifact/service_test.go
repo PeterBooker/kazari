@@ -1351,3 +1351,186 @@ func TestContentTypeValidation(t *testing.T) {
 		})
 	}
 }
+
+// Every listing returns the name and description of each artifact, so an
+// unbounded value would make every listing huge. They are limited on
+// create and on every change, before any content is stored.
+func TestTextFieldLimits(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo")
+	longName := strings.Repeat("n", artifact.NameMaxBytes+1)
+	longDesc := strings.Repeat("d", artifact.DescriptionMaxBytes+1)
+	longLabel := strings.Repeat("l", artifact.LabelMaxBytes+1)
+
+	creates := map[string]artifact.CreateRequest{
+		"name":        {Slug: "new-name", Name: longName},
+		"description": {Slug: "new-desc", Description: longDesc},
+		"label":       {Slug: "new-label", Label: longLabel},
+		"bidi name":   {Slug: "new-bidi", Name: "invoice\u202efdp.exe"},
+	}
+	for what, req := range creates {
+		big := &countingReader{r: strings.NewReader("<p>content</p>")}
+		req.Files = []artifact.FileInput{{Path: "index.html", Content: big}}
+		_, _, err := e.svc.Create(e.ctx, alice, req)
+		wantErr(t, "Create with bad "+what, err, artifact.ErrInvalidArgument)
+		if big.n != 0 {
+			t.Errorf("Create with bad %s read %d bytes of content", what, big.n)
+		}
+		if _, err := e.store.Get(e.ctx, req.Slug); !errors.Is(err, artifact.ErrNotFound) {
+			t.Errorf("Create with bad %s left a row: %v", what, err)
+		}
+	}
+
+	updates := map[string]artifact.UpdateRequest{
+		"name":               {Slug: "demo", Name: ptr(longName)},
+		"description":        {Slug: "demo", Description: ptr(longDesc)},
+		"name with files":    {Slug: "demo", Name: ptr("a\nb"), Files: files("x.txt", "x")},
+		"label":              {Slug: "demo", Label: longLabel, Files: files("x.txt", "x")},
+		"label, fields only": {Slug: "demo", Label: "v2\x00"},
+	}
+	for what, req := range updates {
+		_, _, err := e.svc.Update(e.ctx, alice, req)
+		wantErr(t, "Update with bad "+what, err, artifact.ErrInvalidArgument)
+	}
+	a, _, err := e.svc.Get(e.ctx, alice, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "" || a.Description != "" || a.LatestVersion != 1 {
+		t.Fatalf("rejected updates changed demo: %+v", a)
+	}
+
+	// At the limits is fine, and a description may span lines.
+	desc := strings.Repeat("d", artifact.DescriptionMaxBytes-2) + "\n\t"
+	a, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
+		Slug: "demo", Name: ptr(longName[1:]), Description: ptr(desc), Label: longLabel[1:], Files: files("x.txt", "x"),
+	})
+	if err != nil {
+		t.Fatalf("Update at the limits: %v", err)
+	}
+	if a.Name != longName[1:] || a.Description != desc || v.Label != longLabel[1:] {
+		t.Fatalf("Update at the limits stored name %d, description %d, label %d bytes", len(a.Name), len(a.Description), len(v.Label))
+	}
+}
+
+// Unpublished and soft-deleted artifacts are hidden, as in the listing,
+// from everyone but admins, the owner and the users who changed them. A
+// live artifact, listed or not, is readable by anyone.
+func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice, bob, carol, dave := e.user(t, "alice"), e.user(t, "bob"), e.user(t, "carol"), e.user(t, "dave")
+	root := artifact.Actor{Handle: "root", Admin: true}
+	e.create(t, alice, "demo", "index.html", "hi")
+	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("by bob")}); err != nil {
+		t.Fatal(err)
+	}
+
+	// readable reports whether Get and OpenFile (published and pinned)
+	// agree that actor may read demo, failing on any other error.
+	readable := func(actor artifact.Actor) bool {
+		t.Helper()
+		var oks []bool
+		_, _, err := e.svc.Get(e.ctx, actor, "demo")
+		errs := []error{err}
+		for _, version := range []int{0, 1} {
+			_, rc, err := e.svc.OpenFile(e.ctx, actor, "demo", "index.html", version)
+			if err == nil {
+				rc.Close()
+			}
+			errs = append(errs, err)
+		}
+		for _, err := range errs {
+			if err != nil && !errors.Is(err, artifact.ErrNotFound) {
+				t.Fatalf("read as %q: %v", actor.Handle, err)
+			}
+			oks = append(oks, err == nil)
+		}
+		if !slices.Equal(oks, []bool{oks[0], oks[0], oks[0]}) {
+			t.Fatalf("Get and OpenFile disagree for %q: %v", actor.Handle, errs)
+		}
+		return oks[0]
+	}
+	want := func(state string, wants map[string]bool) {
+		t.Helper()
+		for _, actor := range []artifact.Actor{alice, bob, carol, dave, root, {}} {
+			if got := readable(actor); got != wants[actor.Handle] {
+				t.Errorf("%s: readable by %q = %v, want %v", state, actor.Handle, got, wants[actor.Handle])
+			}
+		}
+	}
+	everyone := map[string]bool{"alice": true, "bob": true, "carol": true, "dave": true, "root": true, "": true}
+
+	if _, err := e.svc.SetVisibility(e.ctx, alice, "demo", string(artifact.Unlisted)); err != nil {
+		t.Fatal(err)
+	}
+	want("unlisted", everyone)
+
+	if _, err := e.svc.SetVisibility(e.ctx, alice, "demo", artifact.Unpublished); err != nil {
+		t.Fatal(err)
+	}
+	want("unpublished", map[string]bool{"alice": true, "bob": true, "root": true})
+
+	// The new owner reads it; the creator still does.
+	if _, err := e.svc.Transfer(e.ctx, root, "demo", "dave"); err != nil {
+		t.Fatal(err)
+	}
+	want("transferred", map[string]bool{"alice": true, "bob": true, "dave": true, "root": true})
+
+	if _, err := e.svc.SetVisibility(e.ctx, dave, "demo", string(artifact.Public)); err != nil {
+		t.Fatal(err)
+	}
+	want("republished", everyone)
+
+	if err := e.svc.Delete(e.ctx, dave, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	want("soft-deleted", map[string]bool{"alice": true, "bob": true, "dave": true, "root": true})
+}
+
+// Every artifact audit event says which credential made the change; the
+// scheduler's events carry none.
+func TestAuditRecordsCredential(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	e.user(t, "alice")
+	alice := artifact.Actor{Handle: "alice", Credential: "api_key:agk_abc123"}
+	steps := []func() error{
+		func() error {
+			_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "demo", Files: files("a", "a")})
+			return err
+		},
+		func() error {
+			_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("n")})
+			return err
+		},
+		func() error { _, err := e.svc.Publish(e.ctx, alice, "demo", 1); return err },
+		func() error { _, err := e.svc.MarkStale(e.ctx, alice, "demo", time.Hour); return err },
+	}
+	for i, step := range steps {
+		if err := step(); err != nil {
+			t.Fatalf("step %d: %v", i, err)
+		}
+	}
+	e.clock.Advance(2 * time.Hour)
+	if _, err := e.svc.Sweep(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(e.rec.Events) != len(steps)+1 {
+		t.Fatalf("events = %v", e.actions())
+	}
+	for _, ev := range e.rec.Events[:len(steps)] {
+		if ev.Details["credential"] != "api_key:agk_abc123" {
+			t.Errorf("%s event details = %v, want the credential", ev.Action, ev.Details)
+		}
+	}
+	// The create event keeps its own details next to the credential.
+	if d := e.rec.Events[0].Details; d["version"] != "1" || d["size"] != "1" {
+		t.Errorf("create details = %v", d)
+	}
+	if sys := e.rec.Events[len(steps)]; sys.Actor != artifact.System.Handle {
+		t.Errorf("last event = %+v, want the sweep's", sys)
+	} else if _, ok := sys.Details["credential"]; ok {
+		t.Errorf("scheduler event has a credential: %v", sys.Details)
+	}
+}

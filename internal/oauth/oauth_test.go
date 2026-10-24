@@ -2,9 +2,12 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -28,7 +31,7 @@ func TestMetadata(t *testing.T) {
 			"authorization_endpoint":                e.srv.URL + "/oauth/authorize",
 			"token_endpoint":                        e.srv.URL + "/oauth/token",
 			"registration_endpoint":                 e.srv.URL + "/oauth/register",
-			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:delete", "admin"},
+			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:delete"},
 			"response_types_supported":              []any{"code"},
 			"response_modes_supported":              []any{"query"},
 			"grant_types_supported":                 []any{"authorization_code", "refresh_token"},
@@ -39,7 +42,7 @@ func TestMetadata(t *testing.T) {
 		{"/.well-known/oauth-protected-resource", map[string]any{
 			"resource":                 e.srv.URL + "/",
 			"authorization_servers":    []any{e.srv.URL},
-			"scopes_supported":         []any{"artifacts:read", "artifacts:write", "artifacts:delete", "admin"},
+			"scopes_supported":         []any{"artifacts:read", "artifacts:write", "artifacts:delete"},
 			"bearer_methods_supported": []any{"header"},
 		}},
 	}
@@ -208,6 +211,7 @@ func TestAuthorizeErrorsRedirect(t *testing.T) {
 		{"missing method", with("code_challenge_method", ""), "invalid_request"},
 		{"short challenge", with("code_challenge", "abc"), "invalid_request"},
 		{"unknown scope", with("scope", "artifacts:read nope"), "invalid_scope"},
+		{"admin scope", with("scope", "artifacts:read admin"), "invalid_scope"},
 		{"other resource", with("resource", "https://elsewhere.example/"), "invalid_target"},
 	}
 	for _, tt := range tests {
@@ -257,26 +261,40 @@ func TestAuthorizeAccepts(t *testing.T) {
 	}
 }
 
+// Regression: the cookie was a plain host cookie on path /oauth, which a
+// page on a sibling host (an artifact) could overwrite with one set for
+// Domain=<base> and so defeat the consent form check. Browsers refuse a
+// __Host- cookie that has a Domain, lacks Secure or is not on path /.
 func TestRequestCookie(t *testing.T) {
 	for _, insecure := range []bool{false, true} {
 		e := newEnv(t, envOptions{})
-		srv := e.svc
+		srv, name := e.svc, oauth.InsecureCookieName
 		if !insecure {
 			srv = oauth.New(e.store, e.users, nil, e.idp, nil, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL, Now: e.clock.Now})
+			name = oauth.CookieName
 		}
 		clientID := e.register("https://app.example/cb")
 		rec := &responseRecorder{header: http.Header{}}
 		req, _ := http.NewRequest(http.MethodGet, "/oauth/authorize?"+authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")).Encode(), nil)
 		srv.Handler().ServeHTTP(rec, req)
 		ck := rec.header.Get("Set-Cookie")
-		for _, want := range []string{oauth.CookieName + "=", "Path=/oauth", "Max-Age=600", "HttpOnly", "SameSite=Lax"} {
+		if !strings.HasPrefix(ck, name+"=") {
+			t.Errorf("insecure=%v: Set-Cookie %q, want name %s", insecure, ck, name)
+		}
+		for _, want := range []string{"; Path=/;", "Max-Age=600", "HttpOnly", "SameSite=Lax"} {
 			if !strings.Contains(ck, want) {
 				t.Errorf("Set-Cookie %q lacks %q", ck, want)
 			}
 		}
+		if strings.Contains(ck, "Domain=") {
+			t.Errorf("Set-Cookie %q has a Domain", ck)
+		}
 		if got := strings.Contains(ck, "Secure"); got == insecure {
 			t.Errorf("insecure=%v: Set-Cookie %q", insecure, ck)
 		}
+	}
+	if oauth.CookieName != "__Host-"+oauth.InsecureCookieName {
+		t.Errorf("CookieName = %q, want the __Host- prefix", oauth.CookieName)
 	}
 }
 
@@ -296,18 +314,15 @@ func TestFullFlow(t *testing.T) {
 		name       string
 		identity   auth.Identity
 		wantHandle string
-		wantAdmin  bool
 		scope      string
 		wantScopes []string
 	}{
 		{"member gets member scopes", auth.Identity{Issuer: "https://idp.example", Subject: "a", Email: "alice@example.com", EmailVerified: true},
-			"alice", false, "", auth.MemberScopes},
-		{"member asking for admin is capped", auth.Identity{Issuer: "https://idp.example", Subject: "a", Email: "alice@example.com", EmailVerified: true},
-			"alice", false, "artifacts:read admin", []string{auth.ScopeRead}},
-		{"admin gets every scope", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
-			"boss", true, "", auth.AllScopes},
+			"alice", "", auth.MemberScopes},
+		{"admin gets member scopes", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
+			"boss", "", auth.MemberScopes},
 		{"narrow request", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
-			"boss", false, "artifacts:read", []string{auth.ScopeRead}},
+			"boss", "artifacts:read", []string{auth.ScopeRead}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -349,7 +364,7 @@ func TestFullFlow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := auth.Principal{Handle: tt.wantHandle, Admin: tt.wantAdmin, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID}
+			want := auth.Principal{Handle: tt.wantHandle, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID}
 			if diff := cmp.Diff(want, p2); diff != "" {
 				t.Errorf("principal (-want +got):\n%s", diff)
 			}
@@ -491,7 +506,7 @@ func TestConsentCSRF(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, e.url("/oauth/consent"), strings.NewReader(v.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			if tt.cookie {
-				req.AddCookie(&http.Cookie{Name: oauth.CookieName, Value: real})
+				req.AddCookie(&http.Cookie{Name: oauth.InsecureCookieName, Value: real})
 			}
 			resp, err := (&http.Client{CheckRedirect: e.client.CheckRedirect}).Do(req)
 			if err != nil {
@@ -861,5 +876,408 @@ func TestCleanup(t *testing.T) {
 	// two refresh tokens and the second access token
 	if n, err := e.svc.Cleanup(ctx); err != nil || n != 3 {
 		t.Errorf("Cleanup after 31 days = %d, %v; want 3", n, err)
+	}
+}
+
+// adminHostStatus is the status of an admin-host request bearing token,
+// guarded as internal/app guards it when no admin token is configured.
+func adminHostStatus(a auth.Authenticator, token string) int {
+	h := auth.RequireAdmin("", a)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// Regression: an empty scope meant every offered scope and admin was
+// offered, so an admin who approved any client (registration is open)
+// handed it a token that the admin host accepted.
+func TestAdminScopeNeverGranted(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{})
+	e.idp.setIdentity(auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true})
+	clientID, tr := e.flow("")
+	if tr.Scope != strings.Join(auth.MemberScopes, " ") {
+		t.Errorf("granted scope = %q, want the member scopes", tr.Scope)
+	}
+	if got := adminHostStatus(e.svc, tr.AccessToken); got != http.StatusForbidden {
+		t.Errorf("admin host with an admin's OAuth token: status %d, want 403", got)
+	}
+
+	// Tokens stored with admin before this rule are capped as well, and so
+	// is what their refresh token issues.
+	accessSecret, refreshSecret := strings.Repeat("a", 43), strings.Repeat("b", 43)
+	now := e.clock.Now()
+	stored := func(secret, kind string) *oauth.Token {
+		h := sha256.Sum256([]byte(secret))
+		return &oauth.Token{Hash: hex.EncodeToString(h[:]), Kind: kind, ClientID: clientID, UserHandle: "boss",
+			Scopes: auth.AllScopes, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	}
+	if err := e.store.CreateTokens(ctx, stored(accessSecret, oauth.KindAccess), stored(refreshSecret, oauth.KindRefresh)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := e.svc.Authenticate(ctx, accessSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := auth.Principal{Handle: "boss", Scopes: auth.MemberScopes, Source: auth.SourceOAuth, KeyID: p.KeyID}
+	if diff := cmp.Diff(want, p); diff != "" {
+		t.Errorf("principal of a stored admin-scoped token (-want +got):\n%s", diff)
+	}
+	if got := adminHostStatus(e.svc, accessSecret); got != http.StatusForbidden {
+		t.Errorf("admin host with a stored admin-scoped token: status %d, want 403", got)
+	}
+	if r := e.refresh(clientID, refreshSecret, "admin"); r.Error != "invalid_scope" {
+		t.Errorf("refresh asking for admin = %d %q, want invalid_scope", r.status, r.Error)
+	}
+	if r := e.refresh(clientID, refreshSecret, ""); r.status != http.StatusOK || r.Scope != strings.Join(auth.MemberScopes, " ") {
+		t.Errorf("refresh of a stored admin-scoped grant = %d %q scope %q, want the member scopes", r.status, r.Error, r.Scope)
+	}
+
+	// Configured with admin, the server still does not offer it.
+	svc := oauth.New(e.store, e.users, nil, nil, nil, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL + "/", Scopes: auth.AllScopes})
+	rec := httptest.NewRecorder()
+	svc.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
+	var meta struct {
+		ScopesSupported []string `json:"scopes_supported"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(auth.MemberScopes, meta.ScopesSupported); diff != "" {
+		t.Errorf("scopes_supported with Options.Scopes = AllScopes (-want +got):\n%s", diff)
+	}
+}
+
+// failingKeys fails every KeyStatus with err.
+type failingKeys struct {
+	oauth.Keys
+	err error
+}
+
+func (k failingKeys) KeyStatus(context.Context, string) (user.KeyStatus, error) {
+	return user.KeyStatus{}, k.err
+}
+
+// Regression: a grant approved with an API key recorded nothing about the
+// key, and every refresh slid its 30-day expiry, so revoking the key or
+// letting it expire did not end the grant.
+func TestGrantEndsWithApprovingKey(t *testing.T) {
+	ctx := context.Background()
+	const redirect = "http://localhost/callback"
+	p := newPKCE("apikey")
+	// approved returns an env and a code approved with a new key of
+	// carol's that expires after expiresIn (0 = never).
+	approved := func(t *testing.T, expiresIn time.Duration) (*env, *user.APIKey, string, string) {
+		t.Helper()
+		e := newEnv(t, envOptions{noIDP: true})
+		if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol"}); err != nil {
+			t.Fatal(err)
+		}
+		k, key, err := e.users.IssueKey(ctx, "carol", "laptop", nil, expiresIn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clientID := e.register(redirect)
+		e.signIn(authorizeParams(clientID, redirect, "", p))
+		return e, k, clientID, e.approve(url.Values{"api_key": {key}})
+	}
+	exchange := func(t *testing.T, e *env, clientID, code string) tokenResult {
+		t.Helper()
+		tr := e.exchange(clientID, redirect, code, p)
+		if tr.status != http.StatusOK {
+			t.Fatalf("exchange = %d %s: %s", tr.status, tr.Error, tr.ErrorDescription)
+		}
+		return tr
+	}
+
+	t.Run("revoked key", func(t *testing.T) {
+		e, k, clientID, code := approved(t, 0)
+		tr := exchange(t, e, clientID, code)
+		if g := e.rec.actions(oauth.ActionGrant); len(g) != 1 || g[0].Details["key_prefix"] != k.Prefix {
+			t.Errorf("grant audit = %+v, want key_prefix %s", g, k.Prefix)
+		}
+		if _, err := e.svc.Authenticate(ctx, tr.AccessToken); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.users.RevokeKey(ctx, "carol", k.Prefix); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("access token after the key was revoked: err = %v, want ErrInvalidToken", err)
+		}
+		if r := e.refresh(clientID, tr.RefreshToken, ""); r.status != http.StatusBadRequest || r.Error != "invalid_grant" {
+			t.Errorf("refresh after the key was revoked = %d %q, want invalid_grant", r.status, r.Error)
+		}
+	})
+	t.Run("key revoked before the exchange", func(t *testing.T) {
+		e, k, clientID, code := approved(t, 0)
+		if err := e.users.RevokeKey(ctx, "carol", k.Prefix); err != nil {
+			t.Fatal(err)
+		}
+		if tr := e.exchange(clientID, redirect, code, p); tr.status != http.StatusBadRequest || tr.Error != "invalid_grant" {
+			t.Errorf("exchange = %d %q, want invalid_grant", tr.status, tr.Error)
+		}
+	})
+	t.Run("expiring key caps the grant", func(t *testing.T) {
+		e, k, clientID, code := approved(t, 90*time.Minute)
+		tr := exchange(t, e, clientID, code)
+		if tr.ExpiresIn != 3600 {
+			t.Errorf("expires_in = %d, want 3600", tr.ExpiresIn)
+		}
+		grants, err := e.svc.ListGrants(ctx, "carol")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(grants) != 1 || !grants[0].ExpiresAt.Equal(*k.ExpiresAt) || grants[0].KeyPrefix != k.Prefix {
+			t.Errorf("grants = %+v, want one of key %s expiring with it at %v", grants, k.Prefix, k.ExpiresAt)
+		}
+		e.clock.Advance(time.Hour)
+		next := e.refresh(clientID, tr.RefreshToken, "")
+		if next.status != http.StatusOK || next.ExpiresIn != 1800 {
+			t.Fatalf("refresh 30 minutes before the key expires = %d %q, expires_in %d; want 1800", next.status, next.Error, next.ExpiresIn)
+		}
+		e.clock.Advance(30 * time.Minute)
+		if _, err := e.svc.Authenticate(ctx, next.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("access token once the key expired: err = %v, want ErrInvalidToken", err)
+		}
+		if r := e.refresh(clientID, next.RefreshToken, ""); r.Error != "invalid_grant" {
+			t.Errorf("refresh once the key expired = %d %q, want invalid_grant", r.status, r.Error)
+		}
+	})
+	t.Run("no key checker", func(t *testing.T) {
+		e, _, clientID, code := approved(t, 0)
+		tr := exchange(t, e, clientID, code)
+		svc := oauth.New(e.store, e.users, nil, nil, nil, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
+		if _, err := svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("Authenticate without Keys: err = %v, want ErrInvalidToken", err)
+		}
+	})
+	t.Run("key check fails", func(t *testing.T) {
+		e, _, clientID, code := approved(t, 0)
+		tr := exchange(t, e, clientID, code)
+		boom := errors.New("disk on fire")
+		svc := oauth.New(e.store, e.users, failingKeys{e.users, boom}, nil, nil, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
+		if _, err := svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, boom) || errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("Authenticate = %v, want the storage error", err)
+		}
+	})
+}
+
+// Regression: KeyID was the access token's row id, which changes on every
+// refresh, so a client could reset its per-credential write rate limit (and
+// split its audit trail) by refreshing.
+func TestKeyIDStableAcrossRefresh(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{})
+	clientID, first := e.flow("")
+	p1, err := e.svc.Authenticate(ctx, first.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := e.refresh(clientID, first.RefreshToken, "")
+	if second.status != http.StatusOK {
+		t.Fatalf("refresh = %d %s", second.status, second.Error)
+	}
+	p2, err := e.svc.Authenticate(ctx, second.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.KeyID != p2.KeyID || !strings.HasPrefix(p1.KeyID, "oauth:") {
+		t.Errorf("KeyID before and after refresh = %q, %q; want the same oauth:<grant>", p1.KeyID, p2.KeyID)
+	}
+	_, other := e.flow("")
+	p3, err := e.svc.Authenticate(ctx, other.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.KeyID == p1.KeyID {
+		t.Errorf("two grants share KeyID %q", p1.KeyID)
+	}
+}
+
+// Regression: disabling a user only suspended their OAuth grants, so
+// enabling them again brought back a grant an attacker held.
+func TestDisableRevokesGrants(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{})
+	clientID, tr := e.flow("")
+	for _, disabled := range []bool{true, false} {
+		if _, err := e.users.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: &disabled}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("access token after disable and enable: err = %v, want ErrInvalidToken", err)
+	}
+	if r := e.refresh(clientID, tr.RefreshToken, ""); r.Error != "invalid_grant" {
+		t.Errorf("refresh after disable and enable = %d %q, want invalid_grant", r.status, r.Error)
+	}
+	if grants, err := e.svc.ListGrants(ctx, "alice"); err != nil || len(grants) != 0 {
+		t.Errorf("ListGrants after disable = %+v, %v; want none", grants, err)
+	}
+	if ev := e.rec.actions(oauth.ActionRevoke); len(ev) != 1 || ev[0].Details["user"] != "alice" {
+		t.Errorf("revoke audit = %+v", ev)
+	}
+	// Signing in again gives a working grant.
+	_, fresh := e.flow("")
+	if _, err := e.svc.Authenticate(ctx, fresh.AccessToken); err != nil {
+		t.Errorf("new grant after enable: %v", err)
+	}
+}
+
+// mcpOrigin is where the authorization server runs in mcpHost; artifacts
+// run member-authored script on sibling hosts such as
+// https://evil.art.example.com.
+const mcpOrigin = "https://mcp.art.example.com"
+
+// mcpHost is the authorization server as deployed (https, Secure cookies),
+// driven without a network. Without an identity provider, carol approves
+// with her API key.
+type mcpHost struct {
+	t        *testing.T
+	svc      *oauth.Service
+	clientID string
+	key      string
+}
+
+func newMCPHost(t *testing.T) *mcpHost {
+	t.Helper()
+	e := newEnv(t, envOptions{noIDP: true})
+	ctx := context.Background()
+	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol"}); err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := e.users.IssueKey(ctx, "carol", "", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &mcpHost{t: t, key: key, clientID: e.register("https://app.example/cb"),
+		svc: oauth.New(e.store, e.users, e.users, nil, nil, oauth.Options{Issuer: mcpOrigin, Resource: mcpOrigin + "/", Now: e.clock.Now})}
+}
+
+func (h *mcpHost) serve(req *http.Request) *http.Response {
+	rec := httptest.NewRecorder()
+	h.svc.Handler().ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+// authorize starts an authorization and returns the request id the browser
+// got in the __Host- cookie.
+func (h *mcpHost) authorize(p pkce) string {
+	h.t.Helper()
+	q := authorizeParams(h.clientID, "https://app.example/cb", "", p)
+	resp := h.serve(httptest.NewRequest(http.MethodGet, mcpOrigin+"/oauth/authorize?"+q.Encode(), nil))
+	for _, c := range resp.Cookies() {
+		if c.Name == oauth.CookieName {
+			return c.Value
+		}
+	}
+	h.t.Fatalf("authorize set no %s cookie: %q", oauth.CookieName, resp.Header["Set-Cookie"])
+	return ""
+}
+
+// consent posts Approve for request id, sending the id in a cookie named
+// cookie, with the headers a browser would add.
+func (h *mcpHost) consent(id, cookie string, header http.Header) *http.Response {
+	form := url.Values{"request_id": {id}, "action": {"approve"}, "api_key": {h.key}}
+	req := httptest.NewRequest(http.MethodPost, mcpOrigin+"/oauth/consent", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, vs := range header {
+		req.Header[k] = vs
+	}
+	req.AddCookie(&http.Cookie{Name: cookie, Value: id})
+	return h.serve(req)
+}
+
+// Regression: the consent post was bound to the browser only by the
+// cookie, and a page on a sibling host is same-site, so SameSite=Lax let
+// its posts through. Only the server's own page may post the form; the
+// token and registration endpoints, called by non-browser clients and by
+// browser clients through CORS, do not care.
+func TestConsentRequiresSameOrigin(t *testing.T) {
+	h := newMCPHost(t)
+	id := h.authorize(newPKCE("v"))
+	refused := []struct {
+		name   string
+		header http.Header
+	}{
+		{"artifact host", http.Header{"Origin": {"https://evil.art.example.com"}, "Sec-Fetch-Site": {"same-site"}}},
+		{"apex", http.Header{"Origin": {"https://art.example.com"}}},
+		{"plain http", http.Header{"Origin": {"http://mcp.art.example.com"}}},
+		{"other site", http.Header{"Origin": {"https://attacker.example"}, "Sec-Fetch-Site": {"cross-site"}}},
+		{"null origin from a sibling host", http.Header{"Origin": {"null"}, "Sec-Fetch-Site": {"same-site"}}},
+		{"no origin, same-site", http.Header{"Sec-Fetch-Site": {"same-site"}}},
+	}
+	for _, tt := range refused {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := h.consent(id, oauth.CookieName, tt.header)
+			if resp.StatusCode != http.StatusForbidden || resp.Header.Get("Location") != "" {
+				t.Errorf("status = %d, Location %q, want 403", resp.StatusCode, resp.Header.Get("Location"))
+			}
+		})
+	}
+
+	accepted := []struct {
+		name   string
+		header http.Header
+	}{
+		{"same origin", http.Header{"Origin": {mcpOrigin}, "Sec-Fetch-Site": {"same-origin"}}},
+		// What browsers send from the consent page, whose Referrer-Policy
+		// is no-referrer.
+		{"null origin, same-origin fetch", http.Header{"Origin": {"null"}, "Sec-Fetch-Site": {"same-origin"}}},
+		{"no browser headers", nil},
+	}
+	for i, tt := range accepted {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newPKCE("v")
+			if i > 0 { // the first approves the request the refused posts left alone
+				id = h.authorize(p)
+			}
+			resp := h.consent(id, oauth.CookieName, tt.header)
+			if resp.StatusCode != http.StatusFound {
+				t.Fatalf("status = %d, want 302", resp.StatusCode)
+			}
+			code := location(t, resp).Query().Get("code")
+			if code == "" {
+				t.Fatalf("redirect %s has no code", resp.Header.Get("Location"))
+			}
+			form := url.Values{"grant_type": {"authorization_code"}, "client_id": {h.clientID},
+				"redirect_uri": {"https://app.example/cb"}, "code": {code}, "code_verifier": {p.verifier}}
+			req := httptest.NewRequest(http.MethodPost, mcpOrigin+"/oauth/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", "https://evil.art.example.com")
+			if resp := h.serve(req); resp.StatusCode != http.StatusOK {
+				t.Errorf("cross-origin token request: status %d, want 200", resp.StatusCode)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodPost, mcpOrigin+"/oauth/register", strings.NewReader(`{"redirect_uris":["https://app.example/cb"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://claude.ai")
+	if resp := h.serve(req); resp.StatusCode != http.StatusCreated {
+		t.Errorf("cross-origin registration: status %d, want 201", resp.StatusCode)
+	}
+}
+
+// Regression: a script on a sibling host could set the consent cookie for
+// Domain=<base> to the id of an authorization request it had started
+// itself, sign the visitor in for that request at the identity provider and
+// post the consent form: the cookie and the form agreed. Over https the
+// cookie is read only under its __Host- name, which browsers never accept
+// from a Set-Cookie with a Domain.
+func TestConsentIgnoresTossedCookie(t *testing.T) {
+	h := newMCPHost(t)
+	id := h.authorize(newPKCE("v"))
+	if resp := h.consent(id, oauth.InsecureCookieName, nil); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("consent with the cookie under its plain name: status %d, want 403", resp.StatusCode)
+	}
+	resp := h.consent(id, oauth.CookieName, nil)
+	if resp.StatusCode != http.StatusFound || location(t, resp).Query().Get("code") == "" {
+		t.Errorf("consent with the __Host- cookie: status %d, Location %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }

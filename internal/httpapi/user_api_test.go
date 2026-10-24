@@ -558,7 +558,7 @@ func TestAuthAndRouting(t *testing.T) {
 
 func TestRateLimits(t *testing.T) {
 	t.Run("per key writes", func(t *testing.T) {
-		e := newEnv(t, config{user: httpapi.UserOptions{WriteRatePerMinute: 1}})
+		e := newEnv(t, config{writeRate: 1})
 		e.call(http.MethodPost, e.u("/v1/uploads"), e.alice, nil, http.StatusCreated, nil)
 		resp := e.send(req{method: http.MethodPost, url: e.u("/v1/uploads"), token: e.alice})
 		e.apiErr(resp, http.StatusTooManyRequests, api.CodeRateLimited)

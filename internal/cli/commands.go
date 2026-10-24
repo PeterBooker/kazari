@@ -245,7 +245,7 @@ func cmdGet(r *runner, args []string) error {
 		if v.Number == d.Artifact.PublishedVersion {
 			num += " *"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", num, dash(v.Label), dash(v.CreatedBy),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", num, dash(oneLine(v.Label)), dash(v.CreatedBy),
 			fmtTime(v.CreatedAt), humanSize(v.SizeBytes), v.URL)
 	}
 	tw.Flush()
@@ -269,7 +269,7 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	tw := newTable(r.stdout)
 	kv := func(k, v string) {
 		if v != "" {
-			fmt.Fprintf(tw, "%s:\t%s\n", k, v)
+			fmt.Fprintf(tw, "%s:\t%s\n", k, oneLine(v))
 		}
 	}
 	kv("slug", a.Slug)
@@ -383,7 +383,7 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 			ver += "/" + strconv.Itoa(a.LatestVersion)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Slug, ver, a.Visibility, artifactState(&a),
-			humanSize(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name)
+			humanSize(a.SizeBytes), fmtTime(a.UpdatedAt), oneLine(a.Name))
 	}
 	tw.Flush()
 	if l.NextCursor != "" {
@@ -593,7 +593,7 @@ func (r *runner) printKeys(keys []api.APIKey) error {
 	tw := newTable(r.stdout)
 	fmt.Fprintln(tw, "PREFIX\tLABEL\tSCOPES\tCREATED\tLAST USED\tEXPIRES\tREVOKED")
 	for _, k := range keys {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", k.Prefix, dash(k.Label), dash(strings.Join(k.Scopes, ",")),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", k.Prefix, dash(oneLine(k.Label)), dash(strings.Join(k.Scopes, ",")),
 			fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
 	}
 	return tw.Flush()

@@ -39,6 +39,9 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"AddVersionConcurrent", testAddVersionConcurrent},
 		{"Update", testUpdate},
 		{"UpdateErrors", testUpdateErrors},
+		{"UpdateCurrentRow", testUpdateCurrentRow},
+		{"Quota", testQuota},
+		{"Involved", testInvolved},
 		{"ListFilters", testListFilters},
 		{"ListPagination", testListPagination},
 		{"ListInvalid", testListInvalid},
@@ -111,7 +114,7 @@ func (h *harness) create(t *testing.T, a *artifact.Artifact, files ...artifact.F
 		files = []artifact.File{file("index.html", "<h1>"+a.Slug+"</h1>")}
 	}
 	v := newVersion(a.OwnerHandle, a.CreatedAt, files...)
-	if err := h.store.Create(h.ctx, a, v); err != nil {
+	if err := h.store.Create(h.ctx, a, v, 0); err != nil {
 		t.Fatalf("Create(%s): %v", a.Slug, err)
 	}
 	return v
@@ -126,11 +129,26 @@ func (h *harness) get(t *testing.T, slug string) *artifact.Artifact {
 	return a
 }
 
+// set returns an Update or AddVersion func that replaces the row's fields
+// with a's.
+func set(a *artifact.Artifact) func(*artifact.Artifact) error {
+	return func(cur *artifact.Artifact) error {
+		*cur = *a
+		return nil
+	}
+}
+
+// update writes every mutable field of a.
 func (h *harness) update(t *testing.T, a *artifact.Artifact, by string) {
 	t.Helper()
-	if err := h.store.Update(h.ctx, a, by); err != nil {
+	if err := h.store.Update(h.ctx, a.Slug, by, set(a)); err != nil {
 		t.Fatalf("Update(%s): %v", a.Slug, err)
 	}
+}
+
+// addVersion adds v to a.Slug with a's fields and no quota.
+func (h *harness) addVersion(a *artifact.Artifact, v *artifact.Version, expected int) error {
+	return h.store.AddVersion(h.ctx, a.Slug, v, expected, 0, set(a))
 }
 
 func wantErr(t *testing.T, what string, err, want error) {
@@ -182,7 +200,7 @@ func testCreateSlugTaken(t *testing.T, h *harness) {
 	h.create(t, newArtifact("taken", "alice", at(0)))
 
 	a := newArtifact("taken", "bob", at(time.Hour))
-	err := h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")))
+	err := h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")), 0)
 	wantErr(t, "Create duplicate", err, artifact.ErrSlugTaken)
 	if got := h.get(t, "taken"); got.OwnerHandle != "alice" {
 		t.Fatalf("owner after failed create = %q, want alice", got.OwnerHandle)
@@ -192,7 +210,7 @@ func testCreateSlugTaken(t *testing.T, h *harness) {
 	if err := h.store.Purge(h.ctx, "taken", at(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	err = h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")))
+	err = h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")), 0)
 	wantErr(t, "Create over tombstone", err, artifact.ErrSlugTaken)
 
 	// Removing the tombstone frees it.
@@ -207,7 +225,7 @@ func testCreateSlugTaken(t *testing.T, h *harness) {
 
 func testCreateUnknownOwner(t *testing.T, h *harness) {
 	a := newArtifact("orphan", "nobody", at(0))
-	if err := h.store.Create(h.ctx, a, newVersion("nobody", at(0), file("x", "x"))); err == nil {
+	if err := h.store.Create(h.ctx, a, newVersion("nobody", at(0), file("x", "x")), 0); err == nil {
 		t.Fatal("Create with unknown owner succeeded")
 	}
 	_, err := h.store.Get(h.ctx, "orphan")
@@ -245,7 +263,7 @@ func testVersions(t *testing.T, h *harness) {
 
 	v2 := newVersion("bob", at(time.Hour), file("index.html", "<p>v2"))
 	v2.Label = "second"
-	if err := h.store.AddVersion(h.ctx, a, v2, 0); err != nil {
+	if err := h.addVersion(a, v2, 0); err != nil {
 		t.Fatal(err)
 	}
 	list, err := h.store.ListVersions(h.ctx, "demo")
@@ -279,7 +297,7 @@ func testAddVersion(t *testing.T, h *harness) {
 		a.StaleAt, a.ExpiresAt = nil, nil
 		a.UpdatedAt = at(time.Duration(n) * time.Hour)
 		v := newVersion("bob", a.UpdatedAt, file("index.html", strings.Repeat("v", n)))
-		if err := h.store.AddVersion(h.ctx, a, v, n-1); err != nil {
+		if err := h.addVersion(a, v, n-1); err != nil {
 			t.Fatalf("AddVersion %d: %v", n, err)
 		}
 		if v.Number != n || v.ID == 0 {
@@ -311,14 +329,14 @@ func testAddVersion(t *testing.T, h *harness) {
 	cur.DeletedAt = ptr(at(4 * time.Hour))
 	h.update(t, cur, "")
 	cur.DeletedAt = nil
-	if err := h.store.AddVersion(h.ctx, cur, newVersion("alice", at(5*time.Hour), file("x", "x")), 0); err != nil {
+	if err := h.addVersion(cur, newVersion("alice", at(5*time.Hour), file("x", "x")), 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.get(t, "demo"); got.DeletedAt != nil || got.LatestVersion != 4 {
 		t.Fatalf("after restore AddVersion: deleted %v latest %d", got.DeletedAt, got.LatestVersion)
 	}
 
-	err = h.store.AddVersion(h.ctx, newArtifact("missing", "alice", at(0)), newVersion("alice", at(0), file("x", "x")), 0)
+	err = h.addVersion(newArtifact("missing", "alice", at(0)), newVersion("alice", at(0), file("x", "x")), 0)
 	wantErr(t, "AddVersion missing", err, artifact.ErrNotFound)
 }
 
@@ -332,7 +350,7 @@ func testAddVersionConflict(t *testing.T, h *harness) {
 	changed.Name = "should not be written"
 	changed.UpdatedAt = at(time.Hour)
 	v := newVersion("alice", at(time.Hour), file("new.txt", "new"))
-	err := h.store.AddVersion(h.ctx, &changed, v, 5)
+	err := h.addVersion(&changed, v, 5)
 	wantErr(t, "AddVersion expected=5", err, artifact.ErrVersionConflict)
 
 	if diff := cmp.Diff(before, h.get(t, "demo"), cmpOpts...); diff != "" {
@@ -355,7 +373,7 @@ func testAddVersionConflict(t *testing.T, h *harness) {
 	}
 
 	// The matching expectation succeeds.
-	if err := h.store.AddVersion(h.ctx, &changed, v, 1); err != nil {
+	if err := h.addVersion(&changed, v, 1); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.get(t, "demo"); got.LatestVersion != 2 || got.Name != "should not be written" {
@@ -376,7 +394,7 @@ func testAddVersionConcurrent(t *testing.T, h *harness) {
 			a := newArtifact("demo", "alice", at(0))
 			a.UpdatedAt = at(time.Hour)
 			v := newVersion("alice", at(time.Hour), file("f.txt", fmt.Sprint(i)))
-			errs[i] = h.store.AddVersion(h.ctx, a, v, 1)
+			errs[i] = h.addVersion(a, v, 1)
 		}()
 	}
 	wg.Wait()
@@ -403,7 +421,7 @@ func testUpdate(t *testing.T, h *harness) {
 	h.mkUser("bob")
 	a := newArtifact("demo", "alice", at(0))
 	h.create(t, a)
-	if err := h.store.AddVersion(h.ctx, a, newVersion("alice", at(time.Minute), file("v2", "v2")), 0); err != nil {
+	if err := h.addVersion(a, newVersion("alice", at(time.Minute), file("v2", "v2")), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -460,19 +478,182 @@ func testUpdateErrors(t *testing.T, h *harness) {
 	h.create(t, a)
 
 	missing := newArtifact("missing", "alice", at(0))
-	wantErr(t, "Update missing", h.store.Update(h.ctx, missing, "alice"), artifact.ErrNotFound)
+	wantErr(t, "Update missing", h.store.Update(h.ctx, missing.Slug, "alice", set(missing)), artifact.ErrNotFound)
 
 	bad := h.get(t, "demo")
 	bad.PublishedVersion = 9
-	wantErr(t, "Update to missing version", h.store.Update(h.ctx, bad, "alice"), artifact.ErrVersionNotFound)
+	wantErr(t, "Update to missing version", h.store.Update(h.ctx, bad.Slug, "alice", set(bad)), artifact.ErrVersionNotFound)
 
 	bad = h.get(t, "demo")
 	bad.OwnerHandle = "nobody"
-	if err := h.store.Update(h.ctx, bad, "alice"); err == nil {
+	if err := h.store.Update(h.ctx, bad.Slug, "alice", set(bad)); err == nil {
 		t.Fatal("Update to unknown owner succeeded")
 	}
 	if got := h.get(t, "demo"); got.OwnerHandle != "alice" || got.PublishedVersion != 1 {
 		t.Fatalf("failed updates changed the artifact: %+v", got)
+	}
+}
+
+// Update and AddVersion hand fn the row as it is inside their transaction,
+// so a read-modify-write never undoes a concurrent change to another field.
+func testUpdateCurrentRow(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	h.mkUser("carol")
+	h.create(t, newArtifact("demo", "alice", at(0)))
+
+	// A transfer and a soft delete land; a later rename keeps both.
+	moved := h.get(t, "demo")
+	moved.OwnerHandle = "bob"
+	moved.DeletedAt = ptr(at(time.Hour))
+	h.update(t, moved, "")
+	err := h.store.Update(h.ctx, "demo", "alice", func(a *artifact.Artifact) error {
+		a.Name = "renamed"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = h.store.AddVersion(h.ctx, "demo", newVersion("alice", at(2*time.Hour), file("v2", "v2")), 0, 0,
+		func(a *artifact.Artifact) error {
+			a.Description = "second"
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := h.get(t, "demo")
+	if got.OwnerHandle != "bob" || got.DeletedAt == nil || got.Name != "renamed" || got.Description != "second" {
+		t.Fatalf("after rename and new version: owner %q deleted %v name %q description %q",
+			got.OwnerHandle, got.DeletedAt, got.Name, got.Description)
+	}
+
+	// An error from fn is returned and nothing is written, not even the
+	// actor row.
+	boom := errors.New("boom")
+	err = h.store.Update(h.ctx, "demo", "carol", func(a *artifact.Artifact) error {
+		a.Name = "no"
+		return boom
+	})
+	wantErr(t, "Update with failing fn", err, boom)
+	err = h.store.AddVersion(h.ctx, "demo", newVersion("carol", at(3*time.Hour), file("v3", "v3")), 0, 0,
+		func(a *artifact.Artifact) error { return boom })
+	wantErr(t, "AddVersion with failing fn", err, boom)
+	if diff := cmp.Diff(got, h.get(t, "demo"), cmpOpts...); diff != "" {
+		t.Fatalf("failing fn changed the artifact (-before +after):\n%s", diff)
+	}
+	if ok, err := h.store.Involved(h.ctx, "demo", "carol"); err != nil || ok {
+		t.Fatalf("failing fn recorded carol as involved: %v, %v", ok, err)
+	}
+
+	// Concurrent increments through fn are all kept.
+	const n = 8
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			inc := func(a *artifact.Artifact) error {
+				k := len(a.Metadata["n"])
+				a.Metadata["n"] = strings.Repeat("x", k+1)
+				return nil
+			}
+			if i%2 == 0 {
+				errs[i] = h.store.Update(h.ctx, "demo", "", inc)
+				return
+			}
+			errs[i] = h.store.AddVersion(h.ctx, "demo", newVersion("alice", at(4*time.Hour), file("f", fmt.Sprint(i))), 0, 0, inc)
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent write: %v", err)
+		}
+	}
+	if got := h.get(t, "demo"); len(got.Metadata["n"]) != n {
+		t.Fatalf("after %d concurrent increments n = %q", n, got.Metadata["n"])
+	}
+}
+
+// Create and AddVersion refuse a version that would take the owner past
+// the quota they are given, inside the transaction that would write it.
+func testQuota(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	a := newArtifact("one", "alice", at(0))
+	if err := h.store.Create(h.ctx, a, newVersion("alice", at(0), file("a", "12345")), 10); err != nil {
+		t.Fatal(err)
+	}
+	err := h.store.Create(h.ctx, newArtifact("two", "alice", at(0)), newVersion("alice", at(0), file("b", "123456")), 10)
+	wantErr(t, "Create over quota", err, artifact.ErrQuotaExceeded)
+	_, err = h.store.Get(h.ctx, "two")
+	wantErr(t, "Get after refused Create", err, artifact.ErrNotFound)
+	err = h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("b", "123456")), 0, 10, set(a))
+	wantErr(t, "AddVersion over quota", err, artifact.ErrQuotaExceeded)
+	if got := h.get(t, "one"); got.LatestVersion != 1 {
+		t.Fatalf("refused AddVersion wrote version %d", got.LatestVersion)
+	}
+	// Exactly at the quota fits, and 0 means unlimited.
+	if err := h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("c", "12345")), 0, 10, set(a)); err != nil {
+		t.Fatalf("AddVersion to the quota: %v", err)
+	}
+	h.create(t, newArtifact("big", "alice", at(0)), file("d", strings.Repeat("d", 100)))
+
+	// Concurrent creates are checked one after the other: two of 4 bytes
+	// fit in 10.
+	const n = 6
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			slug := fmt.Sprintf("bob-%d", i)
+			errs[i] = h.store.Create(h.ctx, newArtifact(slug, "bob", at(0)), newVersion("bob", at(0), file("f", fmt.Sprintf("bob%d", i))), 10)
+		})
+	}
+	wg.Wait()
+	wins := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, artifact.ErrQuotaExceeded):
+		default:
+			t.Errorf("concurrent Create: %v", err)
+		}
+	}
+	if used, err := h.store.Usage(h.ctx, "bob"); err != nil || wins != 2 || used != 8 {
+		t.Fatalf("%d concurrent creates succeeded with usage %d (%v), want 2 and 8", wins, used, err)
+	}
+}
+
+func testInvolved(t *testing.T, h *harness) {
+	for _, u := range []string{"alice", "bob", "carol", "dave"} {
+		h.mkUser(u)
+	}
+	h.create(t, newArtifact("demo", "alice", at(0)))
+	h.update(t, h.get(t, "demo"), "bob")
+	if err := h.addVersion(h.get(t, "demo"), newVersion("carol", at(time.Hour), file("x", "x")), 0); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		slug, handle string
+		want         bool
+	}{
+		{"demo", "alice", true}, // created it
+		{"demo", "bob", true},   // updated it
+		{"demo", "carol", true}, // added a version
+		{"demo", "dave", false},
+		{"demo", "nobody", false},
+		{"missing", "alice", false},
+	}
+	for _, tt := range tests {
+		got, err := h.store.Involved(h.ctx, tt.slug, tt.handle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tt.want {
+			t.Errorf("Involved(%s, %s) = %v, want %v", tt.slug, tt.handle, got, tt.want)
+		}
 	}
 }
 
@@ -679,7 +860,7 @@ func testResolve(t *testing.T, h *harness) {
 	a.Metadata = map[string]string{artifact.MetaSPA: "true", "x": "y"}
 	v1 := h.create(t, a)
 	v2 := newVersion("alice", at(time.Hour), file("index.html", "two"))
-	if err := h.store.AddVersion(h.ctx, a, v2, 0); err != nil {
+	if err := h.addVersion(a, v2, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -783,7 +964,7 @@ func testUsage(t *testing.T, h *harness) {
 	h.mkUser("bob")
 	a := newArtifact("one", "alice", at(0))
 	h.create(t, a, file("a", "12345"))
-	if err := h.store.AddVersion(h.ctx, a, newVersion("bob", at(time.Hour), file("a", "123")), 0); err != nil {
+	if err := h.addVersion(a, newVersion("bob", at(time.Hour), file("a", "123")), 0); err != nil {
 		t.Fatal(err)
 	}
 	h.create(t, newArtifact("two", "alice", at(0)), file("b", "1234567"))
@@ -874,7 +1055,7 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	a := newArtifact("demo", "alice", at(0))
 	v1 := h.create(t, a)
-	if err := h.store.AddVersion(h.ctx, a, newVersion("alice", at(time.Hour), file("x", "x")), 0); err != nil {
+	if err := h.addVersion(a, newVersion("alice", at(time.Hour), file("x", "x")), 0); err != nil {
 		t.Fatal(err)
 	}
 	wantErr(t, "DeleteTombstone of live artifact", h.store.DeleteTombstone(h.ctx, "demo"), artifact.ErrInvalidArgument)

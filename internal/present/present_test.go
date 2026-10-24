@@ -50,6 +50,26 @@ func TestError(t *testing.T) {
 	}
 }
 
+// The actor carries the credential so artifact audit events can name it.
+func TestActorCredential(t *testing.T) {
+	tests := []struct {
+		p    auth.Principal
+		want string
+	}{
+		{auth.Principal{Handle: "alice", Source: auth.SourceAPIKey, KeyID: "agk_abc123"}, "api_key:agk_abc123"},
+		{auth.Principal{Handle: "alice", Source: auth.SourceOAuth, KeyID: "oauth:42"}, "oauth:42"},
+		{auth.Principal{Handle: "alice", Source: auth.SourceOAuth, KeyID: "grant-7"}, "oauth:grant-7"},
+		{auth.Principal{Handle: "admin", Admin: true, Source: auth.SourceAdminToken}, "admin_token"},
+		{auth.Principal{Handle: "alice"}, ""},
+	}
+	for _, tt := range tests {
+		a := Actor(tt.p)
+		if a.Credential != tt.want || a.Handle != tt.p.Handle || a.Admin != tt.p.Admin {
+			t.Errorf("Actor(%+v) = %+v, want credential %q", tt.p, a, tt.want)
+		}
+	}
+}
+
 func TestLinks(t *testing.T) {
 	l := Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }}
 	a := &artifact.Artifact{Slug: "demo", PublishedVersion: 2, LatestVersion: 3}

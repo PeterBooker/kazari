@@ -192,10 +192,11 @@ func TestExchange(t *testing.T) {
 			want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Email: "alice@example.com", Name: "Alice"}},
 		{name: "email_verified absent", edit: func(c map[string]any) { delete(c, "email_verified") },
 			want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Email: "alice@example.com", Name: "Alice"}},
-		{name: "preferred_username fallback", edit: func(c map[string]any) {
+		// The fallback is Entra's only (see TestIdentityMapping).
+		{name: "preferred_username ignored outside entra", edit: func(c map[string]any) {
 			delete(c, "email")
 			c["preferred_username"] = "alice@corp.example"
-		}, want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Email: "alice@corp.example", EmailVerified: true, Name: "Alice"}},
+		}, want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Name: "Alice"}},
 		{name: "preferred_username without at", edit: func(c map[string]any) {
 			delete(c, "email")
 			c["preferred_username"] = "alice"

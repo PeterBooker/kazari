@@ -76,15 +76,17 @@ Every error has the same envelope:
 
 ## Rate limits
 
-The user API applies two token buckets and answers `429 rate_limited` with `Retry-After: <seconds>`
-when either is empty:
+Every control-plane host applies token buckets and answers `429 rate_limited` with
+`Retry-After: <seconds>` when one is empty:
 
-- **per client IP**, before authentication: 120 requests a minute (burst 120) on every route; IPv6
-  clients share one bucket per `/64`;
-- **per credential**, on write and delete routes: `limits.write_rate_per_minute` (default 60, burst
-  the same).
-
-The admin API is not rate-limited.
+- **per client IP**, before authentication: 120 requests a minute (burst 120). The user API, the
+  `mcp.` host (MCP endpoint and OAuth endpoints together) and the admin API's `/v1/` routes each
+  have their own bucket. IPv6 clients share one bucket per `/64`. `/health` and `/metrics` are not
+  limited.
+- **per credential**, on write and delete routes and the MCP write and delete tools:
+  `limits.write_rate_per_minute` (default 60, burst the same). One budget covers a credential on
+  both the user API and MCP. An MCP tool over it fails with `rate_limited: too many writes; retry
+  in <n>s`.
 
 ## The artifact record
 
@@ -201,13 +203,18 @@ curl -sS https://api.art.example.com/v1/artifacts \
 | Field         | Type   | Notes                                                              |
 | ------------- | ------ | ------------------------------------------------------------------ |
 | `slug`        | string | Required                                                           |
-| `name`        | string |                                                                    |
-| `description` | string |                                                                    |
+| `name`        | string | At most 256 bytes, one line                                        |
+| `description` | string | At most 4096 bytes; may contain line breaks and tabs               |
 | `visibility`  | string | `public` (default) or `unlisted`                                   |
 | `metadata`    | object | String to string                                                   |
-| `label`       | string | Label of version 1                                                 |
+| `label`       | string | Label of version 1; at most 256 bytes, one line                    |
 | `files`       | array  | `{ path, content, encoding?, content_type? }`                      |
 | `upload_id`   | string | Staged files from a chunked upload; merged with `files`, which win a path clash |
+
+Text fields must be valid UTF-8 without control characters (C0, DEL, C1) or the bidirectional
+override and isolate characters (U+202A to U+202E, U+2066 to U+2069); `description` may contain
+newlines and tabs. The same rules apply to updates and over MCP; a violation is
+`422 invalid_argument`.
 
 At least one file is required. The whole JSON body is capped at `limits.max_version_bytes` plus
 1 MiB, so base64 content (a third larger than the bytes it carries) reaches the cap sooner; use a
@@ -225,8 +232,10 @@ curl -sS https://api.art.example.com/v1/artifacts \
 ```
 
 Only regular files in the tar are kept: directories, links and devices are skipped, and leading
-`./` is stripped. The manifest is capped at 64 KiB; the request body and the uncompressed bundle are
-each capped at `limits.max_version_bytes` plus 1 MiB.
+`./` is stripped. The manifest is capped at 64 KiB; the request body and the decompressed tar stream
+(every byte of it: headers, long-name records, padding, skipped entries and file content) are each
+capped at `limits.max_version_bytes` plus 1 MiB. A file name longer than 1024 bytes is refused as
+soon as it is read.
 
 ### List artifacts: `GET /artifacts`
 
@@ -261,7 +270,9 @@ its visibility). Purged artifacts never appear. Results are newest-updated first
 { "artifact": { ... }, "versions": [ { "number": 3, "url": "https://q3-report--v3.art.example.com/", ... } ] }
 ```
 
-A soft-deleted artifact is returned with `deleted_at` set; a purged one is `410 gone`.
+An unpublished or soft-deleted artifact is returned (with `unpublished_at` or `deleted_at` set) only
+to admins, its owner and the users who created or updated it, the people who also see it in their
+listings; anyone else gets `404 not_found`. A purged one is `410 gone`.
 
 ### Update an artifact: `PUT /artifacts/{slug}`
 
@@ -362,8 +373,9 @@ applies. Response:
 
 Streams one file of the published version, or of `?version=N`. Headers: the stored `Content-Type`,
 `ETag: "<sha256>"`, `Cache-Control: private, no-cache`, `Content-Disposition: inline` and
-`X-Content-Type-Options: nosniff`; `Range` and `If-None-Match` work. An owner (or, under the shared
-policy, any writer) can still read files of a soft-deleted artifact.
+`X-Content-Type-Options: nosniff`; `Range` and `If-None-Match` work. Files of an unpublished or
+soft-deleted artifact are readable only by admins, its owner and the users who created or updated it
+(so an owner can recover content before the purge); anyone else gets `404 not_found`.
 
 ```sh
 curl -sS -H "Authorization: Bearer $AGALMA_TOKEN" \
@@ -460,7 +472,7 @@ Base URL `https://admin.<base>/v1`. Every `/v1` route needs the admin token or a
 | `GET`    | `/jobs`                                |                                        | `200` job statuses         |
 | `POST`   | `/jobs/{name}/run`                     |                                        | `200` job status           |
 | `GET`    | `/audit`                               | `since`, `slug`, `actor`, `limit`      | `200` events               |
-| `GET`    | `/health` (also `/v1/health`, and `/health` on the apex) |                      | `200` `{"status":"ok","version":"..."}` |
+| `GET`    | `/health` (also `/v1/health`)          |                                        | `200` `{"status":"ok","version":"..."}` |
 | `GET`    | `/metrics`                             |                                        | Prometheus text            |
 
 Details:

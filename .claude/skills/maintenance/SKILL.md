@@ -13,12 +13,12 @@ checks CI runs, and report what changed, what was held back and why.
 | Area | Where | Notes |
 | ---- | ----- | ----- |
 | Go toolchain | `go` line in `go.mod` | CI reads it (`go-version-file: go.mod`), so it sets the Go that CI and releases build with. |
-| | `FROM golang:<major.minor>-alpine` in `deploy/Dockerfile` | Same minor as `go.mod`. The minor tag tracks patch releases. |
+| | `FROM golang:<major.minor>-alpine@sha256:...` in `deploy/Dockerfile` | Same minor as `go.mod`. Pinned by digest, so patch releases arrive only when the digest is refreshed (step 5). |
 | | `site/content/docs/quickstart.md` | "Go (1.27 or later)": the minor only. |
 | Go modules | `go.mod`, `go.sum` | Direct requirements are deliberate (see `docs/adr/0001-language.md`). |
-| Runtime image | `gcr.io/distroless/static-debianNN:nonroot` in `deploy/Dockerfile` and `deploy/Dockerfile.goreleaser` | Keep both files on the same image. |
-| busybox | `deploy/Dockerfile.goreleaser` | Only creates an empty data directory; any recent minor works. |
-| GitHub Actions | `.github/workflows/ci.yml`, `release.yml`, `pages.yml` | Plus the example workflow in `site/content/docs/publish-from-code.md`. |
+| Runtime image | `gcr.io/distroless/static-debianNN:nonroot@sha256:...` in `deploy/Dockerfile` and `deploy/Dockerfile.goreleaser` | Keep both files on the same image and digest. |
+| busybox | `busybox:<minor>@sha256:...` in `deploy/Dockerfile.goreleaser` | Only creates an empty data directory; any recent minor works. |
+| GitHub Actions | `.github/workflows/ci.yml`, `release.yml`, `pages.yml` | Pinned to a commit SHA with the release tag in a comment (`@<sha> # v7.0.1`). The example workflow in `site/content/docs/publish-from-code.md` stays on the major tag (`@v7`), which readers copy. |
 | goreleaser | `version: "~> v2"` in `release.yml`, `version: 2` in `.goreleaser.yaml` | The action major and the goreleaser major are separate. |
 | Hugo | `HUGO_VERSION` in `.github/workflows/pages.yml` | Also the `go install github.com/gohugoio/hugo@v...` lines in `README.md` and `CLAUDE.md`. Use the same version locally. |
 | Lint tools | staticcheck and govulncheck run at `@latest` | Nothing to pin. |
@@ -84,12 +84,12 @@ curl -fsSL https://gcr.io/v2/distroless/static-debian13/tags/list | jq '.tags | 
 The registry answers a Debian release it does not have with an empty tag list rather than an
 error, so check for the `nonroot` tag as above. A bare status code check would say yes.
 
-**GitHub Actions, goreleaser and Hugo.** Every action in use with the major it is pinned to, then
+**GitHub Actions, goreleaser and Hugo.** Every action in use with the release it is pinned to, then
 the newest release tag of each repository. `git ls-remote` needs no token and has no rate limit,
 unlike the GitHub API (60 unauthenticated requests an hour, which this loop can use up):
 
 ```sh
-grep -rhoE 'uses: [^ ]+@[^ ]+' .github/workflows site/content | sort -u
+grep -rhoE 'uses: [^ ]+@[^ ]+( # [^ ]+)?' .github/workflows site/content | sort -u
 grep -n 'version: "~>' .github/workflows/release.yml
 grep -n 'HUGO_VERSION:' .github/workflows/pages.yml
 for repo in $(grep -rhoE 'uses: [^@ ]+' .github/workflows site/content | cut -d' ' -f2 | cut -d/ -f1-2 | sort -u) \
@@ -184,6 +184,18 @@ If a direct requirement is added or removed, update the dependency list in
 - `gcr.io/distroless/static-debianNN:nonroot`: change both Dockerfiles in one go.
 - `busybox:<minor>`: the latest minor tag.
 
+Every `FROM` is pinned by the digest of the multi-platform index, so a tag that moves upstream
+cannot change what is built. Refresh the digests whenever you touch the images, and at least with
+every Go patch release (the alpine digest is how a patch release reaches the image):
+
+```sh
+for img in golang:1.27-alpine gcr.io/distroless/static-debian12:nonroot busybox:1.37; do
+  echo "$img@$(docker buildx imagetools inspect "$img" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+done
+```
+
+Write each `<image>:<tag>@sha256:...` back into its `FROM` line.
+
 Verify:
 
 ```sh
@@ -198,9 +210,19 @@ stays in the `agalma_data` volume). Say so before you run it if a stack is alrea
 
 ## 6. GitHub Actions and goreleaser
 
-- Update every use of an action to the same major: `actions/checkout` and `actions/setup-go`
-  appear several times in `ci.yml`, and once each in `release.yml`, `pages.yml` and the example
-  in `site/content/docs/publish-from-code.md`.
+- Update every use of an action to the same release: `actions/checkout` and `actions/setup-go`
+  appear several times in `ci.yml`, and once each in `release.yml` and `pages.yml`. The workflows
+  pin each action to the commit of its newest release, with the tag as a comment, so a moved or
+  compromised tag cannot change what CI and the release job run. Resolve the commit of a tag
+  (the peeled `^{}` line for an annotated tag, else the tag line itself):
+
+  ```sh
+  git ls-remote --tags https://github.com/actions/checkout 'refs/tags/v7.0.1*'
+  ```
+
+  and write `uses: actions/checkout@<sha> # v7.0.1`. The example in
+  `site/content/docs/publish-from-code.md` keeps the major tag (`@v7`); move it to a new major
+  together with the workflows.
 - `anchore/sbom-action/download-syft` has only ever been `v0`. Keep `@v0` until a v1 exists.
 - `sigstore/cosign-installer`: a new major can install a new cosign major. Check that the `signs`
   and `docker_signs` arguments in `.goreleaser.yaml` and the `cosign verify-blob` command in

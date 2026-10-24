@@ -6,8 +6,10 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,43 +96,142 @@ func TestReadBundleEntryCap(t *testing.T) {
 	}
 }
 
-// The limiter map stays bounded however many distinct keys arrive, and a
-// flood of fresh keys does not reset the bucket of a key that is in use.
-func TestLimiterBounded(t *testing.T) {
-	now := time.Unix(0, 0)
-	l := newLimiter(1, func() time.Time { return now })
-	if d := l.reserve("victim"); d != 0 {
-		t.Fatalf("first request delayed %v", d)
+// gzipStream gzips the archive write produces, followed by trailer zero
+// bytes after the end of the archive.
+func gzipStream(t *testing.T, write func(tw *tar.Writer) error, trailer int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	if err := write(tw); err != nil {
+		t.Fatal(err)
 	}
-	for i := range limiterMaxEntries + 500 {
-		l.reserve(fmt.Sprintf("k%d", i))
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if n := len(l.entries); n > limiterMaxEntries {
-		t.Fatalf("entries = %d, want at most %d", n, limiterMaxEntries)
+	if _, err := zw.Write(make([]byte, trailer)); err != nil {
+		t.Fatal(err)
 	}
-	// Idle entries are swept once the sweep interval has passed.
-	now = now.Add(limiterIdle + limiterSweepEvery + time.Second)
-	l.reserve("fresh")
-	if n := len(l.entries); n != 1 {
-		t.Errorf("entries after idle sweep = %d, want 1", n)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// regular writes one regular file entry in the given format.
+func regular(tw *tar.Writer, name string, body []byte, format tar.Format) error {
+	hdr := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body)), Format: format}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err := tw.Write(body)
+	return err
+}
+
+// The cap counts every decompressed byte of the tar stream, including what
+// tar.Reader reads inside Next (PAX and GNU long-name records, the data of
+// skipped entries) and anything after the archive, not just the headers
+// and file bodies the bundle code sees.
+func TestReadBundleCapsWholeStream(t *testing.T) {
+	const limit = 64 << 10
+	longName := strings.Repeat("a", 2*limit)
+	tests := []struct {
+		name    string
+		write   func(tw *tar.Writer) error
+		trailer int
+		want    error // nil: accepted
+		files   int
+	}{
+		{"fits", func(tw *tar.Writer) error {
+			return regular(tw, "index.html", make([]byte, 60<<10), tar.FormatUSTAR)
+		}, 0, nil, 1},
+		{"file body over the cap", func(tw *tar.Writer) error {
+			return regular(tw, "index.html", make([]byte, limit), tar.FormatUSTAR)
+		}, 0, artifact.ErrTooLarge, 0},
+		{"PAX long name", func(tw *tar.Writer) error {
+			return regular(tw, longName, []byte("x"), tar.FormatPAX)
+		}, 0, artifact.ErrTooLarge, 0},
+		{"GNU long name", func(tw *tar.Writer) error {
+			return regular(tw, longName, []byte("x"), tar.FormatGNU)
+		}, 0, artifact.ErrTooLarge, 0},
+		{"data of a skipped entry", func(tw *tar.Writer) error {
+			if err := tw.WriteHeader(&tar.Header{Name: "x", Typeflag: tar.TypeCont, Mode: 0o644, Size: 1 << 20}); err != nil {
+				return err
+			}
+			if _, err := tw.Write(make([]byte, 1<<20)); err != nil {
+				return err
+			}
+			return regular(tw, "index.html", []byte("hi"), tar.FormatUSTAR)
+		}, 0, artifact.ErrTooLarge, 0},
+		{"data after the archive", func(tw *tar.Writer) error {
+			return regular(tw, "index.html", []byte("hi"), tar.FormatUSTAR)
+		}, 1 << 20, artifact.ErrTooLarge, 0},
+		{"name at the path limit", func(tw *tar.Writer) error {
+			return regular(tw, strings.Repeat("n", artifact.PathMaxBytes), []byte("x"), tar.FormatPAX)
+		}, 0, nil, 1},
+		{"name over the path limit", func(tw *tar.Writer) error {
+			return regular(tw, strings.Repeat("n", artifact.PathMaxBytes+1), []byte("x"), tar.FormatPAX)
+		}, 0, artifact.ErrInvalidPath, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := gzipStream(t, tt.write, tt.trailer)
+			b, err := readBundle(bytes.NewReader(raw), t.TempDir(), limit)
+			if tt.want != nil {
+				if !errors.Is(err, tt.want) {
+					t.Fatalf("readBundle err = %v, want %v", err, tt.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+			if len(b.files) != tt.files {
+				t.Errorf("files = %d, want %d", len(b.files), tt.files)
+			}
+		})
 	}
 }
 
-func TestIPBucket(t *testing.T) {
-	tests := []struct {
-		remote, want string
-	}{
-		{"192.0.2.7:1234", "192.0.2.7"},
-		{"[2001:db8:1:2:aaaa::1]:443", "2001:db8:1:2::/64"},
-		{"[2001:db8:1:2:bbbb::9]:443", "2001:db8:1:2::/64"},
-		{"[::ffff:192.0.2.7]:80", "192.0.2.7"},
-		{"not-an-ip", "not-an-ip"},
-	}
-	for _, tt := range tests {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		r.RemoteAddr = tt.remote
-		if got := ipBucket(r); got != tt.want {
-			t.Errorf("ipBucket(%q) = %q, want %q", tt.remote, got, tt.want)
+// Spill files a crash left behind are removed once they are old enough;
+// anything else in the directory is left alone.
+func TestRemoveStaleSpills(t *testing.T) {
+	dir := t.TempDir()
+	cutoff := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	for name, mtime := range map[string]time.Time{
+		spillPrefix + "old":  cutoff.Add(-time.Minute),
+		spillPrefix + "new":  cutoff.Add(time.Minute),
+		"someone-elses-file": cutoff.Add(-time.Hour),
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
 		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, spillPrefix+"dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	n, err := RemoveStaleSpills(dir, cutoff)
+	if err != nil || n != 1 {
+		t.Fatalf("RemoveStaleSpills = %d, %v; want 1, nil", n, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, e := range entries {
+		left = append(left, e.Name())
+	}
+	want := []string{spillPrefix + "dir", spillPrefix + "new", "someone-elses-file"}
+	if !slices.Equal(left, want) {
+		t.Fatalf("left %v, want %v", left, want)
+	}
+	if n, err := RemoveStaleSpills(filepath.Join(dir, "missing"), cutoff); err != nil || n != 0 {
+		t.Fatalf("missing directory: %d, %v", n, err)
 	}
 }

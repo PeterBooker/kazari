@@ -25,21 +25,38 @@ func NewUploadStore(db *DB) *UploadStore {
 }
 
 // Create inserts u without files. The owner handle must name an existing
-// user.
-func (s *UploadStore) Create(ctx context.Context, u *upload.Upload) error {
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO upload (id, owner_id, bytes, created_at, expires_at)
-		 SELECT ?, id, ?, ?, ? FROM user WHERE handle = ?`,
-		u.ID, u.Bytes, toNanos(u.CreatedAt), toNanos(u.ExpiresAt), u.Owner)
+// user. With maxOpen > 0 the owner's uploads are counted in the same
+// (immediate) transaction as the insert, so concurrent creates cannot both
+// take the last slot; a full owner gets artifact.ErrTooManyUploads.
+func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int) error {
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		var ownerID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE handle = ?`, u.Owner).Scan(&ownerID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unknown owner %q", u.Owner)
+		}
+		if err != nil {
+			return err
+		}
+		if maxOpen > 0 {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM upload WHERE owner_id = ?`, ownerID).Scan(&n); err != nil {
+				return err
+			}
+			if n >= maxOpen {
+				return artifact.Errorf(artifact.ErrTooManyUploads, "%d uploads already open (limit %d)", n, maxOpen)
+			}
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO upload (id, owner_id, bytes, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+			u.ID, ownerID, u.Bytes, toNanos(u.CreatedAt), toNanos(u.ExpiresAt))
+		return err
+	})
+	if artifact.CodeOf(err) != "" {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("sqlite: create upload %s: %w", u.ID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("sqlite: create upload %s: %w", u.ID, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("sqlite: create upload %s: unknown owner %q", u.ID, u.Owner)
 	}
 	return nil
 }

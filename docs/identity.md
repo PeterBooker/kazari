@@ -29,21 +29,26 @@ MCP client ──1──▶ mcp.<base>/            401 + resource_metadata
    `https://mcp.<base>/.well-known/oauth-authorization-server`. The issuer is `https://mcp.<base>`.
 3. The browser goes to `/oauth/authorize` with PKCE (S256 only). Agalma checks the client, the
    redirect URI, the scopes and the `resource`, stores the request, sets a short-lived cookie
-   (`agalma_oauth`, `HttpOnly`, `Secure`, `SameSite=Lax`, path `/oauth`, ten minutes) and redirects
-   to the IdP with its own `state`, `nonce` and PKCE pair.
+   (`__Host-agalma_oauth`, `HttpOnly`, `Secure`, `SameSite=Lax`, path `/`, ten minutes; plain
+   `agalma_oauth` on a plain-HTTP development instance) and redirects to the IdP with its own
+   `state`, `nonce` and PKCE pair. The `__Host-` prefix means no other host, such as an artifact
+   page on `<slug>.<base>`, can set that cookie.
 4. The person signs in at the IdP, which returns to **`https://mcp.<base>/oauth/callback`**: this is
    the redirect URI to register at the IdP.
 5. Agalma redeems the code, verifies the ID token (signature against the IdP's keys, issuer,
    audience, expiry, nonce) and maps the person to an Agalma user by the
    [provisioning policy](#provisioning-policy).
 6. A consent page names the client, the account and the scopes. **Approve** issues a single-use
-   code (five minutes); **Deny** returns `access_denied` to the client.
+   code (five minutes); **Deny** returns `access_denied` to the client. The form is accepted only
+   from the consent page itself: a post whose `Origin` is another origin, or whose
+   `Sec-Fetch-Site` is not `same-origin`, gets "Request rejected".
 7. The client exchanges the code at `/oauth/token` and receives an access token and a refresh token.
 
 The scopes granted are those the client asked for (all of them if it asked for none), capped at what
-the user's role allows: members get `artifacts:read`, `artifacts:write`, `artifacts:delete`; admins
-also get `admin`. Admin powers come only with the `admin` scope, so a client that asked for less
-acts as a member.
+the user's role allows: `artifacts:read`, `artifacts:write`, `artifacts:delete`. The `admin` scope is
+never offered (`scopes_supported` does not list it) or granted, even to admins, and asking for it
+gets `invalid_scope`: an OAuth token always acts as a member, so it never opens the admin host.
+Administer the instance with the admin token or an admin-scoped API key.
 
 ## Configuring a provider
 
@@ -93,7 +98,8 @@ names a per-tenant issuer template, so discovery fails the issuer check.
 How Agalma reads Entra's ID token:
 
 - If `email` is missing, `preferred_username` is used when it looks like an address (it is usually
-  the user principal name, which may differ from the mail address).
+  the user principal name, which may differ from the mail address). This applies to Entra issuers
+  only; for every other provider `preferred_username` is ignored.
 - Entra does not send `email_verified`; for issuers on `login.microsoftonline.com` the address
   counts as verified, since the tenant manages it.
 
@@ -183,9 +189,11 @@ lists a user's identities with their last sign-in.
 
 When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API
 key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes.
-A one-person or small instance can therefore connect claude.ai with no IdP set up: issue yourself a
-key, add the connector, paste the key once. The consent is recorded in the audit log as
-`oauth.grant` with `via: api_key`.
+The grant lives only as long as the key: once the key is revoked or expires, or its user is
+disabled, the grant's access and refresh tokens stop working, and no token outlives the key's
+expiry. A one-person or small instance can therefore connect claude.ai with no IdP set up: issue
+yourself a key, add the connector, paste the key once. The consent is recorded in the audit log as
+`oauth.grant` with `via: api_key` and the key's `key_prefix`.
 
 ## MCP clients
 
@@ -225,7 +233,8 @@ These lifetimes are fixed in this version. Each refresh returns a new refresh to
 old one; presenting a retired refresh token again revokes the whole chain (the client must sign in
 again), which is what limits the damage of a stolen token. A refresh may narrow the scopes but never
 widen them. Tokens are checked against the user on every request: a disabled user's tokens stop
-working, and scopes beyond the user's current role are dropped.
+working, scopes beyond the user's current role are dropped, and a grant approved with an API key
+needs that key to be active.
 
 The `oauth-cleanup` job deletes expired requests, codes and tokens hourly.
 
@@ -239,8 +248,8 @@ The `oauth-cleanup` job deletes expired requests, codes and tokens hourly.
   curl -X DELETE -H "Authorization: Bearer $AGALMA_ADMIN_TOKEN" https://admin.art.example.com/v1/grants/17
   ```
 
-- **Everything for a user**: `agalma admin users update jdoe --disable` revokes their API keys,
-  refuses their sign-ins and makes their OAuth tokens fail while disabled.
+- **Everything for a user**: `agalma admin users update jdoe --disable` revokes their API keys and
+  OAuth grants and refuses their sign-ins. Enabling the user again restores neither.
 - **At the IdP**: removing the person from the IdP stops new sign-ins, but an existing refresh token
   stays valid in Agalma until it expires or is revoked; disable the user in Agalma too.
 
@@ -263,9 +272,13 @@ in order: is the email present at all (Entra: add the `email` optional claim, or
 domain)? Is its domain in `allowed_domains`? Is `auto_provision` on, or does an admin-created user
 have that email? Is the user disabled?
 
-**"Sign-in expired."** The ten-minute window passed, or the browser did not send the `agalma_oauth`
-cookie back (blocked cookies; or a plain-HTTP instance where `external_scheme` is not set to `http`,
-so the cookie was marked `Secure`). Start again from the client.
+**"Sign-in expired."** The ten-minute window passed, or the browser did not send the
+`__Host-agalma_oauth` cookie back (blocked cookies; or a plain-HTTP instance where `external_scheme`
+is not set to `http`, so the cookie was marked `Secure`). Start again from the client.
+
+**"Request rejected."** The consent form was posted from somewhere other than the consent page (a
+different origin, or `Sec-Fetch-Site` other than `same-origin`), or without the matching cookie.
+Start again from the client.
 
 **"Unknown application."** The `client_id` is neither registered nor a fetchable metadata document;
 the log line `oauth: client metadata fetch failed` gives the reason.

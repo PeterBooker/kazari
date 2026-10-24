@@ -94,7 +94,7 @@ func cmdAdminUsersList(r *runner, args []string) error {
 		if u.QuotaBytes > 0 {
 			quota = humanSize(u.QuotaBytes)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(u.Email), u.Role, humanSize(u.UsedBytes),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(oneLine(u.Email)), u.Role, humanSize(u.UsedBytes),
 			quota, fmtTimePtr(u.DisabledAt), fmtTime(u.CreatedAt))
 	}
 	return tw.Flush()
@@ -106,7 +106,7 @@ func (r *runner) printUser(u *api.User) error {
 	}
 	tw := newTable(r.stdout)
 	fmt.Fprintf(tw, "handle:\t%s\n", u.Handle)
-	fmt.Fprintf(tw, "email:\t%s\n", dash(u.Email))
+	fmt.Fprintf(tw, "email:\t%s\n", dash(oneLine(u.Email)))
 	fmt.Fprintf(tw, "role:\t%s\n", u.Role)
 	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(u.UsedBytes, u.QuotaBytes))
 	if u.DisabledAt != nil {
@@ -338,7 +338,7 @@ func cmdAdminSettings(r *runner, args []string) error {
 	}
 	lines := map[string]string{}
 	flatten("", s, lines)
-	tw := tabwriter.NewWriter(r.stdout, 0, 0, 1, ' ', 0)
+	tw := tabwriter.NewWriter(termSafe{r.stdout}, 0, 0, 1, ' ', 0)
 	for _, k := range slices.Sorted(maps.Keys(lines)) {
 		fmt.Fprintf(tw, "%s\t= %s\n", k, lines[k])
 	}
@@ -459,7 +459,7 @@ func cmdAdminAudit(r *runner, args []string) error {
 	tw := newTable(r.stdout)
 	fmt.Fprintln(tw, "AT\tACTOR\tACTION\tSLUG\tDETAILS")
 	for _, e := range events {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(fmtMap(e.Details)))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(oneLine(fmtMap(e.Details))))
 	}
 	return tw.Flush()
 }

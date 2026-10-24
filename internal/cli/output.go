@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"agalma/internal/api"
 )
@@ -23,8 +24,58 @@ func (r *runner) printJSON(v any) error {
 	return nil
 }
 
+// newTable returns an aligned table over w. Its cells hold names,
+// descriptions and labels other members wrote, so the text goes through
+// termSafe on its way to the terminal.
 func newTable(w io.Writer) *tabwriter.Writer {
-	return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	return tabwriter.NewWriter(termSafe{w}, 0, 0, 2, ' ', 0)
+}
+
+// termSafe is a writer that replaces every control character but tab and
+// newline, and the Unicode bidirectional controls, with U+FFFD, so text from
+// the server cannot move the cursor, retitle the window, write the
+// clipboard or reorder what the terminal shows. Writes must not split a
+// UTF-8 sequence, which tabwriter, writing whole cells, never does.
+type termSafe struct{ w io.Writer }
+
+func (t termSafe) Write(p []byte) (int, error) {
+	if !strings.ContainsFunc(string(p), unsafeRune) && utf8.Valid(p) {
+		return t.w.Write(p)
+	}
+	clean := strings.Map(func(r rune) rune {
+		if unsafeRune(r) {
+			return utf8.RuneError
+		}
+		return r
+	}, string(p))
+	if _, err := io.WriteString(t.w, clean); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// unsafeRune reports a rune termSafe replaces.
+func unsafeRune(r rune) bool {
+	switch {
+	case r == '\t' || r == '\n':
+		return false
+	case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f: // C0, DEL, C1
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069: // bidi embeddings, overrides, isolates
+		return true
+	}
+	return false
+}
+
+// oneLine flattens tabs and line breaks in a value printed into one table
+// cell, so it cannot shift columns or fake rows.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // fmtTime renders t in local time as RFC 3339, or "-" when zero.

@@ -15,13 +15,14 @@ import (
 	"agalma/internal/artifact"
 	"agalma/internal/auth"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/upload"
 	"agalma/internal/user"
 )
 
 // DefaultIPRatePerMinute is the per-IP request rate of the user API when
 // UserOptions.IPRatePerMinute is zero.
-const DefaultIPRatePerMinute = 120
+const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
 
 // UserDeps are the collaborators of the user API.
 type UserDeps struct {
@@ -31,6 +32,9 @@ type UserDeps struct {
 	Auth      auth.Authenticator // API keys and OAuth tokens, already chained
 	Links     present.Links
 	Logger    *slog.Logger
+	// Writes limits write requests per credential. It is shared with the
+	// MCP server so that a key has one budget on both; nil disables it.
+	Writes *ratelimit.Limiter
 }
 
 // UserOptions tunes the user API. Zero fields take the defaults noted.
@@ -45,8 +49,6 @@ type UserOptions struct {
 	// MaxTotalBytes is echoed in POST /v1/uploads. Default:
 	// upload.DefaultMaxTotalBytes.
 	MaxTotalBytes int64
-	// WriteRatePerMinute limits write requests per API key; 0 disables.
-	WriteRatePerMinute int
 	// IPRatePerMinute limits requests per client IP before authentication.
 	// 0 means DefaultIPRatePerMinute; a negative value disables it.
 	IPRatePerMinute int
@@ -81,9 +83,8 @@ func (o UserOptions) withDefaults(d UserDeps) UserOptions {
 
 type userAPI struct {
 	base
-	d    UserDeps
-	o    UserOptions
-	keys *limiter
+	d UserDeps
+	o UserOptions
 }
 
 // NewUserAPI returns the handler for /v1/... on the api host. Every route
@@ -91,7 +92,7 @@ type userAPI struct {
 // artifacts:write and deletes artifacts:delete.
 func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
-	h := &userAPI{base: newBase(d.Logger, d.Links), d: d, o: o, keys: newLimiter(o.WriteRatePerMinute, o.Now)}
+	h := &userAPI{base: newBase(d.Logger, d.Links), d: d, o: o}
 
 	read := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeRead, false, fn) }
 	write := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeWrite, true, fn) }
@@ -116,7 +117,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 
 	var handler http.Handler = jsonFallback(mux, &h.base)
 	handler = auth.RequireBearer(d.Auth, auth.BearerOptions{})(handler)
-	handler = limit(newLimiter(o.IPRatePerMinute, o.Now), ipBucket, &h.base)(handler)
+	handler = h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(handler)
 	return handler
 }
 
@@ -124,7 +125,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
 	next := h.serve(fn)
 	if write {
-		next = limit(h.keys, keyOf, &h.base)(next)
+		next = h.limit(h.d.Writes, keyOf)(next)
 	}
 	if scope != "" {
 		next = auth.RequireScope(scope)(next)
@@ -132,14 +133,18 @@ func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
 	return next
 }
 
-// keyOf is the per-key rate-limit bucket: the key prefix or token id,
-// else the handle.
+// keyOf is the per-credential rate-limit bucket.
 func keyOf(r *http.Request) string {
 	p, _ := auth.FromContext(r.Context())
-	if p.KeyID != "" {
-		return p.KeyID
-	}
-	return p.Handle
+	return ratelimit.CredentialKey(p)
+}
+
+// limit rejects requests over l's rate with 429 and Retry-After.
+func (b *base) limit(l *ratelimit.Limiter, key func(*http.Request) string) func(http.Handler) http.Handler {
+	return ratelimit.Middleware(l, key, func(w http.ResponseWriter, r *http.Request, d time.Duration) {
+		b.writeError(w, r, &statusError{status: http.StatusTooManyRequests,
+			code: api.CodeRateLimited, msg: "too many requests", retryAfter: d})
+	})
 }
 
 // mediaType is the request's media type; an absent Content-Type is JSON.

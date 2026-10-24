@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agalma/internal/blob"
 	"agalma/internal/blob/blobtest"
@@ -47,6 +48,48 @@ func TestFSLayout(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".put-") {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
+	}
+}
+
+// Temp files a crashed Put left behind are removed once they are old
+// enough; blobs and anything else are left alone.
+func TestFSRemoveStaleTemp(t *testing.T) {
+	dir := t.TempDir()
+	fs, err := blob.NewFS(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, _, err := fs.Put(ctx, strings.NewReader("kept"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	for name, mtime := range map[string]time.Time{
+		".put-old":    cutoff.Add(-time.Minute),
+		".put-recent": cutoff.Add(time.Minute),
+		"README":      cutoff.Add(-time.Hour),
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := fs.RemoveStaleTemp(cutoff)
+	if err != nil || n != 1 {
+		t.Fatalf("RemoveStaleTemp = %d, %v; want 1, nil", n, err)
+	}
+	for name, want := range map[string]bool{".put-old": false, ".put-recent": true, "README": true} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if got := err == nil; got != want {
+			t.Errorf("%s present = %v, want %v", name, got, want)
+		}
+	}
+	if _, err := fs.Stat(ctx, hash); err != nil {
+		t.Errorf("blob after sweep: %v", err)
 	}
 }
 

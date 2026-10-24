@@ -22,6 +22,7 @@ import (
 	"agalma/internal/auth"
 	"agalma/internal/buildinfo"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/upload"
 )
 
@@ -45,6 +46,9 @@ type Deps struct {
 	Auth      auth.Authenticator
 	Links     present.Links
 	Logger    *slog.Logger
+	// Writes limits write and delete tool calls per credential. It is the
+	// user API's limiter, so a key has one budget on both; nil disables it.
+	Writes *ratelimit.Limiter
 }
 
 // Options configures the server. Limits are only described to the model

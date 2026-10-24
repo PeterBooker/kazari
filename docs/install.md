@@ -226,7 +226,9 @@ For `files`, the certificate must cover both `art.example.com` and `*.art.exampl
 ## Create the first admin user and key
 
 The admin API lives at `https://admin.art.example.com/v1` and accepts the admin token from
-`AGALMA_AUTH_ADMIN_TOKEN`. Use the CLI (from any machine):
+`AGALMA_AUTH_ADMIN_TOKEN` (at least 32 characters). Use the CLI (from any machine). With
+`admin.listen` set, the admin host is served only on that address: run the CLI on the server with
+`AGALMA_ADMIN_URL=http://127.0.0.1:9443`, or through an SSH tunnel.
 
 ```sh
 export AGALMA_ADMIN_URL=https://admin.art.example.com
@@ -266,10 +268,10 @@ claude.ai users to sign in with their organisation account, configure an identit
 
 ## Local development
 
-`deploy/dev.yaml` runs the server in proxy mode on port 8080 with `base_domain: localhost`, data in
-`./.data` and the admin token `dev-admin-token`, unless `AGALMA_AUTH_ADMIN_TOKEN` is set in the
-environment or in `./.env`. Browsers resolve `*.localhost` to the loopback address, so no DNS or
-certificate is needed.
+`deploy/dev.yaml` runs the server in proxy mode on `127.0.0.1:8080` with `base_domain: localhost`,
+data in `./.data` and the admin token `dev-admin-token`, unless `AGALMA_AUTH_ADMIN_TOKEN` is set in
+the environment or in `./.env`. It listens on loopback only, since that token is public knowledge.
+Browsers resolve `*.localhost` to the loopback address, so no DNS or certificate is needed.
 
 ```sh
 go run ./cmd/agalma serve --config deploy/dev.yaml
@@ -292,8 +294,9 @@ command line. Keep `.env` out of version control.
 ### Docker Compose
 
 `compose.yml` at the repository root runs the same development server from the Docker image. It
-builds `deploy/Dockerfile`, mounts `deploy/dev.yaml` as the configuration, publishes port 8080 on the
-loopback addresses only and keeps the data in the named volume `agalma_data`, so the URLs, the admin
+builds `deploy/Dockerfile`, mounts `deploy/dev.yaml` as the configuration (listening on every
+interface inside the container through `AGALMA_LISTEN_HTTP`), publishes port 8080 on the loopback
+addresses only and keeps the data in the named volume `agalma_data`, so the URLs, the admin
 token and the commands above are unchanged. The image's `AGALMA_DATA_DIR=/var/lib/agalma` replaces
 `./.data`, and `./.env` is passed into the container when it exists.
 

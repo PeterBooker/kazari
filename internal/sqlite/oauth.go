@@ -183,10 +183,10 @@ func (s *OAuthStore) CreateCode(ctx context.Context, c *oauth.Code) error {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO oauth_code
-			(code_hash, client_id, user_id, scopes, redirect_uri, code_challenge, resource, expires_at, used_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(code_hash, client_id, user_id, scopes, redirect_uri, code_challenge, resource, key_prefix, expires_at, used_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.Hash, c.ClientID, uid, oauthJoinScopes(c.Scopes), c.RedirectURI, c.CodeChallenge,
-			c.Resource, toNanos(c.ExpiresAt), nullNanos(c.UsedAt))
+			c.Resource, c.KeyPrefix, toNanos(c.ExpiresAt), nullNanos(c.UsedAt))
 		return err
 	})
 	if err != nil {
@@ -233,10 +233,10 @@ func oauthGetCode(ctx context.Context, tx *sql.Tx, hash string) (*oauth.Code, er
 		used    sql.NullInt64
 	)
 	err := tx.QueryRowContext(ctx, `SELECT c.client_id, u.handle, c.scopes, c.redirect_uri,
-			c.code_challenge, c.resource, c.expires_at, c.used_at
+			c.code_challenge, c.resource, c.key_prefix, c.expires_at, c.used_at
 		FROM oauth_code c JOIN user u ON u.id = c.user_id
 		WHERE c.code_hash = ?`, hash).Scan(&c.ClientID, &c.UserHandle, &scopes, &c.RedirectURI,
-		&c.CodeChallenge, &c.Resource, &expires, &used)
+		&c.CodeChallenge, &c.Resource, &c.KeyPrefix, &expires, &used)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrNotFound
 	}
@@ -252,9 +252,9 @@ func oauthGetCode(ctx context.Context, tx *sql.Tx, hash string) (*oauth.Code, er
 // oauthInsertToken inserts t for the user uid and sets t.ID.
 func oauthInsertToken(ctx context.Context, tx *sql.Tx, uid int64, t *oauth.Token) error {
 	res, err := tx.ExecContext(ctx, `INSERT INTO oauth_token
-		(token_hash, kind, client_id, user_id, scopes, resource, family_id, created_at, expires_at, revoked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Hash, t.Kind, t.ClientID, uid, oauthJoinScopes(t.Scopes), t.Resource, t.FamilyID,
+		(token_hash, kind, client_id, user_id, scopes, resource, key_prefix, family_id, created_at, expires_at, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Hash, t.Kind, t.ClientID, uid, oauthJoinScopes(t.Scopes), t.Resource, t.KeyPrefix, t.FamilyID,
 		toNanos(t.CreatedAt), toNanos(t.ExpiresAt), nullNanos(t.RevokedAt))
 	if err != nil {
 		return err
@@ -299,7 +299,7 @@ func (s *OAuthStore) CreateTokens(ctx context.Context, access, refresh *oauth.To
 }
 
 const oauthTokenColumns = `t.id, t.token_hash, t.kind, t.client_id, u.handle, t.scopes, t.resource,
-	t.created_at, t.expires_at, t.revoked_at, t.replaced_by, t.family_id`
+	t.key_prefix, t.created_at, t.expires_at, t.revoked_at, t.replaced_by, t.family_id`
 
 func oauthScanToken(s interface{ Scan(dest ...any) error }, t *oauth.Token) error {
 	var (
@@ -308,7 +308,7 @@ func oauthScanToken(s interface{ Scan(dest ...any) error }, t *oauth.Token) erro
 		revoked, repl    sql.NullInt64
 	)
 	if err := s.Scan(&t.ID, &t.Hash, &t.Kind, &t.ClientID, &t.UserHandle, &scopes, &t.Resource,
-		&created, &expires, &revoked, &repl, &t.FamilyID); err != nil {
+		&t.KeyPrefix, &created, &expires, &revoked, &repl, &t.FamilyID); err != nil {
 		return err
 	}
 	t.Scopes = oauthSplitScopes(scopes)

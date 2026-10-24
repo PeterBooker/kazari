@@ -752,3 +752,34 @@ func TestRunAdmin(t *testing.T) {
 		t.Errorf("%+v", r)
 	}
 }
+
+// Names, descriptions, labels and metadata come from other members: escape
+// sequences in them never reach the terminal, and line breaks cannot fake
+// rows.
+func TestRunGetTerminalSafe(t *testing.T) {
+	art := demo
+	art.Name = "Demo\x1b]52;c;cm0gLXJmIH4=\x07 page"
+	art.Description = "line one\nslug:        forged\t\u202egnp.exe"
+	art.Metadata = map[string]string{"team": "web\x1b[2J"}
+	detail := api.ArtifactDetail{Artifact: art, Versions: []api.Version{
+		{Number: 2, Label: "v\x9b31m", CreatedBy: "ann", CreatedAt: t0, SizeBytes: 100, URL: "https://demo--v2.art.test"},
+	}}
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{"GET /v1/artifacts/demo": replyWith(200, detail)})
+	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "get", "demo")
+	if r.code != 0 {
+		t.Fatalf("get: %+v", r)
+	}
+	if strings.ContainsAny(r.stdout, "\x1b\x07\u009b\u202e") {
+		t.Errorf("control characters reached the output: %q", r.stdout)
+	}
+	for _, want := range []string{
+		"  Demo\uFFFD]52;c;cm0gLXJmIH4=\uFFFD page\n",
+		"  line one slug:        forged \uFFFDgnp.exe\n",
+		"  team=web\uFFFD[2J\n",
+		"2 *      v\uFFFD31m",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("output lacks %q:\n%s", want, r.stdout)
+		}
+	}
+}

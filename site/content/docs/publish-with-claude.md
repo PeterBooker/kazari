@@ -150,6 +150,7 @@ state the real ones.
 | `forbidden` | Your key or sign-in lacks the permission for that action, or the instance lets only owners change their pages. Ask your administrator. |
 | `quota_exceeded` | You have used your storage allowance. Retire old pages or ask for more. |
 | `version_conflict` | Someone else published in between. Claude fetches the latest version and tries again. |
+| `rate_limited` | Too many changes in a minute (60 by default, across Claude and the API). Wait for the time the message names. |
 | The page says "not found" | It is unpublished, deleted, or the address has a typo. |
 | A library or font does not load | Its source is not on the allowed list. Ask Claude to inline it or use one of the CDNs above. |
 | "No access" when signing in | Your account is not allowed on this instance yet. Ask your administrator. |

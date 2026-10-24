@@ -27,6 +27,12 @@ func TestIdentityMapping(t *testing.T) {
 			auth.Identity{Issuer: entra, Subject: "s"}},
 		{"other issuer without email_verified", "https://accounts.google.com", `{"email":"a@example.com"}`,
 			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@example.com"}},
+		// Regression: preferred_username stood in for a missing email at
+		// every issuer, where it can be any string the person picked.
+		{"other issuer ignores preferred_username", "https://idp.example", `{"preferred_username":"boss@corp.example","email_verified":true}`,
+			auth.Identity{Issuer: "https://idp.example", Subject: "s"}},
+		{"entra-like path on another host", "https://idp.example/login.microsoftonline.com/v2.0", `{"preferred_username":"boss@corp.example"}`,
+			auth.Identity{Issuer: "https://idp.example/login.microsoftonline.com/v2.0", Subject: "s"}},
 		// Regression: Google's email_verified alone let a consumer account on
 		// a company address (e.g. a former employee's) pass as that domain.
 		{"google workspace account", "https://accounts.google.com", `{"email":"a@corp.example","email_verified":true,"hd":"corp.example"}`,

@@ -2,7 +2,7 @@
 
 This document is the threat model and security reference for Agalma v1. It
 describes what Agalma protects, where the trust boundaries are, which limits
-apply, what an operator must do, and what the pre-v1.0 review found.
+apply, what an operator must do, and what the security reviews found.
 
 ## Threat model
 
@@ -60,12 +60,36 @@ the browser's same-origin policy keeps artifacts apart:
 - Artifacts cannot reach the control plane as same-origin. Control-plane
   credentials are bearer headers, never cookies, so a page cannot ride on a
   visitor's session. The only cookie in the system is the OAuth consent
-  cookie: host-only on `mcp.`, path `/oauth`, `HttpOnly; Secure;
-  SameSite=Lax`, ten minutes. No cookie is ever set with a `Domain`
-  attribute, so nothing is shared across subdomains.
+  cookie: `__Host-agalma_oauth` on `mcp.`, path `/`, `HttpOnly; Secure;
+  SameSite=Lax`, ten minutes. Agalma never sets a cookie with a `Domain`
+  attribute, and the `__Host-` prefix makes browsers refuse one for that
+  name from any other host.
 - The site handler serves only `GET` and `HEAD` and never sets cookies. An
-  artifact's own script can still set cookies for its own host, but those
+  artifact's own script can still set cookies for its own host, and those
   are confined to that origin.
+
+Origins are separate, but every artifact host and the control plane share
+one *site* (registrable domain), and cookies are scoped by site, not by
+origin:
+
+- An artifact's script can set a cookie with `Domain=<base>`, or with the
+  parent domain of `<base>`, which the browser then sends to every host
+  under it. Agalma's only cookie cannot be planted that way (its `__Host-`
+  prefix), and the consent form also checks `Origin`, but a page can still
+  fill a visitor's
+  cookie jar for `<base>` past the 64 KiB header limit, after which every
+  Agalma host answers that visitor `431` until they clear cookies.
+- Requests from one artifact host to another, or to `mcp.<base>`, are
+  same-site, so `SameSite=Lax` does not stop them.
+- If `<base>` sits under a domain that serves other applications (for
+  example `art.example.com` under `example.com`), artifact scripts can read
+  that domain's non-`HttpOnly` cookies set with `Domain=example.com`, and
+  set cookies those applications will receive.
+
+So give `base_domain` a registrable domain of its own (for example
+`example-artifacts.com`, not a subdomain of the company domain), and
+consider listing it on the [Public Suffix List](https://publicsuffix.org),
+which makes browsers treat each artifact host as its own site.
 
 Arbitrary HTML and JavaScript is the product, so Agalma does not try to make
 uploaded content safe. It makes sure each artifact's content can only harm
@@ -98,7 +122,7 @@ Every artifact response carries:
 | `Content-Security-Policy` | instance default, or the artifact's `agalma.csp` when `allow_csp_override` is on | See below. Instance error pages always use the default. |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Does not leak paths to third parties. |
 | `X-Robots-Tag` | `noindex` unless `agalma.indexable = "true"`; always on errors | Self-hosted content is not indexed by default. |
-| `Cache-Control` | `no-cache` on the latest host, `public, max-age=31536000, immutable` on version hosts, `no-cache` on every error | Versions never change. Latest revalidates cheaply against the strong ETag. |
+| `Cache-Control` | `no-cache` on the latest host, `public, max-age=<lifecycle.tombstone, at most a year>, immutable` on version hosts, `no-cache` on every error | Versions never change. Latest revalidates cheaply against the strong ETag. The version-host lifetime never exceeds the tombstone period, so once a slug is freed, another owner's `<slug>--v1` is not answered from a cache of the old owner's. |
 | `ETag` | `"<sha256>"` | Content address. |
 
 Control-plane hosts add `Cross-Origin-Opener-Policy: same-origin`, `nosniff`,
@@ -153,20 +177,27 @@ Content enters through three paths, and all of them end in
    with `http.MaxBytesReader`. UTF-8 or base64 file contents.
 2. **Multipart tar.gz:** a `manifest` part (64 KiB cap) then a `bundle`
    part. The multipart stream is capped at `MaxBodyBytes`. The gzip and tar
-   streams are decoded into one temporary spill file (never memory). The
-   uncompressed total, file content plus 512 bytes per tar header, is capped
-   at the same `MaxBodyBytes`, so a gzip bomb or a flood of empty entries
-   stops at the cap. Only regular files are kept: directories, symlinks,
+   streams are decoded into one temporary spill file (never memory). Every
+   decompressed byte of the tar stream counts against the same
+   `MaxBodyBytes`: headers, PAX and GNU long-name records, padding, the
+   data of skipped entries and file content, so a gzip bomb, a flood of
+   empty entries or a stack of 1 MiB names stops at the cap. A kept name
+   longer than 1024 bytes is refused as soon as it is read. Only regular
+   files are kept: directories, symlinks,
    hard links, devices and FIFOs are skipped and never followed. Leading
    `./` is stripped, and absolute and `..` names are rejected by path
-   validation. The spill file is removed after the publish.
+   validation. The spill file is removed after the publish, and the hourly
+   `gc` job removes any a crash left behind.
 3. **Chunked staging** (`/v1/uploads`): an upload belongs to the user who
    began it; anyone else, and an expired upload, gets `upload_not_found`.
    Upload ids are 16 random bytes and are checked against their exact shape
    before they are used as a directory name, so they cannot escape the
    staging root. Staged files are stored under numeric names, never under
    their paths. Each chunk must start at the staged size; a retry of the last
-   chunk is acknowledged. Expired uploads and orphaned directories are swept.
+   chunk is acknowledged. A chunk's content type is checked like a
+   manifest's when the chunk arrives. The open-upload limit is checked in
+   the transaction that creates the upload. Expired uploads and orphaned
+   directories are swept.
 
 Path rules (`artifact.ValidatePath`): non-empty; at most 1024 bytes; segments
 at most 255 bytes; relative; not a directory (no trailing `/`); no control
@@ -178,6 +209,12 @@ different files. Duplicate paths in one request are rejected after cleaning.
 Slug rules: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, 3 to 63 bytes, no `--`, not
 reserved, immutable after create.
 
+Text fields: `name` and a version's `label` at most 256 bytes, `description`
+at most 4096 bytes; valid UTF-8 with no C0 or C1 control characters, DEL or
+bidirectional override and isolate characters (`description` may hold
+newlines and tabs). They are returned by every listing and printed by the
+CLI, which also replaces control characters in what it prints.
+
 Metadata: at most 64 pairs (configurable), keys `^[a-zA-Z0-9_.-]{1,64}$`,
 values at most 4096 bytes. `agalma.*` keys are restricted to `agalma.spa`
 and `agalma.indexable` (`"true"`/`"false"`) and `agalma.csp` (printable
@@ -188,18 +225,22 @@ ASCII).
 | Version size | 50 MiB (`limits.max_version_bytes`) | streamed through a counting reader |
 | File size | 25 MiB (`limits.max_file_bytes`) | streamed through a counting reader |
 | Files per version | 2000 (`limits.max_files`) | before any content is read |
-| Owner quota | 2 GiB (`limits.default_user_quota`, per user) | streamed through a counting reader |
-| JSON body with inline files, multipart stream, uncompressed bundle | version size + 1 MiB | `MaxBytesReader`, bundle decoder |
+| Owner quota | 2 GiB (`limits.default_user_quota`, per user) | streamed through a counting reader, then checked again in the transaction that adds the version |
+| JSON body with inline files, multipart stream, decompressed tar stream | version size + 1 MiB | `MaxBytesReader`, bundle decoder |
+| Name, label, description | 256, 256, 4096 bytes | before any content is read |
 | Other JSON bodies | 1 MiB | `MaxBytesReader` |
 | Multipart manifest | 64 KiB | |
 | Chunk | 4 MiB (`limits.max_chunk_bytes`) | |
 | Chunked upload total | 50 MiB | |
-| Open uploads per user | 5 (`limits.max_open_uploads`) | |
+| Open uploads per user | 5 (`limits.max_open_uploads`) | counted in the transaction that creates the upload |
 | Upload lifetime | 1 h (`limits.upload_ttl`) | |
-| Writes per key | 60 per minute (`limits.write_rate_per_minute`) | 429 with `Retry-After` |
-| Requests per client IP on the user API | 120 per minute | before authentication; IPv6 grouped by /64 |
+| Writes per credential | 60 per minute (`limits.write_rate_per_minute`) | one budget across the user API and the MCP write and delete tools; 429 with `Retry-After` |
+| Requests per client IP | 120 per minute on each of `api.`, `mcp.` (MCP and OAuth together) and `admin.` `/v1/` | before authentication; IPv6 grouped by /64 |
 | Rate-limiter state | at most 65536 buckets per limiter | idle buckets swept |
 | OAuth request bodies | 64 KiB | |
+| Reading one request | 10 min (headers 10 s) | `http.Server` timeouts, so a stalled client cannot hold a connection; artifact hosts close a connection whose `GET` announces a body |
+| Writing one response | 15 min | |
+| Admin token | at least 32 characters | refused at startup, except under a `localhost` base domain |
 | Client ID metadata document | 64 KiB, 10 s, cached 1 h, no redirects, public addresses only | |
 
 ## Authentication and authorisation
@@ -220,15 +261,26 @@ credential carries `admin`. An admin's key issued as read-only stays
 read-only.
 
 **Admin host.** `/v1/` on `admin.` accepts the configured admin token
-(SHA-256 then constant-time compare) or a credential that resolves to an admin
-principal (admin role and `admin` scope). Everything else gets 401 or 403.
-`/health` and `/metrics` are unauthenticated: keep the admin listener private.
+(SHA-256 then constant-time compare, at least 32 characters) or a credential
+that resolves to an admin principal (admin role and `admin` scope).
+Everything else gets 401 or 403, and every attempt counts against the per-IP
+limit, so tokens cannot be guessed at speed. `/health` (which reports the
+version; the public `/health` on the apex does not) and `/metrics` are
+unauthenticated. With `admin.listen` set, the admin host is served only on
+that listener and the public listener answers `admin.<base>` with 404.
 
 **Write policy.** `auth.write_policy: shared` (default) lets any member
 with `artifacts:write` change any artifact. `"owner"` limits changes to the
 owner and admins. Transfer is always owner- or admin-only. Listings show
 public artifacts plus the caller's own; unlisted artifacts are hidden from
-other people's listings but served to anyone who knows the URL.
+other people's listings but served to anyone who knows the URL. An
+unpublished (including hidden) or soft-deleted artifact is invisible to
+everyone but admins, its owner and the users who created or updated it:
+they alone can list it, get its record or read its files through the API or
+MCP. Changes are read-modify-write inside one transaction, so a concurrent
+update cannot undo a transfer, a delete or a visibility change, and blob
+garbage collection is locked out while a publish writes and commits its
+blobs.
 
 **OAuth 2.1** (`mcp.` host): public clients only; PKCE S256 required (43-char
 challenge, 43 to 128-char verifier, constant-time comparison). Redirect URIs
@@ -237,10 +289,19 @@ that the port of a loopback URI is ignored (RFC 8252). `resource` must name
 this server's MCP URL. Codes are single-use, consumed before they are
 checked, and live five minutes. Access tokens live one hour, refresh tokens
 thirty days, and all of them are stored hashed. Refresh tokens rotate; replay
-of a rotated token revokes its whole family. The consent form is bound to the
-consent cookie by comparing the request id in the form with the cookie value,
-which stops cross-site form posts. The upstream `state` and `nonce` are
-random per request and checked in constant time. Client ID metadata documents
+of a rotated token revokes its whole family. The authorization server offers
+and grants only the `artifacts:*` scopes: an OAuth token never carries
+`admin`, so approving a client never hands it the admin host. A grant
+approved with an API key (no identity provider) is bound to that key: it
+stops working when the key is revoked or expires or its user is disabled,
+and no token outlives the key. Disabling a user revokes their grants. The
+consent form must come from the consent page itself (`Origin` equal to the
+MCP origin, or `Sec-Fetch-Site: same-origin`), and its request id must equal
+the `__Host-` consent cookie, which no sibling host can set. Both matter
+because artifact pages are same-site with `mcp.` and run member-authored
+script. The upstream `state` and `nonce` are random per request and checked
+in constant time. An OAuth principal's rate-limit and audit identity is its
+grant (`oauth:<family>`), the same across refreshes. Client ID metadata documents
 are fetched only from public unicast addresses: loopback, RFC 1918, link-local,
 CGNAT, NAT64/6to4, documentation, benchmarking and reserved ranges are
 refused at dial time, after DNS resolution, so DNS rebinding cannot get
@@ -276,12 +337,14 @@ as that domain. For Entra ID, a missing `email_verified` counts as verified
 ## Operator checklist
 
 1. **Keep the admin host on its own listener** (`admin.listen`, for example
-   `127.0.0.1:9443`), or reach it only through a VPN. `/metrics` and
-   `/health` are unauthenticated.
+   `127.0.0.1:9443`), or reach it only through a VPN. With `admin.listen`
+   set, the public listener stops serving `admin.<base>`, including the
+   unauthenticated `/metrics` and `/health`.
 2. **Rotate the admin token out.** Use it to create the first admin user,
    issue that user a key with the `admin` scope, check that the key works on
    the admin host, then remove `auth.admin_token` / `AGALMA_AUTH_ADMIN_TOKEN`
-   and restart. Pass secrets through the environment: `${NAME}`
+   and restart. While it exists it must be at least 32 characters
+   (`openssl rand -hex 32`). Pass secrets through the environment: `${NAME}`
    references in the YAML file, values in `agalma.env` or `.env`.
 3. **Proxy mode.** Turn on `listen.proxy_mode` only behind exactly one
    reverse proxy, and make sure nothing can reach Agalma's plain-HTTP port
@@ -302,7 +365,11 @@ as that domain. For Entra ID, a missing `email_verified` counts as verified
    and the database holds key and token hashes and user emails, so treat
    backups as secrets. `uploads/` is transient and does not need backing up.
 8. **Updates.** Run the latest release. Releases are built with `-trimpath`
-   and `CGO_ENABLED=0`.
+   and `CGO_ENABLED=0`, by workflows whose actions are pinned to commit
+   SHAs, from base images pinned by digest.
+9. **Domain.** Serve artifacts from a registrable domain of their own, not
+   a subdomain of a domain your other applications use (see
+   [Origin isolation](#origin-isolation)).
 
 ## Reporting a vulnerability
 
@@ -324,7 +391,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`,
 | 2 | Medium | Google `hd` claim was not checked, so a consumer Google account on a company address passed as verified for that domain (domain allow-list, email linking, auto-provisioning). | Fixed in `oidc` identity mapping. Test: `TestIdentityMapping`. |
 | 3 | Medium | In proxy mode, `RealIP` trusted the leftmost `X-Forwarded-For` entry, which is client-controlled behind appending proxies. Any client could pick its own IP to dodge per-IP limits and poison logs. | Fixed: rightmost entry. Test: `TestRealIP`. |
 | 4 | Medium | The rate-limiter map had no hard cap, and once past 1024 keys every new key scanned the whole map under the lock. Rotating addresses (trivial within an IPv6 /64) grew memory and CPU without bound. | Fixed: hard cap of 65536, idle sweep at most once a minute, IPv6 bucketed by /64. Tests: `TestLimiterBounded`, `TestIPBucket`. |
-| 5 | Medium | The bundle decoder counted only file content against the uncompressed cap. A small gzip of millions of empty (or skipped link) entries decoded without bound and kept a `FileInput` per regular file in memory. | Fixed: each tar header costs 512 bytes against the cap. Test: `TestReadBundleEntryCap`. |
+| 5 | Medium | The bundle decoder counted only file content against the uncompressed cap. A small gzip of millions of empty (or skipped link) entries decoded without bound and kept a `FileInput` per regular file in memory. | Fixed: each tar header costs 512 bytes against the cap. Test: `TestReadBundleEntryCap`. Incomplete; superseded by #21. |
 | 6 | Medium | The CIMD fetch guard allowed CGNAT (`100.64.0.0/10`, used by Tailscale), `0.0.0.0/8`, NAT64/6to4 and other special ranges, so server-side requests could reach internal hosts. | Fixed: public unicast only. Test: `TestPublicAddr`. |
 | 7 | Low | Per-file content types (manifest, JSON, chunk `Content-Type`) were stored unvalidated and sent back as the `Content-Type` header. Go folds CR/LF, but NUL, non-ASCII and oversized values reached proxies. | Fixed: printable ASCII, at most 255 bytes, must parse. Test: `TestContentTypeValidation`. |
 | 8 | Low | `agalma.csp` rejected only CR/LF. Other control characters and non-ASCII went into the header. | Fixed: printable ASCII only. Test: `TestValidateMetadataCSP`. |
@@ -332,9 +399,48 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`,
 | 10 | Info | The site path check let backslashes through. No stored path can contain one, but browsers read `\` as `/` in `Location`. | Fixed as defence in depth: backslash paths are refused. Test: `TestPathRules`. |
 | 11 | Medium | Quota can be dodged. Under the shared policy, a version added by a non-owner is charged to nobody (`artifact/service.go` `Update`). An owner can also transfer an artifact to any user without their consent (`Transfer`), moving usage onto that user's quota and then growing it without limit. | Left: design decision. Should a version be charged to the owner's quota (needs the owner's quota at update time), and should non-admin transfers need the recipient's acceptance or be admin-only? |
 | 12 | Low | Before consent, authorization errors redirect to any redirect URI the client registered. DCR and CIMD are open to anyone, so `mcp.<base>` can be used as an open redirect (RFC 9700 section 4.11.2). | Left: changing this affects client interop. Should errors for unverified clients render a page instead of redirecting? |
-| 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Left: needs the control-plane per-IP limit on `mcp.` (wired in `app`), and possibly expiry of DCR clients that never complete a grant. |
+| 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Left: needs the control-plane per-IP limit on `mcp.` (wired in `app`), and possibly expiry of DCR clients that never complete a grant. Partly addressed by #24: `mcp.` is now limited per client IP; expiry of unused clients is still open. |
 | 14 | Low | Reuse of an authorization code is logged, but tokens already issued from that code are not revoked (OAuth 2.1 recommends revoking). | Left: needs the store to link a code to its token family. |
-| 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Left: design decision. Require admins to have explicitly linked identities, or use Entra's `xms_edov` claim? |
+| 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Left: design decision. Require admins to have explicitly linked identities, or use Entra's `xms_edov` claim? The `preferred_username` stand-in is now Entra-only (#36); the Entra `email_verified` question is still open. |
 | 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Left: add a `ReservedSlugs` field to `site.Options` and wire it from `app`? |
 | 17 | Info | Staged upload files are handed to the publish as open files. A concurrent chunk to the same upload during the publish can grow the content past its recorded size. This only affects the owner's own upload, and the artifact caps still apply. | Left: wrap each staged file in a reader capped at its recorded size if exact staging semantics matter. |
 | 18 | Info | The admin-token principal uses the handle `admin`, which a real user can also have, so audit attribution is ambiguous. | Left: reserve the handle or use a distinct actor name. |
+
+## Findings log (whole-repository review, 2026-10-24)
+
+Scope: everything, including what the first review left out (`app`,
+`mcpserver`, `sqlite`, `blob`, `scheduler`, `metrics`, `certs`, `config`,
+`cli`, `present`, the deploy files and the workflows). Every code fix has a
+regression test; the server timeouts are constants without one.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| 19 | High | Consent CSRF by cookie tossing. Artifact pages are same-site with `mcp.` and run member-authored script, so one could set `agalma_oauth=<id>; Domain=<base>` for a request the attacker started with their own client, drive the victim through the upstream sign-in (its `state` known to the attacker) and post the consent form. The double-submit check passed, and the code went to the attacker's redirect URI, giving them tokens for the victim's account. Needs OIDC and a victim signed in at the IdP. | Fixed: the cookie is `__Host-agalma_oauth` (path `/`), which no other host can set, and the consent post needs `Origin` equal to the MCP origin or `Sec-Fetch-Site: same-origin`. Tests: `TestRequestCookie`, `TestConsentRequiresSameOrigin`, `TestConsentIgnoresTossedCookie`. |
+| 20 | High | Artifact `name`, `description` and version `label` had no limits beyond the 51 MiB body cap. A 40 MiB name made every listing that included the artifact run SQLite out of memory: the driver panicked, leaked a pool connection each time (eight requests froze every host) and, through MCP `list_artifacts`, ended the process. The row survived restarts. | Fixed: 256, 4096 and 256 bytes, valid UTF-8, no control or bidi control characters; chunk content types are checked on arrival. Tests: `TestValidateText`, `TestTextFieldLimits`, `TestAppendChunk`. |
+| 21 | High | The fix for #5 counted only the headers the decoder saw. Long-name records (PAX `path`, GNU `L`, up to 1 MiB each, kept as names) and the data of skipped entry types were read inside `tar.Reader.Next` and never charged: a 140 KB request held 128 MiB of names, and a 51 MiB one could exhaust memory or force about 50 GiB of inflate work. | Fixed: a capping reader under `tar.NewReader` charges every decompressed byte; over-long names are refused at once. Test: `TestReadBundleCapsWholeStream`. |
+| 22 | High | Unauthenticated memory exhaustion: the request method, which net/http accepts as any token, was a Prometheus label, so every new method made a series that was never freed (455 MB after 4000 requests, `/metrics` 240 MB). | Fixed: methods outside a fixed set are counted as `other`. Test: `TestHTTPMethodLabelBounded`. |
+| 23 | Medium | Garbage collection could delete a blob that a concurrent publish had just found already stored and was about to reference, leaving a live version pointing at missing content. | Fixed: publishes hold a read lock from their first blob write to the commit; each GC batch holds the write lock. Test: `TestCollectGarbageSparesBlobOfPublishInProgress`. |
+| 24 | Medium | Only the user API was rate-limited. MCP had no per-key write limit and no per-IP limit (20 of 20 creates accepted after REST answered 429), and the OAuth endpoints and the admin host were unthrottled. | Fixed: shared `internal/ratelimit`; one write budget per credential across REST and MCP; per-IP limits on `mcp.` and the admin `/v1/` routes. Tests: `TestWriteRateLimit`, `TestWriteBudgetShared`, `TestAdminIPRateLimit`, `TestMiddleware`. |
+| 25 | Medium | A grant approved with an API key (no identity provider) kept no link to the key, and refreshes slid its expiry, so revoking or expiring the key never ended it. | Fixed: grants record the approving key (migration `0003`); tokens fail and refreshes are refused once the key is revoked, expired or its user disabled, and no token outlives the key. Tests: `TestGrantEndsWithApprovingKey`, `TestKeyStatus`, `TestOAuthStoreKeyPrefix`. |
+| 26 | Medium | An empty `scope` meant every scope, `admin` included, so an admin approving any self-registered client gave it a token that `RequireAdmin` accepted on the admin host. | Fixed: the authorization server never offers or grants `admin`. Test: `TestAdminScopeNeverGranted`. |
+| 27 | Medium | Setting `admin.listen` added a listener but left `admin.<base>`, `/metrics` and the token check on the public one, contrary to the operator checklist. The admin token's strength was never checked (the example shipped `change-me`) and guesses were not throttled. | Fixed: with `admin.listen` the public listener answers `admin.<base>` with 404; tokens under 32 characters stop startup (except under `localhost`); #24 throttles guesses. Tests: `TestAdminListener`, `TestAdminTokenLength`. |
+| 28 | Low | No `ReadTimeout` or `WriteTimeout`: a client announcing a body it never sent, or reading slowly, held a connection and goroutine indefinitely. | Fixed: 10 min to read a request, 15 min to write a response; artifact hosts close a connection whose `GET` announces a body. Test: `TestAnnouncedBodyDoesNotHold`. |
+| 29 | Low | The quota was checked before streaming only, so concurrent publishes could each pass it. | Fixed: checked again inside the transaction that adds the version. Tests: `TestQuotaHoldsAcrossConcurrentPublishes`, conformance `Quota`. |
+| 30 | Low | The open-upload limit was counted and inserted in separate statements (20 open against a limit of 5). | Fixed: one transaction. Tests: `TestBeginConcurrentLimit`, `TestUploadStoreCreateLimit`. |
+| 31 | Low | Unpublished (including hidden) and soft-deleted artifacts were hidden from listings but readable by any member through `GET .../files/...`, `GET /v1/artifacts/{slug}` and MCP. | Fixed: only admins, the owner and involved users can read them. Tests: `TestGetAndOpenFileHideOfflineArtifacts`, conformance `Involved`. |
+| 32 | Low | A panic in an MCP tool or resource handler ended the process: the SDK runs handlers on goroutines of its own, outside any recovery. | Fixed: handlers recover into an `internal` error. Test: `TestToolPanicRecovered`. |
+| 33 | Low | Disabling a user revoked their API keys but not their OAuth grants, so enabling them again revived the grants. | Fixed: disabling revokes the grants. Tests: `TestDisableRunsOnDisable`, `TestDisableRevokesGrants`. |
+| 34 | Low | Version hosts were cached for a year, but a slug can pass to another owner after the 90-day tombstone, whose `<slug>--v1` could then be answered from caches of the old content. | Fixed: the version-host `max-age` is the tombstone period, at most a year. Test: `TestImmutableMaxAge`. |
+| 35 | Low | The CLI printed names, descriptions, labels and metadata raw, so another member's text could send terminal escape sequences (clipboard writes, hidden text). | Fixed: tables replace control and bidi characters and flatten line breaks. Test: `TestRunGetTerminalSafe`. |
+| 36 | Low | `preferred_username` stood in for a missing email for every OIDC issuer, not only Entra. | Fixed: Entra only. Test: `TestIdentityMapping`. |
+| 37 | Low | `deploy/dev.yaml` listened on every interface with the published admin token `dev-admin-token`, so anyone on the network could administer a development server. | Fixed: it binds `127.0.0.1:8080`; `compose.yml` overrides the address inside the container. Test: `TestDevFile`. |
+| 38 | Low | The workflows, including the release job with `contents`, `packages` and `id-token` write, pinned third-party actions by mutable tags; base images were pinned by tag. | Fixed: actions pinned to commit SHAs, base images to digests; the maintenance skill updates both. |
+| 39 | Low | An OAuth principal's `KeyID` was the access token's row id, new on every refresh, so a client could reset its per-key write budget by refreshing. | Fixed: it names the grant (`oauth:<family>`). Test: `TestKeyIDStableAcrossRefresh`. |
+| 40 | Info | Artifact hosts share a registrable domain with each other and the control plane: a page can set cookies for `<base>` (filling a visitor's jar past the header limit gets them `431` everywhere), and under a shared parent domain it can read and set that domain's cookies. | Documented: give `base_domain` a registrable domain of its own, or list it on the Public Suffix List. #19 removes the one exploitable use. |
+| 41 | Info | Lost updates: a concurrent PATCH or PUT wrote back `owner_id`, `deleted_at` and `unpublished_at` as read before the change, undoing a transfer or soft delete. | Fixed: read-modify-write inside one transaction; the sweep re-checks a row before expiring it. Tests: `TestUpdateKeepsConcurrentChanges`, `TestSweepSkipsArtifactChangedSinceListing`, conformance `UpdateCurrentRow`. |
+| 42 | Info | Temporary blob files and bundle spill files left by a crash were never removed. | Fixed: the `gc` job removes those older than an hour. Tests: `TestFSRemoveStaleTemp`, `TestRemoveStaleSpills`. |
+| 43 | Info | Audit events named the handle only, not the credential that acted. | Fixed: artifact events carry `credential`; `oauth.grant` carries `key_prefix`. Tests: `TestAuditRecordsCredential`, `TestActorCredential`. |
+| 44 | Info | The public `/health` and the apex page disclosed the exact build version. | Fixed: only the admin host reports it. Test: `TestEndToEnd`. |
+| 45 | Low | The sweep's retention purge can still destroy an artifact restored between the sweep's listing and the purge. | Left: the purge step should re-check the row in its transaction, as the expiry step now does. |
+| 46 | Info | Under the `shared` policy a member can republish or restore an artifact they cannot read (#31). | Left: design decision. Should `canWrite` under `shared` also require involvement for offline artifacts? |
+| 47 | Info | Refused authentication attempts (401, 403) are logged per request but not written to the audit log. | Left: the request log covers them; an audit entry per failure would need its own rate limit. |

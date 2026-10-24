@@ -181,7 +181,7 @@ auth:
 	vars := map[string]string{
 		"DOMAIN":    "art.example.com",
 		"DNS":       "12345",
-		"ADMIN":     "*a: #b\nc",
+		"ADMIN":     "*a: #b\nc-0123456789abcdef01234567",
 		"CLIENT_ID": "0123",
 		"SECRET":    "- [x] & ! % @ `",
 	}
@@ -200,7 +200,7 @@ auth:
 		{"limits.max_chunk_bytes", c.Limits.MaxChunkBytes, MiB},
 		{"limits.upload_ttl", c.Limits.UploadTTL, Duration(2 * hour)},
 		{"serve.allow_csp_override", c.Serve.AllowCSPOverride, false},
-		{"auth.admin_token", c.Auth.AdminToken, "*a: #b\nc"},
+		{"auth.admin_token", c.Auth.AdminToken, "*a: #b\nc-0123456789abcdef01234567"},
 		{"auth.oidc.client_id", c.Auth.OIDC.ClientID, "0123"},
 		{"auth.oidc.client_secret", c.Auth.OIDC.ClientSecret, "- [x] & ! % @ `"},
 		{"auth.oidc.auto_provision", c.Auth.OIDC.AutoProvision, true},

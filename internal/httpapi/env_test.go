@@ -26,6 +26,7 @@ import (
 	"agalma/internal/blob"
 	"agalma/internal/httpapi"
 	"agalma/internal/present"
+	"agalma/internal/ratelimit"
 	"agalma/internal/scheduler"
 	"agalma/internal/sqlite"
 	"agalma/internal/upload"
@@ -41,7 +42,10 @@ type config struct {
 	artifact artifact.Options
 	upload   upload.Options
 	user     httpapi.UserOptions
+	admin    httpapi.AdminOptions
 	grants   httpapi.GrantStore
+	// writeRate is the per-credential write limit; 0 disables it.
+	writeRate int
 }
 
 // env is a user API and an admin API over real services, SQLite and a
@@ -93,10 +97,16 @@ func newEnv(t *testing.T, c config) *env {
 	if c.user.IPRatePerMinute == 0 {
 		c.user.IPRatePerMinute = -1 // tests make many requests from one IP
 	}
+	if c.admin.IPRatePerMinute == 0 {
+		c.admin.IPRatePerMinute = -1
+	}
+	c.admin.AdminToken = adminToken
+	c.admin.Now = now
 	c.user.TempDir = dir
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: art, Uploads: uploads, Users: users, Auth: users, Links: links,
+		Writes: ratelimit.New(c.writeRate, now),
 	}, c.user))
 	t.Cleanup(userSrv.Close)
 	admSrv := httptest.NewServer(httpapi.NewAdminAPI(httpapi.AdminDeps{
@@ -111,7 +121,7 @@ func newEnv(t *testing.T, c config) *env {
 			io.WriteString(w, "agalma_up 1\n")
 		}),
 		Links: links,
-	}, httpapi.AdminOptions{AdminToken: adminToken, Now: now}))
+	}, c.admin))
 	t.Cleanup(admSrv.Close)
 
 	e := &env{t: t, ctx: ctx, art: art, users: users, uploads: uploads, jobRuns: &runs,

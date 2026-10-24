@@ -60,6 +60,14 @@ type APIKey struct {
 	CreatedAt  time.Time
 }
 
+// KeyStatus is the state of an API key at one moment, for credentials
+// derived from the key (an OAuth grant approved with it).
+type KeyStatus struct {
+	Handle    string     // the key's owner
+	Active    bool       // neither revoked nor expired, and the owner is not disabled
+	ExpiresAt *time.Time // nil when the key never expires
+}
+
 // Identity links an upstream (issuer, subject) pair to a user.
 type Identity struct {
 	Issuer       string
