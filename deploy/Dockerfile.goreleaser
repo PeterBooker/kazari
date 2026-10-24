@@ -1,0 +1,8 @@
+# Used by goreleaser: the binary is built outside the image.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY agalma /usr/local/bin/agalma
+VOLUME /var/lib/agalma
+EXPOSE 80 443
+ENV AGALMA_DATA_DIR=/var/lib/agalma
+ENTRYPOINT ["/usr/local/bin/agalma"]
+CMD ["serve", "--config", "/etc/agalma/agalma.toml"]

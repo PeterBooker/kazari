@@ -1,0 +1,16 @@
+# Agalma behind Caddy in proxy mode. Caddy owns the wildcard certificate
+# (DNS-01 through its own DNS plugin) and forwards every host to Agalma,
+# which runs with [listen].proxy_mode = true and http = ":8080".
+#
+# Replace art.example.com and the DNS provider block with your own.
+
+*.art.example.com, art.example.com {
+	tls ops@example.com {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}

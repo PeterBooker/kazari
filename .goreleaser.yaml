@@ -1,0 +1,116 @@
+version: 2
+
+project_name: agalma
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agalma
+    main: ./cmd/agalma
+    binary: agalma
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X agalma/internal/buildinfo.version={{.Version}}
+      - -X agalma/internal/buildinfo.commit={{.Commit}}
+      - -X agalma/internal/buildinfo.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - deploy/agalma.toml
+      - deploy/agalma.service
+      - deploy/Caddyfile
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+    artifacts: checksum
+
+dockers:
+  - id: amd64
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.goreleaser
+    image_templates:
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/agalma
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=MIT
+  - id: arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.goreleaser
+    image_templates:
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/agalma
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=MIT
+
+docker_manifests:
+  - name_template: ghcr.io/peterbooker/agalma:{{ .Version }}
+    image_templates:
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
+  - name_template: ghcr.io/peterbooker/agalma:latest
+    image_templates:
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-amd64
+      - ghcr.io/peterbooker/agalma:{{ .Version }}-arm64
+
+docker_signs:
+  - cmd: cosign
+    args: [sign, --yes, "${artifact}"]
+    artifacts: manifests
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: PeterBooker
+    name: agalma
+  draft: false
+  prerelease: auto
