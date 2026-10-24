@@ -543,10 +543,13 @@ func (h *userAPI) abortUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 	return nil
 }
 
-// me reports the caller. UsedBytes stays 0: artifact.Service has no usage
-// query yet.
+// me reports the caller and how much of its quota is in use.
 func (h *userAPI) me(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	writeJSON(w, http.StatusOK, present.Me(p, 0))
+	used, err := h.d.Artifacts.Usage(r.Context(), p.Handle)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, present.Me(p, used))
 	return nil
 }
 

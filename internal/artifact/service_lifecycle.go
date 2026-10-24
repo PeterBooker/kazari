@@ -343,3 +343,9 @@ func (s *Service) CollectGarbage(ctx context.Context) (int, error) {
 		}
 	}
 }
+
+// Usage returns the total size of every version owned by the handle, for
+// quota reporting.
+func (s *Service) Usage(ctx context.Context, ownerHandle string) (int64, error) {
+	return s.store.Usage(ctx, ownerHandle)
+}

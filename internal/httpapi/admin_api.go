@@ -152,6 +152,9 @@ func (h *adminAPI) getUser(w http.ResponseWriter, r *http.Request, _ auth.Princi
 	for _, id := range ids {
 		out.Identities = append(out.Identities, present.Identity(id))
 	}
+	if out.UsedBytes, err = h.d.Artifacts.Usage(r.Context(), handle); err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }
