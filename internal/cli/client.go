@@ -383,9 +383,9 @@ func (c *Client) MarkStale(ctx context.Context, slug, grace string) (*api.StaleR
 	return &out, nil
 }
 
-// UnmarkStale clears the stale mark and returns the artifact.
-func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.Artifact, error) {
-	var out api.Artifact
+// UnmarkStale clears the stale mark and returns the publish result.
+func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResult, error) {
+	var out api.PublishResult
 	if err := c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/stale", nil, nil, nil, &out); err != nil {
 		return nil, err
 	}

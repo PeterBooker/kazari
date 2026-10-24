@@ -169,10 +169,10 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name:   "unmark stale",
 			call:   func(ctx context.Context, c *Client) (any, error) { return c.UnmarkStale(ctx, "demo") },
-			reply:  mustJSON(t, art),
+			reply:  mustJSON(t, pub),
 			method: "DELETE",
 			path:   "/v1/artifacts/demo/stale",
-			want:   &art,
+			want:   &pub,
 		},
 		{
 			name:    "set visibility",
