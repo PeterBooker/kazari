@@ -2,19 +2,27 @@ package httpapi
 
 import (
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 
 	"agalma/internal/api"
+	"agalma/internal/middleware"
 )
 
 // Limiter housekeeping: once the map holds more than limiterSweepAt
-// entries, inserting a new one first drops those idle for limiterIdle.
+// entries, inserting a new one drops those idle for limiterIdle, at most once
+// per limiterSweepEvery so a flood of new keys cannot make every insert scan
+// the whole map. limiterMaxEntries is a hard cap: at the cap an arbitrary
+// entry is dropped before a new one is added, bounding memory whatever the
+// number of distinct keys.
 const (
-	limiterIdle    = 10 * time.Minute
-	limiterSweepAt = 1024
+	limiterIdle       = 10 * time.Minute
+	limiterSweepAt    = 1024
+	limiterSweepEvery = time.Minute
+	limiterMaxEntries = 1 << 16
 )
 
 // limiter is a set of token buckets keyed by caller (client IP or API key),
@@ -23,8 +31,9 @@ type limiter struct {
 	perMinute int
 	now       func() time.Time
 
-	mu      sync.Mutex
-	entries map[string]*limiterEntry
+	mu        sync.Mutex
+	entries   map[string]*limiterEntry
+	lastSweep time.Time
 }
 
 type limiterEntry struct {
@@ -48,8 +57,15 @@ func (l *limiter) reserve(key string) time.Duration {
 	defer l.mu.Unlock()
 	e, ok := l.entries[key]
 	if !ok {
-		if len(l.entries) > limiterSweepAt {
+		if len(l.entries) > limiterSweepAt && now.Sub(l.lastSweep) >= limiterSweepEvery {
 			l.evict(now)
+			l.lastSweep = now
+		}
+		if len(l.entries) >= limiterMaxEntries {
+			for k := range l.entries { // map order is random: drop any one
+				delete(l.entries, k)
+				break
+			}
 		}
 		e = &limiterEntry{lim: rate.NewLimiter(rate.Limit(float64(l.perMinute)/60), l.perMinute)}
 		l.entries[key] = e
@@ -90,4 +106,22 @@ func limit(l *limiter, key func(*http.Request) string, b *base) func(http.Handle
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ipBucket is the per-IP rate-limit key: the client address, with IPv6
+// addresses reduced to their /64 so one host cannot mint fresh buckets by
+// rotating through the addresses of its own prefix.
+func ipBucket(r *http.Request) string {
+	ip := middleware.ClientIP(r)
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is6() {
+		if p, err := addr.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return addr.String()
 }

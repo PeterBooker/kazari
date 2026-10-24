@@ -14,7 +14,6 @@ import (
 	"agalma/internal/api"
 	"agalma/internal/artifact"
 	"agalma/internal/auth"
-	"agalma/internal/middleware"
 	"agalma/internal/present"
 	"agalma/internal/upload"
 	"agalma/internal/user"
@@ -117,7 +116,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 
 	var handler http.Handler = jsonFallback(mux, &h.base)
 	handler = auth.RequireBearer(d.Auth, auth.BearerOptions{})(handler)
-	handler = limit(newLimiter(o.IPRatePerMinute, o.Now), middleware.ClientIP, &h.base)(handler)
+	handler = limit(newLimiter(o.IPRatePerMinute, o.Now), ipBucket, &h.base)(handler)
 	return handler
 }
 
@@ -487,6 +486,9 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	hdr.Set("Content-Type", ct)
 	hdr.Set("ETag", `"`+f.Hash+`"`)
 	hdr.Set("X-Content-Type-Options", "nosniff")
+	// Artifact bytes are untrusted; on the api origin they must never run
+	// as a document, whatever their stored type.
+	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	hdr.Set("Cache-Control", "private, no-cache")
 	hdr.Set("Content-Disposition", disposition)
 	http.ServeContent(w, r, name, time.Time{}, rc)

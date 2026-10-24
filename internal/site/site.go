@@ -181,10 +181,11 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 // cleanPath normalises a request path. It returns the file path without a
 // leading slash ("" for the root), whether the request names a directory
 // (root or trailing slash), and false for paths that can never be served:
-// ".." segments, NUL or other control characters.
+// ".." segments, NUL or other control characters, and backslashes, which no
+// stored path contains and which browsers read as "/" in a Location header.
 func cleanPath(p string) (clean string, dir bool, ok bool) {
 	for i := 0; i < len(p); i++ {
-		if p[i] < 0x20 || p[i] == 0x7f {
+		if p[i] < 0x20 || p[i] == 0x7f || p[i] == '\\' {
 			return "", false, false
 		}
 	}

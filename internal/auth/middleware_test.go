@@ -24,6 +24,10 @@ var tokens = auth.AuthenticatorFunc(func(_ context.Context, token string) (auth.
 	switch token {
 	case "alice-token":
 		return alicePrincipal, nil
+	case "narrow-boss-token":
+		// An admin-role key issued with member scopes only. A real
+		// authenticator leaves Admin false here; the guard must not rely on it.
+		return auth.Principal{Handle: "boss", Admin: true, Scopes: []string{auth.ScopeRead}, Source: auth.SourceAPIKey, KeyID: "bossnarw"}, nil
 	case "boss-token":
 		return bossPrincipal, nil
 	case "broken":
@@ -215,6 +219,8 @@ func TestRequireAdmin(t *testing.T) {
 		{"fallback admin passes with token path disabled", "", tokens, "Bearer boss-token",
 			result{status: 200, principal: &bossPrincipal}},
 		{"fallback non-admin forbidden", "s3cret", tokens, "Bearer alice-token",
+			result{status: 403, code: "forbidden"}},
+		{"fallback admin role without admin scope forbidden", "s3cret", tokens, "Bearer narrow-boss-token",
 			result{status: 403, code: "forbidden"}},
 		{"fallback error", "s3cret", tokens, "Bearer broken",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},

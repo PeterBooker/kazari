@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"mime"
 	"path"
 	"regexp"
 	"slices"
@@ -116,8 +117,10 @@ func ValidateMetadataPair(k, v string) error {
 			return Errorf(ErrInvalidMetadata, "metadata %s must be \"true\" or \"false\"", k)
 		}
 	case MetaCSP:
-		if strings.ContainsAny(v, "\r\n") {
-			return Errorf(ErrInvalidMetadata, "metadata %s may not contain line breaks", k)
+		// The value is sent verbatim as a response header: printable ASCII
+		// only, so no line breaks, NUL or bytes a proxy might mangle.
+		if !printableASCII(v) {
+			return Errorf(ErrInvalidMetadata, "metadata %s must be printable ASCII on one line", k)
 		}
 	default:
 		return Errorf(ErrInvalidMetadata, "unknown server metadata key %q", k)
@@ -142,4 +145,34 @@ func ParseVisibility(s string) (Visibility, error) {
 		return Unlisted, nil
 	}
 	return "", Errorf(ErrInvalidArgument, "visibility must be %q or %q", Public, Unlisted)
+}
+
+// ContentTypeMaxLen caps a stored content type, which is replayed as a
+// response header.
+const ContentTypeMaxLen = 255
+
+// validateContentType checks a caller-supplied content type before it is
+// stored and later sent as the Content-Type header: printable ASCII, at
+// most ContentTypeMaxLen bytes, and a parseable media type. Empty is fine
+// (the type is then derived).
+func validateContentType(ct string) error {
+	if ct == "" {
+		return nil
+	}
+	if len(ct) > ContentTypeMaxLen || !printableASCII(ct) {
+		return Errorf(ErrInvalidArgument, "content type must be at most %d printable ASCII bytes", ContentTypeMaxLen)
+	}
+	if _, _, err := mime.ParseMediaType(ct); err != nil {
+		return Errorf(ErrInvalidArgument, "content type %q is not a media type", ct)
+	}
+	return nil
+}
+
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }

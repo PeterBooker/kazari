@@ -197,3 +197,26 @@ func TestErrorIs(t *testing.T) {
 		t.Fatalf("CodeOf = %q", got)
 	}
 }
+
+// agalma.csp is sent verbatim as a header: only printable ASCII is allowed.
+func TestValidateMetadataCSP(t *testing.T) {
+	tests := []struct {
+		name string
+		v    string
+		ok   bool
+	}{
+		{"policy", "default-src 'self'; frame-ancestors 'none'", true},
+		{"line break", "default-src 'self'\r\nX-Evil: 1", false},
+		{"NUL", "default-src 'self'\x00", false},
+		{"tab", "default-src\t'self'", false},
+		{"non-ASCII", "default-src https://\u00e9.example", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := artifact.ValidateMetadataPair(artifact.MetaCSP, tt.v)
+			if (err == nil) != tt.ok {
+				t.Errorf("ValidateMetadataPair(%q) = %v, ok want %v", tt.v, err, tt.ok)
+			}
+		})
+	}
+}

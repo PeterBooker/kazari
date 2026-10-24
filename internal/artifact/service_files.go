@@ -47,6 +47,9 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 		if in.Content == nil {
 			return nil, 0, Errorf(ErrInvalidArgument, "file %q has no content", p)
 		}
+		if err := validateContentType(in.ContentType); err != nil {
+			return nil, 0, err
+		}
 		adds = append(adds, addition{p, in})
 	}
 

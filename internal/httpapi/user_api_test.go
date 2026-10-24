@@ -79,6 +79,8 @@ func TestCreateMultipart(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"Cache-Control":          "private, no-cache",
 		"Content-Disposition":    "inline; filename=index.html",
+		// Regression: artifact HTML must not run on the api origin.
+		"Content-Security-Policy": "default-src 'none'; sandbox",
 	}
 	for k, v := range wantHeaders {
 		if g := resp.Header.Get(k); g != v {

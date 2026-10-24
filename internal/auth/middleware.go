@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -93,7 +94,7 @@ func RequireAdmin(token string, fallback Authenticator) func(http.Handler) http.
 			if fallback != nil {
 				p, err := fallback.Authenticate(r.Context(), t)
 				if err == nil {
-					if !p.Admin {
+					if !p.Admin || !slices.Contains(p.Scopes, ScopeAdmin) {
 						writeError(w, http.StatusForbidden, "forbidden", "admin role required")
 						return
 					}

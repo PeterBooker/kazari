@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -1313,5 +1314,40 @@ func TestTransfer(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Slug != "demo" {
 		t.Errorf("owner=alice listing = %+v", page.Items)
+	}
+}
+
+// A caller-supplied content type is replayed as the Content-Type header, so
+// anything that is not a short, printable media type is refused at upload.
+func TestContentTypeValidation(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	tests := []struct {
+		name string
+		ct   string
+		ok   bool
+	}{
+		{"empty derives", "", true},
+		{"plain", "text/html", true},
+		{"with params", "text/plain; charset=utf-8", true},
+		{"CRLF injection", "text/html\r\nSet-Cookie: a=b", false},
+		{"NUL", "text/html\x00", false},
+		{"non-ASCII", "text/html; charset=é", false},
+		{"not a media type", "no slash here;;", false},
+		{"too long", "text/" + strings.Repeat("a", artifact.ContentTypeMaxLen), false},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
+				Slug:  fmt.Sprintf("ct-%d", i),
+				Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader("x"), ContentType: tt.ct}},
+			})
+			if tt.ok && err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if !tt.ok && !errors.Is(err, artifact.ErrInvalidArgument) {
+				t.Fatalf("Create err = %v, want invalid_argument", err)
+			}
+		})
 	}
 }

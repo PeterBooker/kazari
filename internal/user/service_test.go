@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -935,5 +936,38 @@ func TestIdentityLinks(t *testing.T) {
 	ids, err = f.svc.ListIdentities(ctx, "alice")
 	if err != nil || len(ids) != 0 {
 		t.Errorf("identities after unlink = %+v, %v", ids, err)
+	}
+}
+
+// An admin's key issued with member scopes must act as a member: before the
+// fix Admin followed the role alone, so HasScope granted every scope and the
+// key passed the admin host.
+func TestAuthenticateAdminKeyWithoutAdminScope(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, user.Options{})
+	f.mustCreate(t, "boss", "", user.RoleAdmin)
+	tests := []struct {
+		name      string
+		scopes    []string
+		wantAdmin bool
+	}{
+		{"read only", []string{auth.ScopeRead}, false},
+		{"default member scopes", nil, false},
+		{"admin scope", []string{auth.ScopeRead, auth.ScopeAdmin}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, secret := f.mustIssue(t, "boss", tt.scopes, 0)
+			p, err := f.svc.Authenticate(ctx, secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Admin != tt.wantAdmin {
+				t.Errorf("Admin = %v, want %v", p.Admin, tt.wantAdmin)
+			}
+			if !tt.wantAdmin && (p.HasScope(auth.ScopeDelete) && !slices.Contains(p.Scopes, auth.ScopeDelete) || p.HasScope(auth.ScopeAdmin)) {
+				t.Errorf("narrow key principal = %+v holds scopes it was not issued", p)
+			}
+		})
 	}
 }

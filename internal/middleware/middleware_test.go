@@ -109,7 +109,10 @@ func TestRealIP(t *testing.T) {
 		{"direct ignores headers", false, "192.0.2.1:1234", "203.0.113.9", "203.0.113.8", "192.0.2.1"},
 		{"direct ipv6", false, "[2001:db8::1]:443", "", "", "2001:db8::1"},
 		{"direct without port", false, "192.0.2.1", "", "", "192.0.2.1"},
-		{"proxy first xff", true, "10.0.0.1:1", "203.0.113.9, 10.0.0.2, 10.0.0.3", "203.0.113.8", "203.0.113.9"},
+		{"proxy last xff", true, "10.0.0.1:1", "198.51.100.1, 10.0.0.2, 203.0.113.9", "203.0.113.8", "203.0.113.9"},
+		// Regression: an appending proxy keeps what the client sent on the
+		// left; trusting the first entry let any client pick its own IP.
+		{"proxy ignores client-supplied left entries", true, "10.0.0.1:1", "1.2.3.4, 203.0.113.9", "", "203.0.113.9"},
 		{"proxy single xff with spaces", true, "10.0.0.1:1", "  203.0.113.9  ", "", "203.0.113.9"},
 		{"proxy xff ipv6", true, "10.0.0.1:1", "2001:db8::2", "", "2001:db8::2"},
 		{"proxy mapped ipv4", true, "10.0.0.1:1", "::ffff:203.0.113.9", "", "203.0.113.9"},

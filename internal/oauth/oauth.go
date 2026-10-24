@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"syscall"
@@ -257,9 +258,7 @@ func defaultHTTPClient() *http.Client {
 			if err != nil {
 				return err
 			}
-			ip := net.ParseIP(host)
-			if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-				ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			if !publicAddr(host) {
 				return fmt.Errorf("oauth: refusing to fetch from non-public address %s", host)
 			}
 			return nil
@@ -269,6 +268,48 @@ func defaultHTTPClient() *http.Client {
 	tr.DialContext = dialer.DialContext
 	tr.Proxy = nil
 	return &http.Client{Timeout: cimdTimeout, Transport: tr}
+}
+
+// nonPublic are special-purpose ranges a metadata fetch must never reach,
+// beyond what the netip predicates cover: "this network", carrier-grade NAT
+// (Tailscale and many self-hosted networks), IETF protocol assignments,
+// documentation, benchmarking, reserved, and the IPv6 transition prefixes
+// that can tunnel to an internal IPv4 address.
+var nonPublic = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("fec0::/10"),
+}
+
+// publicAddr reports whether host, a literal IP from the dialer, is a
+// public unicast address a client ID metadata document may live on.
+func publicAddr(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap().WithZone("")
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
+		return false
+	}
+	for _, p := range nonPublic {
+		if p.Contains(addr) {
+			return false
+		}
+	}
+	return true
 }
 
 // Authenticate resolves an access token. Unknown, revoked or expired tokens
@@ -299,10 +340,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	if u.DisabledAt != nil {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
+	scopes := intersect(t.Scopes, user.ScopesFor(u))
+	// Admin powers travel with the admin scope, so a grant the user narrowed
+	// on the consent page stays narrow.
 	return auth.Principal{
 		Handle:     u.Handle,
-		Admin:      u.Role == user.RoleAdmin,
-		Scopes:     intersect(t.Scopes, user.ScopesFor(u)),
+		Admin:      u.Role == user.RoleAdmin && slices.Contains(scopes, auth.ScopeAdmin),
+		Scopes:     scopes,
 		Source:     auth.SourceOAuth,
 		KeyID:      fmt.Sprintf("oauth:%d", t.ID),
 		QuotaBytes: u.QuotaBytes,

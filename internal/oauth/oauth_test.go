@@ -307,7 +307,7 @@ func TestFullFlow(t *testing.T) {
 		{"admin gets every scope", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
 			"boss", true, "", auth.AllScopes},
 		{"narrow request", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
-			"boss", true, "artifacts:read", []string{auth.ScopeRead}},
+			"boss", false, "artifacts:read", []string{auth.ScopeRead}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

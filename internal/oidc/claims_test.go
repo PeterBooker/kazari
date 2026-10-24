@@ -27,6 +27,16 @@ func TestIdentityMapping(t *testing.T) {
 			auth.Identity{Issuer: entra, Subject: "s"}},
 		{"other issuer without email_verified", "https://accounts.google.com", `{"email":"a@example.com"}`,
 			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@example.com"}},
+		// Regression: Google's email_verified alone let a consumer account on
+		// a company address (e.g. a former employee's) pass as that domain.
+		{"google workspace account", "https://accounts.google.com", `{"email":"a@corp.example","email_verified":true,"hd":"corp.example"}`,
+			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@corp.example", EmailVerified: true}},
+		{"google consumer account on a company address", "https://accounts.google.com", `{"email":"a@corp.example","email_verified":true}`,
+			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@corp.example"}},
+		{"google hd for another domain", "https://accounts.google.com", `{"email":"a@corp.example","email_verified":true,"hd":"other.example"}`,
+			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@corp.example"}},
+		{"google gmail account", "https://accounts.google.com", `{"email":"a@gmail.com","email_verified":true}`,
+			auth.Identity{Issuer: "https://accounts.google.com", Subject: "s", Email: "a@gmail.com", EmailVerified: true}},
 		{"string True", "https://idp.example", `{"email":"a@example.com","email_verified":"True"}`,
 			auth.Identity{Issuer: "https://idp.example", Subject: "s", Email: "a@example.com", EmailVerified: true}},
 		{"null email_verified", "https://idp.example", `{"email":"a@example.com","email_verified":null}`,

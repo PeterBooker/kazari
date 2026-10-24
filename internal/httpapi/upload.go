@@ -22,6 +22,9 @@ import (
 // manifestLimit caps the manifest part of a multipart publish.
 const manifestLimit = 64 << 10
 
+// tarBlock is the size of a tar header block, charged per bundle entry.
+const tarBlock = 512
+
 // inlineFiles converts the files[] of a JSON body. Delete entries are only
 // allowed on update.
 func inlineFiles(in []api.FileInput, allowDelete bool) ([]artifact.FileInput, error) {
@@ -189,6 +192,13 @@ func (b *bundle) fill(tr *tar.Reader, limit int64) error {
 		}
 		if err != nil {
 			return bodyErr("the bundle is not a valid tar archive", err)
+		}
+		// Every entry, kept or skipped, costs its header block against the
+		// uncompressed cap; otherwise a tiny gzip of empty entries decodes
+		// into an unbounded number of headers and FileInputs.
+		left -= tarBlock
+		if left < 0 {
+			return artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue

@@ -317,9 +317,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	scopes := slices.DeleteFunc(slices.Clone(k.Scopes), func(sc string) bool {
 		return !slices.Contains(allowed, sc)
 	})
+	// Admin powers travel with the admin scope: an admin's key issued with
+	// member scopes acts as a member, so a narrowed key stays narrow.
 	return auth.Principal{
 		Handle:     u.Handle,
-		Admin:      u.Role == RoleAdmin,
+		Admin:      u.Role == RoleAdmin && slices.Contains(scopes, auth.ScopeAdmin),
 		Scopes:     scopes,
 		Source:     auth.SourceAPIKey,
 		KeyID:      k.Prefix,

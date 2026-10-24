@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -22,6 +23,18 @@ import (
 
 // DefaultScopes are requested when Config.Scopes is empty.
 var DefaultScopes = []string{gooidc.ScopeOpenID, "email", "profile"}
+
+// googleHost issues Google tokens. A Google account's email_verified only
+// proves the person once received mail at that address: a consumer account
+// created on a work address stays verified after the person leaves. Only the
+// hd (hosted domain) claim shows that the domain's Workspace manages the
+// account, so a non-Google address counts as verified only when hd equals
+// its domain.
+const googleHost = "accounts.google.com"
+
+// googleConsumerDomains are the addresses Google itself owns, which carry
+// no hd claim.
+var googleConsumerDomains = []string{"gmail.com", "googlemail.com"}
 
 // entraHost issues Microsoft Entra ID tokens. Entra single-tenant apps do
 // not send email_verified, and the tenant's mail addresses are verified.
@@ -146,6 +159,7 @@ type claims struct {
 	EmailVerified     *flexBool `json:"email_verified"`
 	Name              string    `json:"name"`
 	PreferredUsername string    `json:"preferred_username"`
+	HostedDomain      string    `json:"hd"`
 }
 
 // identity maps verified claims to an Identity. preferred_username stands
@@ -166,7 +180,17 @@ func (p *Provider) identity(issuer, subject string, c claims) auth.Identity {
 	if id.Email == "" {
 		id.EmailVerified = false
 	}
+	if id.EmailVerified && issuerHost(issuer, googleHost) {
+		_, domain, _ := strings.Cut(strings.ToLower(id.Email), "@")
+		managed := c.HostedDomain != "" && strings.EqualFold(c.HostedDomain, domain)
+		id.EmailVerified = managed || slices.Contains(googleConsumerDomains, domain)
+	}
 	return id
+}
+
+func issuerHost(issuer, host string) bool {
+	u, err := url.Parse(issuer)
+	return err == nil && strings.EqualFold(u.Hostname(), host)
 }
 
 // flexBool accepts a JSON boolean or the strings "true" and "false", which

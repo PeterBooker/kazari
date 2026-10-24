@@ -445,6 +445,9 @@ func TestPathRules(t *testing.T) {
 		{"encoded control char", "demo.art.test", "/index%0a.html", 404, instance404, "", "no-cache"},
 		{"encoded slash dotdot", "demo.art.test", "/docs%2f..%2findex.html", 404, instance404, "", "no-cache"},
 		{"dotdot does not trigger spa", "spa.art.test", "/../etc/passwd", 404, instance404, "", "no-cache"},
+		{"double slash redirect stays on host", "demo.art.test", "//docs", 301, "", "/docs/", "no-cache"},
+		{"encoded backslash", "demo.art.test", "/%5Cevil.example", 404, instance404, "", "no-cache"},
+		{"backslash does not trigger spa", "spa.art.test", "/%5Cevil.example", 404, instance404, "", "no-cache"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
