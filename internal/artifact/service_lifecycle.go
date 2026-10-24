@@ -133,6 +133,26 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 	return s.save(ctx, actor, a, audit.ArtifactVisibility, map[string]string{"visibility": v})
 }
 
+// Transfer gives the artifact to newOwner. Only admins and the current
+// owner may transfer, whatever the write policy. Soft-deleted artifacts can
+// be transferred so an admin can hand content over before the purge. An
+// unknown handle is ErrInvalidArgument (the store resolves it).
+func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner string) (*Artifact, error) {
+	if newOwner == "" {
+		return nil, Errorf(ErrInvalidArgument, "a new owner is required")
+	}
+	a, err := s.loadWritable(ctx, actor, slug, true)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.Admin && actor.Handle != a.OwnerHandle {
+		return nil, Errorf(ErrForbidden, "only the owner or an admin may transfer %q", slug)
+	}
+	from := a.OwnerHandle
+	a.OwnerHandle = newOwner
+	return s.save(ctx, actor, a, audit.ArtifactTransfer, map[string]string{"from": from, "to": newOwner})
+}
+
 // Delete soft-deletes the artifact (restorable until the retention period
 // ends) or, with hard, purges it now. A hard delete leaves the blobs for
 // CollectGarbage.

@@ -426,6 +426,55 @@ func (s *Service) login(ctx context.Context, u *User, id auth.Identity) (*User, 
 	return u, nil
 }
 
+// ErrInvalidIdentity is returned by LinkIdentity and UnlinkIdentity when the
+// issuer or subject is empty.
+var ErrInvalidIdentity = errors.New("user: identity needs an issuer and a subject")
+
+// ListIdentities returns the user's linked identities ordered by issuer and
+// subject. ErrNotFound when the user does not exist.
+func (s *Service) ListIdentities(ctx context.Context, handle string) ([]Identity, error) {
+	return s.store.ListIdentities(ctx, handle)
+}
+
+// LinkIdentity links an upstream (issuer, subject) to the user by hand, so
+// an admin can pre-provision who may sign in as whom. An identity linked to
+// another user moves to this one. ErrInvalidIdentity, ErrNotFound.
+func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, email string) error {
+	issuer, subject = strings.TrimSpace(issuer), strings.TrimSpace(subject)
+	if issuer == "" || subject == "" {
+		return ErrInvalidIdentity
+	}
+	err := s.store.LinkIdentity(ctx, handle, Identity{
+		Issuer:       issuer,
+		Subject:      subject,
+		EmailAtLogin: normalizeEmail(email),
+		LastLoginAt:  s.now(),
+	})
+	if err != nil {
+		return err
+	}
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, map[string]string{
+		"handle": handle, "identity": "link", "issuer": issuer, "subject": subject,
+	})
+	return nil
+}
+
+// UnlinkIdentity removes a linked identity from the user. ErrInvalidIdentity,
+// or ErrNotFound when the user has no such identity.
+func (s *Service) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error {
+	issuer, subject = strings.TrimSpace(issuer), strings.TrimSpace(subject)
+	if issuer == "" || subject == "" {
+		return ErrInvalidIdentity
+	}
+	if err := s.store.UnlinkIdentity(ctx, handle, issuer, subject); err != nil {
+		return err
+	}
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, map[string]string{
+		"handle": handle, "identity": "unlink", "issuer": issuer, "subject": subject,
+	})
+	return nil
+}
+
 // maxHandleAttempts bounds the numeric suffix search.
 const maxHandleAttempts = 1000
 

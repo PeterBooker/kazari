@@ -871,3 +871,69 @@ func TestResolveIdentityHandleSuffix(t *testing.T) {
 		})
 	}
 }
+
+func TestIdentityLinks(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, user.Options{})
+	f.mustCreate(t, "alice", "alice@example.com", "")
+	f.mustCreate(t, "bob", "", "")
+
+	if err := f.svc.LinkIdentity(ctx, "alice", " https://idp.example.com ", "sub-1", "Alice@Example.com"); err != nil {
+		t.Fatalf("LinkIdentity: %v", err)
+	}
+	ev := f.lastEvent(t)
+	if ev.Action != audit.UserUpdate || ev.Actor != "admin" || ev.Details["identity"] != "link" ||
+		ev.Details["handle"] != "alice" || ev.Details["issuer"] != "https://idp.example.com" {
+		t.Errorf("link audit event = %+v", ev)
+	}
+	ids, err := f.svc.ListIdentities(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []user.Identity{{Issuer: "https://idp.example.com", Subject: "sub-1", EmailAtLogin: "alice@example.com", LastLoginAt: t0}}
+	if diff := cmp.Diff(want, ids); diff != "" {
+		t.Errorf("identities (-want +got):\n%s", diff)
+	}
+
+	// The linked identity now resolves to alice without any email match.
+	u, err := f.svc.ResolveIdentity(ctx, auth.Identity{Issuer: "https://idp.example.com", Subject: "sub-1"})
+	if err != nil || u.Handle != "alice" {
+		t.Fatalf("ResolveIdentity = %v, %v; want alice", u, err)
+	}
+
+	errTests := []struct {
+		name         string
+		handle, i, s string
+		wantError    error
+	}{
+		{name: "empty issuer", handle: "alice", i: "", s: "x", wantError: user.ErrInvalidIdentity},
+		{name: "blank subject", handle: "alice", i: "iss", s: "  ", wantError: user.ErrInvalidIdentity},
+		{name: "unknown user", handle: "nobody", i: "iss", s: "x", wantError: user.ErrNotFound},
+	}
+	for _, tt := range errTests {
+		if err := f.svc.LinkIdentity(ctx, tt.handle, tt.i, tt.s, ""); !errors.Is(err, tt.wantError) {
+			t.Errorf("LinkIdentity %s: err = %v, want %v", tt.name, err, tt.wantError)
+		}
+	}
+	if _, err := f.svc.ListIdentities(ctx, "nobody"); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("ListIdentities(nobody): err = %v, want ErrNotFound", err)
+	}
+
+	// Unlinking from the wrong user finds nothing; from the right one works.
+	if err := f.svc.UnlinkIdentity(ctx, "bob", "https://idp.example.com", "sub-1"); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("UnlinkIdentity(bob): err = %v, want ErrNotFound", err)
+	}
+	if err := f.svc.UnlinkIdentity(ctx, "alice", "", "sub-1"); !errors.Is(err, user.ErrInvalidIdentity) {
+		t.Errorf("UnlinkIdentity(empty issuer): err = %v, want ErrInvalidIdentity", err)
+	}
+	if err := f.svc.UnlinkIdentity(ctx, "alice", "https://idp.example.com", "sub-1"); err != nil {
+		t.Fatalf("UnlinkIdentity: %v", err)
+	}
+	if ev := f.lastEvent(t); ev.Details["identity"] != "unlink" {
+		t.Errorf("unlink audit event = %+v", ev)
+	}
+	ids, err = f.svc.ListIdentities(ctx, "alice")
+	if err != nil || len(ids) != 0 {
+		t.Errorf("identities after unlink = %+v, %v", ids, err)
+	}
+}

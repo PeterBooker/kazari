@@ -1264,3 +1264,54 @@ func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 		t.Fatalf("audit failure not logged: %q", logs.String())
 	}
 }
+
+func TestTransfer(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteShared})
+	alice := e.user(t, "alice")
+	bob := e.user(t, "bob")
+	root := artifact.Actor{Handle: "root", Admin: true}
+	e.create(t, alice, "demo")
+
+	// A non-owner may write under the shared policy but not transfer.
+	_, err := e.svc.Transfer(e.ctx, bob, "demo", "bob")
+	wantErr(t, "transfer by non-owner", err, artifact.ErrForbidden)
+
+	_, err = e.svc.Transfer(e.ctx, root, "demo", "nobody")
+	wantErr(t, "transfer to unknown user", err, artifact.ErrInvalidArgument)
+
+	_, err = e.svc.Transfer(e.ctx, root, "demo", "")
+	wantErr(t, "transfer to empty handle", err, artifact.ErrInvalidArgument)
+
+	_, err = e.svc.Transfer(e.ctx, root, "missing", "bob")
+	wantErr(t, "transfer of unknown slug", err, artifact.ErrNotFound)
+
+	e.clock.Advance(time.Minute)
+	a, err := e.svc.Transfer(e.ctx, root, "demo", "bob")
+	if err != nil {
+		t.Fatalf("Transfer: %v", err)
+	}
+	if a.OwnerHandle != "bob" || !a.UpdatedAt.Equal(start.Add(time.Minute)) {
+		t.Errorf("after transfer: owner %q, updated %v", a.OwnerHandle, a.UpdatedAt)
+	}
+	ev := e.rec.Events[len(e.rec.Events)-1]
+	if ev.Action != audit.ArtifactTransfer || ev.Actor != "root" || ev.Slug != "demo" ||
+		ev.Details["from"] != "alice" || ev.Details["to"] != "bob" {
+		t.Errorf("audit event = %+v", ev)
+	}
+
+	// The new owner may transfer it back; the old one no longer may.
+	_, err = e.svc.Transfer(e.ctx, alice, "demo", "alice")
+	wantErr(t, "transfer by previous owner", err, artifact.ErrForbidden)
+	if _, err := e.svc.Transfer(e.ctx, bob, "demo", "alice"); err != nil {
+		t.Fatalf("Transfer by owner: %v", err)
+	}
+
+	// The owner filter follows the transfer.
+	page, err := e.svc.List(e.ctx, root, artifact.ListQuery{All: true, Owner: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Slug != "demo" {
+		t.Errorf("owner=alice listing = %+v", page.Items)
+	}
+}
