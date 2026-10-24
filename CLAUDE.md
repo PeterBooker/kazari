@@ -26,6 +26,9 @@ go mod tidy -diff
 # run locally: http://*.localhost:8080 in proxy mode, data in ./.data, admin token dev-admin-token
 go run ./cmd/agalma serve --config deploy/dev.yaml
 
+# the same from the Docker image (compose.yml, deploy/Dockerfile), data in the named volume agalma_data
+docker compose up --build -d
+
 # first user and key against the local server, then publish a directory
 go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
 go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop

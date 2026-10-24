@@ -1,0 +1,68 @@
+# Agalma for local development and testing: the image built from
+# deploy/Dockerfile, configured by deploy/dev.yaml (proxy mode, plain HTTP on
+# port 8080, base_domain localhost, admin token dev-admin-token), with its
+# data in a named volume.
+#
+#   docker compose up --build -d      # start; artifacts at http://<slug>.localhost:8080/
+#   docker compose logs -f            # follow the server log
+#   docker compose watch              # rebuild and restart when the source changes
+#   docker compose down               # stop; add -v to discard the data too
+#
+# Then, from the host, create a user and a key and publish as usual:
+#   go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
+#   go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
+#   AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... go run ./cmd/agalma publish ./site --slug demo
+#
+# The image sets AGALMA_DATA_DIR=/var/lib/agalma, which overrides the ./.data
+# in dev.yaml. A ./.env (start from deploy/agalma.env.example) is passed into
+# the container, so AGALMA_AUTH_ADMIN_TOKEN set there replaces the admin token
+# here as well as under go run.
+
+services:
+  agalma:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: agalma:dev
+    ports:
+      # Loopback only: *.localhost resolves to both 127.0.0.1 and ::1.
+      - "127.0.0.1:8080:8080"
+      - "[::1]:8080:8080"
+    volumes:
+      - ./deploy/dev.yaml:/etc/agalma/agalma.yaml:ro
+      - data:/var/lib/agalma
+    env_file:
+      - path: .env
+        required: false
+    extra_hosts:
+      # Lets the health check reach the admin host from inside the container.
+      - "admin.localhost:127.0.0.1"
+    healthcheck:
+      # GET /v1/health on the admin host. It needs no credentials; the CLI
+      # merely insists on an admin token being set.
+      test:
+        - CMD
+        - /usr/local/bin/agalma
+        - --admin-url
+        - http://admin.localhost:8080
+        - --admin-token
+        - healthcheck
+        - admin
+        - health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+      start_interval: 1s
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - .data/
+            - .git/
+            - docs/
+            - "*.md"
+
+volumes:
+  data:

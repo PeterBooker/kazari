@@ -1,6 +1,8 @@
 # Local development: plain HTTP in proxy mode on port 8080, data in ./.data,
 # URLs like http://demo.localhost:8080/ (browsers resolve *.localhost to
 # loopback). Run with: go run ./cmd/agalma serve --config deploy/dev.yaml
+# or, from the Docker image, docker compose up --build (compose.yml mounts
+# this file; the image's AGALMA_DATA_DIR=/var/lib/agalma replaces ./.data).
 # Set AGALMA_AUTH_ADMIN_TOKEN in the environment or a .env file to override
 # the development admin token.
 

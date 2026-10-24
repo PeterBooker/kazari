@@ -168,8 +168,9 @@ docker run -d --name agalma --restart unless-stopped \
   ghcr.io/peterbooker/agalma:latest serve
 ```
 
-The data directory must be writable by UID 65532; a bind mount owned by root is not. Images are
-tagged with the release version and `latest`, for linux/amd64 and linux/arm64, and signed with cosign.
+The data directory must be writable by UID 65532. A named volume is initialised from the image and
+is writable as it is; a bind mount owned by root is not. Images are tagged with the release version
+and `latest`, for linux/amd64 and linux/arm64, and signed with cosign.
 
 ## Run behind a reverse proxy (proxy mode)
 
@@ -288,6 +289,21 @@ browsers and systemd-resolved do), add the hosts you need to `/etc/hosts`:
 
 The CLI reads `./.env` as well, so `AGALMA_URL` and `AGALMA_TOKEN` can live there instead of on the
 command line. Keep `.env` out of version control.
+
+### Docker Compose
+
+`compose.yml` at the repository root runs the same development server from the Docker image. It
+builds `deploy/Dockerfile`, mounts `deploy/dev.yaml` as the configuration, publishes port 8080 on the
+loopback addresses only and keeps the data in the named volume `agalma_data`, so the URLs, the admin
+token and the commands above are unchanged. The image's `AGALMA_DATA_DIR=/var/lib/agalma` replaces
+`./.data`, and `./.env` is passed into the container when it exists.
+
+```sh
+docker compose up --build -d      # build and start; docker compose ps shows it healthy
+docker compose logs -f            # follow the server log
+docker compose watch              # rebuild and restart on source changes
+docker compose down               # stop; -v discards the data as well
+```
 
 ### Build, test and release
 
