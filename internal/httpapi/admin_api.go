@@ -113,7 +113,11 @@ func (h *adminAPI) listUsers(w http.ResponseWriter, r *http.Request, _ auth.Prin
 	}
 	out := make([]api.User, 0, len(users))
 	for i := range users {
-		out = append(out, present.User(&users[i]))
+		u := present.User(&users[i])
+		if u.UsedBytes, err = h.d.Artifacts.Usage(r.Context(), u.Handle); err != nil {
+			return err
+		}
+		out = append(out, u)
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil

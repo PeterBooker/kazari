@@ -161,7 +161,7 @@ func (o *OIDC) applyDefaults() {
 // Admin configures the admin host.
 type Admin struct {
 	// Listen is an optional second listener for the admin host only,
-	// e.g. "127.0.0.1:9443". Empty serves admin on the public listener.
+	// e.g. "127.0.0.1:9443". The admin host stays reachable on the public listener too.
 	Listen string `toml:"listen"`
 }
 
