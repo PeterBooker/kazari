@@ -148,7 +148,7 @@ version.
   | `agalma.indexable` | `true`, `false`  | `true` drops `X-Robots-Tag: noindex`                           |
   | `agalma.csp`       | printable ASCII, one line | Replaces the instance CSP, when `serve.allow_csp_override` is on |
 
-- **Write policy**: under `auth.write_policy = "owner"`, only the owner and admins may change an
+- **Write policy**: under `auth.write_policy: owner`, only the owner and admins may change an
   artifact; under `shared` (default) anyone with `artifacts:write` may.
 
 ## User API
@@ -487,7 +487,7 @@ Details:
   is `{ "name", "every", "last_run", "last_error", "next_run", "running" }`.
 - **Audit.** `since` is an RFC 3339 time; `limit` defaults to 100, at most 1000. Newest first:
   `{ "at", "actor", "action", "slug", "details" }`.
-- **Settings.** The configuration keyed like the TOML file, sizes and durations as strings, secrets
+- **Settings.** The configuration keyed like the YAML file, sizes and durations as strings, secrets
   as `"***"`.
 
 ```sh

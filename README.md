@@ -50,7 +50,9 @@ docker run -d --name agalma -p 80:80 -p 443:443 \
 ```sh
 tar -xzf agalma_<version>_linux_amd64.tar.gz
 sudo install -m 0755 agalma /usr/local/bin/agalma
-sudo mkdir -p /etc/agalma && sudo cp deploy/agalma.toml /etc/agalma/agalma.toml   # edit it
+sudo mkdir -p /etc/agalma
+sudo install -m 0644 deploy/agalma.yaml /etc/agalma/agalma.yaml            # edit it
+sudo install -m 0600 deploy/agalma.env.example /etc/agalma/agalma.env      # secrets
 sudo cp deploy/agalma.service /etc/systemd/system/ && sudo systemctl enable --now agalma
 ```
 
@@ -66,24 +68,29 @@ export AGALMA_URL=https://api.art.example.com AGALMA_TOKEN=agk_...
 agalma publish ./site --slug demo        # prints https://demo.art.example.com/
 ```
 
-## Configuration in ten lines
+## Configuration at a glance
 
-```toml
-base_domain = "art.example.com"
-data_dir    = "/var/lib/agalma"
+```yaml
+base_domain: art.example.com
+data_dir: /var/lib/agalma
 
-[tls]
-mode         = "acme"
-email        = "ops@example.com"
-dns_provider = "cloudflare"          # token in AGALMA_TLS_DNS_API_TOKEN
+tls:
+  mode: acme
+  email: ops@example.com
+  dns_provider: cloudflare
+  dns:
+    api_token: ${AGALMA_TLS_DNS_API_TOKEN}
 
-[auth.oidc]
-issuer = "https://login.microsoftonline.com/<tenant-id>/v2.0"
-client_id = "..."                    # secret in AGALMA_AUTH_OIDC_CLIENT_SECRET
+auth:
+  oidc:
+    issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+    client_id: "..."
+    client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
 ```
 
-Every key can be set from the environment as `AGALMA_<SECTION>_<KEY>`. See
-[docs/configuration.md](docs/configuration.md).
+Secrets stay out of the file: `${NAME}` is replaced by the environment variable `NAME`, read from the
+process environment or a `.env` file (`/etc/agalma/agalma.env` under systemd). Every key can also be
+set directly as `AGALMA_<SECTION>_<KEY>`. See [docs/configuration.md](docs/configuration.md).
 
 ## Connecting Claude
 
@@ -117,12 +124,27 @@ agalma --json me
 
 See [docs/cli.md](docs/cli.md).
 
+## Development
+
+```sh
+go run ./cmd/agalma serve --config deploy/dev.yaml      # http://<slug>.localhost:8080/, admin token dev-admin-token
+go test -race ./...
+test -z "$(gofmt -l .)" && go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X agalma/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o agalma ./cmd/agalma
+```
+
+Releases are cut by pushing a `v*` tag; GitHub Actions runs goreleaser. The full walkthrough,
+including a first publish against the development server, is in
+[docs/install.md](docs/install.md#local-development).
+
 ## Documentation
 
 | Document                                     | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |
 | [docs/install.md](docs/install.md)           | DNS, release binaries, systemd, Docker, Caddy, TLS, first user |
-| [docs/configuration.md](docs/configuration.md) | Every configuration key, environment overrides, validation   |
+| [docs/configuration.md](docs/configuration.md) | YAML keys, `${}` references, `.env`, overrides, validation   |
 | [docs/ops.md](docs/ops.md)                   | Data layout, backup, upgrades, logs, metrics, jobs, abuse      |
 | [docs/api.md](docs/api.md)                   | REST reference for the user and admin APIs                     |
 | [docs/mcp.md](docs/mcp.md)                   | MCP tools, resources, prompt and chunked uploads               |

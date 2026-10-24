@@ -47,18 +47,20 @@ acts as a member.
 
 ## Configuring a provider
 
-Add an `[auth.oidc]` table ([configuration.md](configuration.md#authoidc)) and restart. Agalma
+Add an `auth.oidc` section ([configuration.md](configuration.md#authoidc)) and restart. Agalma
 discovers the provider at startup from `<issuer>/.well-known/openid-configuration`; if discovery
 fails, the server does not start and logs `oidc: discover <issuer>: ...`. It requests the scopes
 `openid email profile`.
 
-```toml
-[auth.oidc]
-issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
-client_id       = "00000000-0000-0000-0000-000000000000"
-allowed_domains = ["example.com"]
-auto_provision  = true
-admin_emails    = ["peter@example.com"]
+```yaml
+auth:
+  oidc:
+    issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+    client_id: 00000000-0000-0000-0000-000000000000
+    client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+    allowed_domains: [example.com]
+    auto_provision: true
+    admin_emails: [peter@example.com]
 ```
 
 ```sh
@@ -146,7 +148,7 @@ Consequences worth knowing:
 
 - With `allowed_domains` empty nobody is auto-provisioned; only admin-created users with a matching
   email (or a linked identity) can sign in.
-- With `auto_provision = false`, `allowed_domains` limits which admin-created users may link by email.
+- With `auto_provision: false`, `allowed_domains` limits which admin-created users may link by email.
 - `admin_emails` applies only when a user is first provisioned. To promote an existing user, use
   `agalma admin users update <handle> --role admin`.
 - The match is on `(issuer, subject)` after the first sign-in, so a later change of email address at
@@ -179,7 +181,7 @@ lists a user's identities with their last sign-in.
 
 ## Without an identity provider: API-key sign-in
 
-When `[auth.oidc]` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API
+When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API
 key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes.
 A one-person or small instance can therefore connect claude.ai with no IdP set up: issue yourself a
 key, add the connector, paste the key once. The consent is recorded in the audit log as

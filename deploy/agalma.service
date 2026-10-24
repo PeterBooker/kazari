@@ -6,14 +6,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/agalma serve --config /etc/agalma/agalma.toml
+ExecStart=/usr/local/bin/agalma serve --config /etc/agalma/agalma.yaml
 Restart=on-failure
 RestartSec=2s
 
-# Secrets belong in this file (mode 0600), not in agalma.toml:
-#   AGALMA_AUTH_ADMIN_TOKEN=...
-#   AGALMA_TLS_DNS_API_TOKEN=...
-#   AGALMA_AUTH_OIDC_CLIENT_SECRET=...
+# Secrets belong in agalma.env (mode 0600), not in agalma.yaml, which
+# refers to them as ${AGALMA_AUTH_ADMIN_TOKEN}, ${AGALMA_TLS_DNS_API_TOKEN}
+# and ${AGALMA_AUTH_OIDC_CLIENT_SECRET}. Start from deploy/agalma.env.example:
+#   install -m 0600 deploy/agalma.env.example /etc/agalma/agalma.env
 EnvironmentFile=-/etc/agalma/agalma.env
 
 DynamicUser=yes

@@ -1,0 +1,23 @@
+# Local development: plain HTTP in proxy mode on port 8080, data in ./.data,
+# URLs like http://demo.localhost:8080/ (browsers resolve *.localhost to
+# loopback). Run with: go run ./cmd/agalma serve --config deploy/dev.yaml
+# Set AGALMA_AUTH_ADMIN_TOKEN in the environment or a .env file to override
+# the development admin token.
+
+base_domain: localhost
+data_dir: ./.data
+external_scheme: http
+external_port: 8080
+
+listen:
+  http: ":8080"
+  proxy_mode: true
+
+tls:
+  mode: self-signed
+
+auth:
+  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN:-dev-admin-token}
+
+log:
+  level: debug

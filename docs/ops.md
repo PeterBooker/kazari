@@ -10,7 +10,7 @@ real path is `/var/lib/private/agalma`):
 | `agalma.db`, `agalma.db-wal`, `agalma.db-shm` | SQLite in WAL mode: users, keys, artifacts, versions, file lists, OAuth state, audit log |
 | `blobs/<aa>/<sha256>`        | File contents, content-addressed by SHA-256 (`aa` is the first two hex digits). Written to a temporary `.put-*` file and renamed, so a partial blob is never visible |
 | `uploads/<id>/<n>`           | Chunked uploads in progress. Disposable                                                        |
-| `certmagic/`                 | ACME account, certificates and locks (`tls.mode = "acme"` only)                                |
+| `certmagic/`                 | ACME account, certificates and locks (`tls.mode: acme` only)                                   |
 | `tmp/`                       | Multipart bundles spilled to disk while they are published; removed afterwards. Disposable     |
 
 ## Backup
@@ -81,7 +81,7 @@ journalctl -u agalma -o cat | grep -i certmagic
 ## Metrics
 
 Prometheus metrics are served at `https://admin.<base>/metrics`, and at `http://<admin.listen>/metrics`
-when `[admin].listen` is set. **The endpoint needs no credential**, so if the admin host is reachable
+when `admin.listen` is set. **The endpoint needs no credential**, so if the admin host is reachable
 from the internet, restrict `/metrics` at your proxy or firewall and scrape the private admin
 listener instead.
 
@@ -100,7 +100,7 @@ standard Go runtime (`go_*`) and process (`process_*`) collectors are included.
 scrape_configs:
   - job_name: agalma
     static_configs:
-      - targets: ["127.0.0.1:9443"]      # [admin].listen = "127.0.0.1:9443"
+      - targets: ["127.0.0.1:9443"]      # admin.listen: "127.0.0.1:9443"
 ```
 
 Useful alerts: `increase(agalma_job_runs_total{result="error"}[1h]) > 0`, and a high rate of
@@ -258,7 +258,7 @@ loses that one row. The log is append-only and never pruned.
 
 ### Certificate issuance
 
-With `tls.mode = "acme"`, the certificate is obtained in the background after start; until then TLS
+With `tls.mode: acme`, the certificate is obtained in the background after start; until then TLS
 handshakes fail. Look for CertMagic's lines in the log (`journalctl -u agalma | grep -i certmagic`).
 
 - **DNS provider errors** (`401`, `403`, "zone not found"): the token lacks permission on the zone. A
@@ -267,7 +267,7 @@ handshakes fail. Look for CertMagic's lines in the log (`journalctl -u agalma | 
   it to propagate. Check `dig TXT _acme-challenge.art.example.com @1.1.1.1` while it runs.
 - **CAA records** on the domain must allow `letsencrypt.org`.
 - **Rate limits**: repeated failures against production Let's Encrypt hit its limits. Debug with
-  `tls.ca = "letsencrypt-staging"`, then switch back and delete `certmagic/` to drop the staging
+  `tls.ca: letsencrypt-staging`, then switch back and delete `certmagic/` to drop the staging
   certificate.
 - **`files` mode**: a reload failure keeps the old certificate and logs
   `certs: reload failed, keeping previous certificate`; the files are checked once a minute.

@@ -5,4 +5,4 @@ VOLUME /var/lib/agalma
 EXPOSE 80 443
 ENV AGALMA_DATA_DIR=/var/lib/agalma
 ENTRYPOINT ["/usr/local/bin/agalma"]
-CMD ["serve", "--config", "/etc/agalma/agalma.toml"]
+CMD ["serve", "--config", "/etc/agalma/agalma.yaml"]

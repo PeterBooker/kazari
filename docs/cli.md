@@ -20,6 +20,8 @@ On a laptop, `install -m 0755 agalma ~/.local/bin/agalma` is enough.
 ## Configuration
 
 Each setting comes from the first of: the global flag, the environment variable, the config file.
+The environment variables may also be set in a `.env` file in the working directory (`KEY=VALUE`
+lines, as for the server); a variable already set in the process environment wins over the file.
 
 | Flag            | Variable             | Config key    | Meaning                                       |
 | --------------- | -------------------- | ------------- | --------------------------------------------- |
@@ -34,17 +36,17 @@ Give the URLs without `/v1`; the client adds it. When no admin URL is set and th
 with `api.`, the admin URL is derived as `admin.<base>`. When no admin token is set, the user token is
 tried on the admin host.
 
-The config file is `$XDG_CONFIG_HOME/agalma/config.toml`, else `~/.config/agalma/config.toml`. It is
+The config file is `$XDG_CONFIG_HOME/agalma/config.yaml`, else `~/.config/agalma/config.yaml`. It is
 optional unless named with `--config`, and an unknown key is an error:
 
-```toml
-url         = "https://api.art.example.com"
-token       = "agk_abcdefgh_..."
-admin_url   = "https://admin.art.example.com"   # optional
-admin_token = ""                                # optional
+```yaml
+url: https://api.art.example.com
+token: agk_abcdefgh_...
+admin_url: https://admin.art.example.com   # optional
+admin_token: ""                            # optional
 ```
 
-Keep it private (`chmod 600`): it holds credentials.
+Keep it, and any `.env` holding a token, private (`chmod 600`): they hold credentials.
 
 ## Output and exit codes
 

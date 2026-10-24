@@ -224,7 +224,7 @@ read-only.
 principal (admin role and `admin` scope). Everything else gets 401 or 403.
 `/health` and `/metrics` are unauthenticated: keep the admin listener private.
 
-**Write policy.** `auth.write_policy = "shared"` (default) lets any member
+**Write policy.** `auth.write_policy: shared` (default) lets any member
 with `artifacts:write` change any artifact. `"owner"` limits changes to the
 owner and admins. Transfer is always owner- or admin-only. Listings show
 public artifacts plus the caller's own; unlisted artifacts are hidden from
@@ -281,7 +281,8 @@ as that domain. For Entra ID, a missing `email_verified` counts as verified
 2. **Rotate the admin token out.** Use it to create the first admin user,
    issue that user a key with the `admin` scope, check that the key works on
    the admin host, then remove `auth.admin_token` / `AGALMA_AUTH_ADMIN_TOKEN`
-   and restart. Pass secrets through the environment, not the TOML file.
+   and restart. Pass secrets through the environment: `${NAME}`
+   references in the YAML file, values in `agalma.env` or `.env`.
 3. **Proxy mode.** Turn on `listen.proxy_mode` only behind exactly one
    reverse proxy, and make sure nothing can reach Agalma's plain-HTTP port
    except that proxy. Agalma takes the rightmost `X-Forwarded-For` entry,
@@ -294,7 +295,7 @@ as that domain. For Entra ID, a missing `email_verified` counts as verified
    people in it become admins on first sign-in.
 5. **Write policy.** Choose `owner` if members should not be able to change
    each other's artifacts.
-6. **CSP override.** Set `serve.allow_csp_override = false` if you need the
+6. **CSP override.** Set `serve.allow_csp_override: false` if you need the
    instance policy to hold for every artifact.
 7. **Backups.** Back up `data_dir`: `agalma.db` (use SQLite's online backup
    or stop the service) and `blobs/`. `certmagic/` holds certificate keys,

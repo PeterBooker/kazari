@@ -1,9 +1,9 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
@@ -12,7 +12,8 @@ env:
   CGO_ENABLED: "0"
 
 jobs:
-  test:
+  lint:
+    name: Format, vet, staticcheck, govulncheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,20 +21,38 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify module graph
-        run: go mod verify && go mod tidy -diff
-      - name: Vet
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go mod tidy -diff
+        run: go mod tidy -diff
+      - name: go vet
         run: go vet ./...
-      - name: Staticcheck
+      - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
-      - name: Test
-        run: go test -race -count=1 ./...
-      - name: Vulnerability check
+      - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-  build:
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -count=1 ./...
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: [lint, test]
     strategy:
       matrix:
         include:
@@ -49,8 +68,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-        env:
+      - env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/agalma

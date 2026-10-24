@@ -1,12 +1,13 @@
 # Configuration
 
-Agalma reads one TOML file plus environment overrides, validates the result at startup and refuses
+Agalma reads one YAML file plus environment variables, validates the result at startup and refuses
 to start with a list of every problem it found, each named by its key. There are no settings stored
 in the database: to change a limit, edit the file and restart (it takes under a second).
 `agalma admin settings` (or `GET /v1/settings` on the admin API) prints the effective configuration
 with secrets redacted.
 
-`deploy/agalma.toml` is a complete example with every default.
+`deploy/agalma.yaml` is a complete example with every default, `deploy/dev.yaml` the local
+development setup and `deploy/agalma.env.example` the template for secrets.
 
 ## Where the file comes from
 
@@ -14,15 +15,94 @@ with secrets redacted.
 
 1. `--config PATH` (the file must exist);
 2. `$AGALMA_CONFIG`;
-3. `/etc/agalma/agalma.toml`, if it exists;
+3. `/etc/agalma/agalma.yaml`, if it exists;
 4. no file: defaults plus environment variables.
 
 A key the server does not know is an error, so a typo fails loudly rather than being ignored.
 
+## Format
+
+Sections are nested mappings; the keys and their nesting are those in [Keys](#keys). Sizes and
+durations are written as plain strings (`50MiB`, `336h`), lists as YAML sequences.
+
+```yaml
+base_domain: art.example.com
+data_dir: /var/lib/agalma
+
+tls:
+  mode: acme
+  email: ops@example.com
+  dns_provider: cloudflare
+  dns:
+    api_token: ${AGALMA_TLS_DNS_API_TOKEN}
+
+auth:
+  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
+  oidc:
+    issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+    client_id: 00000000-0000-0000-0000-000000000000
+    client_secret: ${AGALMA_AUTH_OIDC_CLIENT_SECRET}
+    allowed_domains: [example.com]
+```
+
+### Environment references
+
+Any value may refer to an environment variable:
+
+| Written             | Becomes                                                     |
+| ------------------- | ----------------------------------------------------------- |
+| `${NAME}`           | The value of `NAME`                                         |
+| `${NAME:-default}`  | The value of `NAME`, falling back to `default`              |
+| `$$`                | A literal `$`                                               |
+
+A reference to a variable that is not set and has no default stops startup with an error naming the
+variable. `deploy/dev.yaml` uses a default so that development needs no secrets:
+
+```yaml
+auth:
+  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN:-dev-admin-token}
+```
+
+### The `.env` file
+
+`agalma serve` also loads variables from a dotenv file, the first of:
+
+1. `--env-file PATH`;
+2. `$AGALMA_ENV_FILE`;
+3. `./.env` in the working directory, if it exists.
+
+One `KEY=VALUE` per line; `#` starts a comment, `export ` before the key is allowed, and a value may
+be wrapped in single or double quotes:
+
+```sh
+# .env
+AGALMA_AUTH_ADMIN_TOKEN=3f9c2e...
+export AGALMA_TLS_DNS_API_TOKEN="your-cloudflare-token"
+AGALMA_LISTEN_PROXY_MODE=true
+```
+
+A variable already set in the process environment wins over the file. Variables from the file feed
+both `${NAME}` references and the `AGALMA_*` overrides below. The file holds secrets: keep it mode
+`0600` and out of version control. Under systemd the unit reads `/etc/agalma/agalma.env` with
+`EnvironmentFile=`, so those variables arrive as process environment.
+
+The CLI reads `./.env` too, for its own variables ([cli.md](cli.md#configuration)).
+
+### Precedence
+
+From lowest to highest:
+
+1. built-in defaults;
+2. the YAML file, after `${}` references are expanded;
+3. `AGALMA_*` overrides, from the process environment or the `.env` file.
+
+Validation then checks the result.
+
 ## Environment overrides
 
 Every key has an environment variable: `AGALMA_` followed by the key's full path, upper-cased, with
-dots replaced by underscores. The environment always wins over the file.
+dots replaced by underscores. An override wins over the file, whether or not the file mentions the
+key, so a deployment configured entirely from the environment needs no file at all.
 
 | Key                        | Variable                          |
 | -------------------------- | --------------------------------- |
@@ -32,6 +112,9 @@ dots replaced by underscores. The environment always wins over the file.
 | `tls.dns.api_token`        | `AGALMA_TLS_DNS_API_TOKEN`        |
 | `limits.max_version_bytes` | `AGALMA_LIMITS_MAX_VERSION_BYTES` |
 | `auth.oidc.allowed_domains`| `AGALMA_AUTH_OIDC_ALLOWED_DOMAINS`|
+
+The secrets in `deploy/agalma.yaml` use the same names in their `${}` references, so one variable
+serves either way.
 
 Value formats:
 
@@ -44,7 +127,7 @@ Value formats:
 - **Durations**: Go durations (`"15m"`, `"336h"`, `"1h30m"`) with an optional leading whole number
   of days: `"14d"`, `"1d12h"`.
 
-Setting any `AGALMA_AUTH_OIDC_*` variable switches on the `[auth.oidc]` table, with its defaults,
+Setting any `AGALMA_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults,
 even when the file has none.
 
 Do not confuse the server's variables with the CLI's: `AGALMA_URL`, `AGALMA_TOKEN`,
@@ -65,7 +148,7 @@ admin token is `AGALMA_AUTH_ADMIN_TOKEN`.
 `external_scheme` and `external_port` only shape the URLs in responses; they do not change what
 Agalma listens on.
 
-### `[listen]`
+### `listen`
 
 | Key          | Type   | Default | Meaning                                                                                                   |
 | ------------ | ------ | ------- | --------------------------------------------------------------------------------------------------------- |
@@ -73,7 +156,7 @@ Agalma listens on.
 | `http`       | string | `:80`   | Plain listener. Outside proxy mode it answers `/health` and redirects every request for the base domain or its subdomains to HTTPS (`301`); `""` disables it. In proxy mode it is the only listener and is required. |
 | `proxy_mode` | bool   | `false` | Serve plain HTTP on `http` behind one TLS-terminating proxy and take the client IP from the last `X-Forwarded-For` entry, then `X-Real-IP`. |
 
-### `[tls]`
+### `tls`
 
 | Key            | Type   | Default       | Meaning                                                                                       |
 | -------------- | ------ | ------------- | --------------------------------------------------------------------------------------------- |
@@ -84,13 +167,13 @@ Agalma listens on.
 | `cert_file`    | string | `""`          | PEM certificate chain for `files`. Must cover the base domain and its wildcard.               |
 | `key_file`     | string | `""`          | PEM private key for `files`.                                                                  |
 
-### `[tls.dns]`
+### `tls.dns`
 
 | Key         | Type   | Default | Meaning                                                                                              |
 | ----------- | ------ | ------- | ---------------------------------------------------------------------------------------------------- |
 | `api_token` | secret | `""`    | DNS provider credential. Required for `cloudflare` and `hetzner`. For `route53`, leave empty to use the AWS default credential chain, or set `ACCESS_KEY_ID:SECRET_ACCESS_KEY`. |
 
-### `[limits]`
+### `limits`
 
 | Key                     | Type     | Default | Meaning                                                                                                   |
 | ----------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------- |
@@ -105,7 +188,7 @@ Agalma listens on.
 | `upload_ttl`            | duration | `1h`    | How long a chunked upload stays open before the `uploads-expire` job removes it.                          |
 | `max_open_uploads`      | integer  | `5`     | Open chunked uploads per user.                                                                            |
 
-### `[lifecycle]`
+### `lifecycle`
 
 | Key              | Type     | Default            | Meaning                                                                           |
 | ---------------- | -------- | ------------------ | --------------------------------------------------------------------------------- |
@@ -117,7 +200,7 @@ Agalma listens on.
 
 See [ops.md](ops.md#lifecycle) for how these combine.
 
-### `[serve]`
+### `serve`
 
 | Key                  | Type        | Default       | Meaning                                                                                       |
 | -------------------- | ----------- | ------------- | --------------------------------------------------------------------------------------------- |
@@ -135,16 +218,16 @@ The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2
 `autodiscover` and `localhost`. If you replace the list, keep `api`, `mcp` and `admin`.
 
 Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors;
-on a multi-tenant instance consider `allow_csp_override = false`.
+on a multi-tenant instance consider `allow_csp_override: false`.
 
-### `[auth]`
+### `auth`
 
 | Key            | Type   | Default  | Meaning                                                                                              |
 | -------------- | ------ | -------- | ---------------------------------------------------------------------------------------------------- |
 | `write_policy` | string | `shared` | `shared`: anyone with `artifacts:write` may change any artifact. `owner`: only the owner and admins may. |
 | `admin_token`  | secret | `""`     | Bearer token accepted on the admin host. Empty disables it, leaving admin users' credentials that carry the `admin` scope. |
 
-### `[auth.oidc]`
+### `auth.oidc`
 
 Present means "users sign in through this OpenID Connect provider"; absent means the OAuth consent
 page asks for an API key instead. See [identity.md](identity.md).
@@ -158,13 +241,13 @@ page asks for an API key instead. See [identity.md](identity.md).
 | `auto_provision`  | bool        | `true`  | Create a member on first sign-in from an allowed domain.                                           |
 | `admin_emails`    | string list | `[]`    | Emails provisioned with the admin role.                                                            |
 
-### `[admin]`
+### `admin`
 
 | Key      | Type   | Default | Meaning                                                                                         |
 | -------- | ------ | ------- | ----------------------------------------------------------------------------------------------- |
 | `listen` | string | `""`    | Optional second listener, plain HTTP, that serves the admin API, `/health` and `/metrics` whatever the `Host` header, for example `127.0.0.1:9443`. The admin host stays reachable on the public listener too. |
 
-### `[log]`
+### `log`
 
 | Key      | Type   | Default | Meaning                              |
 | -------- | ------ | ------- | ------------------------------------ |
@@ -184,21 +267,24 @@ All of these are checked together; the error lists every failure as `key: proble
   - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`,
     `tls.dns.api_token`;
   - `files` needs `tls.cert_file` and `tls.key_file`.
-- Every number and duration in `[limits]` and `[lifecycle]` must be greater than 0. In particular
+- Every number and duration in `limits` and `lifecycle` must be greater than 0. In particular
   `write_rate_per_minute` cannot be set to 0 to disable rate limiting, and `default_user_quota` cannot
   be 0; give individual users an unlimited quota through the admin API instead
   (`agalma admin users update <handle> --quota 0`).
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` must not exceed `limits.max_version_bytes`.
 - `auth.write_policy` is `shared` or `owner`.
-- With `[auth.oidc]`: `issuer` is an `https` URL, `client_id` and `client_secret` are set.
+- With `auth.oidc`: `issuer` is an `https` URL, `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.
 
 ## Secrets
 
 Three keys are secrets: `tls.dns.api_token`, `auth.admin_token` and `auth.oidc.client_secret`. They are
-shown as `"***"` by the settings endpoint. Keep them out of the TOML file, which under systemd must be
-world-readable, and set them through the environment: `/etc/agalma/agalma.env` (mode `0600`, read by
-systemd as root) for the unit, `--env-file` for Docker, or your secret manager's equivalent.
+shown as `"***"` by the settings endpoint. Never write them into the YAML file, which under systemd
+must be world-readable: refer to them as `${NAME}` (or leave them out and set the `AGALMA_*`
+override) and supply the variables through `/etc/agalma/agalma.env` (mode `0600`, read by systemd as
+root) for the unit, `.env` in development, `--env-file` for Docker, or your secret manager's
+equivalent.
 
 Generate the admin token with `openssl rand -hex 32`. Once an admin user has an API key with the
-`admin` scope, you can unset `AGALMA_AUTH_ADMIN_TOKEN` entirely.
+`admin` scope, you can retire the token: delete the `admin_token` line from the file (a `${}`
+reference to a variable that is no longer set stops startup) and unset `AGALMA_AUTH_ADMIN_TOKEN`.

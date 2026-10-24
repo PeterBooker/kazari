@@ -2,10 +2,6 @@ version: 2
 
 project_name: agalma
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: agalma
     main: ./cmd/agalma
@@ -36,7 +32,8 @@ archives:
     files:
       - LICENSE
       - README.md
-      - deploy/agalma.toml
+      - deploy/agalma.yaml
+      - deploy/agalma.env.example
       - deploy/agalma.service
       - deploy/Caddyfile
 

@@ -1,0 +1,9 @@
+.git
+.github
+.data
+.env
+.env.*
+agalma
+dist
+docs
+*.md

@@ -24,7 +24,7 @@ the base domain; replace it with yours.
   | Hetzner DNS  | `hetzner`          | Hetzner DNS API token                                                 |
   | AWS Route 53 | `route53`          | Empty (AWS default credential chain) or `ACCESS_KEY_ID:SECRET_ACCESS_KEY` |
 
-  You do not need a token if you bring your own certificate (`tls.mode = "files"`) or run behind a
+  You do not need a token if you bring your own certificate (`tls.mode: files`) or run behind a
   reverse proxy that holds the certificate (proxy mode).
 - **Ports 80 and 443** reachable, or a reverse proxy in front.
 - Linux on amd64 or arm64, or macOS on arm64. No CGO, no external database.
@@ -59,46 +59,59 @@ The same binary is the server (`agalma serve`) and the client (every other comma
 
 ## Run under systemd
 
-The archive contains `deploy/agalma.service`, `deploy/agalma.toml` and `deploy/Caddyfile`.
+The archive contains `deploy/agalma.service`, `deploy/agalma.yaml`, `deploy/agalma.env.example` and
+`deploy/Caddyfile`.
 
 ```sh
 sudo mkdir -p /etc/agalma
-sudo install -m 0644 deploy/agalma.toml /etc/agalma/agalma.toml
-sudo install -m 0600 /dev/null /etc/agalma/agalma.env
+sudo install -m 0644 deploy/agalma.yaml /etc/agalma/agalma.yaml
+sudo install -m 0600 deploy/agalma.env.example /etc/agalma/agalma.env
 sudo install -m 0644 deploy/agalma.service /etc/systemd/system/agalma.service
 ```
 
-Edit `/etc/agalma/agalma.toml`. The minimum for ACME is:
+Edit `/etc/agalma/agalma.yaml`. For ACME, the settings that matter are:
 
-```toml
-base_domain = "art.example.com"
-data_dir    = "/var/lib/agalma"
+```yaml
+base_domain: art.example.com
+data_dir: /var/lib/agalma
 
-[tls]
-mode         = "acme"
-email        = "ops@example.com"
-dns_provider = "cloudflare"
+tls:
+  mode: acme
+  email: ops@example.com
+  dns_provider: cloudflare
+  dns:
+    api_token: ${AGALMA_TLS_DNS_API_TOKEN}
+
+auth:
+  admin_token: ${AGALMA_AUTH_ADMIN_TOKEN}
 ```
 
-Put the secrets in `/etc/agalma/agalma.env`, not in the TOML file. systemd reads this file as root
-before it drops privileges, so mode `0600` is right:
+The file holds no secrets: each `${NAME}` is replaced at startup by the environment variable `NAME`.
+Put the values in `/etc/agalma/agalma.env`, which the unit loads with `EnvironmentFile=`. systemd
+reads it as root before it drops privileges, so mode `0600` is right:
 
 ```sh
 AGALMA_TLS_DNS_API_TOKEN=your-cloudflare-token
-AGALMA_AUTH_ADMIN_TOKEN=a-long-random-string        # openssl rand -hex 32
-# AGALMA_AUTH_OIDC_CLIENT_SECRET=...                 # once you configure sign-in
+# openssl rand -hex 32
+AGALMA_AUTH_ADMIN_TOKEN=a-long-random-string
+# once you configure sign-in
+# AGALMA_AUTH_OIDC_CLIENT_SECRET=...
 ```
+
+A `${NAME}` reference to a variable that is not set stops startup with an error naming it, so define
+every variable the file refers to (as the template does) or delete the line from the YAML. See
+[configuration.md](configuration.md#environment-references).
 
 What the unit does:
 
-- `ExecStart=/usr/local/bin/agalma serve --config /etc/agalma/agalma.toml`.
+- `ExecStart=/usr/local/bin/agalma serve --config /etc/agalma/agalma.yaml`.
 - `DynamicUser=yes` runs it as a transient unprivileged user; `StateDirectory=agalma` gives that user
   `/var/lib/agalma` (stored under `/var/lib/private/agalma`), and `AGALMA_DATA_DIR` points there.
 - `AmbientCapabilities=CAP_NET_BIND_SERVICE` lets it bind ports 80 and 443 without root.
 - `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and a system-call filter confine it to
   its state directory and `/tmp`.
 
-Because the service user is dynamic, `/etc/agalma/agalma.toml` must be world-readable (`0644`), which
+Because the service user is dynamic, `/etc/agalma/agalma.yaml` must be world-readable (`0644`), which
 is another reason to keep secrets in the environment file.
 
 ```sh
@@ -116,10 +129,13 @@ come).
 
 1. `--config PATH`, if given (the file must exist);
 2. else `$AGALMA_CONFIG`;
-3. else `/etc/agalma/agalma.toml`, when that file exists;
+3. else `/etc/agalma/agalma.yaml`, when that file exists;
 4. else environment variables only.
 
-Environment variables override the file in every case. See [configuration.md](configuration.md).
+Variables can also come from a dotenv file: `--env-file PATH`, else `$AGALMA_ENV_FILE`, else `./.env`
+in the working directory if it exists. Variables already in the process environment win over the
+file. `AGALMA_*` overrides beat the YAML file in every case. See
+[configuration.md](configuration.md#precedence).
 A configuration error exits with status 2 and lists every problem; a failure to start (a port in
 use, an unreachable OIDC issuer, a database that cannot be opened) exits with status 1.
 
@@ -127,14 +143,14 @@ use, an unreachable OIDC issuer, a database that cannot be opened) exits with st
 
 The image `ghcr.io/peterbooker/agalma` is distroless, runs as the `nonroot` user (UID 65532), keeps
 its data in the volume `/var/lib/agalma` and exposes ports 80 and 443. Its default command is
-`serve --config /etc/agalma/agalma.toml`, so either mount a config file there:
+`serve --config /etc/agalma/agalma.yaml`, so either mount a config file there:
 
 ```sh
 sudo mkdir -p /srv/agalma/data && sudo chown 65532:65532 /srv/agalma/data
 docker run -d --name agalma --restart unless-stopped \
   -p 80:80 -p 443:443 \
   -v /srv/agalma/data:/var/lib/agalma \
-  -v /etc/agalma/agalma.toml:/etc/agalma/agalma.toml:ro \
+  -v /etc/agalma/agalma.yaml:/etc/agalma/agalma.yaml:ro \
   --env-file /etc/agalma/agalma.env \
   ghcr.io/peterbooker/agalma:latest
 ```
@@ -158,17 +174,17 @@ tagged with the release version and `latest`, for linux/amd64 and linux/arm64, a
 ## Run behind a reverse proxy (proxy mode)
 
 If something else already terminates TLS on the host, run Agalma in proxy mode: it then serves plain
-HTTP on `[listen].http` only and takes the client IP from the last `X-Forwarded-For` entry (the one
+HTTP on `listen.http` only and takes the client IP from the last `X-Forwarded-For` entry (the one
 the proxy in front added), then `X-Real-IP`. Use proxy mode behind exactly one proxy, and do not
 expose the plain port.
 
-```toml
-base_domain = "art.example.com"
-data_dir    = "/var/lib/agalma"
+```yaml
+base_domain: art.example.com
+data_dir: /var/lib/agalma
 
-[listen]
-proxy_mode = true
-http       = "127.0.0.1:8080"
+listen:
+  proxy_mode: true
+  http: "127.0.0.1:8080"
 ```
 
 In proxy mode Agalma terminates no TLS, so the `tls` settings beyond a valid `tls.mode` are not
@@ -250,24 +266,45 @@ claude.ai users to sign in with their organisation account, configure an identit
 
 ## Local development
 
-`make run-dev` builds the binary and runs it in proxy mode on port 8080 with `base_domain = localhost`,
-data in `./.data` and the admin token `dev-admin-token`. Browsers resolve `*.localhost` to the
-loopback address, so no DNS or certificate is needed.
+`deploy/dev.yaml` runs the server in proxy mode on port 8080 with `base_domain: localhost`, data in
+`./.data` and the admin token `dev-admin-token`, unless `AGALMA_AUTH_ADMIN_TOKEN` is set in the
+environment or in `./.env`. Browsers resolve `*.localhost` to the loopback address, so no DNS or
+certificate is needed.
 
 ```sh
-make run-dev
+go run ./cmd/agalma serve --config deploy/dev.yaml
 
 # in another terminal
-agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
-agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
+go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
+go run ./cmd/agalma --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
 
-AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... agalma publish ./site --slug demo
+AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... go run ./cmd/agalma publish ./site --slug demo
 ```
 
-Open `http://demo.localhost:8080/`. The MCP server is at `http://mcp.localhost:8080/`. `make clean`
-removes the binary and `./.data`. If a tool on your system does not resolve `*.localhost` (most
+Open `http://demo.localhost:8080/`. The MCP server is at `http://mcp.localhost:8080/`. Delete
+`./.data` to start again from nothing. If a tool on your system does not resolve `*.localhost` (most
 browsers and systemd-resolved do), add the hosts you need to `/etc/hosts`:
 `127.0.0.1 api.localhost admin.localhost mcp.localhost demo.localhost`.
 
-Other targets: `make build`, `make test` (race detector), `make lint` (vet and staticcheck),
-`make vuln` (govulncheck) and `make snapshot` (a local goreleaser build without publishing).
+The CLI reads `./.env` as well, so `AGALMA_URL` and `AGALMA_TOKEN` can live there instead of on the
+command line. Keep `.env` out of version control.
+
+### Build, test and release
+
+```sh
+# build, stamped with the version from git
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X agalma/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o agalma ./cmd/agalma
+
+go test -race ./...                                       # tests with the race detector
+test -z "$(gofmt -l .)"                                   # formatting check
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...    # lint
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
+
+goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release dry run
+```
+
+On pull requests and pushes to `main`, GitHub Actions runs gofmt, go vet, staticcheck, govulncheck,
+`go mod tidy -diff`, `go test -race` and the cross-builds. To release, push a `v*` tag: the workflow
+runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, and
+pushes the signed image to `ghcr.io/peterbooker/agalma`.

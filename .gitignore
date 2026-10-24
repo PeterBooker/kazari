@@ -5,3 +5,6 @@
 *.db-shm
 /data/
 /.data/
+.env
+.env.*
+!.env.example
