@@ -33,18 +33,17 @@ the base domain; replace it with yours.
 
 Each release on GitHub carries `agalma_<version>_<os>_<arch>.tar.gz` archives (the binary, the
 licence, this README and the files in `deploy/`), a `checksums.txt`, an SBOM per archive, and a
-cosign signature of the checksums (`checksums.txt.sig`, `checksums.txt.pem`).
+Sigstore bundle for the checksums (`checksums.txt.sigstore.json`), signed with cosign.
 
 ```sh
 VERSION=0.1.0
 curl -LO https://github.com/PeterBooker/agalma/releases/download/v$VERSION/agalma_${VERSION}_linux_amd64.tar.gz
 curl -LO https://github.com/PeterBooker/agalma/releases/download/v$VERSION/checksums.txt
-curl -LO https://github.com/PeterBooker/agalma/releases/download/v$VERSION/checksums.txt.sig
-curl -LO https://github.com/PeterBooker/agalma/releases/download/v$VERSION/checksums.txt.pem
+curl -LO https://github.com/PeterBooker/agalma/releases/download/v$VERSION/checksums.txt.sigstore.json
 
 # The checksums were signed by the release workflow (keyless cosign).
 cosign verify-blob checksums.txt \
-  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --bundle checksums.txt.sigstore.json \
   --certificate-identity-regexp '^https://github.com/PeterBooker/agalma/\.github/workflows/release\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 

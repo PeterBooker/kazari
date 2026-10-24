@@ -149,7 +149,7 @@ from code) live in `site/content/`. Building it needs only the standard edition 
 version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node, no theme.
 
 ```sh
-go install github.com/gohugoio/hugo@v0.161.1   # Hugo at the version CI uses
+go install github.com/gohugoio/hugo@v0.168.0   # Hugo at the version CI uses
 hugo server --source site                      # preview at http://localhost:1313/agalma/, reloads on save
 hugo --source site --gc --minify               # build into site/public/ as CI does
 ```

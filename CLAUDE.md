@@ -39,7 +39,7 @@ AGALMA_URL=http://api.localhost:8080 AGALMA_TOKEN=agk_... go run ./cmd/agalma pu
 goreleaser release --snapshot --clean --skip=publish,sign,sbom
 
 # website: Hugo standard edition at HUGO_VERSION from .github/workflows/pages.yml
-go install github.com/gohugoio/hugo@v0.161.1
+go install github.com/gohugoio/hugo@v0.168.0
 hugo server --source site               # http://localhost:1313/agalma/, live reload
 hugo --source site --gc --minify        # build into site/public/ as CI does; must print no WARN or ERROR
 ```

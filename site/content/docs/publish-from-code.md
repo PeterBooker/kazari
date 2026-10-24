@@ -118,7 +118,7 @@ jobs:
             | tar -xz agalma
           sudo install -m 0755 agalma /usr/local/bin/agalma
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event.action != 'closed'
 
       - name: Build

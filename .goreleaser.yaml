@@ -45,13 +45,12 @@ sboms:
 
 signs:
   - cmd: cosign
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
-      - --yes
-      - --output-certificate=${certificate}
-      - --output-signature=${signature}
+      - --bundle=${signature}
       - ${artifact}
+      - --yes
     artifacts: checksum
 
 dockers:
@@ -94,7 +93,7 @@ docker_manifests:
 
 docker_signs:
   - cmd: cosign
-    args: [sign, --yes, "${artifact}"]
+    args: [sign, --yes, "${artifact}@${digest}"]
     artifacts: manifests
 
 changelog:
