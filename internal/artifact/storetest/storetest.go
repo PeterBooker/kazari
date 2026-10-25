@@ -45,12 +45,15 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"ListFilters", testListFilters},
 		{"ListPagination", testListPagination},
 		{"ListInvalid", testListInvalid},
+		{"ListMembers", testListMembers},
 		{"Resolve", testResolve},
 		{"Files", testFiles},
 		{"Usage", testUsage},
 		{"LifecycleQueries", testLifecycleQueries},
 		{"PurgeAndDeleteTombstone", testPurgeAndDeleteTombstone},
 		{"Blobs", testBlobs},
+		{"ShareLinks", testShareLinks},
+		{"ShareLinksFollowTheRow", testShareLinksFollowTheRow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1172,5 +1175,125 @@ func testBlobs(t *testing.T, h *harness) {
 	}
 	if diff := cmp.Diff(sorted(free1, used), unref(at(3*time.Hour), 10)); diff != "" {
 		t.Fatalf("after purge (-want +got):\n%s", diff)
+	}
+}
+
+// Members artifacts are listed to every viewer, like public ones, unless
+// they are offline.
+func testListMembers(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("dave")
+	for i, slug := range []string{"team-page", "team-draft"} {
+		a := newArtifact(slug, "alice", at(time.Duration(i)*time.Hour))
+		a.Visibility = artifact.Members
+		h.create(t, a)
+	}
+	draft := h.get(t, "team-draft")
+	draft.UnpublishedAt = ptr(at(3 * time.Hour))
+	h.update(t, draft, "alice")
+
+	page, err := h.store.List(h.ctx, artifact.ListQuery{Viewer: "dave"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"team-page"}, slugs(page.Items), cmpOpts...); diff != "" {
+		t.Fatalf("stranger's listing (-want +got):\n%s", diff)
+	}
+	if got := h.get(t, "team-page").Visibility; got != artifact.Members {
+		t.Fatalf("Visibility = %q, want members", got)
+	}
+}
+
+func testShareLinks(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	h.create(t, newArtifact("demo", "alice", at(0)))
+	h.create(t, newArtifact("other", "bob", at(0)))
+
+	l1 := &artifact.ShareLink{Prefix: "aaaaaaaa", Label: "for the client", CreatedBy: "alice",
+		CreatedAt: at(time.Hour), ExpiresAt: at(48 * time.Hour)}
+	l2 := &artifact.ShareLink{Prefix: "bbbbbbbb", CreatedBy: "bob", CreatedAt: at(2 * time.Hour), ExpiresAt: at(72 * time.Hour)}
+	if err := h.store.CreateShareLink(h.ctx, "demo", l1, hashOf("token-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.CreateShareLink(h.ctx, "demo", l2, hashOf("token-2")); err != nil {
+		t.Fatal(err)
+	}
+	wantErr(t, "CreateShareLink on a missing slug",
+		h.store.CreateShareLink(h.ctx, "missing", &artifact.ShareLink{Prefix: "cccccccc", CreatedAt: at(0), ExpiresAt: at(time.Hour)}, hashOf("t")),
+		artifact.ErrNotFound)
+
+	links, err := h.store.ListShareLinks(h.ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]artifact.ShareLink{*l2, *l1}, links, cmpOpts...); diff != "" {
+		t.Fatalf("ListShareLinks, newest first (-want +got):\n%s", diff)
+	}
+	if links, err := h.store.ListShareLinks(h.ctx, "other"); err != nil || len(links) != 0 {
+		t.Fatalf("ListShareLinks(other) = %v, %v; want none", links, err)
+	}
+
+	got, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(l1, got, cmpOpts...); diff != "" {
+		t.Fatalf("ShareLink (-want +got):\n%s", diff)
+	}
+	_, err = h.store.ShareLink(h.ctx, "other", hashOf("token-1"))
+	wantErr(t, "ShareLink of another artifact", err, artifact.ErrLinkNotFound)
+	_, err = h.store.ShareLink(h.ctx, "demo", hashOf("unknown"))
+	wantErr(t, "ShareLink unknown", err, artifact.ErrLinkNotFound)
+
+	for i := range 2 {
+		if err := h.store.UseShareLink(h.ctx, "demo", l1.Prefix, at(time.Duration(3+i)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantErr(t, "UseShareLink through another artifact", h.store.UseShareLink(h.ctx, "other", l1.Prefix, at(0)), artifact.ErrLinkNotFound)
+	if got, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.Uses != 2 || !got.LastUsedAt.Equal(at(4*time.Hour)) {
+		t.Fatalf("after two uses: Uses %d, LastUsedAt %v", got.Uses, got.LastUsedAt)
+	}
+
+	if err := h.store.RevokeShareLink(h.ctx, "demo", l1.Prefix, at(5*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// A second revoke keeps the first time.
+	if err := h.store.RevokeShareLink(h.ctx, "demo", l1.Prefix, at(6*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.RevokedAt == nil || !got.RevokedAt.Equal(at(5*time.Hour)) {
+		t.Fatalf("RevokedAt = %v, want %v", got.RevokedAt, at(5*time.Hour))
+	}
+	wantErr(t, "RevokeShareLink through another artifact",
+		h.store.RevokeShareLink(h.ctx, "other", l2.Prefix, at(0)), artifact.ErrLinkNotFound)
+	wantErr(t, "RevokeShareLink unknown", h.store.RevokeShareLink(h.ctx, "demo", "zzzzzzzz", at(0)), artifact.ErrLinkNotFound)
+}
+
+// A link belongs to its artifact row: it outlives a purge, goes with the
+// tombstone, and never opens a later artifact that reuses the slug.
+func testShareLinksFollowTheRow(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	h.create(t, newArtifact("demo", "alice", at(0)))
+	l := &artifact.ShareLink{Prefix: "aaaaaaaa", CreatedBy: "alice", CreatedAt: at(0), ExpiresAt: at(1000 * time.Hour)}
+	if err := h.store.CreateShareLink(h.ctx, "demo", l, hashOf("token")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Purge(h.ctx, "demo", at(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token")); err != nil {
+		t.Fatalf("ShareLink on a tombstone: %v", err)
+	}
+	if err := h.store.DeleteTombstone(h.ctx, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	h.create(t, newArtifact("demo", "bob", at(2*time.Hour)))
+	_, err := h.store.ShareLink(h.ctx, "demo", hashOf("token"))
+	wantErr(t, "old link on the reused slug", err, artifact.ErrLinkNotFound)
+	if links, err := h.store.ListShareLinks(h.ctx, "demo"); err != nil || len(links) != 0 {
+		t.Fatalf("ListShareLinks on the reused slug = %v, %v; want none", links, err)
 	}
 }

@@ -22,8 +22,9 @@ const (
 // maxBodyBytes caps every request body.
 const maxBodyBytes = 64 << 10
 
-// Handler serves the metadata documents and the /oauth/ endpoints. Mount it
-// at the root of the MCP host, beside the MCP endpoint; it claims
+// Handler serves the metadata documents and the /oauth/ endpoints, browser
+// sign-in for gated artifacts included. Mount it at the root of the MCP
+// host, beside the MCP endpoint; it claims
 // /.well-known/oauth-authorization-server,
 // /.well-known/oauth-protected-resource (and paths below it) and /oauth/.
 func (s *Service) Handler() http.Handler {
@@ -41,6 +42,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET "+PathAuthorize, s.serveAuthorize)
 	mux.HandleFunc("GET "+PathCallback, s.serveCallback)
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
+	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
+	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
 	return mux
 }
 

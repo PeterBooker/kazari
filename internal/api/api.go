@@ -33,6 +33,7 @@ const (
 	CodeEditNotFound     = "edit_not_found"
 	CodeEditAmbiguous    = "edit_ambiguous"
 	CodeAnchorMismatch   = "anchor_mismatch"
+	CodeLinkNotFound     = "share_link_not_found"
 )
 
 // Error is the body of every error response.
@@ -214,9 +215,43 @@ type StaleResult struct {
 	Artifact  Artifact  `json:"artifact"`
 }
 
-// VisibilityRequest sets visibility (public, unlisted, unpublished).
+// VisibilityRequest sets visibility (public, unlisted, members, unpublished).
 type VisibilityRequest struct {
 	Visibility string `json:"visibility"`
+}
+
+// ShareLink is a share link of a members artifact, without its token.
+// Prefix names it for revoking.
+type ShareLink struct {
+	Prefix     string     `json:"prefix"`
+	Label      string     `json:"label,omitempty"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Uses       int        `json:"uses"`
+	Active     bool       `json:"active"`
+}
+
+// ShareLinkRequest is POST /artifacts/{slug}/share-links. ExpiresIn is a
+// duration such as 72h or 7d; empty means 7 days.
+type ShareLinkRequest struct {
+	Label     string `json:"label,omitempty"`
+	ExpiresIn string `json:"expires_in,omitempty"`
+}
+
+// CreatedShareLink carries the link's URL, which holds its token, exactly
+// once.
+type CreatedShareLink struct {
+	URL       string    `json:"url"`
+	ShareLink ShareLink `json:"share_link"`
+	Artifact  Artifact  `json:"artifact"`
+}
+
+// ShareLinkList is GET /artifacts/{slug}/share-links, newest first.
+type ShareLinkList struct {
+	Items []ShareLink `json:"items"`
 }
 
 // OK is an empty success body.

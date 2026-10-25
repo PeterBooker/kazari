@@ -178,9 +178,9 @@ func TestListTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"begin_upload", "create_artifact", "delete_artifact", "edit_file", "get_artifact", "get_guide",
-		"list_artifacts", "mark_stale", "publish_version", "read_file", "set_visibility", "unmark_stale", "update_artifact",
-		"upload_chunk"}
+	want := []string{"begin_upload", "create_artifact", "create_share_link", "delete_artifact", "edit_file", "get_artifact",
+		"get_guide", "list_artifacts", "list_share_links", "mark_stale", "publish_version", "read_file", "revoke_share_link",
+		"set_visibility", "unmark_stale", "update_artifact", "upload_chunk"}
 	var got []string
 	byName := map[string]*mcp.Tool{}
 	for _, tool := range res.Tools {
@@ -215,8 +215,20 @@ func TestListTools(t *testing.T) {
 			t.Errorf("upload_chunk description lacks %q", s)
 		}
 	}
-	if d := byName["set_visibility"].Description; !strings.Contains(d, "unpublished") {
-		t.Errorf("set_visibility description lacks unpublished")
+	if d := byName["set_visibility"].Description; !strings.Contains(d, "unpublished") || !strings.Contains(d, "\"members\"") {
+		t.Errorf("set_visibility description lacks unpublished or members")
+	}
+	if d := create; !strings.Contains(d, "\"members\"") || !strings.Contains(d, `"public" on this instance`) {
+		t.Errorf("create_artifact description lacks members or the default visibility")
+	}
+	if d := byName["create_share_link"].Description; !strings.Contains(d, "90 days") || !strings.Contains(d, "only this once") {
+		t.Errorf("create_share_link description lacks the maximum lifetime or the one-time url")
+	}
+	if a := byName["list_share_links"].Annotations; !a.ReadOnlyHint {
+		t.Errorf("list_share_links is not read-only")
+	}
+	if a := byName["revoke_share_link"].Annotations; a.DestructiveHint == nil || !*a.DestructiveHint || !a.IdempotentHint {
+		t.Errorf("revoke_share_link annotations = %+v", a)
 	}
 	if a := byName["get_artifact"].Annotations; !a.ReadOnlyHint {
 		t.Errorf("get_artifact is not read-only")

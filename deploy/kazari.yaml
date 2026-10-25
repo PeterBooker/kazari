@@ -61,13 +61,19 @@ serve:
   # app origins there to let it embed pages (docs/mcp.md, Preview app).
   allow_csp_override: true           # kazari.csp metadata replaces csp for that artifact
   reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
+  # Visibility of artifacts created without one: public | unlisted | members.
+  # members pages open only for people who sign in to this instance (or hold
+  # a share link); members is the safer default for an internal instance.
+  default_visibility: public
+  share_link_max_ttl: 90d            # longest a share link may stay valid
 
 auth:
   write_policy: shared               # shared | owner
   admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
   # Sign-in through the organisation's OpenID Connect provider. Leave oidc
   # out entirely to fall back to API-key sign-in on the consent page.
-  # Register https://mcp.<base_domain>/oauth/callback as the redirect URI.
+  # Register https://mcp.<base_domain>/oauth/callback as the redirect URI; it
+  # serves MCP clients and people opening members pages alike.
   #
   # oidc:
   #   issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # or https://accounts.google.com

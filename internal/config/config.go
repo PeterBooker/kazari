@@ -122,7 +122,8 @@ type Lifecycle struct {
 	GCInterval    Duration `yaml:"gc_interval"`
 }
 
-// Serve controls headers on served artifacts and which slugs are reserved.
+// Serve controls headers on served artifacts, which slugs are reserved and
+// how artifacts are shared.
 type Serve struct {
 	// CSP is the instance default Content-Security-Policy; empty sends none.
 	CSP string `yaml:"csp"`
@@ -130,6 +131,11 @@ type Serve struct {
 	AllowCSPOverride bool `yaml:"allow_csp_override"`
 	// ReservedSlugs may not be used as artifact slugs.
 	ReservedSlugs []string `yaml:"reserved_slugs"`
+	// DefaultVisibility is given to artifacts created without one: public,
+	// unlisted or members.
+	DefaultVisibility string `yaml:"default_visibility"`
+	// ShareLinkMaxTTL is the longest a share link may stay valid.
+	ShareLinkMaxTTL Duration `yaml:"share_link_max_ttl"`
 }
 
 // Auth holds the write policy, the admin token and the optional identity provider.
@@ -213,9 +219,11 @@ func Default() Config {
 			GCInterval:    Duration(1 * hour),
 		},
 		Serve: Serve{
-			CSP:              DefaultCSP,
-			AllowCSPOverride: true,
-			ReservedSlugs:    slices.Clone(defaultReservedSlugs),
+			CSP:               DefaultCSP,
+			AllowCSPOverride:  true,
+			ReservedSlugs:     slices.Clone(defaultReservedSlugs),
+			DefaultVisibility: "public",
+			ShareLinkMaxTTL:   Duration(90 * day),
 		},
 		Auth: Auth{
 			WritePolicy: "shared",

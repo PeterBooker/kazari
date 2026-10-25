@@ -44,6 +44,17 @@ type consentPage struct {
 	Error        string
 }
 
+// signInPage asks for an API key to open a gated artifact, on an instance
+// without an identity provider.
+type signInPage struct {
+	Site     string // origin of the artifact host
+	Lifetime string // of a session, e.g. "12 hours"
+	Host     string
+	Path     string
+	Nonce    string
+	Error    string
+}
+
 var scopeDescriptions = map[string]string{
 	auth.ScopeRead:   "List and read your artifacts",
 	auth.ScopeWrite:  "Create and update artifacts",

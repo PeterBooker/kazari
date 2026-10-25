@@ -16,7 +16,8 @@ This document is the threat model and security reference for Kazari v1. It descr
 
 ### Actors
 
-- **Anonymous visitor.** Reads artifact pages. Can send any host header, path, query, method and header. Has no credential.
+- **Anonymous visitor.** Reads artifact pages that are not `members` only. Can send any host header, path, query, method and header. Has no credential.
+- **Viewer.** A person signed in to the instance in a browser, or holding a share link, who reads `members` pages. Holds only host-only cookies on the hosts they opened.
 - **Authenticated member.** Holds an API key or OAuth token with some of `artifacts:read`, `artifacts:write`, `artifacts:delete`. May try to escape their scopes, act on other users' artifacts beyond the write policy, exceed limits or quota, or attack the server with what they upload.
 - **Malicious bundle.** Content uploaded by a member: HTML and JavaScript that runs in readers' browsers, archives built to escape paths or exhaust resources, metadata built to inject headers.
 - **Malicious OAuth client.** Anyone can register a client (DCR) or name a client ID metadata document URL. Such clients can send users through the authorization flow and make the server fetch URLs.
@@ -24,7 +25,7 @@ This document is the threat model and security reference for Kazari v1. It descr
 
 ### Trust boundaries
 
-1. **Browser to artifact host.** Untrusted requests meet untrusted content. Everything served here is treated as hostile to everything else.
+1. **Browser to artifact host.** Untrusted requests meet untrusted content. Everything served here is treated as hostile to everything else. For a `members` artifact the gate decides first whether the request may see the page (see [Gated artifacts](#gated-artifacts)).
 2. **Browser or client to control plane.** Every request must carry a bearer credential (or, for the OAuth pages, the consent cookie), and every action is authorised against scopes and the write policy.
 3. **Upload boundary.** Bytes from members enter through inline JSON, multipart tar.gz or chunked staging. They are size-capped, path-validated and content-addressed before anything references them.
 4. **Kazari to the identity provider and to CIMD URLs.** Outbound requests: OIDC tokens are verified cryptographically; metadata fetches are restricted to public addresses.
@@ -35,13 +36,13 @@ This document is the threat model and security reference for Kazari v1. It descr
 Every artifact is served from its own host, `<slug>.<base>`, and every pinned version from `<slug>--v<N>.<base>`. Each host is a separate web origin, so the browser's same-origin policy keeps artifacts apart:
 
 - Script in one artifact cannot read another artifact's DOM, storage, cookies, IndexedDB or service workers, and cannot make credentialed same-origin requests to it.
-- Artifacts cannot reach the control plane as same-origin. Control-plane credentials are bearer headers, never cookies, so a page cannot ride on a visitor's session. The only cookie in the system is the OAuth consent cookie: `__Host-kazari_oauth` on `mcp.`, path `/`, `HttpOnly; Secure; SameSite=Lax`, ten minutes. Kazari never sets a cookie with a `Domain` attribute, and the `__Host-` prefix makes browsers refuse one for that name from any other host.
-- The site handler serves only `GET` and `HEAD` and never sets cookies. An artifact's own script can still set cookies for its own host, and those are confined to that origin.
+- Artifacts cannot reach the control plane as same-origin. API, MCP and admin credentials are bearer headers, never cookies, so a page cannot ride on a visitor's session. Kazari's cookies are all `__Host-` cookies (path `/`, `HttpOnly; Secure; SameSite=Lax`, no `Domain`): on `mcp.`, `__Host-kazari_oauth` (an OAuth authorization in progress, ten minutes), `__Host-kazari_signin` (a browser sign-in in progress, ten minutes) and `__Host-kazari_session` (a browser's sign-in, twelve hours), none of which the API or MCP endpoints read; on an artifact host, `__Host-kazari_nonce` and `__Host-kazari_view` (see [Gated artifacts](#gated-artifacts)). Kazari never sets a cookie with a `Domain` attribute, and the `__Host-` prefix makes browsers refuse one for those names from any other host.
+- The site handler serves only `GET` and `HEAD`, except the gate's sign-out form under `/.kazari/`, and sets cookies only from the gate. An artifact's own script can still set cookies for its own host, and those are confined to that origin; it cannot read or overwrite the gate's `HttpOnly` cookies.
 
 Origins are separate, but every artifact host and the control plane share one *site* (registrable domain), and cookies are scoped by site, not by origin:
 
-- An artifact's script can set a cookie with `Domain=<base>`, or with the parent domain of `<base>`, which the browser then sends to every host under it. Kazari's only cookie cannot be planted that way (its `__Host-` prefix), and the consent form also checks `Origin`, but a page can still fill a visitor's cookie jar for `<base>` past the 64 KiB header limit, after which every Kazari host answers that visitor `431` until they clear cookies.
-- Requests from one artifact host to another, or to `mcp.<base>`, are same-site, so `SameSite=Lax` does not stop them.
+- An artifact's script can set a cookie with `Domain=<base>`, or with the parent domain of `<base>`, which the browser then sends to every host under it. Kazari's cookies cannot be planted that way (their `__Host-` prefix), and the consent and sign-in forms also check `Origin`, but a page can still fill a visitor's cookie jar for `<base>` past the 64 KiB header limit, after which every Kazari host answers that visitor `431` until they clear cookies.
+- Requests from one artifact host to another, or to `mcp.<base>`, are same-site, so `SameSite=Lax` does not stop them. A `members` page therefore also sends `Cross-Origin-Resource-Policy: same-origin`, so another artifact cannot include its scripts, JSON or images.
 - If `<base>` sits under a domain that serves other applications (for example `art.example.com` under `example.com`), artifact scripts can read that domain's non-`HttpOnly` cookies set with `Domain=example.com`, and set cookies those applications will receive.
 
 So give `base_domain` a registrable domain of its own (for example `example-artifacts.com`, not a subdomain of the company domain), and consider listing it on the [Public Suffix List](https://publicsuffix.org), which makes browsers treat each artifact host as its own site.
@@ -50,7 +51,7 @@ Arbitrary HTML and JavaScript is the product, so Kazari does not try to make upl
 
 Host handling (`internal/site/host.go`): the host is lower-cased and its port and trailing dot stripped. It must end in `.<base>` with exactly one label in front. The label splits on the last `--v` followed by digits (no leading zeros, at most nine digits), and the slug must pass the slug rules. Anything else, including the apex, deeper subdomains and IDNA labels (they contain `--`), gets the instance 404 page. Reserved slugs (`api`, `mcp`, `admin`, `www`, ...) cannot be created, and the host router sends the control-plane hosts elsewhere before the site handler runs.
 
-Path handling (`internal/site/site.go`): the decoded request path is refused (404) if it contains a control character, a backslash or a `..` segment. That includes the percent-encoded forms, because the check runs after decoding. It is then cleaned and looked up in the version's file map, which is built from validated paths only. No path is ever joined onto a filesystem path: blobs are opened by content hash. Directory redirects are always relative to the host (`/<clean>/`), so they cannot be turned into open redirects.
+Path handling (`internal/site/site.go`): requests under `/.kazari/` go to the gate, never to the artifact's files, and no artifact may store a file under `.kazari/`. Every other decoded request path is refused (404) if it contains a control character, a backslash or a `..` segment. That includes the percent-encoded forms, because the check runs after decoding. It is then cleaned and looked up in the version's file map, which is built from validated paths only. No path is ever joined onto a filesystem path: blobs are opened by content hash. Directory redirects are always relative to the host (`/<clean>/`), so they cannot be turned into open redirects.
 
 ## Header policy
 
@@ -62,7 +63,8 @@ Every artifact response carries:
 | `Content-Security-Policy` | instance default, or the artifact's `kazari.csp` when `allow_csp_override` is on | See below. Instance error pages always use the default. |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Does not leak paths to third parties. |
 | `X-Robots-Tag` | `noindex` unless `kazari.indexable = "true"`; always on errors | Self-hosted content is not indexed by default. |
-| `Cache-Control` | `no-cache` on the latest host, `public, max-age=<lifecycle.tombstone, at most a year>, immutable` on version hosts, `no-cache` on every error | Versions never change. Latest revalidates cheaply against the strong ETag. The version-host lifetime never exceeds the tombstone period, so once a slug is freed, another owner's `<slug>--v1` is not answered from a cache of the old owner's. |
+| `Cache-Control` | `no-cache` on the latest host, `public, max-age=<lifecycle.tombstone, at most a year>, immutable` on version hosts, `no-cache` on every error; `private, no-cache` on every host of a `members` artifact | Versions never change. Latest revalidates cheaply against the strong ETag. The version-host lifetime never exceeds the tombstone period, so once a slug is freed, another owner's `<slug>--v1` is not answered from a cache of the old owner's. A `members` page is never kept by a shared cache, and a browser asks again each time, even for a version it has seen, so a sign-out or a revoked link takes effect there too; the ETag keeps the repeat a `304`. |
+| `Cross-Origin-Resource-Policy` | `same-origin`, on `members` artifacts only | Sibling artifact hosts are same-site, so a viewer's cookie rides along when another artifact loads this one's files; the browser then refuses to hand them over. |
 | `ETag` | `"<sha256>"` | Content address. |
 
 Control-plane hosts add `Cross-Origin-Opener-Policy: same-origin`, `nosniff`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The OAuth pages add `X-Frame-Options: DENY` and a CSP of `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' <redirect origin>`. Raw file reads through the user API (`GET /v1/artifacts/{slug}/files/...`) are sent with `Content-Security-Policy: default-src 'none'; sandbox`, so artifact bytes can never run as a document on the `api.` origin.
@@ -93,6 +95,25 @@ The reasoning:
 
 The MCP server's preview app (`ui://kazari/preview.html`, see [mcp.md](mcp.md#preview-app)) runs inside the MCP host's sandbox. It is static HTML with inline script, carries no credential and shows the name, description and URLs from the tool result with `textContent`, never as markup. It embeds the published page only when the instance CSP's `frame-ancestors` allows framing; the default `'none'` keeps the card to links. Relaxing `frame-ancestors` to an MCP host's app origins lets those origins frame every page of the instance, so pages become clickjackable from there; artifact pages hold no sessions, so what an attacker can make a visitor click is limited to the page's own controls. Allow only hosts you trust, and keep `'none'` when pages carry forms that matter.
 
+## Gated artifacts
+
+An artifact with visibility `members` is served only to people who sign in to the instance in their browser (the users the provisioning policy admits) and to holders of one of its share links. The same check runs on the latest host and on every version host. The flow is in [identity.md](identity.md#viewing-members-pages); the security properties are:
+
+- **No cookie spans hosts.** A parent-domain cookie would be refused once `<base>` is on the Public Suffix List, would be sent to every artifact, and could be shadowed or pushed out by any artifact's script (#19 is that attack). Instead the sign-in session stays on `mcp.`, and each artifact host gets its own view session through a redirect.
+- **The handshake.** A navigation without access sets `__Host-kazari_nonce` (32 random bytes, ten minutes) on the artifact host and goes to `mcp.<base>/oauth/signin` with the host's label, the path and the S256 of the nonce. A live session there (or a fresh sign-in) returns the browser with a code: 32 random bytes, stored hashed, single use, one minute, valid only for that host and only with the matching nonce. So a code started by someone else cannot sign a visitor in as that person, and a code is useless anywhere else. The return path must be a path on the same host (`/`, not `//` or `/\`), so the sign-in is never an open redirect, and the MCP host only sends codes to labels that name an artifact host.
+- **The view cookie.** `__Host-kazari_view` (`HttpOnly; Secure; SameSite=Lax`, path `/`) holds either a view session token (32 random bytes, stored hashed, valid for one host, ending with its sign-in session) or a share link token. Every request checks it against the database: the user must still be enabled, an API-key sign-in's key still active, a share link unrevoked, unexpired and belonging to this artifact row, so a slug reused after its tombstone never opens with an old link.
+- **Share links** are `kzs_<prefix>_<secret>` (40 + 256 random bits), stored as SHA-256, shown once. They are multi-use, so mail scanners and chat previews that fetch links do not use them up; a `HEAD` changes nothing. Opening one swaps the token into the cookie and redirects to `/` with `Referrer-Policy: no-referrer`. Kazari's request log records paths, not query strings, so tokens and codes stay out of it; a reverse proxy in front logs whole URLs unless told not to. They expire after 7 days by default and at most `serve.share_link_max_ttl` (90 days).
+- **Who manages them.** Creating, listing and revoking a link needs the same rights as changing the artifact (`artifacts:write` and the write policy; listing needs `artifacts:read`), and an offline artifact's links can be managed only by the people who can see it.
+- **Responses.** Pages without access are never sent: page navigations get a `302` to sign in, everything else `401`, both `Cache-Control: no-store`. Gated content is `Cache-Control: private, no-cache` on every host, version hosts included (an `immutable` version would be shown from the browser's cache after a sign-out), and `Cross-Origin-Resource-Policy: same-origin`. The gate's own pages carry `default-src 'none'` and `X-Frame-Options: DENY`. Sign-out (`/.kazari/signout`, on a host the browser opened) is a form post that must come from the same host; it ends the browser's sign-in session and with it every view session.
+- **Agents.** MCP and REST already read `members` artifacts with bearer credentials. Artifact hosts do not accept bearer tokens: headless browsers add extra headers to every request a page makes, including to the CDNs the CSP allows, so a key sent that way would leak to third parties. Give a headless browser a share link.
+
+What gating does not do:
+
+- **Hide the slug.** An unknown slug answers `404`, a `members` one a sign-in redirect, so a guessed slug's existence shows. Choose slugs that can be seen.
+- **Recall copies.** A page's own script, a service worker it installed, a download or a screenshot keep what a viewer already saw. Revoking a link or disabling a user stops new responses. Copies that a shared cache took while a page was still `public` (version hosts for up to `lifecycle.tombstone`) stay until you purge them.
+- **Protect a page from its own artifact.** Under the `shared` write policy any member can change any artifact, including a `members` page's script, which runs with the viewer's access to that page.
+- **Choose people.** `members` means every user of the instance. Per-person or per-group lists are not part of this version.
+
 ## Upload trust boundary and limits
 
 Content enters through four paths, and all of them end in `artifact.Service`, which applies the same rules.
@@ -102,7 +123,7 @@ Content enters through four paths, and all of them end in `artifact.Service`, wh
 3. **Chunked staging** (`/v1/uploads`): an upload belongs to the user who began it; anyone else, and an expired upload, gets `upload_not_found`. Upload ids are 16 random bytes and are checked against their exact shape before they are used as a directory name, so they cannot escape the staging root. Staged files are stored under numeric names, never under their paths. Each chunk must start at the staged size; a retry of the last chunk is acknowledged. A chunk's content type is checked like a manifest's when the chunk arrives. The open-upload limit is checked in the transaction that creates the upload. Expired uploads and orphaned directories are swept.
 4. **Edits** (`POST /v1/artifacts/{slug}/edit`, the `edit_file` tool): the stored file is read, the edits are applied in memory and the result is published through the same `Service.Update` path as any other version, so the write policy, quota, size and path rules all apply. Only UTF-8 text without NUL bytes is edited, at most `limits.max_file_bytes`, with at most 100 edits per call and 10000 replacements per edit, and the size of each result is checked against the file limit before it is built. Matching streams over the file's lines: the whitespace-tolerant fallback is a linear Knuth-Morris-Pratt search, it and the closest-match search apply only to an `old_text` of at most 2000 lines, and the closest-match search scores at most 40 candidate windows in full. Excerpts in results clip long lines, and an anchored read (`?anchors=true`) is streamed, so neither holds a copy of a large file's lines in memory.
 
-Path rules (`artifact.ValidatePath`): non-empty; at most 1024 bytes; segments at most 255 bytes; relative; not a directory (no trailing `/`); no control characters, DEL, backslash or invalid UTF-8; cleaned with `path.Clean`; no `..` left after cleaning. Paths are compared byte-for-byte: no case folding or Unicode normalisation, so `a.html` and `A.html`, or NFC and NFD forms, are different files. Duplicate paths in one request are rejected after cleaning.
+Path rules (`artifact.ValidatePath`): non-empty; at most 1024 bytes; segments at most 255 bytes; relative; not a directory (no trailing `/`); no control characters, DEL, backslash or invalid UTF-8; cleaned with `path.Clean`; no `..` left after cleaning; not `.kazari` or under `.kazari/`. Paths are compared byte-for-byte: no case folding or Unicode normalisation, so `a.html` and `A.html`, or NFC and NFD forms, are different files. Duplicate paths in one request are rejected after cleaning.
 
 Slug rules: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, 3 to 63 bytes, no `--`, not reserved, immutable after create.
 
@@ -131,6 +152,8 @@ Metadata: at most 64 pairs (configurable), keys `^[a-zA-Z0-9_.-]{1,64}$`, values
 | Reading one request | 10 min (headers 10 s) | `http.Server` timeouts, so a stalled client cannot hold a connection; artifact hosts close a connection whose `GET` announces a body |
 | Writing one response | 15 min | |
 | Admin token | at least 32 characters | refused at startup, except under a `localhost` base domain |
+| Share link lifetime | 7 days by default, at most 90 days (`serve.share_link_max_ttl`) | |
+| Browser sign-in session | 12 h; a view code 1 min, single use | every view session ends with its sign-in session |
 | Client ID metadata document | 64 KiB, 10 s, cached 1 h, no redirects, public addresses only | |
 
 ## Authentication and authorisation
@@ -152,7 +175,7 @@ Metadata: at most 64 pairs (configurable), keys `^[a-zA-Z0-9_.-]{1,64}$`, values
 ## Out of scope for v1
 
 - **Public-instance hardening.** v1 assumes the members are colleagues: any member can publish arbitrary HTML on the instance's domain, and the domain will be used for phishing if strangers can sign up. Do not run an instance with open sign-up (`auto_provision` without `allowed_domains`). There is no malware scanning, abuse reporting flow or per-artifact takedown other than the admin hide endpoint.
-- **Gated visibility.** `public` and `unlisted` are both served to anyone with the URL. There is no per-artifact access control on artifact hosts in v1. Do not publish secrets.
+- **Per-person access.** `public` and `unlisted` are served to anyone with the URL (`unlisted` is not private: slugs are easy to guess). `members` is served to every user of the instance and to share-link holders; there are no per-person or per-group lists, and no mode that trusts an identity header from a proxy in front. See [Gated artifacts](#gated-artifacts) for what gating does not do.
 - **Isolation between artifacts on the same instance beyond the browser's origin model.** For example, a CSP override that allows framing or third parties is the artifact owner's choice.
 - **Protecting artifacts from admins.** Admins can read, transfer and delete everything.
 - Enterprise managed auth (RFC 7523 JWT bearer grant) is a Phase 4 item.
@@ -168,6 +191,8 @@ Metadata: at most 64 pairs (configurable), keys `^[a-zA-Z0-9_.-]{1,64}$`, values
 7. **Backups.** Back up `data_dir`: `kazari.db` (use SQLite's online backup or stop the service) and `blobs/`. `certmagic/` holds certificate keys, and the database holds key and token hashes and user emails, so treat backups as secrets. `uploads/` is transient and does not need backing up.
 8. **Updates.** Run the latest release. Releases are built with `-trimpath` and `CGO_ENABLED=0`, by workflows whose actions are pinned to commit SHAs, from base images pinned by digest.
 9. **Domain.** Serve artifacts from a registrable domain of their own, not a subdomain of a domain your other applications use (see [Origin isolation](#origin-isolation)).
+10. **Default visibility.** On an instance whose pages are not for the open web, set `serve.default_visibility: members`, so a page published without a visibility is not public. Share links then cover the people outside.
+11. **Reverse proxy and CDN.** Keep query strings out of the proxy's access log, or accept that share-link tokens and sign-in codes land there. When a page that was `public` becomes `members`, purge its hosts from any CDN in front.
 
 ## Reporting a vulnerability
 

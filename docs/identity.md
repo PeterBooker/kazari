@@ -3,7 +3,9 @@
 Kazari has two kinds of credential:
 
 - **API keys** (`kzk_...`), issued by an admin, sent as `Authorization: Bearer`. They work on every surface and suit the CLI, scripts and agents that take a key in their configuration.
-- **OAuth access tokens**, which MCP clients (cloud agents' connectors, and agents on your machine configured without a key) obtain by sending the person through a sign-in flow. This page is about those.
+- **OAuth access tokens**, which MCP clients (cloud agents' connectors, and agents on your machine configured without a key) obtain by sending the person through a sign-in flow. Most of this page is about those.
+
+People opening a `members` page in a browser sign in through the same identity provider and the same callback; see [Viewing members pages](#viewing-members-pages).
 
 ## How sign-in works
 
@@ -134,6 +136,33 @@ curl -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: ap
 
 When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes. The grant lives only as long as the key: once the key is revoked or expires, or its user is disabled, the grant's access and refresh tokens stop working, and no token outlives the key's expiry. A one-person or small instance can therefore connect a cloud agent with no IdP set up: issue yourself a key, add the connector, paste the key once. The consent is recorded in the audit log as `oauth.grant` with `via: api_key` and the key's `key_prefix`.
 
+Opening a `members` page works the same way: the sign-in page asks for an API key with `artifacts:read`, and the browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. Browser sign-ins are recorded as `oauth.signin` (`via: oidc` or `api_key`).
+
+## Viewing members pages
+
+An artifact with visibility `members` opens only for people who can sign in to this instance, and for holders of a [share link](api.md#share-links). The rule is the same on the latest host and every version host. "Members" means exactly the people the [provisioning policy](#provisioning-policy) admits: there is no second list to keep. With `auto_provision` on, a first sign-in to view a page creates the account, just as connecting an agent would.
+
+```text
+browser ──1──▶ team.<base>/report       no view cookie: 302, sets a nonce cookie on team.
+        ──2──▶ mcp.<base>/oauth/signin  ?host=team&path=/report&nonce=<S256 of the nonce>
+                   │  signed in here already? skip to 4
+                   └──3──▶ your IdP  (or, without one, a form asking for an API key)
+        ◀──4── 302 team.<base>/.kazari/callback?code=...   single use, 1 minute, for team. only
+        ──5──▶ team. redeems the code with its nonce cookie, sets __Host-kazari_view, 302 /report
+```
+
+1. A page navigation to a `members` artifact without a valid view cookie is redirected to the MCP host. Anything else (a script, an image, a `fetch`, a frame, `curl`) gets `401` with a short explanation instead, since a sign-in page is no use to it.
+2. The MCP host keeps its own sign-in session, `__Host-kazari_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, path `/`). If the browser has a live one, it is sent straight back with a code; the person sees nothing.
+3. Otherwise the person signs in at the IdP, which returns to the same `https://mcp.<base>/oauth/callback` that MCP clients use, so nothing changes in the IdP's configuration. Without an IdP, a page asks for an API key with `artifacts:read`; that session ends with the key.
+4. The code is single use, lives one minute, works only on the host it was issued for, and only in the browser holding the matching nonce cookie, so a code started by someone else cannot sign a visitor in as them.
+5. The artifact host turns the code into a view session of its own: the cookie `__Host-kazari_view`, sent only to that host, never readable by the page's script. The next host (another artifact, or `team--v2.<base>`) repeats steps 1, 2, 4 and 5 without the IdP.
+
+Every sign-in session lasts 12 hours, and every view session it opened ends with it. Signing out at `/.kazari/signout` on a members page the browser has open (for example `https://<slug>.<base>/.kazari/signout`) ends its sign-in on every host. A disabled user, or a revoked API key, loses access on the next request.
+
+**Share links** are for people who cannot sign in. Opening one (`https://<slug>.<base>/.kazari/share?token=kzs_...`) stores its token as the view cookie on that host until the link expires, then redirects to `/`. The token works on every host of the artifact, but each host needs it once: for a pinned version, send `https://<slug>--v<N>.<base>/.kazari/share?token=kzs_...`. Revoking the link ends access on the next request.
+
+On a plain-HTTP instance (`external_scheme: http`, development only) the cookies drop `Secure` and the `__Host-` prefix: `kazari_session`, `kazari_view`, `kazari_nonce`.
+
 ## MCP clients
 
 **Client registration.** Kazari accepts both ways an MCP client identifies itself, and only public clients (no client secret, `token_endpoint_auth_method: none`):
@@ -155,10 +184,14 @@ Redirect URIs must be `https`, or `http` on `localhost`, `127.0.0.1` or `::1`. T
 | Authorization code     | 5 minutes  | Single use; a second use fails                                     |
 | Access token           | 1 hour     | Opaque, stored as a SHA-256 hash                                   |
 | Refresh token          | 30 days    | Rotated on every use                                               |
+| Browser sign-in session | 12 hours  | On the MCP host; ends sooner with the API key that opened it       |
+| View session           | until its sign-in session ends | One per artifact host, on that host only     |
+| Sign-in code           | 1 minute   | Single use, one host, bound to the browser's nonce cookie          |
+| Share link             | 7 days by default | Up to `serve.share_link_max_ttl` (90 days); revocable        |
 
 These lifetimes are fixed in this version. Each refresh returns a new refresh token and retires the old one; presenting a retired refresh token again revokes the whole chain (the client must sign in again), which is what limits the damage of a stolen token. A refresh may narrow the scopes but never widen them. Tokens are checked against the user on every request: a disabled user's tokens stop working, scopes beyond the user's current role are dropped, and a grant approved with an API key needs that key to be active.
 
-The `oauth-cleanup` job deletes expired requests, codes and tokens hourly.
+The `oauth-cleanup` job deletes expired requests, codes, tokens, browser sign-ins and sessions hourly.
 
 ## Revoking access
 
@@ -169,7 +202,8 @@ The `oauth-cleanup` job deletes expired requests, codes and tokens hourly.
   curl -X DELETE -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" https://admin.art.example.com/v1/grants/17
   ```
 
-- **Everything for a user**: `kazari admin users update jdoe --disable` revokes their API keys and OAuth grants and refuses their sign-ins. Enabling the user again restores neither.
+- **Everything for a user**: `kazari admin users update jdoe --disable` revokes their API keys and OAuth grants, ends their browser sessions and refuses their sign-ins. Enabling the user again restores none of them.
+- **A share link**: `kazari share revoke <slug> <prefix>` (or `revoke_share_link`); `kazari share list <slug>` shows the prefixes.
 - **At the IdP**: removing the person from the IdP stops new sign-ins, but an existing refresh token stays valid in Kazari until it expires or is revoked; disable the user in Kazari too.
 
 ## Troubleshooting
@@ -183,6 +217,10 @@ The `oauth-cleanup` job deletes expired requests, codes and tokens hourly.
 **"Sign-in expired."** The ten-minute window passed, or the browser did not send the `__Host-kazari_oauth` cookie back (blocked cookies; or a plain-HTTP instance where `external_scheme` is not set to `http`, so the cookie was marked `Secure`). Start again from the client.
 
 **"Request rejected."** The consent form was posted from somewhere other than the consent page (a different origin, or `Sec-Fetch-Site` other than `same-origin`), or without the matching cookie. Start again from the client.
+
+**A members page keeps redirecting to sign-in.** The browser does not keep the `__Host-kazari_view` cookie. Usually Kazari is served over plain HTTP while `external_scheme` is `https`, so the cookie is `Secure` and the browser drops it; or cookies are blocked for the instance's domain. The browser stops after about twenty redirects.
+
+**"Sign-in failed" on `/.kazari/callback`.** The code expired (it lives a minute), was used already (a reload of the callback URL), or the browser lost the nonce cookie it set before the redirect. Open the page again.
 
 **"Unknown application."** The `client_id` is neither registered nor a fetchable metadata document; the log line `oauth: client metadata fetch failed` gives the reason.
 

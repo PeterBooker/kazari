@@ -1,4 +1,5 @@
-// Package oauth is the OAuth 2.1 authorization server for MCP clients. It
+// Package oauth is the OAuth 2.1 authorization server for MCP clients and
+// the sign-in host for people opening gated artifacts in a browser. It
 // serves the RFC 8414 and RFC 9728 metadata documents, dynamic client
 // registration (RFC 7591), client ID metadata documents, the authorization
 // code flow with PKCE (S256 only) and refresh-token rotation.
@@ -9,6 +10,11 @@
 // offered or granted. Access and refresh tokens are opaque random strings
 // stored as SHA-256 hashes. Service implements auth.Authenticator for access
 // tokens.
+//
+// Browser sign-in (signin.go) keeps a session cookie on the MCP host and
+// hands each artifact host a single-use code, which the host redeems
+// in-process (Redeem) for a view session of its own: a cookie that only
+// that host receives.
 package oauth
 
 import (
@@ -44,6 +50,7 @@ const (
 const (
 	ActionGrant  = "oauth.grant"
 	ActionRevoke = "oauth.revoke"
+	ActionSignIn = "oauth.signin"
 )
 
 // Errors returned by a Store. Compare with errors.Is.
@@ -109,6 +116,55 @@ type Token struct {
 	FamilyID   int64  // id of the first refresh token of the chain
 }
 
+// SignInRequest is a browser sign-in at the identity provider, started for
+// an artifact host. Its ID is the upstream state.
+type SignInRequest struct {
+	ID               string
+	Binding          string // hash of the browser's sign-in cookie
+	Nonce            string
+	UpstreamVerifier string
+	Host             string // artifact host label: <slug> or <slug>--v<N>
+	Path             string // where to return to on that host
+	NonceHash        string // S256 of the host's nonce cookie
+	ExpiresAt        time.Time
+}
+
+// Session is a person signed in in one browser, held in a cookie on the
+// MCP host. Only its hash is stored.
+type Session struct {
+	ID         int64
+	Hash       string
+	UserHandle string
+	KeyPrefix  string // the API key that signed in; "" after an identity-provider sign-in
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+}
+
+// ViewCode carries a session to one artifact host. Only its hash is
+// stored; it is single use.
+type ViewCode struct {
+	Hash      string
+	SessionID int64
+	Host      string
+	Path      string
+	NonceHash string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+}
+
+// ViewSession is a session's cookie on one artifact host. Only its hash is
+// stored. UserHandle and KeyPrefix come from the session.
+type ViewSession struct {
+	ID         int64
+	Hash       string
+	SessionID  int64
+	Host       string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	UserHandle string
+	KeyPrefix  string
+}
+
 // Store is the persistence contract. Users are referenced by handle.
 type Store interface {
 	// UpsertClient inserts the client or replaces its name, redirect URIs
@@ -151,11 +207,43 @@ type Store interface {
 	ListGrants(ctx context.Context, handle string, now time.Time) ([]Token, error)
 	// RevokeGrant revokes the family of refresh token id. ErrNotFound.
 	RevokeGrant(ctx context.Context, id int64, at time.Time) error
-	// RevokeAllForUser revokes every live token of the user.
+	// RevokeAllForUser revokes every live token of the user and deletes
+	// their sessions.
 	RevokeAllForUser(ctx context.Context, handle string, at time.Time) error
-	// DeleteExpired removes requests, codes and tokens expired at now and
-	// returns how many rows went.
+	// DeleteExpired removes requests, codes, tokens, sign-ins and sessions
+	// expired at now and returns how many rows went.
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
+
+	// CreateSignIn stores a pending browser sign-in.
+	CreateSignIn(ctx context.Context, r *SignInRequest) error
+	// GetSignIn returns a sign-in by id, expired or not. ErrNotFound.
+	GetSignIn(ctx context.Context, id string) (*SignInRequest, error)
+	// DeleteSignIn removes a sign-in. ErrNotFound when it is already gone,
+	// so of two callbacks racing for one sign-in only one proceeds.
+	DeleteSignIn(ctx context.Context, id string) error
+
+	// CreateSession stores s and sets its ID. user.ErrNotFound for an
+	// unknown handle.
+	CreateSession(ctx context.Context, s *Session) error
+	// GetSession returns a session by hash, expired or not. ErrNotFound.
+	GetSession(ctx context.Context, hash string) (*Session, error)
+	// GetSessionByID returns a session by id, expired or not. ErrNotFound.
+	GetSessionByID(ctx context.Context, id int64) (*Session, error)
+	// DeleteSession removes a session with its codes and view sessions; a
+	// missing one is not an error.
+	DeleteSession(ctx context.Context, id int64) error
+
+	// CreateViewCode stores a code for an existing session.
+	CreateViewCode(ctx context.Context, c *ViewCode) error
+	// ConsumeViewCode atomically marks the code used at at and returns it.
+	// ErrNotFound for an unknown code, ErrCodeUsed for a second use.
+	ConsumeViewCode(ctx context.Context, hash string, at time.Time) (*ViewCode, error)
+
+	// CreateViewSession stores v for an existing session and sets its ID.
+	CreateViewSession(ctx context.Context, v *ViewSession) error
+	// GetViewSession returns a view session by hash, expired or not, with
+	// its session's user and key prefix. ErrNotFound.
+	GetViewSession(ctx context.Context, hash string) (*ViewSession, error)
 }
 
 // IdentityProvider sends a browser to sign in and turns the callback into
@@ -203,14 +291,25 @@ type Options struct {
 	// InsecureCookies drops the Secure cookie attribute and the __Host-
 	// cookie name prefix, for development over plain http.
 	InsecureCookies bool
+	// ViewCallback returns the URL on an artifact host where a browser
+	// sign-in ends (https://demo.art.example.com/.kazari/callback), given
+	// the host's label, and whether the label names an artifact host. Nil
+	// turns browser sign-in off.
+	ViewCallback func(host string) (string, bool)
+	// SessionTTL is how long a browser sign-in lasts (default 12h); every
+	// view session it opens ends with it. ViewCodeTTL is the lifetime of
+	// the code that carries it to an artifact host (default 1m).
+	SessionTTL, ViewCodeTTL time.Duration
 }
 
 // Default lifetimes.
 const (
-	DefaultAccessTTL  = time.Hour
-	DefaultRefreshTTL = 30 * 24 * time.Hour
-	DefaultRequestTTL = 10 * time.Minute
-	DefaultCodeTTL    = 5 * time.Minute
+	DefaultAccessTTL   = time.Hour
+	DefaultRefreshTTL  = 30 * 24 * time.Hour
+	DefaultRequestTTL  = 10 * time.Minute
+	DefaultCodeTTL     = 5 * time.Minute
+	DefaultSessionTTL  = 12 * time.Hour
+	DefaultViewCodeTTL = time.Minute
 )
 
 // Service is the authorization server.
@@ -249,6 +348,12 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	}
 	if opts.CodeTTL <= 0 {
 		opts.CodeTTL = DefaultCodeTTL
+	}
+	if opts.SessionTTL <= 0 {
+		opts.SessionTTL = DefaultSessionTTL
+	}
+	if opts.ViewCodeTTL <= 0 {
+		opts.ViewCodeTTL = DefaultViewCodeTTL
 	}
 	opts.Scopes = slices.DeleteFunc(slices.Clone(opts.Scopes), func(sc string) bool { return sc == auth.ScopeAdmin })
 	if len(opts.Scopes) == 0 {

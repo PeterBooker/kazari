@@ -1,4 +1,4 @@
-// Package mcpserver is the MCP surface of Kazari: fourteen tools, two
+// Package mcpserver is the MCP surface of Kazari: seventeen tools, two
 // resource templates, one prompt, the instance's Agent Skill (Skills
 // extension) and a preview app (MCP Apps extension) over the Streamable HTTP
 // transport, running stateless. Each request builds a fresh server whose
@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,6 +89,14 @@ type Options struct {
 	// MCPURL is this server's URL, e.g. https://mcp.<base>/, which the
 	// skill gives as the address to connect to. Optional.
 	MCPURL string
+	// DefaultVisibility is the visibility of artifacts created without
+	// one (default public); MaxShareLinkTTL the longest a share link may
+	// live (default artifact.DefaultMaxShareLinkTTL).
+	DefaultVisibility string
+	MaxShareLinkTTL   time.Duration
+	// Now is the clock that decides whether a share link is active
+	// (default time.Now).
+	Now func() time.Time
 }
 
 func (o Options) withDefaults(d Deps) Options {
@@ -116,6 +125,15 @@ func (o Options) withDefaults(d Deps) Options {
 		o.MaxInlineReadBytes = DefaultMaxInlineReadBytes
 	}
 	o.APIBaseURL = strings.TrimSuffix(o.APIBaseURL, "/")
+	if o.DefaultVisibility == "" {
+		o.DefaultVisibility = string(artifact.Public)
+	}
+	if o.MaxShareLinkTTL <= 0 {
+		o.MaxShareLinkTTL = artifact.DefaultMaxShareLinkTTL
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	return o
 }
 

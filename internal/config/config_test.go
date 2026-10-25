@@ -587,6 +587,8 @@ func TestValidateErrors(t *testing.T) {
 		{"chunk over version", func(c *Config) { c.Limits.MaxChunkBytes = 100 * MiB }, "limits.max_chunk_bytes: must not exceed"},
 		{"lifecycle zero", func(c *Config) { c.Lifecycle.GCInterval = 0 }, "lifecycle.gc_interval: must be greater than 0"},
 		{"reserved slug case", func(c *Config) { c.Serve.ReservedSlugs = []string{"API"} }, "serve.reserved_slugs:"},
+		{"default visibility", func(c *Config) { c.Serve.DefaultVisibility = "private" }, "serve.default_visibility: must be one of public, unlisted, members"},
+		{"share link lifetime", func(c *Config) { c.Serve.ShareLinkMaxTTL = 0 }, "serve.share_link_max_ttl: must be greater than 0"},
 		{"write policy", func(c *Config) { c.Auth.WritePolicy = "anyone" }, "auth.write_policy: must be one of shared, owner"},
 		{"oidc issuer", func(c *Config) { oidc(c).Issuer = "http://idp.example" }, "auth.oidc.issuer: must be an https URL"},
 		{"oidc client id", func(c *Config) { oidc(c).ClientID = "" }, "auth.oidc.client_id: required"},

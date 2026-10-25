@@ -66,6 +66,8 @@ Say what you want and that it should go on Kazari. Naming a slug is optional, bu
 | "What versions of `signup-flow` are there?" | Calls `get_artifact` and lists them with their addresses. |
 | "Roll `signup-flow` back to version 2." | Calls `publish_version`. Version 3 is kept. |
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
+| "Make `signup-flow` members-only and give me a link for the client that lasts two weeks." | Calls `set_visibility` with `members`, then `create_share_link` with `expires_in: 14d`, and gives you the link. |
+| "Stop the client's link to `signup-flow`." | Calls `list_share_links`, then `revoke_share_link`. |
 | "We're done with `signup-flow`. Retire it in a week." | Calls `mark_stale` with a seven-day grace period. |
 
 The agent replies with the address, for example `Published https://signup-flow.art.example.com/ (version 1)`. Apps that support MCP Apps also show a card with links to the page and the version.
@@ -82,10 +84,12 @@ Share the main address with people who should see the latest work. Put a version
 ## Share safely
 
 > [!IMPORTANT]
-> Anyone who has the link can open a page. Kazari has no per-page passwords or sign-in for viewers yet, so do not publish passwords, personal data or anything confidential.
+> A public or unlisted page opens for anyone who has its address, and addresses are easy to guess. Make anything that is not for the open web `members`.
 
 - **Public** pages appear in the listings that other Kazari users see. **Unlisted** pages are left out of other people's listings but are still open to anyone with the link.
-- **Unpublished** takes a page offline at once (visitors get "not found") without deleting anything. Ask your agent to make it public or unlisted again to bring it back.
+- **Members** pages open only for people who sign in to your Kazari instance. The first visit goes through your organisation's sign-in; after that, other members pages open at once for twelve hours. Members pages still appear in other members' listings.
+- **Share links** open a members page for someone who cannot sign in, such as a client or an outside reviewer. Each has an expiry (a week unless you ask for longer) and can be revoked on its own. Anyone who has the link can open the page until then, so send it only to the people it is for.
+- **Unpublished** takes a page offline at once (visitors get "not found") without deleting anything. Ask your agent to make it public, unlisted or members again to bring it back.
 - Search engines are told not to index pages unless you ask for the page to be indexable.
 
 ## Tidy up

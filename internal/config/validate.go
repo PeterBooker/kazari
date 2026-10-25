@@ -61,6 +61,10 @@ func (c *Config) Validate() error {
 			v.add("serve.reserved_slugs", fmt.Sprintf("%q must be a non-empty lower-case slug", s))
 		}
 	}
+	v.oneOf("serve.default_visibility", c.Serve.DefaultVisibility, "public", "unlisted", "members")
+	if c.Serve.ShareLinkMaxTTL <= 0 {
+		v.add("serve.share_link_max_ttl", "must be greater than 0")
+	}
 
 	v.oneOf("auth.write_policy", c.Auth.WritePolicy, "shared", "owner")
 	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !isLocalhost(c.BaseDomain) {

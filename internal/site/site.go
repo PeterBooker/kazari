@@ -2,8 +2,10 @@
 // <slug>.<base> for the published version and <slug>--v<N>.<base> for a
 // pinned one. It resolves the host to a version, maps the request path to a
 // file in that version and streams the blob with caching and security
-// headers. It never serves control-plane hosts; the host router keeps
-// those away from it.
+// headers. A gated artifact is served only after its Gate allows the
+// request, on every host of the artifact, and the Gate answers the paths
+// under ReservedPrefix. It never serves control-plane hosts; the host
+// router keeps those away from it.
 package site
 
 import (
@@ -33,6 +35,21 @@ type Resolver interface {
 	Files(ctx context.Context, versionID int64) (map[string]artifact.File, error)
 }
 
+// Gate guards gated artifacts (visibility members). gate.Gate implements
+// it.
+type Gate interface {
+	// Allow reports whether r may be served p on host, the label of the
+	// request's host (<slug> or <slug>--v<N>). When it returns false it
+	// has answered the request.
+	Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) bool
+	// ServeReserved answers a request under ReservedPrefix.
+	ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string)
+}
+
+// ReservedPrefix is the path every artifact host leaves to the Gate; no
+// artifact file can live under it (artifact.ReservedDir).
+const ReservedPrefix = "/" + artifact.ReservedDir + "/"
+
 // Options configures the handler. The zero value works, except that
 // BaseDomain must be set for any host to match.
 type Options struct {
@@ -56,6 +73,10 @@ type Options struct {
 	// than the tombstone period: once a slug is freed, another owner's
 	// <slug>--v1 must not be answered from a cache of the old one.
 	ImmutableMaxAge time.Duration
+	// Gate guards gated artifacts and answers ReservedPrefix. Without one,
+	// gated artifacts and reserved paths are not found: nothing gated is
+	// ever served unchecked.
+	Gate Gate
 }
 
 // MaxImmutableAge is the longest, and the default, ImmutableMaxAge.
@@ -69,8 +90,15 @@ var (
 )
 
 // cacheLatest is the Cache-Control value of the latest host; pinned
-// versions get "public, max-age=<ImmutableMaxAge>, immutable".
-const cacheLatest = "no-cache"
+// versions get "public, max-age=<ImmutableMaxAge>, immutable". A gated
+// artifact's responses are cacheGated on every host: no shared cache may
+// keep them, and a browser must come back each time, so a sign-out or a
+// revoked share link takes effect even for a version it has seen (the
+// strong ETag keeps that a 304).
+const (
+	cacheLatest = "no-cache"
+	cacheGated  = "private, no-cache"
+)
 
 const indexFile = "index.html"
 
@@ -79,7 +107,7 @@ type handler struct {
 	blobs     blob.Store
 	opts      Options
 	log       *slog.Logger
-	immutable string // Cache-Control of pinned versions
+	immutable string // Cache-Control of public pinned versions
 }
 
 // NewHandler returns the artifact-serving handler.
@@ -109,7 +137,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// that a client announces and never sends.
 		w.Header().Set("Connection", "close")
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+	// The reserved paths take a form post (sign-out); the gate checks
+	// their methods itself.
+	reserved := strings.HasPrefix(r.URL.Path, ReservedPrefix)
+	if !reserved && r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		h.writeError(w, r, http.StatusMethodNotAllowed)
 		return
@@ -137,6 +168,24 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeError(w, r, http.StatusNotFound)
 		return
+	}
+
+	host := slug
+	if version != 0 {
+		host += artifact.VersionSeparator + strconv.Itoa(version)
+	}
+	if reserved || p.Visibility.Gated() {
+		if h.opts.Gate == nil {
+			h.writeError(w, r, http.StatusNotFound)
+			return
+		}
+		if reserved {
+			h.opts.Gate.ServeReserved(w, r, p, host)
+			return
+		}
+		if !h.opts.Gate.Allow(w, r, p, host) {
+			return
+		}
 	}
 
 	files, err := h.resolver.Files(r.Context(), p.VersionID)
@@ -310,10 +359,21 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 	if csp := h.csp(p); csp != "" {
 		hdr.Set("Content-Security-Policy", csp)
 	}
-	if pinned {
+	gated := p != nil && p.Visibility.Gated()
+	switch {
+	case gated:
+		hdr.Set("Cache-Control", cacheGated)
+	case pinned:
 		hdr.Set("Cache-Control", h.immutable)
-	} else {
+	default:
 		hdr.Set("Cache-Control", cacheLatest)
+	}
+	if gated {
+		// Sibling artifact hosts are same-site, so a viewer's Lax cookie
+		// rides along when another artifact's page loads this one's
+		// script, JSON or image; same-origin stops the browser handing
+		// such a no-cors response to that page.
+		hdr.Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 }
 

@@ -79,6 +79,11 @@ func TestValidatePath(t *testing.T) {
 		{"invalid utf-8", "a\xffb", ""},
 		{"segment too long", strings.Repeat("a", artifact.SegmentMaxBytes+1), ""},
 		{"total too long", strings.Repeat("abcdefgh/", artifact.PathMaxBytes/9+1) + "x", ""},
+		{"reserved directory", ".kazari/signin", ""},
+		{"reserved name", ".kazari", ""},
+		{"reserved after cleaning", "./a/../.kazari/x", ""},
+		{"reserved prefix only", ".kazari-notes/a.html", ".kazari-notes/a.html"},
+		{"reserved name deeper", "docs/.kazari/a.html", "docs/.kazari/a.html"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,6 +222,7 @@ func TestParseVisibility(t *testing.T) {
 		{"", artifact.Public, true},
 		{"public", artifact.Public, true},
 		{"unlisted", artifact.Unlisted, true},
+		{"members", artifact.Members, true},
 		{"unpublished", "", false},
 		{"Public", "", false},
 		{"private", "", false},

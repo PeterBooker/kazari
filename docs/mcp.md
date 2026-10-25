@@ -48,13 +48,16 @@ Cloud agents' custom connectors, and agents configured without a key, authentica
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
 | `mark_stale` | Start the grace period (`grace` such as `72h` or `14d`) after which the artifact is soft-deleted. |
 | `unmark_stale` | Cancel a pending expiry. |
-| `set_visibility` | `public`, `unlisted`, or `unpublished` to take the page offline; `public`/`unlisted` bring it back. |
+| `set_visibility` | `public`, `unlisted`, `members` (only people signed in to the instance and share-link holders can open it), or `unpublished` to take the page offline; any of the first three brings it back. |
+| `create_share_link` | A URL that opens a `members` artifact without signing in, until `expires_in` (default 7 days, at most `serve.share_link_max_ttl`) passes or it is revoked. The URL is returned only this once. |
+| `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
+| `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. |
 | `delete_artifact` | Soft delete, or `hard: true` to purge now, after the user confirms where the client supports it ([Confirmation before a purge](#confirmation-before-a-purge)). |
 | `get_guide` | The instance's skill as Markdown, for clients that do not load skills over MCP. |
 
-Every result carries a one-line text summary first (for publishing tools `Published https://<slug>.<base>/ (version N)`), then the JSON of the result, which is also the structured content. The structured types are the REST API's (`PublishResult`, `EditResult`, `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `OK`). `get_guide` returns the Markdown alone.
+Every result carries a one-line text summary first (for publishing tools `Published https://<slug>.<base>/ (version N)`), then the JSON of the result, which is also the structured content. The structured types are the REST API's (`PublishResult`, `EditResult`, `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `CreatedShareLink`, `ShareLinkList`, `OK`). `get_guide` returns the Markdown alone.
 
-Tool descriptions are generated from the instance configuration, so they state the real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, inline-upload threshold and chunk limit. A model needs nothing else to use them. The server's instructions say how the tools fit together (read with anchors, edit with `expected_version`, read again on a conflict) and point to the skill.
+Tool descriptions are generated from the instance configuration, so they state the real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, inline-upload threshold, chunk limit, default visibility and longest share-link lifetime. A model needs nothing else to use them. The server's instructions say how the tools fit together (read with anchors, edit with `expected_version`, read again on a conflict) and point to the skill.
 
 ## Editing files
 
@@ -97,7 +100,7 @@ Restart the server after a configuration change and every copy states the new se
 
 `create_artifact`, `update_artifact`, `edit_file` and `publish_version` link their results to the MCP App `ui://kazari/preview.html` (the `io.modelcontextprotocol/ui` extension, SEP-1865). A host that supports MCP Apps renders the result as a card with the page's name, version and links to the page and to the pinned version; other hosts show the text result as before.
 
-The card also embeds the pinned version of the page when the instance's Content-Security-Policy lets other sites frame pages: when `serve.csp` has no `frame-ancestors` directive, or one that names a source other than `'none'` and `'self'`. The default policy has `frame-ancestors 'none'`, so the card shows links only. To embed pages, add the origins your MCP host renders apps from to `frame-ancestors`; the resource then asks the host to allow frames from `https://*.<base>`. Allowing framing lets those sites show any page of the instance inside their own, so list only hosts you trust. Per-artifact `kazari.csp` overrides do not change the decision.
+The card also embeds the pinned version of the page when the instance's Content-Security-Policy lets other sites frame pages: when `serve.csp` has no `frame-ancestors` directive, or one that names a source other than `'none'` and `'self'`. The default policy has `frame-ancestors 'none'`, so the card shows links only. To embed pages, add the origins your MCP host renders apps from to `frame-ancestors`; the resource then asks the host to allow frames from `https://*.<base>`. Allowing framing lets those sites show any page of the instance inside their own, so list only hosts you trust. Per-artifact `kazari.csp` overrides do not change the decision. A `members` page is never embedded, whatever the policy: it needs a sign-in, which cannot run inside a frame.
 
 ## Confirmation before a purge
 
@@ -132,6 +135,7 @@ Next step: Someone published since you read it: read the artifact again (get_art
 | `too_large`, `too_many_files`, `quota_exceeded` | A file, version, chunk, upload or quota limit was hit. |
 | `upload_offset_mismatch` | Wrong chunk offset; the text carries `current=<n>`. |
 | `upload_not_found` | Unknown, expired, foreign or already consumed upload. |
+| `share_link_not_found` | The artifact has no share link with that prefix. |
 | `too_many_uploads` | Too many open uploads for this user. |
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |

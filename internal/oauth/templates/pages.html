@@ -60,3 +60,20 @@
 </div>
 </form>
 {{template "foot"}}{{end}}
+
+{{define "signin"}}{{template "head" "Sign in"}}
+<h1>Sign in to view this page</h1>
+<p><strong>{{.Site}}</strong> is only open to members of this Kazari instance.</p>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/oauth/signin">
+<input type="hidden" name="host" value="{{.Host}}">
+<input type="hidden" name="path" value="{{.Path}}">
+<input type="hidden" name="nonce" value="{{.Nonce}}">
+<label for="api_key">API key</label>
+<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
+<p class="muted">Any of your keys that can read artifacts works. You stay signed in for {{.Lifetime}}, or until the key is revoked.</p>
+<div class="actions">
+<button type="submit" class="primary">Sign in</button>
+</div>
+</form>
+{{template "foot"}}{{end}}

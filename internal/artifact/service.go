@@ -30,6 +30,8 @@ const (
 	DefaultRetention       = 30 * 24 * time.Hour
 	DefaultTombstone       = 90 * 24 * time.Hour
 	DefaultBlobGrace       = time.Hour
+	DefaultShareLinkTTL    = 7 * 24 * time.Hour
+	DefaultMaxShareLinkTTL = 90 * 24 * time.Hour
 )
 
 // gcBatch is how many blobs CollectGarbage asks for at a time.
@@ -47,8 +49,15 @@ type Options struct {
 	Tombstone        time.Duration // purged -> slug freed
 	BlobGrace        time.Duration // how long an unreferenced blob survives GC
 	WritePolicy      string        // WriteShared (default) or WriteOwner
-	Now              func() time.Time
-	Logger           *slog.Logger // audit failures are logged here; default slog.Default()
+	// DefaultVisibility is given to artifacts created without one
+	// (default Public).
+	DefaultVisibility Visibility
+	// MaxShareLinkTTL is the longest lifetime a share link may be given;
+	// links created without one live DefaultShareLinkTTL, or this when it
+	// is shorter.
+	MaxShareLinkTTL time.Duration
+	Now             func() time.Time
+	Logger          *slog.Logger // audit failures are logged here; default slog.Default()
 }
 
 func (o Options) withDefaults() Options {
@@ -78,6 +87,12 @@ func (o Options) withDefaults() Options {
 	}
 	if o.WritePolicy == "" {
 		o.WritePolicy = WriteShared
+	}
+	if o.DefaultVisibility == "" {
+		o.DefaultVisibility = Public
+	}
+	if o.MaxShareLinkTTL <= 0 {
+		o.MaxShareLinkTTL = DefaultMaxShareLinkTTL
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -149,6 +164,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 	}
 	if err := validateTexts(req.Name, req.Description, req.Label); err != nil {
 		return nil, nil, err
+	}
+	if req.Visibility == "" {
+		req.Visibility = s.opts.DefaultVisibility
 	}
 	vis, err := ParseVisibility(string(req.Visibility))
 	if err != nil {
@@ -400,6 +418,11 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 		a.Description = *req.Description
 	}
 	if req.Visibility != nil {
+		// ParseVisibility reads "" as public, the create default; here it
+		// would quietly open a members page to everyone.
+		if *req.Visibility == "" {
+			return Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
+		}
 		vis, err := ParseVisibility(string(*req.Visibility))
 		if err != nil {
 			return err

@@ -116,6 +116,9 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("POST /v1/artifacts/{slug}/stale", write(h.markStale))
 	mux.Handle("DELETE /v1/artifacts/{slug}/stale", write(h.unmarkStale))
 	mux.Handle("GET /v1/artifacts/{slug}/files/{path...}", read(h.readFile))
+	mux.Handle("POST /v1/artifacts/{slug}/share-links", write(h.createShareLink))
+	mux.Handle("GET /v1/artifacts/{slug}/share-links", read(h.listShareLinks))
+	mux.Handle("DELETE /v1/artifacts/{slug}/share-links/{prefix}", write(h.revokeShareLink))
 	mux.Handle("POST /v1/uploads", write(h.beginUpload))
 	mux.Handle("PATCH /v1/uploads/{id}/files/{path...}", write(h.uploadChunk))
 	mux.Handle("DELETE /v1/uploads/{id}", write(h.abortUpload))
@@ -344,9 +347,9 @@ func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.P
 }
 
 // update applies an update request. Visibility goes through
-// SetVisibility, so "unpublished" works and "public" or "unlisted" also
-// re-publish an unpublished artifact; it is applied after the other
-// changes, so a restore comes first.
+// SetVisibility, so "unpublished" works and "public", "unlisted" or
+// "members" also re-publish an unpublished artifact; it is applied after
+// the other changes, so a restore comes first.
 func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principal, req api.UpdateArtifactRequest, files []artifact.FileInput) error {
 	slug := r.PathValue("slug")
 	expected, err := expectedVersion(r, req.ExpectedVersion)
@@ -355,9 +358,9 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 	}
 	if req.Visibility != nil {
 		switch *req.Visibility {
-		case string(artifact.Public), string(artifact.Unlisted), artifact.Unpublished:
+		case string(artifact.Public), string(artifact.Unlisted), string(artifact.Members), artifact.Unpublished:
 		default:
-			return invalid("visibility must be public, unlisted or unpublished")
+			return invalid("visibility must be public, unlisted, members or unpublished")
 		}
 	}
 	actor := present.Actor(p)
@@ -459,6 +462,46 @@ func (h *userAPI) skill(w http.ResponseWriter, _ *http.Request, _ auth.Principal
 	hdr.Set("Cache-Control", "private, no-cache")
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.WriteString(w, h.o.Skill)
+	return nil
+}
+
+func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	var req api.ShareLinkRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
+		return err
+	}
+	ttl, err := present.ParseDuration("expires_in", req.ExpiresIn)
+	if err != nil {
+		return err
+	}
+	actor, slug := present.Actor(p), r.PathValue("slug")
+	l, token, err := h.d.Artifacts.CreateShareLink(r.Context(), actor, slug, req.Label, ttl)
+	if err != nil {
+		return err
+	}
+	a, _, err := h.d.Artifacts.Get(r.Context(), actor, slug)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, h.links.CreatedShareLink(a, l, token, h.o.Now()))
+	return nil
+}
+
+func (h *userAPI) listShareLinks(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	ls, err := h.d.Artifacts.ListShareLinks(r.Context(), present.Actor(p), r.PathValue("slug"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, present.ShareLinks(ls, h.o.Now()))
+	return nil
+}
+
+func (h *userAPI) revokeShareLink(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	err := h.d.Artifacts.RevokeShareLink(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("prefix"))
+	if err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
