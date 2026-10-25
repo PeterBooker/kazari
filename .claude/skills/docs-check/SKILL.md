@@ -17,7 +17,7 @@ Check the uncommitted changes (`git diff HEAD`), or the revision or range given 
 2. For each one, `grep -rn` the old and the new name or value across the doc set. Grep rather than reading documents whole; topics such as quotas and limits appear in many places.
    - Doc set: `docs/*.md`, `deploy/kazari.yaml` (comments), `deploy/kazari.env.example`, `site/content/docs/*.md`, `site/layouts/home.html`, `README.md`, `examples/kazari/SKILL.md`.
    - Main homes: CLI in `docs/cli.md`, config in `docs/configuration.md` and `deploy/kazari.yaml`, REST in `docs/api.md`, MCP in `docs/mcp.md` and `examples/kazari/SKILL.md`, sign-in in `docs/identity.md`, metrics, jobs and quotas in `docs/ops.md`, limits and headers in `docs/security.md`.
-   - `PLAN.md` and `docs/adr/` record decisions as they were made: leave them.
+   - `docs/adr/` records decisions as they were made: leave it.
 3. Fix each stale or missing statement in the style of the file around it. Change no code.
 4. If anything under `docs/` or `site/` changed, `hugo --source site --gc --minify` must print no WARN or ERROR.
 5. Report each behaviour change with the files you updated, and anything you were unsure of.

@@ -6,7 +6,7 @@ Status: accepted (2026-10-24)
 
 Kazari stores artifact metadata (artifacts, versions, users, keys, tokens, audit log) and the files of every immutable version. It is self-hosted, usually on one small machine, and must build without CGO (ADR 0001). Versions are immutable and often share most of their files with the previous version. The serving path looks up one file of one version per request.
 
-The source plan stored each version's manifest (path to hash) as a JSON blob and used UUIDs as identifiers.
+The first design stored each version's manifest (path to hash) as a JSON blob and used UUIDs as identifiers.
 
 ## Decision
 

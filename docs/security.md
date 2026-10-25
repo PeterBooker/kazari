@@ -178,7 +178,7 @@ Metadata: at most 64 pairs (configurable), keys `^[a-zA-Z0-9_.-]{1,64}$`, values
 - **Per-person access.** `public` and `unlisted` are served to anyone with the URL (`unlisted` is not private: slugs are easy to guess). `members` is served to every user of the instance and to share-link holders; there are no per-person or per-group lists, and no mode that trusts an identity header from a proxy in front. See [Gated artifacts](#gated-artifacts) for what gating does not do.
 - **Isolation between artifacts on the same instance beyond the browser's origin model.** For example, a CSP override that allows framing or third parties is the artifact owner's choice.
 - **Protecting artifacts from admins.** Admins can read, transfer and delete everything.
-- Enterprise managed auth (RFC 7523 JWT bearer grant) is a Phase 4 item.
+- Enterprise managed auth (RFC 7523 JWT bearer grant).
 
 ## Operator checklist
 

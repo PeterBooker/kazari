@@ -4,7 +4,7 @@ Status: accepted (2026-10-24). Dependency list amended: the configuration file i
 
 ## Context
 
-Kazari is one binary that terminates TLS for a wildcard domain, serves static artifacts, exposes a REST API and an MCP server, and runs a background scheduler. The source build plan proposed a one-to-two-week Rust-vs-Go spike (its Phase 0) before writing any code.
+Kazari is one binary that terminates TLS for a wildcard domain, serves static artifacts, exposes a REST API and an MCP server, and runs a background scheduler. A one-to-two-week Rust-vs-Go spike was proposed before writing any code.
 
 The deciding needs are:
 
@@ -15,9 +15,9 @@ The deciding needs are:
 
 ## Decision
 
-Write Kazari in Go and drop the spike. The reasons the source plan listed for Go already decide it, and the spike would spend one to two weeks confirming them.
+Write Kazari in Go and drop the spike. The needs above already decide it, and the spike would spend one to two weeks confirming them.
 
-Keep the dependency set small and standard-library first: `net/http` with `ServeMux` host patterns, `log/slog`, `database/sql`, `archive/tar`, `embed`, `testing`. Third-party code only where the standard library has nothing: the MCP SDK, CertMagic and libdns, a pure-Go SQLite driver, `gopkg.in/yaml.v3` for the configuration file, `coreos/go-oidc` with `x/oauth2` (Phase 2b), `x/time/rate`, `x/sync/errgroup`, the Prometheus client (Phase 3) and `go-cmp` in tests. CertMagic logs through zap, so `go.uber.org/zap` is required too; `internal/certs` hands CertMagic a zap logger that writes to `slog`.
+Keep the dependency set small and standard-library first: `net/http` with `ServeMux` host patterns, `log/slog`, `database/sql`, `archive/tar`, `embed`, `testing`. Third-party code only where the standard library has nothing: the MCP SDK, CertMagic and libdns, a pure-Go SQLite driver, `gopkg.in/yaml.v3` for the configuration file, `coreos/go-oidc` with `x/oauth2`, `x/time/rate`, `x/sync/errgroup`, the Prometheus client and `go-cmp` in tests. CertMagic logs through zap, so `go.uber.org/zap` is required too; `internal/certs` hands CertMagic a zap logger that writes to `slog`.
 
 Deliberately not used: cobra, chi/gin/echo, gorm/sqlx/sqlc, testify, mockery, wire/fx, uuid, cron libraries, and zap or logrus for Kazari's own logging.
 
