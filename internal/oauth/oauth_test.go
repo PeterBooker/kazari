@@ -90,7 +90,10 @@ func TestRegister(t *testing.T) {
 		{"fragment", `{"redirect_uris":["https://app.example/cb#x"]}`, 400, "invalid_redirect_uri"},
 		{"relative", `{"redirect_uris":["/cb"]}`, 400, "invalid_redirect_uri"},
 		{"confidential client", `{"redirect_uris":["https://app.example/cb"],"token_endpoint_auth_method":"client_secret_basic"}`, 400, "invalid_client_metadata"},
+		{"other grants beside authorization_code", `{"redirect_uris":["https://app.example/cb"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"]}`, 201, ""},
 		{"implicit grant", `{"redirect_uris":["https://app.example/cb"],"grant_types":["implicit"]}`, 400, "invalid_client_metadata"},
+		{"other response types beside code", `{"redirect_uris":["https://app.example/cb"],"response_types":["code","token"]}`, 201, ""},
+		{"no code response type", `{"redirect_uris":["https://app.example/cb"],"response_types":["token"]}`, 400, "invalid_client_metadata"},
 		{"not json", `redirect_uris=x`, 400, "invalid_client_metadata"},
 		{"too large", `{"client_name":"` + strings.Repeat("a", 70<<10) + `","redirect_uris":["https://app.example/cb"]}`, 413, "invalid_client_metadata"},
 	}
