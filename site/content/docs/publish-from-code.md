@@ -7,24 +7,36 @@ description: Publish to Kazari from a terminal, a script or CI with the kazari C
 
 Everything an agent can do through the MCP server, you can do from a terminal, a script or a CI job with the `kazari` CLI or the REST API. They share one service layer, so an artifact published one way can be updated any other way.
 
-## Get a key
+This guide covers getting a key, installing the CLI, publishing and changing a directory, preview deployments from GitHub Actions, and calling the REST API directly.
 
-An administrator issues keys. A key carries scopes: `artifacts:read` to read, `artifacts:write` to publish and change, `artifacts:delete` to delete. For CI, ask for a key without the delete scope and with an expiry:
+## Getting a key
+
+An administrator issues keys. A key carries scopes, which decide what it can do:
+
+- `artifacts:read` to read.
+- `artifacts:write` to publish and change.
+- `artifacts:delete` to delete.
+
+For CI, ask for a key without the delete scope and with an expiry. This admin command issues one that expires after 90 days:
 
 ```sh
 kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 2160h
 ```
 
-## Install the CLI
+The key is printed once, so store it straight away.
 
-The `kazari` binary is the server and the client in one. Download it from a [release](https://github.com/PeterBooker/kazari/releases) for Linux (amd64, arm64) or macOS (arm64) and put it on your `PATH`, or build it from a checkout:
+## Installing the CLI
+
+The `kazari` binary is the server and the client in one. Download it from a [GitHub release](https://github.com/PeterBooker/kazari/releases) for Linux on amd64 or arm64, or macOS on arm64, and put it on your `PATH`.
+
+To build it from a checkout instead, run:
 
 ```sh
 CGO_ENABLED=0 go build -o kazari ./cmd/kazari
 install -m 0755 kazari ~/.local/bin/kazari
 ```
 
-Point it at your instance with environment variables, a `.env` file in the working directory, or `~/.config/kazari/config.yaml`:
+Then point the CLI at your instance. Export its address and your key, and check them with `kazari me`:
 
 ```sh
 export KAZARI_URL=https://api.art.example.com
@@ -32,16 +44,32 @@ export KAZARI_TOKEN=kzk_...
 kazari me          # who you are, your scopes and your storage use
 ```
 
-## Publish a directory
+The same settings can also live in a `.env` file in the working directory, or in `~/.config/kazari/config.yaml` ([CLI configuration](cli.md#configuring-the-client)).
+
+## Publishing a directory
+
+To publish, name the directory and choose a slug, which becomes the page's address:
 
 ```sh
 kazari publish ./dist --slug q3-report --name "Q3 report" --meta team=finance
-# https://q3-report.art.example.com/
+# prints https://q3-report.art.example.com/
 ```
 
-The directory is streamed as a tar.gz bundle. Dot files are skipped (except `.well-known`), and so are symlinks.
+The CLI streams the directory as a tar.gz bundle. It skips symlinks, and every file or directory whose name starts with a dot, such as `.git`, except `.well-known`.
 
-Then, to change it:
+### Publishing a single-page app
+
+An app that routes in the browser, with React Router, Vue Router or the like, needs every unknown path without a file extension to serve `index.html`. Set the metadata `kazari.spa` to `true` when you publish it:
+
+```sh
+kazari publish ./dist --slug planner --meta kazari.spa=true
+```
+
+Use relative asset paths in your build, such as Vite's `base: "./"`, so the app also works on version addresses like `planner--v3.art.example.com`.
+
+## Changing an artifact
+
+These commands change an artifact after its first publish:
 
 | Command | Effect |
 | ------- | ------ |
@@ -56,35 +84,29 @@ Then, to change it:
 | `kazari stale q3-report --grace 72h` | Retires it after three days. `kazari unstale` cancels. |
 | `kazari rm q3-report` | Soft-deletes it now; `--hard` purges it. |
 
-Add `--json` to any command for the API's JSON response, which suits scripts:
+### Preventing overwrites
 
-```sh
-url=$(kazari --json publish ./dist --slug q3-report --update | jq -r .url)
-```
-
-### Avoid overwriting someone else's work
-
-Two people (or a person and an agent) can publish to the same artifact. To make sure you are building on the version you think you are, pass the latest version you saw; the call fails with `version_conflict` if someone else published in between:
+Two people, or a person and an agent, can publish to the same artifact. To make sure you build on the version you think you are, pass the latest version you saw with `--expected`:
 
 ```sh
 kazari update q3-report ./dist --expected 4
 ```
 
-`publish --update` performs this check for you.
+If someone else published in between, the call fails with `version_conflict`. `publish --update` performs this check for you.
 
-### Single-page apps
+### Using JSON output in scripts
 
-An app that routes in the browser (React Router, Vue Router and the like) needs every unknown path without a file extension to serve `index.html`:
+To use a result in a script, add `--json` to any command. It prints the API's JSON response instead of text:
 
 ```sh
-kazari publish ./dist --slug planner --meta kazari.spa=true
+url=$(kazari --json publish ./dist --slug q3-report --update | jq -r .url)
 ```
 
-Use relative asset paths in your build (for example Vite's `base: "./"`) so the app also works on version addresses such as `planner--v3.art.example.com`.
+Here `jq` takes the page's address from the response.
 
-## Preview deployments from GitHub Actions
+## Deploying previews from GitHub Actions
 
-Publish each pull request to its own address and let the preview retire itself after the pull request closes. Store the key as the repository secret `KAZARI_TOKEN`.
+Publish each pull request to its own address, and let the preview retire itself after the pull request closes. Store the key as the repository secret `KAZARI_TOKEN`, then add a workflow like this one, for example as `.github/workflows/preview.yml`:
 
 ```yaml
 name: Preview
@@ -125,11 +147,15 @@ jobs:
         run: kazari stale "$SLUG" --grace 72h
 ```
 
+On every push to a pull request, the workflow builds the site and publishes it to a slug made from the pull request's number, such as `myapp-pr-42`. When the pull request closes, it marks the preview stale with a 72-hour grace period.
+
 Each push becomes a new version, so reviewers can link to `myapp-pr-42--v3` and know it will not change under them. For the main branch, publish to a fixed slug the same way, without the retire step.
 
-## The REST API
+## Using the REST API
 
-The CLI is a thin client over the REST API at `https://api.art.example.com/v1`, which any language can call with a bearer token. A page from inline JSON:
+The CLI is a thin client over the REST API at `https://api.art.example.com/v1`, which any language can call with a bearer token.
+
+To publish a page from inline JSON, send its files in the request body:
 
 ```sh
 curl -sS https://api.art.example.com/v1/artifacts \
@@ -142,7 +168,7 @@ curl -sS https://api.art.example.com/v1/artifacts \
   }'
 ```
 
-A whole site as a bundle:
+To publish a whole site, send it as a tar.gz bundle with a JSON manifest:
 
 ```sh
 tar -czf site.tar.gz -C dist .
@@ -152,8 +178,23 @@ curl -sS https://api.art.example.com/v1/artifacts \
   -F 'bundle=@site.tar.gz;type=application/gzip'
 ```
 
-Updates use `PUT /v1/artifacts/{slug}` with the same two formats and an `If-Match: "<version>"` header for the concurrency check. Bundles too large for one request go through chunked uploads. The [REST API reference](api.md) has every route, field and error code.
+To update an artifact, send either format to `PUT /v1/artifacts/{slug}`, with an `If-Match: "<version>"` header for the concurrency check. Bundles too large for one request go through [chunked uploads](api.md#chunked-uploads).
 
-## Limits worth knowing
+The [REST API reference](api.md) has every route, field and error code.
 
-By default a version holds up to 50 MiB and 2,000 files, a single file up to 25 MiB, and each user has 2 GiB of storage, counted across every version of every artifact they own. The user API allows 60 writes a minute per key. Your instance may set other values: `kazari me` shows your quota and use, and errors name the limit that was hit.
+## Limits
+
+By default, Kazari enforces these limits:
+
+- **A version**: up to 50 MiB and 2,000 files.
+- **A single file**: up to 25 MiB.
+- **Storage**: 2 GiB per user, counted across every version of every artifact they own.
+- **Writes**: 60 a minute per key on the user API.
+
+Your instance can set other values. `kazari me` shows your quota and use, and errors name the limit that was hit.
+
+## Next steps
+
+- [CLI](cli.md): every `kazari` command and flag, output and exit codes.
+- [REST API](api.md): every route, field and error code, including chunked uploads.
+- [Publish with an agent](publish-with-an-agent.md): connecting an agent to the same instance, and sharing pages safely.
