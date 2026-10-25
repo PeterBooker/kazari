@@ -30,11 +30,11 @@ claude mcp add --transport http kazari https://mcp.art.example.com/
 
 The first time Claude Code uses the server it opens your browser to sign in, exactly as above. To use an API key instead, add `--header "Authorization: Bearer kzk_..."` to the command.
 
-Kazari's repository also ships a Claude Code skill with its conventions and recipes. Install it for all your projects with:
+Kazari's repository also has an example Claude Code skill with its conventions and recipes. Install it for all your projects with:
 
 ```sh
 mkdir -p ~/.claude/skills/kazari
-curl -fsSL https://raw.githubusercontent.com/PeterBooker/kazari/main/skills/kazari/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/PeterBooker/kazari/main/examples/kazari/SKILL.md \
   -o ~/.claude/skills/kazari/SKILL.md
 ```
 

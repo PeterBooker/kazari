@@ -47,4 +47,4 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 - Standard library first: no web framework, ORM, DI container or assertion library. `go-cmp` is fine in tests.
 - SQLite timestamps are INTEGER unix nanoseconds. Migrations are `internal/sqlite/migrations/NNNN_*.sql`, applied at start. Users are referenced by id internally and by handle externally.
 - A bug fix adds a test at the lowest layer that reproduces it.
-- A change in behaviour (commands, flags, limits, tools, defaults) updates every file that states it: `docs/`, `site/content/docs/`, `site/layouts/home.html`, `README.md`, `deploy/kazari.yaml`, `skills/kazari/SKILL.md`. After any change under `docs/` or `site/`, `hugo --source site --gc --minify` must print no WARN or ERROR.
+- A change in behaviour (commands, flags, limits, tools, defaults) updates every file that states it: `docs/`, `site/content/docs/`, `site/layouts/home.html`, `README.md`, `deploy/kazari.yaml`, `examples/kazari/SKILL.md`. After any change under `docs/` or `site/`, `hugo --source site --gc --minify` must print no WARN or ERROR.

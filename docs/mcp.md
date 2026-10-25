@@ -14,7 +14,7 @@ claude mcp add --transport http kazari https://mcp.<base>/ --header "Authorizati
 
 Issue the key with `POST /users/{handle}/keys` on the admin API (or the CLI's admin commands); the secret is shown once. A key carries scopes: `artifacts:read` for the read tools, `artifacts:write` for publishing and lifecycle changes, `artifacts:delete` for `delete_artifact`.
 
-The repository ships a Claude Code skill in `skills/kazari/SKILL.md` with the authoring conventions and tool recipes; copy it to `~/.claude/skills/kazari/` or a project's `.claude/skills/`.
+The repository has an example Claude Code skill in `examples/kazari/SKILL.md` with the authoring conventions and tool recipes; copy it to `~/.claude/skills/kazari/` or a project's `.claude/skills/`.
 
 ### claude.ai
 

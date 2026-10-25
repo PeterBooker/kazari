@@ -89,7 +89,7 @@ Leave out `--header` to let Claude Code sign in through OAuth instead.
 
 **claude.ai**: add a custom connector with the URL `https://mcp.art.example.com/`. claude.ai discovers the authorization server, sends you to your organisation's identity provider and shows Kazari's consent page. With no identity provider configured, the consent page asks for an API key instead.
 
-Tools, resources and the authoring conventions are in [docs/mcp.md](docs/mcp.md); sign-in is in [docs/identity.md](docs/identity.md). A Claude Code skill ships in `skills/kazari/SKILL.md`.
+Tools, resources and the authoring conventions are in [docs/mcp.md](docs/mcp.md); sign-in is in [docs/identity.md](docs/identity.md). An example Claude Code skill is in `examples/kazari/SKILL.md`.
 
 ## CLI
 
