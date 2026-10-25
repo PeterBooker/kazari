@@ -2,6 +2,9 @@ name: Pages
 
 # Builds the website in site/ (which mounts docs/) with Hugo and publishes it to GitHub Pages.
 # In the repository settings, Pages must use "GitHub Actions" as its source, with the custom domain kazari.io.
+# The base URL is baseURL in site/hugo.toml (https://kazari.io/). It is not taken from the Pages settings,
+# which report http:// until GitHub can enforce HTTPS, and would put http:// URLs in the canonical links,
+# og:url and sitemap.xml.
 
 on:
   push:
@@ -26,7 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: read # configure-pages reads the Pages site settings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Hugo
@@ -38,13 +40,8 @@ jobs:
           tar -xzf "$archive" hugo
           sudo install -m 0755 hugo /usr/local/bin/hugo
           hugo version
-      - id: pages
-        if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Build
-        env:
-          BASE_URL: ${{ steps.pages.outputs.base_url }}
-        run: hugo --source site --gc --minify ${BASE_URL:+--baseURL "$BASE_URL/"}
+        run: hugo --source site --gc --minify
       - if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
