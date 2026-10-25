@@ -500,7 +500,7 @@ func decodeArtifactCursor(s string) (artifactCursor, error) {
 }
 
 // List shows a viewer without All what it owns, created or updated, plus
-// public artifacts that are neither unpublished nor deleted.
+// public and members artifacts that are neither unpublished nor deleted.
 func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifact.ListPage, error) {
 	var (
 		where = []string{"a.purged_at IS NULL"}
@@ -511,7 +511,7 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifac
 			WHERE aa.artifact_id = a.id AND au.handle = ?` + cond + `)`
 	}
 	if !q.All {
-		where = append(where, `((a.visibility = 'public' AND a.unpublished_at IS NULL AND a.deleted_at IS NULL)
+		where = append(where, `((a.visibility IN ('public', 'members') AND a.unpublished_at IS NULL AND a.deleted_at IS NULL)
 			OR u.handle = ? OR `+involved("")+`)`)
 		args = append(args, q.Viewer, q.Viewer)
 	}

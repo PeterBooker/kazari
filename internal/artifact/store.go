@@ -81,4 +81,28 @@ type Store interface {
 	UnreferencedBlobs(ctx context.Context, before time.Time, limit int) ([]string, error)
 
 	DeleteBlob(ctx context.Context, hash string) error
+
+	// CreateShareLink adds l to the artifact; hash is the hex SHA-256 of
+	// the link's token. ErrNotFound for an unknown slug. A link belongs to
+	// the artifact row, not the slug: it goes when the tombstone does and
+	// never opens a later artifact with the same slug.
+	CreateShareLink(ctx context.Context, slug string, l *ShareLink, hash string) error
+
+	// ListShareLinks returns the artifact's links, revoked and expired
+	// ones included, newest first.
+	ListShareLinks(ctx context.Context, slug string) ([]ShareLink, error)
+
+	// RevokeShareLink sets the revoke time of the artifact's link with
+	// prefix, keeping an earlier one. ErrLinkNotFound when the artifact
+	// has no such link.
+	RevokeShareLink(ctx context.Context, slug, prefix string, at time.Time) error
+
+	// ShareLink returns the artifact's link whose token hashes to hash, in
+	// any state. ErrLinkNotFound otherwise, including for another
+	// artifact's link.
+	ShareLink(ctx context.Context, slug, hash string) (*ShareLink, error)
+
+	// UseShareLink counts one opening of the artifact's link with prefix
+	// and sets its last use to at. ErrLinkNotFound.
+	UseShareLink(ctx context.Context, slug, prefix string, at time.Time) error
 }

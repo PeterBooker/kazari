@@ -356,7 +356,8 @@ Commands:
   rm <slug>                     delete an artifact (--hard to purge)
   stale <slug>                  mark stale
   unstale <slug>                clear the stale mark
-  visibility <slug> <v>         set public, unlisted or unpublished
+  visibility <slug> <v>         set public, unlisted, members or unpublished
+  share create|list|revoke      manage share links that open a members artifact
   rollback <slug> <version>     publish an earlier version
   edit <slug> <path>            change text in a file and publish it as a new version
   files cat <slug> <path>       write a file to stdout (--anchors for edit --start)

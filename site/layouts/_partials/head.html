@@ -1,19 +1,43 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {{- $title := partial "title.html" . }}
-{{- $full := cond .IsHome (printf "%s: self-hosted publishing for the pages AI agents build" site.Title) (printf "%s · %s" $title site.Title) }}
-{{- $desc := or .Description (cond .IsHome site.Params.description (printf "%s: %s" $title "Kazari documentation")) }}
+{{- /* A title that already names the site ("Installing Kazari") does not repeat it. */}}
+{{- $full := cond (strings.Contains $title site.Title) $title (printf "%s · %s" $title site.Title) }}
+{{- if .IsHome }}{{ $full = printf "%s: self-hosted publishing for the pages AI agents build" site.Title }}{{ end }}
+{{- $desc := partial "description.html" . }}
+{{- $isDoc := eq .Section "docs" }}
+{{- /* The link preview image, from social-card.sh; fingerprinted so that a new card gets a new URL past the preview caches. */}}
+{{- $card := resources.Get "images/social-card.png" | fingerprint }}
 <title>{{ $full }}</title>
 <meta name="description" content="{{ $desc }}">
+{{- if eq .Kind "404" }}
+<meta name="robots" content="noindex">
+{{- else }}
+<meta name="robots" content="max-image-preview:large">
 <link rel="canonical" href="{{ .Permalink }}">
-<meta property="og:type" content="website">
+{{- end }}
+<meta property="og:type" content="{{ cond $isDoc "article" "website" }}">
 <meta property="og:site_name" content="{{ site.Title }}">
+<meta property="og:locale" content="{{ replace site.Language.Locale "-" "_" }}">
 <meta property="og:title" content="{{ $full }}">
 <meta property="og:description" content="{{ $desc }}">
 <meta property="og:url" content="{{ .Permalink }}">
+<meta property="og:image" content="{{ $card.Permalink }}">
+<meta property="og:image:type" content="{{ $card.MediaType.Type }}">
+<meta property="og:image:width" content="{{ $card.Width }}">
+<meta property="og:image:height" content="{{ $card.Height }}">
+<meta property="og:image:alt" content="Kazari. Ask your agent for a page. Share it on your domain.">
+{{- if and $isDoc (not .Lastmod.IsZero) }}
+<meta property="article:modified_time" content="{{ .Lastmod.Format "2006-01-02T15:04:05Z07:00" }}">
+{{- end }}
+<meta name="twitter:card" content="summary_large_image">
+{{- if ne .Kind "404" }}
+{{ partial "schema.html" (dict "page" . "title" $title "description" $desc "image" $card.Permalink) }}
+{{- end }}
 <meta name="theme-color" content="#edefea" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#191c1a" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="{{ "favicon.svg" | relURL }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ "apple-touch-icon.png" | relURL }}">
 <link rel="preload" href="{{ "fonts/manrope.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{ "fonts/noto-sans-jp.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
 {{- /* Inline so the theme and term apply before first paint; mirrors _partials/sekki.html. */}}

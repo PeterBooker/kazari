@@ -169,20 +169,29 @@ func withQuery(raw string, v url.Values) string {
 	return u.String()
 }
 
-func (s *Service) cookieName() string {
+func (s *Service) cookieName() string { return s.named(InsecureCookieName) }
+
+// named returns a cookie name with the __Host- prefix, or base itself over
+// plain http (Options.InsecureCookies).
+func (s *Service) named(base string) string {
 	if s.opts.InsecureCookies {
-		return InsecureCookieName
+		return base
 	}
-	return CookieName
+	return "__Host-" + base
 }
 
 func (s *Service) setCookie(w http.ResponseWriter, value string, ttl time.Duration) {
+	s.setNamedCookie(w, s.cookieName(), value, ttl)
+}
+
+// setNamedCookie sets a host-only cookie; a negative ttl deletes it.
+func (s *Service) setNamedCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
 	maxAge := int(ttl / time.Second)
 	if ttl < 0 {
 		maxAge = -1
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     s.cookieName(),
+		Name:     name,
 		Value:    value,
 		Path:     "/", // required by the __Host- prefix
 		MaxAge:   maxAge,
@@ -225,6 +234,12 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if s.idp == nil {
 		s.message(w, http.StatusNotFound, "Not found", "No identity provider is configured.", "")
+		return
+	}
+	// The identity provider has one redirect URI for both flows; the state
+	// says which one this is.
+	if strings.HasPrefix(r.URL.Query().Get("state"), signInStatePrefix) {
+		s.serveSignInCallback(w, r)
 		return
 	}
 	req, ok := s.pendingRequest(w, r)

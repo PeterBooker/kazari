@@ -185,6 +185,8 @@ See [ops.md](ops.md#lifecycle) for how these combine.
 | `csp`                | string      | see below     | `Content-Security-Policy` sent with every artifact response; `""` sends none.                 |
 | `allow_csp_override` | bool        | `true`        | Let an artifact's `kazari.csp` metadata replace `csp` for its own files.                      |
 | `reserved_slugs`     | string list | see below     | Slugs no artifact may take. Each must be non-empty and lower-case.                            |
+| `default_visibility` | string      | `public`      | Visibility of an artifact created without one: `public`, `unlisted` or `members`.              |
+| `share_link_max_ttl` | duration    | `90d`         | The longest a share link may stay valid. Links last 7 days unless asked otherwise (or this, if shorter). |
 
 The default CSP allows inline scripts and styles plus the common CDNs:
 
@@ -195,6 +197,8 @@ default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.c
 The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2`, `autoconfig`, `autodiscover` and `localhost`. If you replace the list, keep `api`, `mcp` and `admin`.
 
 Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors; on a multi-tenant instance consider `allow_csp_override: false`.
+
+On an instance that is not meant for the open web, set `default_visibility: members`: a page an agent publishes without saying otherwise then opens only for people who sign in, and someone outside the organisation needs a share link. `unlisted` is not private; slugs are easy to guess. See [identity.md](identity.md#viewing-members-pages) for how viewers sign in.
 
 `frame-ancestors` in `csp` also decides whether the MCP preview app embeds pages: with `'none'` (the default) or `'self'` it shows links only, and with an MCP host's app origins listed it embeds the published version. See [mcp.md](mcp.md#preview-app).
 
@@ -244,6 +248,7 @@ All of these are checked together; the error lists every failure as `key: proble
   - `files` needs `tls.cert_file` and `tls.key_file`.
 - Every number and duration in `limits` and `lifecycle` must be greater than 0. In particular `write_rate_per_minute` cannot be set to 0 to disable rate limiting, and `default_user_quota` cannot be 0; give individual users an unlimited quota through the admin API instead (`kazari admin users update <handle> --quota 0`).
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` must not exceed `limits.max_version_bytes`.
+- `serve.default_visibility` is `public`, `unlisted` or `members`; `serve.share_link_max_ttl` is greater than 0.
 - `auth.write_policy` is `shared` or `owner`.
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost` (a development instance that only its own machine can reach).
 - With `auth.oidc`: `issuer` is an `https` URL, `client_id` and `client_secret` are set.

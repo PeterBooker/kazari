@@ -31,9 +31,9 @@ Each release on GitHub carries `kazari_<version>_<os>_<arch>.tar.gz` archives (t
 
 ```sh
 VERSION=0.1.0
-curl -LO https://github.com/PeterBooker/kazari/releases/download/v$VERSION/kazari_${VERSION}_linux_amd64.tar.gz
-curl -LO https://github.com/PeterBooker/kazari/releases/download/v$VERSION/checksums.txt
-curl -LO https://github.com/PeterBooker/kazari/releases/download/v$VERSION/checksums.txt.sigstore.json
+curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/kazari_${VERSION}_linux_amd64.tar.gz
+curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt
+curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt.sigstore.json
 
 # The checksums were signed by the release workflow (keyless cosign).
 cosign verify-blob checksums.txt \
@@ -267,4 +267,4 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilitie
 goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release dry run
 ```
 
-On pull requests and pushes to `main`, GitHub Actions runs gofmt, go vet, staticcheck, govulncheck, `go mod tidy -diff`, `go test -race` and the cross-builds. To release, push a `v*` tag: the workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, and pushes the signed image to `ghcr.io/peterbooker/kazari`.
+On pull requests and pushes to `main`, GitHub Actions runs gofmt, go vet, staticcheck, govulncheck, `go mod tidy -diff`, `go test -race` and the cross-builds. To release, push a tag named for the version without a `v` (such as `0.2.0`): the workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, and pushes the signed image to `ghcr.io/peterbooker/kazari`.

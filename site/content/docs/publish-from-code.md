@@ -51,6 +51,8 @@ Then, to change it:
 | `kazari update q3-report --name "Q3 report (final)"` | Changes fields only; no new version. |
 | `kazari rollback q3-report 2` | Serves version 2 again. Nothing is deleted. |
 | `kazari visibility q3-report unlisted` | Hides it from other people's listings. `unpublished` takes it offline. |
+| `kazari visibility q3-report members` | Opens it only for people who sign in to the instance. |
+| `kazari share create q3-report --expires 14d` | Prints a link that opens a members page for someone outside, for two weeks. `kazari share revoke` ends it. |
 | `kazari stale q3-report --grace 72h` | Retires it after three days. `kazari unstale` cancels. |
 | `kazari rm q3-report` | Soft-deletes it now; `--hard` purges it. |
 
@@ -101,7 +103,7 @@ jobs:
     steps:
       - name: Install the Kazari CLI
         run: |
-          curl -fsSL "https://github.com/PeterBooker/kazari/releases/download/v${KAZARI_VERSION}/kazari_${KAZARI_VERSION}_linux_amd64.tar.gz" \
+          curl -fsSL "https://github.com/PeterBooker/kazari/releases/download/${KAZARI_VERSION}/kazari_${KAZARI_VERSION}_linux_amd64.tar.gz" \
             | tar -xz kazari
           sudo install -m 0755 kazari /usr/local/bin/kazari
 

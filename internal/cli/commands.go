@@ -28,6 +28,7 @@ func commands() map[string]commandFunc {
 		"stale":      cmdStale,
 		"unstale":    cmdUnstale,
 		"visibility": cmdVisibility,
+		"share":      cmdShare,
 		"rollback":   cmdRollback,
 		"edit":       cmdEdit,
 		"files":      cmdFiles,
@@ -45,7 +46,7 @@ func cmdPublish(r *runner, args []string) error {
 	name := fs.String("name", "", "display name")
 	desc := fs.String("description", "", "description")
 	label := fs.String("label", "", "version label")
-	vis := fs.String("visibility", "", "public or unlisted")
+	vis := fs.String("visibility", "", "public, unlisted or members (default: the instance's)")
 	meta := metaFlag{}
 	fs.Var(meta, "meta", "metadata `key=value` (repeatable)")
 	update := fs.Bool("update", false, "if the slug exists, add a version that mirrors dir (files missing from dir are deleted)")
@@ -56,8 +57,10 @@ func cmdPublish(r *runner, args []string) error {
 	if *slug == "" {
 		return usagef("publish: --slug is required")
 	}
-	if *vis != "" && *vis != "public" && *vis != "unlisted" {
-		return usagef("publish: --visibility must be public or unlisted")
+	switch *vis {
+	case "", "public", "unlisted", "members":
+	default:
+		return usagef("publish: --visibility must be public, unlisted or members")
 	}
 	dir := pos[0]
 	files, err := bundleFiles(dir)
@@ -464,15 +467,15 @@ func cmdUnstale(r *runner, args []string) error {
 }
 
 func cmdVisibility(r *runner, args []string) error {
-	fs := r.newFlags("visibility", "visibility <slug> <public|unlisted|unpublished>")
+	fs := r.newFlags("visibility", "visibility <slug> <public|unlisted|members|unpublished>")
 	pos, err := parse(fs, args, 2, 2)
 	if err != nil {
 		return err
 	}
 	switch pos[1] {
-	case "public", "unlisted", "unpublished":
+	case "public", "unlisted", "members", "unpublished":
 	default:
-		return usagef("visibility: want public, unlisted or unpublished, got %q", pos[1])
+		return usagef("visibility: want public, unlisted, members or unpublished, got %q", pos[1])
 	}
 	c, err := r.userClient()
 	if err != nil {
@@ -486,6 +489,109 @@ func cmdVisibility(r *runner, args []string) error {
 		return r.printJSON(res)
 	}
 	fmt.Fprintf(r.stdout, "%s is now %s\n", pos[0], pos[1])
+	return nil
+}
+
+const shareUsage = "share create <slug> [--label L] [--expires 7d] | share list <slug> | share revoke <slug> <prefix>"
+
+func cmdShare(r *runner, args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		fmt.Fprintln(r.stderr, "usage: kazari "+shareUsage)
+		if len(args) == 0 {
+			return errUsagePrinted
+		}
+		return nil
+	}
+	switch args[0] {
+	case "create":
+		return cmdShareCreate(r, args[1:])
+	case "list":
+		return cmdShareList(r, args[1:])
+	case "revoke":
+		return cmdShareRevoke(r, args[1:])
+	}
+	return usagef("share: unknown command %q, want create, list or revoke", args[0])
+}
+
+func cmdShareCreate(r *runner, args []string) error {
+	fs := r.newFlags("share create", "share create <slug> [--label L] [--expires 7d]")
+	label := fs.String("label", "", "note on who the link is for")
+	expires := fs.String("expires", "", "how long the link works, e.g. 72h or 14d (default 7d)")
+	pos, err := parse(fs, args, 1, 1)
+	if err != nil {
+		return err
+	}
+	c, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	res, err := c.CreateShareLink(r.ctx, pos[0], *label, *expires)
+	if err != nil {
+		return err
+	}
+	if r.g.json {
+		return r.printJSON(res)
+	}
+	fmt.Fprintln(r.stdout, res.URL)
+	fmt.Fprintf(r.stderr, "share link %s opens %s until %s; anyone with the URL can open it\n",
+		res.ShareLink.Prefix, pos[0], fmtTime(res.ShareLink.ExpiresAt))
+	if res.Artifact.Visibility != "members" {
+		fmt.Fprintf(r.stderr, "note: %s is %s, so it opens without the link too (kazari visibility %s members)\n",
+			pos[0], res.Artifact.Visibility, pos[0])
+	}
+	return nil
+}
+
+func cmdShareList(r *runner, args []string) error {
+	fs := r.newFlags("share list", "share list <slug>")
+	pos, err := parse(fs, args, 1, 1)
+	if err != nil {
+		return err
+	}
+	c, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	list, err := c.ListShareLinks(r.ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	if r.g.json {
+		return r.printJSON(list)
+	}
+	tw := newTable(r.stdout)
+	fmt.Fprintln(tw, "PREFIX\tLABEL\tCREATED BY\tCREATED\tEXPIRES\tUSES\tLAST USED\tSTATE")
+	for _, l := range list.Items {
+		state := "active"
+		switch {
+		case l.RevokedAt != nil:
+			state = "revoked"
+		case !l.Active:
+			state = "expired"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", l.Prefix, dash(oneLine(l.Label)), l.CreatedBy,
+			fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), state)
+	}
+	return tw.Flush()
+}
+
+func cmdShareRevoke(r *runner, args []string) error {
+	fs := r.newFlags("share revoke", "share revoke <slug> <prefix>")
+	pos, err := parse(fs, args, 2, 2)
+	if err != nil {
+		return err
+	}
+	c, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	if err := c.RevokeShareLink(r.ctx, pos[0], pos[1]); err != nil {
+		return err
+	}
+	if r.g.json {
+		return r.printJSON(api.OK{OK: true})
+	}
+	fmt.Fprintf(r.stdout, "revoked share link %s of %s\n", pos[1], pos[0])
 	return nil
 }
 

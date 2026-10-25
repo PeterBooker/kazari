@@ -42,6 +42,7 @@ var (
 	ErrGone            = &Error{Code: "gone", Message: "artifact has been purged"}
 	ErrOffsetMismatch  = &Error{Code: "upload_offset_mismatch", Message: "chunk offset does not match the staged size"}
 	ErrUploadNotFound  = &Error{Code: "upload_not_found", Message: "upload not found"}
+	ErrLinkNotFound    = &Error{Code: "share_link_not_found", Message: "share link not found"}
 	ErrTooManyUploads  = &Error{Code: "too_many_uploads", Message: "too many open uploads"}
 	ErrEditNotFound    = &Error{Code: "edit_not_found", Message: "text to replace not found"}
 	ErrEditAmbiguous   = &Error{Code: "edit_ambiguous", Message: "text to replace matches more than once"}

@@ -58,10 +58,10 @@ kazari --json get q3-report | jq -r '.artifact.published_version'
 
 ```text
 kazari publish <dir> --slug <slug> [--name N] [--description D] [--label L]
-               [--visibility public|unlisted] [--meta key=value ...] [--update]
+               [--visibility public|unlisted|members] [--meta key=value ...] [--update]
 ```
 
-Creates an artifact from a directory and prints its URL. The directory is streamed as a tar.gz bundle: regular files only, symlinks skipped, and every file or directory whose name starts with a dot skipped except `.well-known`.
+Creates an artifact from a directory and prints its URL. Without `--visibility` it gets the instance's `serve.default_visibility`. The directory is streamed as a tar.gz bundle: regular files only, symlinks skipped, and every file or directory whose name starts with a dot skipped except `.well-known`.
 
 With `--update`, an existing slug gets a new version that **mirrors** the directory: files missing from the directory are deleted, and the call fails with `version_conflict` if someone else published in between. A missing slug is created as usual.
 
@@ -129,10 +129,26 @@ kazari unstale <slug>
 ### visibility
 
 ```text
-kazari visibility <slug> public|unlisted|unpublished
+kazari visibility <slug> public|unlisted|members|unpublished
 ```
 
-`unpublished` takes the page offline (`404`) without deleting anything; `public` or `unlisted` brings it back. `unlisted` artifacts are served but left out of other people's listings.
+`unlisted` artifacts are served to anyone with the URL but left out of other people's listings. `members` artifacts open only for people who sign in to the instance in their browser, and for holders of a share link (below). `unpublished` takes the page offline (`404`) without deleting anything; any of the other three brings it back.
+
+### share
+
+```text
+kazari share create <slug> [--label L] [--expires 7d]
+kazari share list <slug>
+kazari share revoke <slug> <prefix>
+```
+
+`create` prints a URL that opens a `members` artifact without signing in, for someone outside the instance, until it expires (`--expires` such as `72h` or `14d`; default 7 days, at most `serve.share_link_max_ttl`) or is revoked. The URL holds the link's secret and is printed only this once, on stdout, so `kazari share create q3-report --label "Acme" | pbcopy` works; the prefix and expiry go to stderr. `list` shows each link's prefix, label, creator, expiry, uses and state (`active`, `expired` or `revoked`), never its URL. `revoke` ends a link at once.
+
+```sh
+kazari visibility q3-report members
+kazari share create q3-report --label "Acme review" --expires 14d
+kazari share revoke q3-report ab12cd34
+```
 
 ### rollback
 

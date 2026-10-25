@@ -39,7 +39,8 @@ func (s *Service) Get(ctx context.Context, actor Actor, slug string) (*Artifact,
 
 // checkReadable hides an unpublished or soft-deleted artifact from all but
 // admins, the owner and those who created or updated it, as the listing
-// does. A live artifact is served to anyone, so any actor may read it.
+// does. Any actor may read a live artifact: every visibility is served to
+// anyone signed in.
 func (s *Service) checkReadable(ctx context.Context, actor Actor, a *Artifact) error {
 	if a.UnpublishedAt == nil && a.DeletedAt == nil {
 		return nil
@@ -126,13 +127,14 @@ func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (*A
 	})
 }
 
-// SetVisibility sets "public" or "unlisted", which also re-publishes, or
-// "unpublished", which stops serving and keeps the stored visibility.
+// SetVisibility sets "public", "unlisted" or "members", which also
+// re-publishes, or "unpublished", which stops serving and keeps the stored
+// visibility.
 func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v string) (*Artifact, error) {
 	switch v {
-	case string(Public), string(Unlisted), Unpublished:
+	case string(Public), string(Unlisted), string(Members), Unpublished:
 	default:
-		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Unpublished)
+		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q, %q or %q", Public, Unlisted, Members, Unpublished)
 	}
 	return s.modify(ctx, actor, slug, false, audit.ArtifactVisibility, func(a *Artifact) (map[string]string, error) {
 		if v == Unpublished {

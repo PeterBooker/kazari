@@ -18,6 +18,8 @@ const (
 	ArtifactPurge      = "artifact.purge"
 	ArtifactFree       = "artifact.free" // tombstone removed
 	ArtifactTransfer   = "artifact.transfer"
+	ShareLinkCreate    = "share_link.create"
+	ShareLinkRevoke    = "share_link.revoke"
 	UserCreate         = "user.create"
 	UserUpdate         = "user.update"
 	KeyIssue           = "key.issue"

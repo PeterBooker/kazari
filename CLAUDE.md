@@ -26,7 +26,7 @@ go mod tidy -diff
 go run ./cmd/kazari serve --config deploy/dev.yaml
 docker compose up --build -d    # the same from the Docker image, data in the volume kazari_data
 
-# release dry run (real releases run from a v* tag in GitHub Actions)
+# release dry run (real releases run in GitHub Actions from a version tag without a v, such as 0.2.0)
 goreleaser release --snapshot --clean --skip=publish,sign,sbom
 ```
 

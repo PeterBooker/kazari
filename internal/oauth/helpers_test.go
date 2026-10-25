@@ -68,18 +68,21 @@ func (r *recorder) actions(action string) []audit.Event {
 	return out
 }
 
-// fakeIDP's Exchange checks the PKCE pair and nonce it was handed in AuthURL.
+// fakeIDP's Exchange checks the PKCE pair and nonce it was handed in AuthURL,
+// for any number of sign-ins in flight.
 type fakeIDP struct {
-	mu        sync.Mutex
-	identity  auth.Identity
-	nonce     string
-	challenge string
+	mu       sync.Mutex
+	identity auth.Identity
+	flows    map[string]string // nonce -> PKCE challenge
 }
 
 func (f *fakeIDP) AuthURL(state, nonce, challenge string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.nonce, f.challenge = nonce, challenge
+	if f.flows == nil {
+		f.flows = map[string]string{}
+	}
+	f.flows[nonce] = challenge
 	return "https://idp.example/authorize?" + url.Values{
 		"state": {state}, "nonce": {nonce}, "code_challenge": {challenge},
 	}.Encode()
@@ -91,11 +94,12 @@ func (f *fakeIDP) Exchange(_ context.Context, code, nonce, verifier string) (aut
 	if code != "upstream-code" {
 		return auth.Identity{}, errors.New("bad upstream code")
 	}
-	if nonce != f.nonce {
+	challenge, ok := f.flows[nonce]
+	if !ok {
 		return auth.Identity{}, errors.New("nonce mismatch")
 	}
 	h := sha256.Sum256([]byte(verifier))
-	if base64.RawURLEncoding.EncodeToString(h[:]) != f.challenge {
+	if base64.RawURLEncoding.EncodeToString(h[:]) != challenge {
 		return auth.Identity{}, errors.New("pkce mismatch")
 	}
 	return f.identity, nil
@@ -160,6 +164,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		HTTPClient:      eo.httpClient,
 		Logger:          eo.logger,
 		InsecureCookies: true,
+		ViewCallback:    viewCallback,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()
@@ -171,6 +176,16 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return e
+}
+
+// viewCallback knows the artifact hosts demo, demo--v2 and other under
+// art.test.
+func viewCallback(host string) (string, bool) {
+	switch host {
+	case "demo", "demo--v2", "other":
+		return "https://" + host + ".art.test/.kazari/callback", true
+	}
+	return "", false
 }
 
 func (e *env) url(path string) string { return e.srv.URL + path }

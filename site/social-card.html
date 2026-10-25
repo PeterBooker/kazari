@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- The link preview image (og:image, 1200x630), rendered to assets/images/social-card.png by
+     social-card.sh. Like the favicon it uses literal colours: Ma's grounds and gentian, the term the
+     design was made in. The headline is the hero's in layouts/home.html; keep the two the same. -->
+<html lang="en-GB">
+<meta charset="utf-8">
+<title>Kazari social card</title>
+<style>
+@font-face { font-family: "Manrope"; src: url("static/fonts/manrope.woff2") format("woff2"); font-weight: 300 700; }
+@font-face { font-family: "Noto Sans JP"; src: url("static/fonts/noto-sans-jp.woff2") format("woff2"); font-weight: 200 700; }
+@font-face { font-family: "DM Mono"; src: url("static/fonts/dm-mono-400.woff2") format("woff2"); font-weight: 400; }
+html, body { margin: 0; }
+body {
+  position: relative; box-sizing: border-box; width: 1200px; height: 630px; overflow: hidden;
+  display: flex; flex-direction: column; padding: 68px 80px 64px;
+  background: #edefea; color: #222621; font-family: "Manrope", sans-serif;
+}
+.ghost {
+  position: absolute; top: 20px; right: -28px; margin: 0;
+  font: 200 380px/1 "Noto Sans JP"; letter-spacing: -.02em; color: #dee2d9;
+}
+header { position: relative; display: flex; justify-content: space-between; align-items: center; }
+.brand { display: flex; align-items: center; gap: 16px; font: 500 28px/1 "Manrope"; letter-spacing: .14em; }
+.brand svg { width: 40px; height: 40px; }
+.address { font: 400 22px/1 "DM Mono"; letter-spacing: .04em; color: #5e655b; }
+main { position: relative; margin-top: auto; }
+.kicker {
+  display: flex; align-items: center; gap: 14px; margin: 0 0 30px;
+  font: 400 22px/1.4 "DM Mono"; letter-spacing: .04em; color: #5e655b;
+}
+.kicker::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #5b57a3; }
+h1 { margin: 0; font-size: 74px; font-weight: 300; line-height: 1.06; letter-spacing: -.03em; }
+h1 b { font-weight: 500; }
+/* The season strip: 24 bars from 立春, the current one (霜降, 17) tall in its colour. */
+.bars {
+  display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 8px; align-items: end;
+  height: 52px; margin: 58px 0 0; padding: 0; list-style: none;
+}
+.bars li {
+  --a: max(var(--i) - 17, 17 - var(--i));
+  height: max(10px, 32px - min(var(--a), 24 - var(--a)) * 3px); border-radius: 2px; background: #c9cfc4;
+}
+.bars li:nth-child(18) { height: 52px; background: #5b57a3; }
+</style>
+<body>
+  <p class="ghost" lang="ja">飾り</p>
+  <header>
+    <span class="brand">
+      <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="#222621" stroke-width="1.8"/><path d="M9.87 2.86A14.5 14.5 0 0 1 22.13 2.86L19.17 9.2A7.5 7.5 0 0 0 12.83 9.2Z" fill="#5b57a3"/></svg>
+      KAZARI
+    </span>
+    <span class="address">kazari.io</span>
+  </header>
+  <main>
+    <p class="kicker">Self-hosted publishing for the pages AI agents build</p>
+    <h1>Ask your agent for a page.<br><b>Share it on your domain.</b></h1>
+    <ol class="bars">
+      <li style="--i: 0"></li><li style="--i: 1"></li><li style="--i: 2"></li><li style="--i: 3"></li>
+      <li style="--i: 4"></li><li style="--i: 5"></li><li style="--i: 6"></li><li style="--i: 7"></li>
+      <li style="--i: 8"></li><li style="--i: 9"></li><li style="--i: 10"></li><li style="--i: 11"></li>
+      <li style="--i: 12"></li><li style="--i: 13"></li><li style="--i: 14"></li><li style="--i: 15"></li>
+      <li style="--i: 16"></li><li style="--i: 17"></li><li style="--i: 18"></li><li style="--i: 19"></li>
+      <li style="--i: 20"></li><li style="--i: 21"></li><li style="--i: 22"></li><li style="--i: 23"></li>
+    </ol>
+  </main>
+</body>
+</html>

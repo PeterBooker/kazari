@@ -21,9 +21,9 @@ const (
 
 const maxBodyBytes = 64 << 10
 
-// Handler serves the metadata documents and /oauth/. Mount it at the root of
-// the MCP host beside the MCP endpoint; it also claims paths below
-// PathResourceMeta.
+// Handler serves the metadata documents and /oauth/, browser sign-in for
+// gated artifacts included. Mount it at the root of the MCP host beside the
+// MCP endpoint; it also claims paths below PathResourceMeta.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET "+PathAuthServerMeta, cors(http.HandlerFunc(s.serveAuthServerMeta)))
@@ -39,6 +39,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET "+PathAuthorize, s.serveAuthorize)
 	mux.HandleFunc("GET "+PathCallback, s.serveCallback)
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
+	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
+	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
 	return mux
 }
 

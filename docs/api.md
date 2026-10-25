@@ -20,7 +20,7 @@ Either an API key (`kzk_<8-character prefix>_<secret>`, issued by an admin) or a
 | Scope              | Allows                                                                      |
 | ------------------ | --------------------------------------------------------------------------- |
 | `artifacts:read`   | `GET` routes                                                                |
-| `artifacts:write`  | create, update, publish, stale, visibility, uploads                         |
+| `artifacts:write`  | create, update, publish, stale, visibility, share links, uploads            |
 | `artifacts:delete` | `DELETE /artifacts/{slug}` (soft and hard)                                  |
 | `admin`            | the admin API; held only by admin users, and implies every other scope      |
 
@@ -60,6 +60,7 @@ Every error has the same envelope:
 | `version_not_found`      | 404    | No such version                                                                    |
 | `file_not_found`         | 404    | No such file in the version                                                        |
 | `upload_not_found`       | 404    | Unknown, expired or someone else's upload                                          |
+| `share_link_not_found`   | 404    | The artifact has no share link with that prefix                                   |
 | `method_not_allowed`     | 405    | Route exists, method does not (`Allow` header lists the methods)                   |
 | `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period)                |
 | `upload_offset_mismatch` | 409    | Chunk offset does not match the staged size                                        |
@@ -106,7 +107,7 @@ Every response that returns an artifact uses this shape. Timestamps are RFC 3339
 }
 ```
 
-- `visibility` is the stored listing visibility, `public` or `unlisted`. Taking a page offline sets `unpublished_at` and keeps `visibility` for when it comes back.
+- `visibility` is who may open the page and who sees it listed: `public` (anyone; listed), `unlisted` (anyone with the URL; left out of other people's listings) or `members` (only people signed in to the instance and holders of a [share link](#share-links); listed to members). Taking a page offline sets `unpublished_at` and keeps `visibility` for when it comes back.
 - `size_bytes` is the sum of every version's size.
 - A version: `{ "number", "label", "created_by", "created_at", "size_bytes", "url", "files" }`, where `url` is the pinned `https://<slug>--v<N>.<base>/` and `files` (only on request) is a list of `{ "path", "hash", "size", "content_type" }` with `hash` the hex SHA-256.
 
@@ -121,7 +122,7 @@ Create, update, publish, unstale and visibility changes return a **publish resul
 ### Rules
 
 - **Slug**: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, 3 to 63 characters, no `--` (reserved for version hosts), not in `serve.reserved_slugs`. Fixed at creation.
-- **File path**: relative, slash-separated, cleaned with `path.Clean`; no leading or trailing `/`, no `..` escaping the bundle, no control characters or backslashes, segments up to 255 bytes, whole path up to 1024 bytes. A path may appear once per request.
+- **File path**: relative, slash-separated, cleaned with `path.Clean`; no leading or trailing `/`, no `..` escaping the bundle, no control characters or backslashes, segments up to 255 bytes, whole path up to 1024 bytes, and nothing under the top-level `.kazari/` directory, which every artifact host keeps for sign-in and share links. A path may appear once per request.
 - **Content type**: the one given with the file, else from the extension, else sniffed from the first 512 bytes. Never from the request that later reads it. A given type must be a parseable media type of at most 255 printable ASCII bytes (`422 invalid_argument` otherwise).
 - **Metadata**: keys `[a-zA-Z0-9_.-]{1,64}`, values up to 4096 bytes, at most `limits.metadata_max_pairs` pairs. Keys under `kazari.` are interpreted by the server and limited to:
 
@@ -150,6 +151,9 @@ Base URL `https://api.<base>/v1`.
 | `POST`   | `/artifacts/{slug}/stale`             | write    | `200` stale result          |
 | `DELETE` | `/artifacts/{slug}/stale`             | write    | `200` publish result        |
 | `GET`    | `/artifacts/{slug}/files/{path...}`   | read     | `200` file bytes            |
+| `POST`   | `/artifacts/{slug}/share-links`       | write    | `201` new share link        |
+| `GET`    | `/artifacts/{slug}/share-links`       | read     | `200` share links           |
+| `DELETE` | `/artifacts/{slug}/share-links/{prefix}` | write | `204`                       |
 | `POST`   | `/uploads`                            | write    | `201` upload                |
 | `PATCH`  | `/uploads/{id}/files/{path...}`       | write    | `200` chunk result          |
 | `DELETE` | `/uploads/{id}`                       | write    | `204`                       |
@@ -186,7 +190,7 @@ curl -sS https://api.art.example.com/v1/artifacts \
 | `slug`        | string | Required                                                           |
 | `name`        | string | At most 256 bytes, one line                                        |
 | `description` | string | At most 4096 bytes; may contain line breaks and tabs               |
-| `visibility`  | string | `public` (default) or `unlisted`                                   |
+| `visibility`  | string | `public`, `unlisted` or `members`; default `serve.default_visibility` (`public`) |
 | `metadata`    | object | String to string                                                   |
 | `label`       | string | Label of version 1; at most 256 bytes, one line                    |
 | `files`       | array  | `{ path, content, encoding?, content_type? }`                      |
@@ -224,7 +228,7 @@ curl -sS -H "Authorization: Bearer $KAZARI_TOKEN" \
 | `cursor`          | `next_cursor` of the previous page      |           |
 | `limit`           | 1 to 200                                | 50        |
 
-You see public, published, live artifacts plus every artifact you own, created or updated (whatever its visibility). Purged artifacts never appear. Results are newest-updated first:
+You see public and members artifacts that are published and live, plus every artifact you own, created or updated (whatever its visibility). Purged artifacts never appear. Results are newest-updated first:
 
 ```json
 { "items": [ { ... } ], "next_cursor": "eyJ..." }
@@ -269,7 +273,7 @@ JSON body:
 | Field              | Notes                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------- |
 | `metadata`         | Merged into the existing metadata; `null` deletes a key                                     |
-| `visibility`       | `public`, `unlisted` or `unpublished`; applied after everything else                        |
+| `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else             |
 | `expected_version` | Fail with `412 version_conflict` unless this is the latest version                          |
 | `keep_stale`       | A new version normally clears `stale_at` and `expires_at`; `true` keeps them                |
 | `restore`          | Clear `deleted_at` on a soft-deleted artifact (without it, a soft-deleted artifact is `404`) |
@@ -295,7 +299,7 @@ curl -sS -X PATCH https://api.art.example.com/v1/artifacts/q3-report \
   -d '{"visibility":"unpublished"}'
 ```
 
-`"public"` or `"unlisted"` brings an unpublished artifact back.
+`"public"`, `"unlisted"` or `"members"` brings an unpublished artifact back.
 
 ### Delete: `DELETE /artifacts/{slug}`
 
@@ -368,6 +372,35 @@ Streams one file of the published version, or of `?version=N`. Headers: the stor
 curl -sS -H "Authorization: Bearer $KAZARI_TOKEN" \
   'https://api.art.example.com/v1/artifacts/q3-report/files/index.html?version=1'
 ```
+
+### Share links
+
+A share link opens one `members` artifact in a browser without signing in, for people who cannot sign in to the instance: a client, an outside reviewer, a headless browser. It works until it expires or is revoked. Its URL opens the latest host; the same token opens a pinned version at `https://<slug>--v<N>.<base>/.kazari/share?token=...` (the cookie is set per host). Managing links needs the same rights as changing the artifact (the write policy applies), and an offline artifact's links can only be managed by the people who can see it.
+
+`POST /artifacts/{slug}/share-links` creates one. The body is optional:
+
+```json
+{ "label": "Acme review", "expires_in": "14d" }
+```
+
+`expires_in` is a duration such as `72h` or `14d`; the default is 7 days and the most `serve.share_link_max_ttl` (90 days). `label` follows the version label rules. The response is the only time the link's URL, which holds its token, is returned:
+
+```json
+{
+  "url": "https://q3-report.art.example.com/.kazari/share?token=kzs_ab12cd34_...",
+  "share_link": {
+    "prefix": "ab12cd34", "label": "Acme review", "created_by": "peter",
+    "created_at": "2026-10-25T09:00:00Z", "expires_at": "2026-11-08T09:00:00Z", "uses": 0, "active": true
+  },
+  "artifact": { ... }
+}
+```
+
+The token is `kzs_<8-character prefix>_<52-character secret>`; only its SHA-256 is stored. Opening the URL stores the token in a cookie on that host and redirects to `/`, so it leaves the address bar. A link on a `public` or `unlisted` artifact works but changes nothing: those open for anyone anyway.
+
+`GET /artifacts/{slug}/share-links` lists the links, newest first, without their tokens: `{ "items": [ { "prefix", "label", "created_by", "created_at", "expires_at", "revoked_at", "last_used_at", "uses", "active" } ] }`. `uses` counts openings of the URL, not page views.
+
+`DELETE /artifacts/{slug}/share-links/{prefix}` revokes a link at once: browsers that opened it lose access on their next request. Revoking twice is `204` again; an unknown prefix is `404 share_link_not_found`.
 
 ### Chunked uploads
 

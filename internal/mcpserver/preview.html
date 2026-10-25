@@ -118,8 +118,10 @@
     $("open-version").onclick = () => openLink(pinned);
     const frame = $("frame");
     frame.replaceChildren();
-    frame.hidden = !config.embed;
-    if (config.embed) {
+    // A members page needs a sign-in, which cannot happen inside a frame.
+    const embed = config.embed && a.visibility !== "members";
+    frame.hidden = !embed;
+    if (embed) {
       const f = document.createElement("iframe");
       f.src = pinned;
       f.title = "Preview of " + (a.name || a.slug);

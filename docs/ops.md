@@ -92,7 +92,7 @@ Useful alerts: `increase(kazari_job_runs_total{result="error"}[1h]) > 0`, and a 
 | `sweep`          | `lifecycle.sweep_interval` (15 min)       | Advances the lifecycle: expired stale artifacts are soft-deleted, soft-deleted ones past retention are purged, tombstones past the tombstone period are removed |
 | `gc`             | `lifecycle.gc_interval` (1 h)             | Deletes blobs no version references, in batches of 1000; blobs written in the last hour are left alone so a publish in progress never loses one |
 | `uploads-expire` | 10 min                                    | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash |
-| `oauth-cleanup`  | 1 h                                       | Deletes expired OAuth authorization requests, codes and tokens            |
+| `oauth-cleanup`  | 1 h                                       | Deletes expired OAuth authorization requests, codes and tokens, and expired browser sign-ins, sign-in codes and sessions |
 
 `kazari admin jobs list` shows each job's interval, last run, next run and last error. A sweep or gc that changed something logs a summary line (`sweep soft_deleted=1 purged=0 freed=0`). Each interval is jittered by ±10% and the first run comes after a random delay of up to 10% of the interval. A job never runs twice at once.
 
@@ -194,6 +194,9 @@ Every change is recorded with time, actor (a handle, `admin` for the admin token
 | `key.revoke`          | API key revoked                                                      |
 | `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
 | `oauth.revoke`        | OAuth grant revoked                                                  |
+| `oauth.signin`        | A browser signed in to view `members` pages (`via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
+| `share_link.create`   | Share link created (`prefix`, `expires_at`)                          |
+| `share_link.revoke`   | Share link revoked (`prefix`)                                        |
 
 ```sh
 kazari admin audit --since 24h
@@ -235,3 +238,11 @@ The `message` names the limit that was hit: a file over `limits.max_file_bytes`,
 ### 404 or 410 on a page
 
 `404` with the instance page: no such slug, unpublished, soft-deleted, or no such version on a `--v<N>` host. `410 Gone`: the artifact was purged and its slug is still in the tombstone period. `kazari get <slug>` shows which timestamps are set.
+
+### 401 or a sign-in redirect on a page
+
+The artifact's visibility is `members`. A browser is sent to sign in; other clients get `401`. Signed-in members and holders of a share link see the page. For someone outside the instance, `kazari share create <slug>`; for everyone, `kazari visibility <slug> public`. If the redirect never ends, see [identity.md](identity.md#troubleshooting).
+
+### A CDN in front of Kazari
+
+Responses of `members` pages are `Cache-Control: private, no-cache`, so a shared cache does not keep them. Copies it took while a page was still `public` stay, though: pinned versions are cached for up to `lifecycle.tombstone`. When you switch a page that was public to `members`, purge `https://<slug>.<base>/` and `https://<slug>--v*.<base>/` at the CDN.

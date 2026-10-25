@@ -10,7 +10,6 @@ import (
 	"maps"
 	"runtime/debug"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -47,7 +46,7 @@ type CreateInput struct {
 	Name        string            `json:"name" jsonschema:"human-readable title"`
 	Description string            `json:"description" jsonschema:"one or two sentences on what the page is"`
 	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable and kazari.csp are interpreted by the server"`
-	Visibility  string            `json:"visibility,omitempty" jsonschema:"public (default) or unlisted"`
+	Visibility  string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members (only people signed in to this instance, or with a share link); omitted means the instance default"`
 	Label       string            `json:"label,omitempty" jsonschema:"optional note on this version"`
 	Files       []FileInput       `json:"files,omitempty" jsonschema:"inline files; index.html is served at the root URL"`
 	UploadID    string            `json:"upload_id,omitempty" jsonschema:"upload from begin_upload whose staged files to include"`
@@ -61,7 +60,7 @@ type UpdateInput struct {
 	Name            *string            `json:"name,omitempty" jsonschema:"new title"`
 	Description     *string            `json:"description,omitempty" jsonschema:"new description"`
 	Metadata        map[string]*string `json:"metadata,omitempty" jsonschema:"keys to set; a null value deletes the key"`
-	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public or unlisted"`
+	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members"`
 	Label           string             `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	ExpectedVersion int                `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
@@ -159,7 +158,25 @@ type SlugInput struct {
 // VisibilityInput is the input of set_visibility.
 type VisibilityInput struct {
 	Slug       string `json:"slug" jsonschema:"artifact to change"`
-	Visibility string `json:"visibility" jsonschema:"public, unlisted or unpublished (offline)"`
+	Visibility string `json:"visibility" jsonschema:"public, unlisted, members or unpublished (offline)"`
+}
+
+// ShareLinkInput is the input of create_share_link.
+type ShareLinkInput struct {
+	Slug      string `json:"slug" jsonschema:"artifact to share"`
+	Label     string `json:"label,omitempty" jsonschema:"note on who the link is for, e.g. Acme review"`
+	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h or 14d; default 7d"`
+}
+
+// ListShareLinksInput is the input of list_share_links.
+type ListShareLinksInput struct {
+	Slug string `json:"slug" jsonschema:"artifact whose share links to list"`
+}
+
+// RevokeShareLinkInput is the input of revoke_share_link.
+type RevokeShareLinkInput struct {
+	Slug   string `json:"slug" jsonschema:"artifact the link opens"`
+	Prefix string `json:"prefix" jsonschema:"prefix of the link, from list_share_links or create_share_link"`
 }
 
 // DeleteInput is the input of delete_artifact.
@@ -341,7 +358,9 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				KeepStale:       in.KeepStale,
 				Files:           files,
 			}
-			if in.Visibility != nil {
+			// Models fill optional fields with "": that leaves the
+			// visibility alone rather than changing it.
+			if in.Visibility != nil && *in.Visibility != "" {
 				v := artifact.Visibility(*in.Visibility)
 				req.Visibility = &v
 			}
@@ -485,6 +504,56 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return res, publishedLine(res), nil
 		})
 
+	register(b, s, p, &mcp.Tool{Name: "create_share_link", Annotations: annotations("Create share link", false, false, false)},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (api.CreatedShareLink, string, error) {
+			ttl, err := present.ParseDuration("expires_in", in.ExpiresIn)
+			if err != nil {
+				return api.CreatedShareLink{}, "", err
+			}
+			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
+			if err != nil {
+				return api.CreatedShareLink{}, "", err
+			}
+			a, _, err := arts.Get(ctx, actor, in.Slug)
+			if err != nil {
+				return api.CreatedShareLink{}, "", err
+			}
+			out := links.CreatedShareLink(a, l, token, b.o.Now())
+			line := fmt.Sprintf("Share link for %s: %s (until %s). Anyone with this URL can open the page until then; "+
+				"give it to the user, and revoke it with revoke_share_link prefix %q.",
+				a.Slug, out.URL, l.ExpiresAt.Format(time.RFC3339), l.Prefix)
+			if !a.Visibility.Gated() {
+				line += fmt.Sprintf(" Note: %s is %s, so anyone can open it without the link; set_visibility \"members\" "+
+					"limits it to members and link holders.", a.Slug, a.Visibility)
+			}
+			return out, line, nil
+		})
+
+	register(b, s, p, &mcp.Tool{Name: "list_share_links", Annotations: annotations("List share links", true, false, true)},
+		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in ListShareLinksInput) (api.ShareLinkList, string, error) {
+			ls, err := arts.ListShareLinks(ctx, actor, in.Slug)
+			if err != nil {
+				return api.ShareLinkList{}, "", err
+			}
+			out := present.ShareLinks(ls, b.o.Now())
+			active := 0
+			for _, l := range out.Items {
+				if l.Active {
+					active++
+				}
+			}
+			return out, fmt.Sprintf("%d share links of %s, %d active.", len(out.Items), in.Slug, active), nil
+		})
+
+	register(b, s, p, &mcp.Tool{Name: "revoke_share_link", Annotations: annotations("Revoke share link", false, true, true)},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in RevokeShareLinkInput) (api.OK, string, error) {
+			if err := arts.RevokeShareLink(ctx, actor, in.Slug, in.Prefix); err != nil {
+				return api.OK{}, "", err
+			}
+			return api.OK{OK: true}, fmt.Sprintf("Revoked share link %s of %s; browsers that opened it lose access on "+
+				"their next request.", in.Prefix, in.Slug), nil
+		})
+
 	register(b, s, p, &mcp.Tool{Name: "delete_artifact", Annotations: annotations("Delete artifact", false, true, true)},
 		auth.ScopeDelete, func(ctx context.Context, req *mcp.CallToolRequest, in DeleteInput) (api.OK, string, error) {
 			if in.Hard && canConfirm(req) {
@@ -572,7 +641,7 @@ func publishedLine(r api.PublishResult) string {
 	case r.Artifact.DeletedAt != nil:
 		line += "; the artifact is deleted, so the URL is offline"
 	case r.Artifact.UnpublishedAt != nil:
-		line = fmt.Sprintf("Unpublished %s: offline until set_visibility public or unlisted (version %d kept)", r.URL, r.Version)
+		line = fmt.Sprintf("Unpublished %s: offline until set_visibility public, unlisted or members (version %d kept)", r.URL, r.Version)
 	}
 	return line
 }
@@ -700,24 +769,8 @@ func decode(path, content, encoding string) (string, error) {
 	return "", artifact.Errorf(artifact.ErrInvalidArgument, "encoding of %q must be utf8 or base64, not %q", path, encoding)
 }
 
-// parseGrace accepts a Go duration or whole days ("14d"); empty returns 0, the instance default.
-func parseGrace(s string) (time.Duration, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, nil
-	}
-	if days, ok := strings.CutSuffix(s, "d"); ok {
-		n, err := strconv.Atoi(days)
-		if err == nil && n > 0 {
-			return time.Duration(n) * 24 * time.Hour, nil
-		}
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d <= 0 {
-		return 0, artifact.Errorf(artifact.ErrInvalidArgument, "grace %q must be a positive duration such as 72h or 14d", s)
-	}
-	return d, nil
-}
+// parseGrace returns 0, the instance default, for "".
+func parseGrace(s string) (time.Duration, error) { return present.ParseDuration("grace", s) }
 
 // readAtMost reads up to limit bytes and reports whether r had more.
 func readAtMost(r io.Reader, limit int64) ([]byte, bool, error) {

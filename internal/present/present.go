@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"kazari/internal/api"
 	"kazari/internal/artifact"
 	"kazari/internal/audit"
 	"kazari/internal/auth"
+	"kazari/internal/gate"
 	"kazari/internal/scheduler"
 	"kazari/internal/upload"
 	"kazari/internal/user"
@@ -113,6 +116,63 @@ func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 		version = a.PublishedVersion
 	}
 	return api.PublishResult{URL: l.ArtifactURL(a.Slug), Version: version, Artifact: l.Artifact(a)}
+}
+
+// ShareURL is the URL that opens a share link: the gate's share path on
+// the artifact's latest host, with the token.
+func (l Links) ShareURL(slug, token string) string {
+	base := strings.TrimSuffix(l.ArtifactURL(slug), "/")
+	return base + gate.SharePath + "?" + url.Values{"token": {token}}.Encode()
+}
+
+// ShareLink converts a share link; Active is its state at now.
+func ShareLink(sl *artifact.ShareLink, now time.Time) api.ShareLink {
+	return api.ShareLink{
+		Prefix:     sl.Prefix,
+		Label:      sl.Label,
+		CreatedBy:  sl.CreatedBy,
+		CreatedAt:  sl.CreatedAt,
+		ExpiresAt:  sl.ExpiresAt,
+		RevokedAt:  sl.RevokedAt,
+		LastUsedAt: sl.LastUsedAt,
+		Uses:       sl.Uses,
+		Active:     sl.Active(now),
+	}
+}
+
+// ShareLinks converts a listing of share links.
+func ShareLinks(ls []artifact.ShareLink, now time.Time) api.ShareLinkList {
+	out := api.ShareLinkList{Items: make([]api.ShareLink, 0, len(ls))}
+	for i := range ls {
+		out.Items = append(out.Items, ShareLink(&ls[i], now))
+	}
+	return out
+}
+
+// CreatedShareLink converts a new link and its token for the artifact a.
+func (l Links) CreatedShareLink(a *artifact.Artifact, sl *artifact.ShareLink, token string, now time.Time) api.CreatedShareLink {
+	return api.CreatedShareLink{URL: l.ShareURL(a.Slug, token), ShareLink: ShareLink(sl, now), Artifact: l.Artifact(a)}
+}
+
+// ParseDuration reads a duration given on the wire: a Go duration such as
+// 72h, or whole days such as 14d. Empty is 0. field names the input in the
+// error, which is ErrInvalidArgument.
+func ParseDuration(field, s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour, nil
+		}
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, artifact.Errorf(artifact.ErrInvalidArgument, "%s %q must be a positive duration such as 72h or 14d", field, s)
+	}
+	return d, nil
 }
 
 // Edit converts the outcome of an edit of path that produced version.
@@ -259,7 +319,7 @@ func Error(err error) (int, api.Error) {
 
 func statusFor(code string) int {
 	switch code {
-	case api.CodeNotFound, api.CodeVersionNotFound, api.CodeFileNotFound, api.CodeUploadNotFound:
+	case api.CodeNotFound, api.CodeVersionNotFound, api.CodeFileNotFound, api.CodeUploadNotFound, api.CodeLinkNotFound:
 		return http.StatusNotFound
 	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch:
 		return http.StatusConflict

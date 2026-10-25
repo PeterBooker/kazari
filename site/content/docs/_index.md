@@ -24,7 +24,7 @@ Kazari hosts static web pages. An AI agent, the CLI or the REST API publishes a 
 
 **Published version** : The version served at the artifact's main address. It is usually the newest, but rolling back points it at an older one without deleting anything.
 
-**Visibility** : `public` pages appear in everyone's listings; `unlisted` pages are left out of other people's listings; `unpublished` takes the page offline without deleting it. Public and unlisted pages are both served to anyone who has the link.
+**Visibility** : `public` pages appear in everyone's listings; `unlisted` pages are left out of other people's listings; `members` pages open only for people who sign in to the instance, and for whoever holds one of the page's share links; `unpublished` takes the page offline without deleting it. Public and unlisted pages are served to anyone who has the link.
 
 **Stale** : A page marked for retirement. It keeps serving through a grace period, then it is soft-deleted (offline, restorable), later purged, and finally its slug becomes free again.
 
@@ -34,7 +34,7 @@ Kazari hosts static web pages. An AI agent, the CLI or the REST API publishes a 
 
 | Page                              | What is in it                                                     |
 | --------------------------------- | ----------------------------------------------------------------- |
-| [MCP server](mcp.md)              | The fourteen tools, editing files, the skill, the preview app, chunked uploads, errors |
+| [MCP server](mcp.md)              | The seventeen tools, editing files, the skill, the preview app, chunked uploads, errors |
 | [CLI](cli.md)                     | Every `kazari` command and flag, output and exit codes            |
 | [REST API](api.md)                | The user and admin APIs, wire types, limits and error codes       |
 | [Configuration](configuration.md) | Every YAML key, `${}` environment references, `.env`, overrides   |

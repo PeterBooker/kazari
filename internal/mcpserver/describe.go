@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"kazari/internal/artifact"
 	"kazari/internal/present"
@@ -18,6 +19,7 @@ type texts struct {
 	serving    string
 	csp        string
 	metadata   string
+	visibility string
 	inline     string
 	chunks     string
 
@@ -65,6 +67,11 @@ func newTexts(links present.Links, o Options) texts {
 		"free-form label that list_artifacts can filter on.",
 		artifact.MetaSPA, artifact.MetaIndexable, artifact.MetaCSP)
 
+	t.visibility = fmt.Sprintf("visibility is \"public\" (served to anyone, listed), \"unlisted\" (served to anyone "+
+		"with the URL, not listed) or \"members\" (only people who sign in to this Kazari instance, and holders of a "+
+		"share link from create_share_link, can open it); omitted, it is %q on this instance. A page is never secret "+
+		"by its URL alone, so use \"members\" for anything not meant for the open web.", o.DefaultVisibility)
+
 	t.inline = fmt.Sprintf("Inline files: give each file in files[] as {path, content, encoding, content_type}; encoding is "+
 		"\"utf8\" (default, for text) or \"base64\" (for binary). When any single file or all files together exceed %s, "+
 		"do not inline them: call begin_upload, send the content with upload_chunk, then pass upload_id here. Inline "+
@@ -90,6 +97,8 @@ func newTexts(links present.Links, o Options) texts {
 		"- Content above %s: begin_upload, upload_chunk for each file, then create_artifact or update_artifact with upload_id.\n"+
 		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
 		"before delete_artifact with hard: true.\n"+
+		"- Sharing a \"members\" page with someone who cannot sign in to this instance: create_share_link, then give "+
+		"the user the url from the result.\n"+
 		"Errors end with the next step to take; follow it. The full guide (workflow, authoring conventions with this "+
 		"instance's limits and CSP, edit modes, errors) is the skill %s, also returned by get_guide.",
 		t.pageURL, t.versionURL, size(o.InlineGuidanceBytes), skillURI)
@@ -111,8 +120,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			fmt.Sprintf("Create a new artifact (a static web page or site) and publish it as version 1 at %s. "+
 				"Returns url, version and the artifact record; report the url to the user.", t.pageURL),
 			t.slugRules, t.limits, t.serving, t.csp, t.metadata, t.inline,
-			"visibility is \"public\" (default, appears in listings) or \"unlisted\" (served to anyone with the URL, not listed). " +
-				"label is an optional note on the version.",
+			t.visibility,
+			"label is an optional note on the version.",
 			t.text,
 		}, "\n\n"),
 
@@ -121,8 +130,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"at once at %s: files[] entries add or replace paths, {path, delete: true} removes a path, and every file "+
 				"not mentioned carries over from the latest version. Without files only the fields change and no version "+
 				"is added.", t.pageURL),
-			"name, description and visibility (\"public\" or \"unlisted\") replace the stored values when given. " +
-				"metadata is merged into the stored map; a key set to null is deleted.",
+			"name, description and visibility (\"public\", \"unlisted\" or \"members\") replace the stored values when " +
+				"given. metadata is merged into the stored map; a key set to null is deleted.",
 			"expected_version: pass the latest_version you last saw (from get_artifact or a previous result). If " +
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
@@ -187,8 +196,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"read version = latest_version before editing.",
 			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl),
 
-		"list_artifacts": "List artifacts visible to you: every public artifact plus unlisted ones you created or " +
-			"updated. Filters: mine = \"created\", \"updated\" or \"any\" (relative to you); metadata = key/value pairs " +
+		"list_artifacts": "List artifacts visible to you: every public and members artifact plus unlisted ones you " +
+			"created or updated. Filters: mine = \"created\", \"updated\" or \"any\" (relative to you); metadata = key/value pairs " +
 			"that must all match; stale = \"include\" (default), \"exclude\" or \"only\". limit defaults to 50, at most " +
 			"200; when next_cursor is set, pass it as cursor for the next page.",
 
@@ -203,9 +212,30 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 		"unmark_stale": "Cancel a pending stale expiry, keeping the artifact indefinitely. Publishing a new version " +
 			"also cancels it unless keep_stale is set.",
 
-		"set_visibility": fmt.Sprintf("Set an artifact's visibility. \"public\": served and listed. \"unlisted\": served "+
-			"to anyone with the URL but not listed. \"unpublished\": takes the page offline (%s answers 404) while "+
-			"keeping every version; setting \"public\" or \"unlisted\" brings it back online.", t.pageURL),
+		"set_visibility": fmt.Sprintf("Set an artifact's visibility. \"public\": served to anyone and listed. "+
+			"\"unlisted\": served to anyone with the URL but not listed. \"members\": served only to people who sign "+
+			"in to this Kazari instance (a browser is sent to sign in first) and to holders of a share link "+
+			"(create_share_link), on the latest URL and every version URL; listed to members. \"unpublished\": takes "+
+			"the page offline (%s answers 404) while keeping every version; setting \"public\", \"unlisted\" or "+
+			"\"members\" brings it back online. A page is never secret by its URL alone: slugs are easy to guess, so "+
+			"use \"members\" for anything not meant for the open web.", t.pageURL),
+
+		"create_share_link": fmt.Sprintf("Create a share link: a URL that opens an artifact in a browser without "+
+			"signing in, for someone outside this instance (a client, a reviewer, a headless browser). It matters for "+
+			"\"members\" artifacts; public and unlisted ones open for anyone anyway. The url opens the published version "+
+			"until expires_in has passed (a duration such as \"72h\" or \"14d\"; default 7 days, at most %s) or the "+
+			"link is revoked; for a pinned version, give the same url with the host changed to %s. label is a "+
+			"note such as who the link is for. The url in the result holds the link's secret and is returned only "+
+			"this once: give it to the user. Anyone who has the url can open the page, so it is for the people it is "+
+			"meant for only.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
+
+		"list_share_links": "List an artifact's share links, newest first: prefix, label, created_by, expires_at, " +
+			"revoked_at, uses, last_used_at and whether each is active. Their URLs are never shown again; revoke a link " +
+			"by its prefix with revoke_share_link.",
+
+		"revoke_share_link": "Revoke one share link of an artifact by its prefix (from list_share_links or " +
+			"create_share_link). It stops opening the page at once: browsers that opened it lose access on their next " +
+			"request. Revoking twice is fine.",
 
 		"delete_artifact": "Delete an artifact. By default a soft delete: the page goes offline at once and the " +
 			"artifact is purged after the retention period. hard = true purges it now, permanently: every version is " +
@@ -353,4 +383,26 @@ func describeSources(src []string) string {
 		}
 	}
 	return strings.Join(out, ", ")
+}
+
+// days prints a whole number of days as "90 days", anything else as a Go
+// duration.
+func days(d time.Duration) string {
+	const day = 24 * time.Hour
+	switch {
+	case d == day:
+		return "1 day"
+	case d%day == 0:
+		return fmt.Sprintf("%d days", d/day)
+	}
+	return d.String()
+}
+
+// hostOnly is the host of a URL pattern, e.g. <slug>--v<N>.art.example.com
+// from https://<slug>--v<N>.art.example.com/.
+func hostOnly(u string) string {
+	if _, rest, ok := strings.Cut(u, "://"); ok {
+		u = rest
+	}
+	return strings.TrimSuffix(u, "/")
 }

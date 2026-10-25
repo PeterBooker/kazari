@@ -19,6 +19,9 @@ const (
 	DefaultMaxPairs  = 64
 	DefaultMaxFiles  = 2000
 	VersionSeparator = "--v" // <slug>--v<N>.<base>
+	// ReservedDir is the top-level directory the server answers on every
+	// artifact host (sign-in, share links); no file may live under it.
+	ReservedDir = ".kazari"
 
 	// Bytes of UTF-8, kept short because every listing returns them.
 	NameMaxBytes        = 256
@@ -50,7 +53,7 @@ func ValidateSlug(slug string, reserved []string) error {
 }
 
 // ValidatePath returns p cleaned, rejecting anything that could escape or
-// confuse the serving path.
+// confuse the serving path, and paths under ReservedDir.
 func ValidatePath(p string) (string, error) {
 	if p == "" {
 		return "", Errorf(ErrInvalidPath, "empty path")
@@ -80,6 +83,9 @@ func ValidatePath(p string) (string, error) {
 		if len(seg) > SegmentMaxBytes {
 			return "", Errorf(ErrInvalidPath, "path segment longer than %d bytes", SegmentMaxBytes)
 		}
+	}
+	if clean == ReservedDir || strings.HasPrefix(clean, ReservedDir+"/") {
+		return "", Errorf(ErrInvalidPath, "path %q is under %s/, which the server reserves", p, ReservedDir)
 	}
 	return clean, nil
 }
@@ -143,10 +149,10 @@ func ParseVisibility(s string) (Visibility, error) {
 	switch Visibility(s) {
 	case "", Public:
 		return Public, nil
-	case Unlisted:
-		return Unlisted, nil
+	case Unlisted, Members:
+		return Visibility(s), nil
 	}
-	return "", Errorf(ErrInvalidArgument, "visibility must be %q or %q", Public, Unlisted)
+	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
 }
 
 // ValidateName allows one line of valid UTF-8, at most NameMaxBytes, with no

@@ -375,7 +375,33 @@ func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResu
 	return &out, nil
 }
 
-// SetVisibility sets public, unlisted or unpublished.
+// CreateShareLink creates a share link expiring after expiresIn, such as 72h
+// or 7d ("" for a week). The result's URL carries the token.
+func (c *Client) CreateShareLink(ctx context.Context, slug, label, expiresIn string) (*api.CreatedShareLink, error) {
+	var out api.CreatedShareLink
+	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/share-links", nil, nil,
+		api.ShareLinkRequest{Label: label, ExpiresIn: expiresIn}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListShareLinks lists an artifact's share links, newest first.
+func (c *Client) ListShareLinks(ctx context.Context, slug string) (*api.ShareLinkList, error) {
+	var out api.ShareLinkList
+	if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug)+"/share-links", nil, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokeShareLink revokes the share link with prefix.
+func (c *Client) RevokeShareLink(ctx context.Context, slug, prefix string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/share-links/"+seg(prefix), nil, nil, nil, nil)
+}
+
+// SetVisibility sets public, unlisted, members or unpublished.
 func (c *Client) SetVisibility(ctx context.Context, slug, visibility string) (*api.PublishResult, error) {
 	return c.Patch(ctx, slug, api.UpdateArtifactRequest{Visibility: &visibility})
 }

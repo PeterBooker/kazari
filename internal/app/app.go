@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"kazari/internal/blob"
 	"kazari/internal/certs"
 	"kazari/internal/config"
+	"kazari/internal/gate"
 	"kazari/internal/httpapi"
 	"kazari/internal/mcpserver"
 	"kazari/internal/metrics"
@@ -117,17 +120,19 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	auditStore := sqlite.NewAuditStore(a.db)
 
 	arts := artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artifact.Options{
-		MaxVersionBytes:  int64(cfg.Limits.MaxVersionBytes),
-		MaxFileBytes:     int64(cfg.Limits.MaxFileBytes),
-		MaxFiles:         cfg.Limits.MaxFiles,
-		MaxMetadataPairs: cfg.Limits.MetadataMaxPairs,
-		ReservedSlugs:    cfg.Serve.ReservedSlugs,
-		DefaultGrace:     cfg.Lifecycle.DefaultGrace.Std(),
-		Retention:        cfg.Lifecycle.Retention.Std(),
-		Tombstone:        cfg.Lifecycle.Tombstone.Std(),
-		WritePolicy:      cfg.Auth.WritePolicy,
-		Now:              now,
-		Logger:           log,
+		MaxVersionBytes:   int64(cfg.Limits.MaxVersionBytes),
+		MaxFileBytes:      int64(cfg.Limits.MaxFileBytes),
+		MaxFiles:          cfg.Limits.MaxFiles,
+		MaxMetadataPairs:  cfg.Limits.MetadataMaxPairs,
+		ReservedSlugs:     cfg.Serve.ReservedSlugs,
+		DefaultGrace:      cfg.Lifecycle.DefaultGrace.Std(),
+		Retention:         cfg.Lifecycle.Retention.Std(),
+		Tombstone:         cfg.Lifecycle.Tombstone.Std(),
+		WritePolicy:       cfg.Auth.WritePolicy,
+		DefaultVisibility: artifact.Visibility(cfg.Serve.DefaultVisibility),
+		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
+		Now:               now,
+		Logger:            log,
 	})
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
@@ -174,6 +179,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Now:             now,
 		Logger:          log,
 		InsecureCookies: cfg.ExternalScheme == "http",
+		ViewCallback:    viewCallback(cfg),
 	})
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
@@ -232,6 +238,9 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,
 		APIBaseURL:          cfg.ExternalURL("api") + "v1",
 		MCPURL:              mcpURL,
+		DefaultVisibility:   cfg.Serve.DefaultVisibility,
+		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
+		Now:                 now,
 	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes,
@@ -264,6 +273,12 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
+		Gate: gate.New(oauthSvc, arts, gate.Options{
+			SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
+			InsecureCookies: cfg.ExternalScheme == "http",
+			Now:             now,
+			Logger:          log,
+		}),
 	})
 	apexH, err := apexHandler(cfg)
 	if err != nil {
@@ -294,6 +309,26 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		}
 	}
 	return nil
+}
+
+// viewCallback returns the gate's callback on an artifact host, where a
+// browser sign-in for it ends. Only a canonical artifact label (<slug> or
+// <slug>--v<N>, never a reserved slug) has one.
+func viewCallback(cfg config.Config) func(host string) (string, bool) {
+	return func(host string) (string, bool) {
+		slug, version, ok := site.ParseHost(cfg.Host(host), cfg.BaseDomain)
+		if !ok || slices.Contains(cfg.Serve.ReservedSlugs, slug) {
+			return "", false
+		}
+		label := slug
+		if version != 0 {
+			label += artifact.VersionSeparator + strconv.Itoa(version)
+		}
+		if label != host {
+			return "", false
+		}
+		return cfg.ExternalURL(host) + strings.TrimPrefix(gate.CallbackPath, "/"), true
+	}
 }
 
 func job(m *metrics.Metrics, name string, every time.Duration, fn func(context.Context) error) scheduler.Job {

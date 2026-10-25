@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -70,6 +71,14 @@ type Options struct {
 	APIBaseURL string
 	// MCPURL is the address the skill gives for connecting, e.g. https://mcp.<base>/; optional.
 	MCPURL string
+	// DefaultVisibility is the visibility of artifacts created without
+	// one (default public); MaxShareLinkTTL the longest a share link may
+	// live (default artifact.DefaultMaxShareLinkTTL).
+	DefaultVisibility string
+	MaxShareLinkTTL   time.Duration
+	// Now is the clock that decides whether a share link is active
+	// (default time.Now).
+	Now func() time.Time
 }
 
 func (o Options) withDefaults(d Deps) Options {
@@ -98,6 +107,15 @@ func (o Options) withDefaults(d Deps) Options {
 		o.MaxInlineReadBytes = DefaultMaxInlineReadBytes
 	}
 	o.APIBaseURL = strings.TrimSuffix(o.APIBaseURL, "/")
+	if o.DefaultVisibility == "" {
+		o.DefaultVisibility = string(artifact.Public)
+	}
+	if o.MaxShareLinkTTL <= 0 {
+		o.MaxShareLinkTTL = artifact.DefaultMaxShareLinkTTL
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	return o
 }
 

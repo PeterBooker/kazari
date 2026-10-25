@@ -7,14 +7,20 @@ import (
 	"time"
 )
 
-// Visibility controls whether an artifact appears in listings; both values
-// are served.
+// Visibility controls who may open an artifact and who sees it listed.
+// Unlisted is left out of other people's listings; Members is served only to
+// people signed in to the instance and share-link holders, and listed like
+// Public.
 type Visibility string
 
 const (
 	Public   Visibility = "public"
 	Unlisted Visibility = "unlisted"
+	Members  Visibility = "members"
 )
+
+// Gated reports whether serving needs a signed-in viewer or a share link.
+func (v Visibility) Gated() bool { return v == Members }
 
 // Unpublished is a Service.SetVisibility value that sets unpublished_at; it
 // is never a stored Visibility.
@@ -98,7 +104,7 @@ type CreateRequest struct {
 	Slug        string
 	Name        string
 	Description string
-	Visibility  Visibility // defaults to Public
+	Visibility  Visibility // defaults to Options.DefaultVisibility
 	Metadata    map[string]string
 	Label       string
 	Files       []FileInput
@@ -166,6 +172,26 @@ func (p *Published) DeriveFlags() {
 // Servable reports whether the artifact is in a state to be served.
 func (p *Published) Servable() bool {
 	return p.VersionID != 0 && p.UnpublishedAt == nil && p.DeletedAt == nil && p.PurgedAt == nil
+}
+
+// ShareLink opens one members-only artifact, on its latest and version
+// hosts, without signing in. Its token, kzs_<prefix>_<secret>, is shown
+// once when the link is created; the store keeps only the token's hash, and
+// the prefix names the link afterwards.
+type ShareLink struct {
+	Prefix     string
+	Label      string
+	CreatedBy  string // handle
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	RevokedAt  *time.Time
+	LastUsedAt *time.Time
+	Uses       int // times the link was opened
+}
+
+// Active reports whether the link opens its artifact at now.
+func (l *ShareLink) Active(now time.Time) bool {
+	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
 }
 
 // SweepReport counts what one Sweep did.

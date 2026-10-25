@@ -73,7 +73,10 @@ func (t texts) skillText(o Options) string {
 		"4. **Large content** (any file, or all files together, above %s): `begin_upload`, `upload_chunk` for each file, "+
 		"then `create_artifact` or `update_artifact` with `upload_id`.\n"+
 		"5. **Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.\n"+
-		"6. **Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace "+
+		"6. **Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. "+
+		"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that "+
+		"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.\n"+
+		"7. **Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace "+
 		"period) to `delete_artifact`. Ask the user before `delete_artifact` with `hard: true`; clients that support it "+
 		"also show the user a confirmation.\n\n", size(o.InlineGuidanceBytes))
 
@@ -240,7 +243,8 @@ var nextStepOrder = []string{
 	api.CodeVersionConflict, api.CodeAnchorMismatch, api.CodeEditNotFound, api.CodeEditAmbiguous,
 	api.CodeSlugTaken, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument, api.CodeNotFound, api.CodeFileNotFound, api.CodeVersionNotFound,
 	api.CodeGone, api.CodeTooLarge, api.CodeTooManyFiles, api.CodeQuotaExceeded, api.CodeUploadNotFound,
-	api.CodeOffsetMismatch, api.CodeTooManyUploads, api.CodeForbidden, api.CodeRateLimited, api.CodeInternal,
+	api.CodeOffsetMismatch, api.CodeTooManyUploads, api.CodeLinkNotFound, api.CodeForbidden, api.CodeRateLimited,
+	api.CodeInternal,
 }
 
 // nextSteps is the model's next step per error code, shown after tool errors and in the skill.
@@ -271,6 +275,7 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeUploadNotFound: "The upload expired or was used by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
 		api.CodeTooManyUploads: "Finish or abandon the open uploads (unused ones expire), then begin a new one.",
+		api.CodeLinkNotFound:   "Call list_share_links: it lists the prefixes of the artifact's share links.",
 		api.CodeForbidden: "Retrying will not help. Tell the user: the connection's credential lacks the scope, or the " +
 			"instance's write policy reserves the artifact for its owner.",
 		api.CodeRateLimited: "Wait as long as the message says, then repeat the call.",

@@ -42,7 +42,12 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	return &DB{DB: db}, nil
 }
 
-func inTx(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) error) (err error) {
+// beginner is a *sql.DB, or a *sql.Conn that a migration has set up.
+type beginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) (err error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
