@@ -20,12 +20,20 @@ type metadataServer struct {
 	fetches     int
 	name        string
 	clientID    string // "" = the document's own URL
+	grantTypes  []string
 	contentType string
 	status      int
 }
 
 func newMetadataServer(t *testing.T) *metadataServer {
-	m := &metadataServer{name: "Claude Code", contentType: "application/json", status: http.StatusOK}
+	m := &metadataServer{
+		name: "Claude Code",
+		// As claude.ai's document lists them: a grant Kazari does not offer is
+		// no reason to refuse the client.
+		grantTypes:  []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+		contentType: "application/json",
+		status:      http.StatusOK,
+	}
 	m.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -40,6 +48,8 @@ func newMetadataServer(t *testing.T) *metadataServer {
 			"client_id":                  id,
 			"client_name":                m.name,
 			"redirect_uris":              []string{"http://localhost/callback", "http://127.0.0.1/callback"},
+			"grant_types":                m.grantTypes,
+			"response_types":             []string{"code"},
 			"token_endpoint_auth_method": "none",
 		})
 	}))
@@ -125,6 +135,7 @@ func TestClientMetadataDocumentFailures(t *testing.T) {
 		{"not found", func(m *metadataServer) { m.status = http.StatusNotFound }, "/client.json"},
 		{"not json", func(m *metadataServer) { m.contentType = "text/html" }, "/client.json"},
 		{"redirect", func(m *metadataServer) { m.status = http.StatusFound }, "/client.json"},
+		{"no authorization_code grant", func(m *metadataServer) { m.grantTypes = []string{"client_credentials"} }, "/client.json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

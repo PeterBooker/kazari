@@ -41,19 +41,18 @@ type clientMetadata struct {
 }
 
 // validate returns an RFC 7591 error code and description, or "" if valid.
+// Grant and response types Kazari does not offer are ignored, not refused: a
+// client lists what it uses with any server (claude.ai lists the JWT bearer
+// grant), and the authorize and token endpoints accept only the code flow.
 func (m *clientMetadata) validate() (code, desc string) {
 	if m.TokenEndpointAuthMethod != "" && m.TokenEndpointAuthMethod != "none" {
 		return "invalid_client_metadata", "only public clients (token_endpoint_auth_method \"none\") are supported"
 	}
-	for _, g := range m.GrantTypes {
-		if g != "authorization_code" && g != "refresh_token" {
-			return "invalid_client_metadata", fmt.Sprintf("unsupported grant type %q", g)
-		}
+	if len(m.GrantTypes) > 0 && !slices.Contains(m.GrantTypes, "authorization_code") {
+		return "invalid_client_metadata", "grant_types must include authorization_code"
 	}
-	for _, r := range m.ResponseTypes {
-		if r != "code" {
-			return "invalid_client_metadata", fmt.Sprintf("unsupported response type %q", r)
-		}
+	if len(m.ResponseTypes) > 0 && !slices.Contains(m.ResponseTypes, "code") {
+		return "invalid_client_metadata", "response_types must include code"
 	}
 	if len(m.ClientName) > maxClientNameLen {
 		return "invalid_client_metadata", "client_name is too long"
