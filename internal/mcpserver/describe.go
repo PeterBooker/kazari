@@ -24,6 +24,9 @@ type texts struct {
 
 	instructions string
 	tools        map[string]string
+	next         map[string]string // next step per error code
+	frontmatter  skillFrontmatter
+	skill        string // SKILL.md
 }
 
 func newTexts(links present.Links, o Options) texts {
@@ -78,15 +81,25 @@ func newTexts(links present.Links, o Options) texts {
 		"the error says current=<n>: resume that path from offset n.",
 		size(o.MaxChunkBytes), size(o.MaxTotalBytes))
 
-	t.instructions = fmt.Sprintf("Kazari hosts static web pages (HTML artifacts). Each artifact has a slug and is "+
-		"served at %s (the published version) and %s (a pinned version). Publish a new page with create_artifact and "+
-		"change it with update_artifact; for content above %s use begin_upload and upload_chunk, then pass upload_id. "+
-		"Inspect with get_artifact, read_file and list_artifacts. publish_version rolls back or forward, "+
-		"set_visibility takes a page offline or back, mark_stale schedules expiry, delete_artifact removes it. "+
-		"The publish-page prompt carries the authoring conventions. Always report the URL from a result to the user.",
-		t.pageURL, t.versionURL, size(o.InlineGuidanceBytes))
+	// The instructions say how the tools fit together; what each one does
+	// is in its own description.
+	t.instructions = fmt.Sprintf("Kazari hosts static web pages at %s (the published version) and %s (version N). "+
+		"Work in this order:\n"+
+		"- New page: create_artifact, then report the url from the result to the user.\n"+
+		"- Change a page: read_file with anchors: true, then edit_file with expected_version set to the latest_version "+
+		"the read returned. On version_conflict or anchor_mismatch, read again and redo the edit; never resend it "+
+		"unchanged. update_artifact adds, replaces or deletes whole files.\n"+
+		"- Content above %s: begin_upload, upload_chunk for each file, then create_artifact or update_artifact with upload_id.\n"+
+		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
+		"before delete_artifact with hard: true.\n"+
+		"Errors end with the next step to take; follow it. The full guide (workflow, authoring conventions with this "+
+		"instance's limits and CSP, edit modes, errors) is the skill %s, also returned by get_guide.",
+		t.pageURL, t.versionURL, size(o.InlineGuidanceBytes), skillURI)
 
 	t.tools = t.toolDescriptions(o)
+	t.next = t.nextSteps(o)
+	t.frontmatter = skillFrontmatter{Name: skillName, Description: t.skillDescription(o)}
+	t.skill = t.skillText(o)
 	return t
 }
 
@@ -119,6 +132,32 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			t.text, t.limits, t.csp, t.metadata, t.inline,
 		}, "\n\n"),
 
+		"edit_file": strings.Join([]string{
+			fmt.Sprintf("Change one text file of an artifact with edits and publish the result as a new version at %s; "+
+				"every other file carries over from the latest version. Prefer it to update_artifact for a change inside "+
+				"a file: only the changed text is sent.", t.pageURL),
+			"Text edits: {old_text, new_text}. old_text is copied exactly from the file and must match once (add " +
+				"surrounding lines, or set replace_all). If it does not match exactly, whole lines are compared ignoring " +
+				"trailing whitespace, then ignoring indentation (new_text is re-indented to fit); each edit's match in the " +
+				"result says which was used. Edits apply in order. A miss names the closest lines with their anchors.",
+			"Anchor edits: {start, end, new_text} with anchors from read_file with anchors: true (\"12:3fa0\"). The " +
+				"lines from start to end (inclusive; end defaults to start) are replaced by new_text; empty new_text " +
+				"deletes them. All anchors in a call refer to the file as read and must not overlap; a line that changed " +
+				"fails with anchor_mismatch and nothing is written.",
+			fmt.Sprintf("One call takes text edits or anchor edits, not both, at most %d. expected_version: the "+
+				"latest_version you read; if someone published since, the call fails with version_conflict and changes "+
+				"nothing. Without it, edits that still apply are applied to the newest content.", artifact.MaxEdits),
+			"The result has the new version and, per edit, start_line, end_line and an anchored excerpt of the new " +
+				"text, so a follow-up anchor edit needs no new read. A new version clears a pending stale mark unless " +
+				"keep_stale is true.",
+			t.limits,
+		}, "\n\n"),
+
+		"get_guide": "Return the guide to this Kazari instance: the workflow, how to edit files, the authoring " +
+			"conventions with this instance's limits and Content-Security-Policy, and what to do after each error. It is " +
+			"the Agent Skill also served as the resource " + skillURI + ". Read it once before publishing or editing " +
+			"if your client has not loaded that skill.",
+
 		"begin_upload": strings.Join([]string{
 			fmt.Sprintf("Start a chunked upload, for content too large to inline (any file, or all files together, "+
 				"above %s). Returns upload_id, expires_at, max_chunk_bytes and max_total_bytes.", size(o.InlineGuidanceBytes)),
@@ -143,8 +182,11 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 
 		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. Text files up "+
 			"to %s come back inline as text; other files up to %s come back as a base64 blob resource; anything larger "+
-			"returns a download URL on the REST API (%s, bearer authentication). The structured result always "+
-			"carries path, content_type, size, hash (sha256) and encoding (utf8, base64 or url).",
+			"returns a download URL on the REST API (%s, bearer authentication). anchors: true prefixes every line of a "+
+			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits. The "+
+			"structured result always carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
+			"version (the version read) and latest_version. edit_file edits the latest version: when the two differ, "+
+			"read version = latest_version before editing.",
 			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl),
 
 		"list_artifacts": "List artifacts visible to you: every public artifact plus unlisted ones you created or " +
@@ -169,8 +211,9 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 
 		"delete_artifact": "Delete an artifact. By default a soft delete: the page goes offline at once and the " +
 			"artifact is purged after the retention period. hard = true purges it now, permanently: every version is " +
-			"gone and the slug stays blocked for a while. Prefer set_visibility \"unpublished\" to take a page offline " +
-			"reversibly.",
+			"gone and the slug stays blocked for a while. Ask the user before a hard delete; clients that support it are " +
+			"asked to confirm, and if the user declines nothing is deleted. Prefer set_visibility \"unpublished\" to " +
+			"take a page offline reversibly.",
 	}
 }
 
@@ -199,13 +242,15 @@ func (t texts) promptText(o Options, topic string) string {
 	return b.String()
 }
 
-// hostURL renders the root URL of a host label for descriptions.
+// hostURL renders the root URL of a host label for descriptions. The
+// links know the public scheme and port (http://<slug>.localhost:8080/ in
+// development), so they come first.
 func hostURL(links present.Links, base, sub string) string {
-	if base != "" {
-		return "https://" + sub + "." + base + "/"
-	}
 	if links.URL != nil {
 		return links.URL(sub)
+	}
+	if base != "" {
+		return "https://" + sub + "." + base + "/"
 	}
 	return "https://" + sub + ".<base>/"
 }

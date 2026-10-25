@@ -117,6 +117,16 @@ func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 	return api.PublishResult{URL: l.ArtifactURL(a.Slug), Version: version, Artifact: l.Artifact(a)}
 }
 
+// Edit converts the outcome of an edit of path that produced version.
+func (l Links) Edit(a *artifact.Artifact, version int, path string, outs []artifact.EditOutcome) api.EditResult {
+	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: version, Path: path,
+		Edits: make([]api.EditOutcome, 0, len(outs)), Artifact: l.Artifact(a)}
+	for _, o := range outs {
+		r.Edits = append(r.Edits, api.EditOutcome(o))
+	}
+	return r
+}
+
 // Stale converts the outcome of MarkStale.
 func (l Links) Stale(a *artifact.Artifact) api.StaleResult {
 	r := api.StaleResult{Artifact: l.Artifact(a)}
@@ -255,13 +265,14 @@ func statusFor(code string) int {
 	switch code {
 	case api.CodeNotFound, api.CodeVersionNotFound, api.CodeFileNotFound, api.CodeUploadNotFound:
 		return http.StatusNotFound
-	case api.CodeSlugTaken, api.CodeOffsetMismatch:
+	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch:
 		return http.StatusConflict
 	case api.CodeVersionConflict:
 		return http.StatusPreconditionFailed
 	case api.CodeTooLarge:
 		return http.StatusRequestEntityTooLarge
-	case api.CodeTooManyFiles, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument:
+	case api.CodeTooManyFiles, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument,
+		api.CodeEditNotFound, api.CodeEditAmbiguous:
 		return http.StatusUnprocessableEntity
 	case api.CodeQuotaExceeded, api.CodeTooManyUploads:
 		return http.StatusForbidden

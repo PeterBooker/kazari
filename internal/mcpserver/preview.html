@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kazari preview</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfcfb;
+    --fg: #1d2420;
+    --muted: #5b665f;
+    --line: #d9e0db;
+    --accent: #2f6b4f;
+    --accent-fg: #ffffff;
+    --chip: #e8efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161a18;
+      --fg: #e7ece8;
+      --muted: #9aa69e;
+      --line: #2e3632;
+      --accent: #7cc4a0;
+      --accent-fg: #0f1311;
+      --chip: #232a26;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161a18;
+    --fg: #e7ece8;
+    --muted: #9aa69e;
+    --line: #2e3632;
+    --accent: #7cc4a0;
+    --accent-fg: #0f1311;
+    --chip: #232a26;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 14px 16px; }
+  .head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  p { margin: 4px 0 0; color: var(--muted); }
+  .url { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button {
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--fg);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .frame { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  iframe { display: block; width: 100%; height: 420px; border: 0; background: #fff; }
+  .error { color: #b3261e; white-space: pre-wrap; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="waiting"><p>Waiting for the result…</p></div>
+<div id="card" hidden>
+  <div class="head"><h1 id="name"></h1><span class="chip" id="version"></span></div>
+  <p id="description"></p>
+  <p class="url" id="url"></p>
+  <div class="actions">
+    <button class="primary" id="open" type="button">Open page</button>
+    <button id="open-version" type="button"></button>
+  </div>
+  <div class="frame" id="frame" hidden></div>
+</div>
+<p class="error" id="error" hidden></p>
+<script>
+(() => {
+  "use strict";
+  const config = /*KAZARI_CONFIG*/null;
+  const $ = (id) => document.getElementById(id);
+  let nextId = 1;
+  const pending = new Map();
+
+  const send = (msg) => window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*");
+  const notify = (method, params) => send({ method, params });
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    send({ id, method, params });
+  });
+
+  const applyTheme = (ctx) => {
+    if (ctx && (ctx.theme === "light" || ctx.theme === "dark")) {
+      document.documentElement.dataset.theme = ctx.theme;
+    }
+  };
+
+  const openLink = (url) => request("ui/open-link", { url }).catch(() => {
+    $("error").textContent = "Could not open the link: " + url;
+    $("error").hidden = false;
+  });
+
+  const render = (result) => {
+    $("waiting").hidden = true;
+    const sc = result && result.structuredContent;
+    if (!sc || result.isError || !sc.artifact || !sc.url) {
+      const parts = ((result && result.content) || []).filter((c) => c && c.type === "text").map((c) => c.text);
+      $("error").textContent = parts.join("\n") || "The call did not publish a page.";
+      $("error").hidden = false;
+      $("card").hidden = true;
+      return;
+    }
+    const a = sc.artifact;
+    const pinned = config.versionURL.replace("{slug}", a.slug).replace("{version}", String(sc.version));
+    $("name").textContent = a.name || a.slug;
+    $("version").textContent = "version " + sc.version;
+    $("description").textContent = a.description || "";
+    $("description").hidden = !a.description;
+    $("url").textContent = sc.url;
+    $("open").onclick = () => openLink(sc.url);
+    $("open-version").textContent = "Open version " + sc.version;
+    $("open-version").onclick = () => openLink(pinned);
+    const frame = $("frame");
+    frame.replaceChildren();
+    frame.hidden = !config.embed;
+    if (config.embed) {
+      const f = document.createElement("iframe");
+      f.src = pinned;
+      f.title = "Preview of " + (a.name || a.slug);
+      f.loading = "lazy";
+      f.referrerPolicy = "no-referrer";
+      frame.append(f);
+    }
+    $("error").hidden = true;
+    $("card").hidden = false;
+  };
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.method === undefined) {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        if (msg.error) p.reject(msg.error); else p.resolve(msg.result);
+      }
+      return;
+    }
+    switch (msg.method) {
+      case "ui/notifications/tool-result":
+        render(msg.params);
+        break;
+      case "ui/notifications/host-context-changed":
+        applyTheme(msg.params);
+        break;
+      case "ui/resource-teardown":
+        send({ id: msg.id, result: {} });
+        break;
+      default:
+        if (msg.id !== undefined) send({ id: msg.id, error: { code: -32601, message: "Method not found" } });
+    }
+  });
+
+  // The body's own box: the document's scroll size never drops below the
+  // frame the host gave us, so the view could only ever grow.
+  new ResizeObserver(() => {
+    const box = document.body.getBoundingClientRect();
+    notify("ui/notifications/size-changed", { width: Math.ceil(box.width), height: Math.ceil(box.height) });
+  }).observe(document.body);
+
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "kazari-preview", version: "1" },
+    appCapabilities: {},
+  }).then((res) => applyTheme(res && res.hostContext), () => {})
+    .finally(() => notify("ui/notifications/initialized", {}));
+})();
+</script>
+</body>
+</html>

@@ -407,12 +407,16 @@ func (c *Client) Delete(ctx context.Context, slug string, hard bool) error {
 }
 
 // ReadFile opens one file of the published version, or of version when
-// positive. The caller closes the returned body. The string is the response
-// Content-Type.
-func (c *Client) ReadFile(ctx context.Context, slug, path string, version int) (io.ReadCloser, string, error) {
-	var q url.Values
+// positive. With anchors, a text file comes back with every line prefixed
+// by its anchor, for Edit's Start and End. The caller closes the returned
+// body. The string is the response Content-Type.
+func (c *Client) ReadFile(ctx context.Context, slug, path string, version int, anchors bool) (io.ReadCloser, string, error) {
+	q := url.Values{}
 	if version > 0 {
-		q = url.Values{"version": {strconv.Itoa(version)}}
+		q.Set("version", strconv.Itoa(version))
+	}
+	if anchors {
+		q.Set("anchors", "true")
 	}
 	resp, err := c.send(ctx, request{
 		method: http.MethodGet,
@@ -423,6 +427,31 @@ func (c *Client) ReadFile(ctx context.Context, slug, path string, version int) (
 		return nil, "", err
 	}
 	return resp.Body, resp.Header.Get("Content-Type"), nil
+}
+
+// Edit applies edits to one text file of the latest version and publishes
+// the result (POST /artifacts/{slug}/edit). A positive ExpectedVersion
+// fails with version_conflict if someone published since.
+func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*api.EditResult, error) {
+	var out api.EditResult
+	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Skill returns the instance's Agent Skill, a SKILL.md (GET /skill).
+func (c *Client) Skill(ctx context.Context) (string, error) {
+	resp, err := c.send(ctx, request{method: http.MethodGet, path: "/skill"})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read GET /skill response: %w", err)
+	}
+	return string(b), nil
 }
 
 // Me returns the caller's identity and scopes.

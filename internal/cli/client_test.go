@@ -476,7 +476,7 @@ func TestReadFile(t *testing.T) {
 		w.Write([]byte{0x89, 'P', 'N', 'G'})
 	}))
 	defer srv.Close()
-	body, ct, err := NewClient(srv.URL, "tok", nil).ReadFile(t.Context(), "demo", "img/a b.png", 3)
+	body, ct, err := NewClient(srv.URL, "tok", nil).ReadFile(t.Context(), "demo", "img/a b.png", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,7 @@ Kazari hosts static web pages. An AI agent, the CLI or the REST API publishes a 
 
 | Page                              | What is in it                                                     |
 | --------------------------------- | ----------------------------------------------------------------- |
-| [MCP server](mcp.md)              | The twelve tools, resources, the `publish-page` prompt, chunked uploads, errors |
+| [MCP server](mcp.md)              | The fourteen tools, editing files, the skill, the preview app, chunked uploads, errors |
 | [CLI](cli.md)                     | Every `kazari` command and flag, output and exit codes            |
 | [REST API](api.md)                | The user and admin APIs, wire types, limits and error codes       |
 | [Configuration](configuration.md) | Every YAML key, `${}` environment references, `.env`, overrides   |

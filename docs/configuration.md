@@ -196,6 +196,8 @@ The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2
 
 Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors; on a multi-tenant instance consider `allow_csp_override: false`.
 
+`frame-ancestors` in `csp` also decides whether the MCP preview app embeds pages: with `'none'` (the default) or `'self'` it shows links only, and with an MCP host's app origins listed it embeds the published version. See [mcp.md](mcp.md#preview-app).
+
 ### `auth`
 
 | Key            | Type   | Default  | Meaning                                                                                              |

@@ -50,6 +50,8 @@ Every error has the same envelope:
 | `invalid_path`           | 422    | File path breaks the path rules                                                    |
 | `invalid_metadata`       | 422    | Bad metadata key, value, pair count or `kazari.*` key                              |
 | `too_many_files`         | 422    | More than `limits.max_files` in a version or upload                                |
+| `edit_not_found`         | 422    | Edit: an `old_text` matched nowhere; the message names the closest lines           |
+| `edit_ambiguous`         | 422    | Edit: an `old_text` matched more than once without `replace_all`                   |
 | `unauthorized`           | 401    | Missing, invalid, expired or revoked credential                                    |
 | `forbidden`              | 403    | Missing scope, write policy, disabled user, or admin role required                 |
 | `quota_exceeded`         | 403    | The owner's storage quota would be exceeded                                        |
@@ -61,6 +63,7 @@ Every error has the same envelope:
 | `method_not_allowed`     | 405    | Route exists, method does not (`Allow` header lists the methods)                   |
 | `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period)                |
 | `upload_offset_mismatch` | 409    | Chunk offset does not match the staged size                                        |
+| `anchor_mismatch`        | 409    | Edit: an anchor's line changed since it was read, or is past the end of the file   |
 | `handle_taken`           | 409    | Admin API: handle exists                                                           |
 | `email_taken`            | 409    | Admin API: another user has the email                                              |
 | `job_running`            | 409    | Admin API: the job is already running                                              |
@@ -142,6 +145,7 @@ Base URL `https://api.<base>/v1`.
 | `PUT`    | `/artifacts/{slug}`                   | write    | `200` publish result        |
 | `PATCH`  | `/artifacts/{slug}`                   | write    | `200` publish result        |
 | `DELETE` | `/artifacts/{slug}`                   | delete   | `204`                       |
+| `POST`   | `/artifacts/{slug}/edit`              | write    | `200` edit result           |
 | `POST`   | `/artifacts/{slug}/publish`           | write    | `200` publish result        |
 | `POST`   | `/artifacts/{slug}/stale`             | write    | `200` stale result          |
 | `DELETE` | `/artifacts/{slug}/stale`             | write    | `200` publish result        |
@@ -149,6 +153,7 @@ Base URL `https://api.<base>/v1`.
 | `POST`   | `/uploads`                            | write    | `201` upload                |
 | `PATCH`  | `/uploads/{id}/files/{path...}`       | write    | `200` chunk result          |
 | `DELETE` | `/uploads/{id}`                       | write    | `204`                       |
+| `GET`    | `/skill`                              | read     | `200` the instance's skill  |
 | `GET`    | `/me`                                 | any      | `200` caller                |
 | `GET`    | `/me/keys`                            | any      | `200` caller's keys         |
 
@@ -296,6 +301,41 @@ curl -sS -X PATCH https://api.art.example.com/v1/artifacts/q3-report \
 
 Soft delete: the page stops serving (`404`), the slug stays reserved and the artifact can be restored with `{"restore": true}` until `lifecycle.retention` elapses. `?hard=true` purges now: versions and files are deleted, the page answers `410` until the tombstone period ends, and blobs are removed by the next `gc` run. Both forms need `artifacts:delete`. `204 No Content`.
 
+### Edit a file: `POST /artifacts/{slug}/edit`
+
+Changes one text file of the latest version and publishes the result as a new version; every other file carries over. The body names the file and up to 100 edits of one kind:
+
+```json
+{
+  "path": "index.html",
+  "expected_version": 4,
+  "label": "fix the title",
+  "edits": [
+    { "old_text": "<h1>Q3 report</h1>", "new_text": "<h1>Q4 report</h1>" },
+    { "old_text": "2025", "new_text": "2026", "replace_all": true }
+  ]
+}
+```
+
+- A **text edit** replaces `old_text`, which must match once unless `replace_all` is set. Edits apply in order. When `old_text` does not match exactly, whole lines are compared ignoring trailing whitespace, then ignoring indentation (and `new_text` is re-indented to the file's).
+- An **anchor edit** `{"start": "12:3fa0", "end": "14:9b1c", "new_text": "..."}` replaces lines 12 to 14 inclusive (`end` defaults to `start`; an empty `new_text` deletes them). Anchors come from reading the file with `?anchors=true`. Every anchor refers to the file as read, the ranges must not overlap, and a line whose content changed fails the request with `409 anchor_mismatch`.
+
+`expected_version` (or `If-Match`) fails with `412 version_conflict` if someone published since; without it, edits are applied to the newest content. A binary file is `422 invalid_argument`, and a result larger than `limits.max_file_bytes` is `413 too_large`. The whitespace-tolerant fallback applies to an `old_text` of at most 2000 lines, `replace_all` changes at most 10000 places, and in a file with CRLF line breaks the new text gets them too. The response is an edit result:
+
+```json
+{
+  "url": "https://q3-report.art.example.com/", "version": 5, "path": "index.html",
+  "edits": [
+    { "match": "exact", "replacements": 1, "start_line": 12, "end_line": 12,
+      "excerpt": "10:5d2e|  <body>\n11:0b7f|    <header>\n12:a41c|      <h1>Q4 report</h1>\n13:77e0|    </header>\n14:2c9d|    <main>" },
+    { "match": "exact", "replacements": 3, "start_line": 20, "end_line": 20, "excerpt": "..." }
+  ],
+  "artifact": { ... }
+}
+```
+
+`match` is `exact`, `trailing_whitespace`, `indentation` or `anchor`; `start_line` and `end_line` are where the new text of the edit's first replacement sits in the new version (`end_line` is one less than `start_line` when the edit left no text), and `excerpt` shows those lines with two around them, anchored (at most 24 lines of new text; lines longer than 160 bytes are clipped with a note), so a follow-up anchor edit needs no new read.
+
 ### Roll back or forward: `POST /artifacts/{slug}/publish`
 
 ```json
@@ -322,7 +362,7 @@ Serves an existing version. `404 version_not_found` if it does not exist.
 
 ### Read a file: `GET /artifacts/{slug}/files/{path...}`
 
-Streams one file of the published version, or of `?version=N`. Headers: the stored `Content-Type`, `ETag: "<sha256>"`, `Cache-Control: private, no-cache`, `Content-Disposition: inline` and `X-Content-Type-Options: nosniff`; `Range` and `If-None-Match` work. Files of an unpublished or soft-deleted artifact are readable only by admins, its owner and the users who created or updated it (so an owner can recover content before the purge); anyone else gets `404 not_found`.
+Streams one file of the published version, or of `?version=N`. Headers: the stored `Content-Type`, `ETag: "<sha256>"`, `Cache-Control: private, no-cache`, `Content-Disposition: inline` and `X-Content-Type-Options: nosniff`; `Range` and `If-None-Match` work. `?anchors=true` returns a text file as `text/plain` with every line prefixed by its anchor (`12:3fa0|<h1>Title</h1>`), the form anchor edits refer to; a binary file is `422 invalid_argument`. Files of an unpublished or soft-deleted artifact are readable only by admins, its owner and the users who created or updated it (so an owner can recover content before the purge); anyone else gets `404 not_found`.
 
 ```sh
 curl -sS -H "Authorization: Bearer $KAZARI_TOKEN" \
@@ -371,6 +411,10 @@ curl -sS -H "$AUTH" -H 'Content-Type: application/json' $API/artifacts -d "{
 ```
 
 Always set `Content-Type` on chunks: `curl --data-binary` otherwise sends `application/x-www-form-urlencoded`, which would become the file's type.
+
+### The instance's skill: `GET /skill`
+
+Returns the instance's [Agent Skill](https://agentskills.io/specification) as `text/markdown`: a `SKILL.md` generated from the configuration, with the MCP workflow, the authoring conventions with this instance's limits and CSP, and what to do after each error. The MCP server serves the same text as `skill://kazari/SKILL.md` and through `get_guide`. Save it as `~/.claude/skills/kazari/SKILL.md` (or wherever your agent reads skills) with `kazari skill`.
 
 ### Who am I: `GET /me` and `GET /me/keys`
 

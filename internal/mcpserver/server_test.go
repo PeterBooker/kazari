@@ -178,8 +178,9 @@ func TestListTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"begin_upload", "create_artifact", "delete_artifact", "get_artifact", "list_artifacts",
-		"mark_stale", "publish_version", "read_file", "set_visibility", "unmark_stale", "update_artifact", "upload_chunk"}
+	want := []string{"begin_upload", "create_artifact", "delete_artifact", "edit_file", "get_artifact", "get_guide",
+		"list_artifacts", "mark_stale", "publish_version", "read_file", "set_visibility", "unmark_stale", "update_artifact",
+		"upload_chunk"}
 	var got []string
 	byName := map[string]*mcp.Tool{}
 	for _, tool := range res.Tools {
@@ -384,7 +385,8 @@ func TestReadOnlyPrincipal(t *testing.T) {
 	cs := e.connect(t, readOnly)
 	msg := fails(t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
-	if msg != `forbidden: scope "artifacts:write" required` {
+	if first, next, _ := strings.Cut(msg, "\n"); first != `forbidden: scope "artifacts:write" required` ||
+		!strings.HasPrefix(next, "Next step: Retrying will not help.") {
 		t.Errorf("create as reader = %q", msg)
 	}
 	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !strings.Contains(msg, `scope "artifacts:delete" required`) {
@@ -569,7 +571,8 @@ func TestWriteRateLimit(t *testing.T) {
 	p.KeyID = "abcd1234"
 	cs := e.connect(t, p)
 	ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	if msg := fails(t, cs, "begin_upload", map[string]any{}); msg != "rate_limited: too many writes; retry in 60s" {
+	if msg := fails(t, cs, "begin_upload", map[string]any{}); msg != "rate_limited: too many writes; retry in 60s\n"+
+		"Next step: Wait as long as the message says, then repeat the call." {
 		t.Errorf("second write = %q", msg)
 	}
 	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "nope"}); !strings.HasPrefix(msg, "rate_limited: ") {
@@ -588,7 +591,7 @@ func TestToolPanicRecovered(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Uploads = nil // begin_upload now dereferences a nil service
 	cs := e.connect(t, member)
-	if msg := fails(t, cs, "begin_upload", map[string]any{}); msg != "internal: internal error" {
+	if msg := fails(t, cs, "begin_upload", map[string]any{}); !strings.HasPrefix(msg, "internal: internal error\nNext step: ") {
 		t.Errorf("panicking tool = %q", msg)
 	}
 	// The session still works.

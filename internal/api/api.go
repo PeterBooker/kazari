@@ -30,6 +30,9 @@ const (
 	CodeEmailTaken       = "email_taken"
 	CodeInternal         = "internal"
 	CodeMethodNotAllowed = "method_not_allowed"
+	CodeEditNotFound     = "edit_not_found"
+	CodeEditAmbiguous    = "edit_ambiguous"
+	CodeAnchorMismatch   = "anchor_mismatch"
 )
 
 // Error is the body of every error response.
@@ -141,6 +144,47 @@ type UpdateArtifactRequest struct {
 	Restore         bool               `json:"restore,omitempty"`
 	Files           []FileInput        `json:"files,omitempty"`
 	UploadID        string             `json:"upload_id,omitempty"`
+}
+
+// EditRequest is the JSON body of POST /artifacts/{slug}/edit: edits to one
+// text file of the latest version, published as a new version.
+type EditRequest struct {
+	Path            string `json:"path"`
+	Edits           []Edit `json:"edits"`
+	Label           string `json:"label,omitempty"`
+	ExpectedVersion int    `json:"expected_version,omitempty"`
+	KeepStale       bool   `json:"keep_stale,omitempty"`
+}
+
+// Edit is one change: old_text replaced by new_text, or the lines from the
+// start anchor to the end anchor replaced by new_text.
+type Edit struct {
+	OldText    string `json:"old_text,omitempty"`
+	NewText    string `json:"new_text"`
+	ReplaceAll bool   `json:"replace_all,omitempty"`
+	Start      string `json:"start,omitempty"`
+	End        string `json:"end,omitempty"`
+}
+
+// EditResult is returned by an edit: the publish result and how each edit
+// applied.
+type EditResult struct {
+	URL      string        `json:"url"`
+	Version  int           `json:"version"`
+	Path     string        `json:"path"`
+	Edits    []EditOutcome `json:"edits"`
+	Artifact Artifact      `json:"artifact"`
+}
+
+// EditOutcome reports one edit: how it matched (exact, trailing_whitespace,
+// indentation or anchor), how many places it replaced, and the lines its new
+// text occupies in the new version with an anchored excerpt around them.
+type EditOutcome struct {
+	Match        string `json:"match"`
+	Replacements int    `json:"replacements"`
+	StartLine    int    `json:"start_line"`
+	EndLine      int    `json:"end_line"`
+	Excerpt      string `json:"excerpt"`
 }
 
 // CreateManifest is the manifest part of a multipart create.

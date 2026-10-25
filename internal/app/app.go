@@ -229,6 +229,21 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		}),
 	)
 
+	mcpOpts := mcpserver.Options{
+		BaseDomain:          cfg.BaseDomain,
+		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
+		AllowedOrigins:      []string{strings.TrimSuffix(mcpURL, "/")},
+		InlineGuidanceBytes: int64(cfg.Limits.InlineGuidanceBytes),
+		MaxVersionBytes:     int64(cfg.Limits.MaxVersionBytes),
+		MaxFileBytes:        int64(cfg.Limits.MaxFileBytes),
+		MaxFiles:            cfg.Limits.MaxFiles,
+		MaxChunkBytes:       int64(cfg.Limits.MaxChunkBytes),
+		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
+		CSP:                 cfg.Serve.CSP,
+		ReservedSlugs:       cfg.Serve.ReservedSlugs,
+		APIBaseURL:          cfg.ExternalURL("api") + "v1",
+		MCPURL:              mcpURL,
+	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes,
 	}, httpapi.UserOptions{
@@ -237,6 +252,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
 		Now:           now,
 		TempDir:       tempDir(cfg),
+		Skill:         mcpserver.Skill(links, mcpOpts),
 	})
 	adminH := httpapi.NewAdminAPI(httpapi.AdminDeps{
 		Artifacts: arts,
@@ -252,20 +268,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}, httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now})
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes,
-	}, mcpserver.Options{
-		BaseDomain:          cfg.BaseDomain,
-		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
-		AllowedOrigins:      []string{strings.TrimSuffix(mcpURL, "/")},
-		InlineGuidanceBytes: int64(cfg.Limits.InlineGuidanceBytes),
-		MaxVersionBytes:     int64(cfg.Limits.MaxVersionBytes),
-		MaxFileBytes:        int64(cfg.Limits.MaxFileBytes),
-		MaxFiles:            cfg.Limits.MaxFiles,
-		MaxChunkBytes:       int64(cfg.Limits.MaxChunkBytes),
-		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
-		CSP:                 cfg.Serve.CSP,
-		ReservedSlugs:       cfg.Serve.ReservedSlugs,
-		APIBaseURL:          cfg.ExternalURL("api") + "v1",
-	})
+	}, mcpOpts)
 	siteH := site.NewHandler(arts, blobs, site.Options{
 		BaseDomain:       cfg.BaseDomain,
 		DefaultCSP:       cfg.Serve.CSP,

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"io"
 	"log/slog"
 	"maps"
 	"mime"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"kazari/internal/api"
 	"kazari/internal/artifact"
@@ -57,6 +60,9 @@ type UserOptions struct {
 	TempDir string
 	// Now is the clock of the rate limiters. Default: time.Now.
 	Now func() time.Time
+	// Skill is the instance's Agent Skill (a SKILL.md) served at
+	// GET /v1/skill; empty answers 404.
+	Skill string
 }
 
 func (o UserOptions) withDefaults(d UserDeps) UserOptions {
@@ -105,6 +111,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("PUT /v1/artifacts/{slug}", write(h.updateArtifact))
 	mux.Handle("PATCH /v1/artifacts/{slug}", write(h.patchArtifact))
 	mux.Handle("DELETE /v1/artifacts/{slug}", del(h.deleteArtifact))
+	mux.Handle("POST /v1/artifacts/{slug}/edit", write(h.editFile))
 	mux.Handle("POST /v1/artifacts/{slug}/publish", write(h.publish))
 	mux.Handle("POST /v1/artifacts/{slug}/stale", write(h.markStale))
 	mux.Handle("DELETE /v1/artifacts/{slug}/stale", write(h.unmarkStale))
@@ -112,6 +119,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("POST /v1/uploads", write(h.beginUpload))
 	mux.Handle("PATCH /v1/uploads/{id}/files/{path...}", write(h.uploadChunk))
 	mux.Handle("DELETE /v1/uploads/{id}", write(h.abortUpload))
+	mux.Handle("GET /v1/skill", read(h.skill))
 	mux.Handle("GET /v1/me", h.guard("", false, h.me))
 	mux.Handle("GET /v1/me/keys", h.guard("", false, h.myKeys))
 
@@ -410,6 +418,50 @@ func expectedVersion(r *http.Request, fromBody int) (int, error) {
 	return n, nil
 }
 
+// editFile is POST /artifacts/{slug}/edit: edits to one text file of the
+// latest version, published as a new version.
+func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	var req api.EditRequest
+	if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
+		return err
+	}
+	expected, err := expectedVersion(r, req.ExpectedVersion)
+	if err != nil {
+		return err
+	}
+	edits := make([]artifact.Edit, len(req.Edits))
+	for i, e := range req.Edits {
+		edits[i] = artifact.Edit(e)
+	}
+	a, v, outs, err := h.d.Artifacts.Edit(r.Context(), present.Actor(p), artifact.EditRequest{
+		Slug:            r.PathValue("slug"),
+		Path:            req.Path,
+		Edits:           edits,
+		Label:           req.Label,
+		ExpectedVersion: expected,
+		KeepStale:       req.KeepStale,
+	})
+	if err != nil {
+		return err
+	}
+	clean, _ := artifact.ValidatePath(req.Path) // valid: Edit accepted it
+	writeJSON(w, http.StatusOK, h.links.Edit(a, v.Number, clean, outs))
+	return nil
+}
+
+// skill is GET /skill: the instance's Agent Skill, as Markdown.
+func (h *userAPI) skill(w http.ResponseWriter, _ *http.Request, _ auth.Principal) error {
+	if h.o.Skill == "" {
+		return artifact.Errorf(artifact.ErrNotFound, "this instance serves no skill")
+	}
+	hdr := w.Header()
+	hdr.Set("Content-Type", "text/markdown; charset=utf-8")
+	hdr.Set("Cache-Control", "private, no-cache")
+	hdr.Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.WriteString(w, h.o.Skill)
+	return nil
+}
+
 func (h *userAPI) deleteArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	hard, err := queryBool(r, "hard")
 	if err != nil {
@@ -473,11 +525,18 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	if err != nil {
 		return err
 	}
+	anchors, err := queryBool(r, "anchors")
+	if err != nil {
+		return err
+	}
 	f, rc, err := h.d.Artifacts.OpenFile(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("path"), version)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
+	if anchors {
+		return writeAnchored(w, f, rc)
+	}
 	ct := f.ContentType
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -490,14 +549,38 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	hdr := w.Header()
 	hdr.Set("Content-Type", ct)
 	hdr.Set("ETag", `"`+f.Hash+`"`)
+	setUntrustedHeaders(hdr)
+	hdr.Set("Content-Disposition", disposition)
+	http.ServeContent(w, r, name, time.Time{}, rc)
+	return nil
+}
+
+// writeAnchored writes a text file with every line prefixed by its anchor
+// (artifact.AnchorLines), the form edit anchors refer to. The anchored text
+// is streamed: it can be several times the size of the file.
+func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.Reader) error {
+	data, err := io.ReadAll(rc) // stored files are at most limits.max_file_bytes
+	if err != nil {
+		return err
+	}
+	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+		return invalid("%s is not UTF-8 text, so it has no line anchors", f.Path)
+	}
+	hdr := w.Header()
+	hdr.Set("Content-Type", "text/plain; charset=utf-8")
+	setUntrustedHeaders(hdr)
+	_ = artifact.WriteAnchored(w, string(data)) // a failed write is the client going away
+	return nil
+}
+
+// setUntrustedHeaders sets the headers of a response carrying artifact
+// bytes on the api origin.
+func setUntrustedHeaders(hdr http.Header) {
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	// Artifact bytes are untrusted; on the api origin they must never run
 	// as a document, whatever their stored type.
 	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	hdr.Set("Cache-Control", "private, no-cache")
-	hdr.Set("Content-Disposition", disposition)
-	http.ServeContent(w, r, name, time.Time{}, rc)
-	return nil
 }
 
 func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Principal) error {

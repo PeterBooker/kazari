@@ -1,7 +1,9 @@
-// Package mcpserver is the MCP surface of Kazari: twelve tools, two resource
-// templates and one prompt over the Streamable HTTP transport, running
-// stateless. Each request builds a fresh server whose tool handlers close
-// over the authenticated principal, so no session state exists anywhere.
+// Package mcpserver is the MCP surface of Kazari: fourteen tools, two
+// resource templates, one prompt, the instance's Agent Skill (Skills
+// extension) and a preview app (MCP Apps extension) over the Streamable HTTP
+// transport, running stateless. Each request builds a fresh server whose
+// tool handlers close over the authenticated principal, so no session state
+// exists anywhere.
 //
 // Every tool calls the same artifact and upload services as the REST API and
 // returns the same wire types from package api.
@@ -15,6 +17,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"kazari/internal/api"
@@ -82,6 +85,9 @@ type Options struct {
 	// APIBaseURL is the REST API root, e.g. https://api.<base>/v1, used
 	// for read_file download links.
 	APIBaseURL string
+	// MCPURL is this server's URL, e.g. https://mcp.<base>/, which the
+	// skill gives as the address to connect to. Optional.
+	MCPURL string
 }
 
 func (o Options) withDefaults(d Deps) Options {
@@ -114,14 +120,17 @@ func (o Options) withDefaults(d Deps) Options {
 }
 
 // builder holds what every per-request server shares: the dependencies,
-// the options, the generated texts and the schema cache.
+// the options, the generated texts, the preview page and the schemas.
 type builder struct {
-	d      Deps
-	o      Options
-	log    *slog.Logger
-	sdkLog *slog.Logger // log filtered to warnings: the SDK logs every stateless connect at info
-	text   texts
-	schema *mcp.SchemaCache
+	d          Deps
+	o          Options
+	log        *slog.Logger
+	sdkLog     *slog.Logger // log filtered to warnings: the SDK logs every stateless connect at info
+	text       texts
+	schema     *mcp.SchemaCache
+	editSchema *jsonschema.Schema // edit_file's input, with oneOf for the two kinds of edit
+	preview    string             // the preview app's HTML
+	previewUI  map[string]any     // the preview resource's _meta.ui
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -130,13 +139,18 @@ func newBuilder(d Deps, o Options) *builder {
 	if log == nil {
 		log = slog.Default()
 	}
+	text := newTexts(d.Links, o)
+	preview, ui := newPreview(text, o.CSP)
 	return &builder{
-		d:      d,
-		o:      o,
-		log:    log,
-		sdkLog: slog.New(minLevel{min: slog.LevelWarn, Handler: log.Handler()}),
-		text:   newTexts(d.Links, o),
-		schema: mcp.NewSchemaCache(),
+		d:          d,
+		o:          o,
+		log:        log,
+		sdkLog:     slog.New(minLevel{min: slog.LevelWarn, Handler: log.Handler()}),
+		text:       text,
+		schema:     mcp.NewSchemaCache(),
+		editSchema: editFileSchema(),
+		preview:    preview,
+		previewUI:  ui,
 	}
 }
 
@@ -147,18 +161,23 @@ func NewServer(d Deps, o Options, p auth.Principal) *mcp.Server {
 }
 
 func (b *builder) server(p auth.Principal) *mcp.Server {
+	caps := &mcp.ServerCapabilities{}
+	caps.AddExtension(skillsExtension, nil)
+	caps.AddExtension(appsExtension, map[string]any{"mimeTypes": []string{appMIME}})
 	s := mcp.NewServer(
 		&mcp.Implementation{Name: "kazari", Title: "Kazari", Version: buildinfo.Get().Version},
 		&mcp.ServerOptions{
 			Instructions: b.text.instructions,
 			Logger:       b.sdkLog,
-			Capabilities: &mcp.ServerCapabilities{},
+			Capabilities: caps,
 			SchemaCache:  b.schema,
 		},
 	)
 	b.addTools(s, p)
 	b.addResources(s, p)
 	b.addPrompt(s)
+	b.addSkill(s, p)
+	b.addPreview(s)
 	return s
 }
 

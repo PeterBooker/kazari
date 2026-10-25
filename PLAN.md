@@ -860,3 +860,15 @@ Nothing is waiting on a decision. Items to verify during the build rather than d
 - **Claude Code OAuth.** Claude Code supports both a bearer header and its own OAuth client (CIMD with loopback redirects). 2a gates on the header; 2b verifies the OAuth path too.
 - **Entra claims.** Confirm whether the tenant's app registration emits `email` or only `preferred_username`, and document the optional-claim setting in `docs/identity.md`.
 - **Google Workspace** gets a live run after Entra, before v1.0, since the fake provider cannot exercise the `hd` claim handling against real tokens.
+
+Decided on 2026-10-25, adopting what the MCP 2026-07-28 specification and its extensions offer agents. These supersede decision 22's tool count, which is now fourteen:
+
+| Decision | Choice |
+| -------- | ------ |
+| Editing inside a file | `edit_file` (REST `POST /artifacts/{slug}/edit`, CLI `kazari edit`): exact `old_text` edits by default, then whole-line matches ignoring trailing whitespace, then indentation, always reported in `match`; anchor edits against `<line>:<hash>` anchors from `read_file anchors: true`; a miss names the closest lines. Edits apply to the latest version through `Service.Update`. |
+| Unified diff or `apply_patch` | Not accepted: models apply exact replacements and anchors more reliably, and one format keeps the surface small. |
+| Errors | Each tool error ends with a `Next step:` line per code. Structured error content is not sent: the SDK's typed handlers replace `structuredContent` on error results. |
+| Server instructions | Describe the order across tools and point to the skill; they no longer list the tools. |
+| Skill | Generated from the configuration and served as `skill://kazari/SKILL.md` with `skills/list` and `skills/get` (SEP-2640), through `get_guide`, at `GET /v1/skill` and by `kazari skill`. |
+| Confirmation | Only a hard delete asks, through an `input_required` result, and only clients on 2026-07-28 or later with form elicitation: a stateless server cannot elicit from older clients. Rollbacks and soft deletes are reversible and ask nothing. |
+| Preview | An MCP App (`ui://kazari/preview.html`) linked from the four publishing tools. It embeds the page only when the instance CSP's `frame-ancestors` allows framing; the default `'none'` is kept, so the card shows links. |

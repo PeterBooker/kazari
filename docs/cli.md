@@ -142,16 +142,53 @@ kazari rollback <slug> <version>
 
 Serves an existing version again (or a newer one: it is a pointer move, not a copy).
 
+### edit
+
+```text
+kazari edit <slug> <path> --old TEXT --new TEXT [--all] [--expected N] [--label L] [--keep-stale]
+kazari edit <slug> <path> --start ANCHOR [--end ANCHOR] --new TEXT [flags]
+kazari edit <slug> <path> --edits FILE [flags]
+```
+
+Changes text in one file of the latest version and publishes the result as a new version; every other file carries over. `--old` must match once, or everywhere with `--all`; when it does not match exactly, whole lines are compared ignoring trailing whitespace, then indentation. `--start` and `--end` replace whole lines by the anchors `files cat --anchors` prints; `--new ""` deletes. `--edits` reads a JSON array of edits (`{"old_text", "new_text", "replace_all"}` or `{"start", "end", "new_text"}`) from a file, or stdin with `-`. `--expected N` fails unless the latest version is `N`. The REST operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit).
+
+Prints the URL, then a line per edit with where it landed and how it matched:
+
+```sh
+$ kazari edit q3-report index.html --old "<h1>Q3 report</h1>" --new "<h1>Q4 report</h1>"
+https://q3-report.art.example.com/
+edit 1: lines 12-12 (exact)
+$ kazari files cat q3-report index.html --anchors | sed -n 20,22p
+20:7c1e|    <p>Revenue grew.</p>
+21:e03a|    <p>Costs fell.</p>
+22:41b9|  </main>
+$ kazari edit q3-report index.html --start 20:7c1e --end 21:e03a --new ""
+https://q3-report.art.example.com/
+edit 1: removed at line 20 (anchor)
+```
+
 ### files cat
 
 ```text
-kazari files cat <slug> <path> [--version N]
+kazari files cat <slug> <path> [--version N] [--anchors]
 ```
 
-Writes one file of the published version, or of version `N`, to stdout.
+Writes one file of the published version, or of version `N`, to stdout. `--anchors` prefixes every line of a text file with its anchor (`12:3fa0|`), for `edit --start` and `--end`.
 
 ```sh
 kazari files cat q3-report index.html --version 1 > old-index.html
+```
+
+### skill
+
+```text
+kazari skill
+```
+
+Prints the instance's Agent Skill, a `SKILL.md` generated from its configuration with the MCP workflow, authoring conventions, limits and error recipes. Install it for Claude Code with:
+
+```sh
+mkdir -p ~/.claude/skills/kazari && kazari skill > ~/.claude/skills/kazari/SKILL.md
 ```
 
 ### me, keys, version

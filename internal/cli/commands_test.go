@@ -783,3 +783,68 @@ func TestRunGetTerminalSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestRunEdit(t *testing.T) {
+	var got api.EditRequest
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+		"POST /v1/artifacts/demo/edit": func(w http.ResponseWriter, r *http.Request) {
+			got = api.EditRequest{}
+			json.NewDecoder(r.Body).Decode(&got)
+			reply(w, 200, api.EditResult{URL: "https://demo.art.test", Version: 4, Path: "index.html", Edits: []api.EditOutcome{
+				{Match: "indentation", Replacements: 1, StartLine: 3, EndLine: 4},
+				{Match: "exact", Replacements: 2, StartLine: 9, EndLine: 8},
+			}})
+		},
+		"GET /v1/skill": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+			io.WriteString(w, "---\nname: kazari\n---\n")
+		},
+		"GET /v1/artifacts/demo/files/index.html": func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, r.URL.RawQuery)
+		},
+	})
+	base := []string{"--url", srv.URL, "--token", "t"}
+
+	r := runCLI(t, nil, append(base, "edit", "demo", "index.html", "--old", "Q3", "--new", "Q4", "--all", "--expected", "3", "--label", "q4")...)
+	want := "https://demo.art.test\nedit 1: lines 3-4 (indentation)\nedit 2: removed at line 9 (exact, 2 places)\n"
+	if r.code != 0 || r.stdout != want {
+		t.Fatalf("edit = %+v", r)
+	}
+	if diff := cmp.Diff(api.EditRequest{Path: "index.html", Label: "q4", ExpectedVersion: 3,
+		Edits: []api.Edit{{OldText: "Q3", NewText: "Q4", ReplaceAll: true}}}, got); diff != "" {
+		t.Errorf("request (-want +got):\n%s", diff)
+	}
+
+	r = runCLI(t, nil, append(base, "edit", "demo", "index.html", "--start", "3:abcd", "--end", "4:0123", "--new", "")...)
+	if r.code != 0 || len(got.Edits) != 1 || got.Edits[0] != (api.Edit{Start: "3:abcd", End: "4:0123"}) {
+		t.Errorf("anchor edit = %+v, request %+v", r, got)
+	}
+
+	file := filepath.Join(t.TempDir(), "edits.json")
+	if err := os.WriteFile(file, []byte(`[{"old_text":"a","new_text":"b"},{"old_text":"c","new_text":""}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = runCLI(t, nil, append(base, "edit", "demo", "index.html", "--edits", file)...)
+	if r.code != 0 || len(got.Edits) != 2 || got.Edits[1].OldText != "c" {
+		t.Errorf("edits file = %+v, request %+v", r, got)
+	}
+
+	for _, args := range [][]string{
+		{"edit", "demo", "index.html", "--new", "x"},
+		{"edit", "demo", "index.html", "--old", "x"},
+		{"edit", "demo", "index.html", "--edits", file, "--old", "x"},
+		{"edit", "demo"},
+	} {
+		if r := runCLI(t, nil, append(base, args...)...); r.code != 2 {
+			t.Errorf("%v: code %d, want 2 (%s)", args, r.code, r.stderr)
+		}
+	}
+
+	if r := runCLI(t, nil, append(base, "skill")...); r.code != 0 || r.stdout != "---\nname: kazari\n---\n" {
+		t.Errorf("skill = %+v", r)
+	}
+	if r := runCLI(t, nil, append(base, "files", "cat", "demo", "index.html", "--anchors", "--version", "2")...); r.code != 0 ||
+		r.stdout != "anchors=true&version=2" {
+		t.Errorf("files cat --anchors = %+v", r)
+	}
+}

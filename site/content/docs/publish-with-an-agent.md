@@ -45,11 +45,11 @@ Leave out `headers` to sign in through OAuth instead, if your agent supports it.
 claude mcp add --transport http kazari https://mcp.art.example.com/
 ```
 
-Kazari's repository also has an example skill with its conventions and recipes, for agents that read skills. Install it for all your projects in Claude Code with:
+Your instance also serves a skill with its conventions, limits and recipes. Agents that load skills over MCP find it on their own; others can call the `get_guide` tool. To install it for all your projects in Claude Code, download it with your API key (or run `kazari skill` with the [CLI](cli.md#skill)):
 
 ```sh
 mkdir -p ~/.claude/skills/kazari
-curl -fsSL https://raw.githubusercontent.com/PeterBooker/kazari/main/examples/kazari/SKILL.md \
+curl -fsSL -H "Authorization: Bearer kzk_..." https://api.art.example.com/v1/skill \
   -o ~/.claude/skills/kazari/SKILL.md
 ```
 
@@ -61,13 +61,14 @@ Say what you want and that it should go on Kazari. Naming a slug is optional, bu
 | ------- | ------------------- |
 | "Build a clickable prototype of a three-step signup flow and publish it to Kazari as `signup-flow`." | Writes the page and calls `create_artifact`. |
 | "Turn this CSV into a dashboard with a chart per region and publish it." | Builds the page with the data in it, picks a slug, publishes. |
-| "Make the buttons larger on `signup-flow`. Keep everything else." | Calls `update_artifact` with only the changed files: a new version. |
+| "Make the buttons larger on `signup-flow`. Keep everything else." | Reads the page and calls `edit_file` with only the changed lines: a new version. |
+| "Add a pricing page to `signup-flow`." | Calls `update_artifact` with the new file; every other file carries over. |
 | "What versions of `signup-flow` are there?" | Calls `get_artifact` and lists them with their addresses. |
 | "Roll `signup-flow` back to version 2." | Calls `publish_version`. Version 3 is kept. |
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
 | "We're done with `signup-flow`. Retire it in a week." | Calls `mark_stale` with a seven-day grace period. |
 
-The agent replies with the address, for example `Published https://signup-flow.art.example.com/ (version 1)`.
+The agent replies with the address, for example `Published https://signup-flow.art.example.com/ (version 1)`. Apps that support MCP Apps also show a card with links to the page and the version.
 
 ## Versions and addresses
 
@@ -95,7 +96,7 @@ Pages you no longer need can retire themselves. Ask your agent to mark a page st
 2. it is **purged**: the files are gone, and old links say "gone" for 90 days;
 3. the **slug is freed** and can be used again.
 
-Changed your mind during the grace period? Ask your agent to unmark it, or publish a new version, which clears the mark too. Deleting a page outright is possible too; the agent should check with you before a permanent delete.
+Changed your mind during the grace period? Ask your agent to unmark it, or publish a new version, which clears the mark too. Deleting a page outright is possible too; the agent should check with you before a permanent delete, and apps that support it ask you to confirm.
 
 ## What works in a page
 
@@ -120,6 +121,7 @@ Your instance's limits and allowed sources may differ; the tool descriptions you
 | `forbidden` | Your key or sign-in lacks the permission for that action, or the instance lets only owners change their pages. Ask your administrator. |
 | `quota_exceeded` | You have used your storage allowance. Retire old pages or ask for more. |
 | `version_conflict` | Someone else published in between. The agent fetches the latest version and tries again. |
+| `anchor_mismatch`, `edit_not_found` | The page changed since the agent read it, or the text to change was not found. The agent reads the page again and redoes the edit. |
 | `rate_limited` | Too many changes in a minute (60 by default, across MCP and the API). Wait for the time the message names. |
 | The page says "not found" | It is unpublished, deleted, or the address has a typo. |
 | A library or font does not load | Its source is not on the allowed list. Ask your agent to inline it or use one of the CDNs above. |

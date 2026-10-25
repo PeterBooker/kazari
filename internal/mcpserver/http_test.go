@@ -137,8 +137,8 @@ func TestHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 12 {
-		t.Errorf("%d tools, want 12", len(tools.Tools))
+	if len(tools.Tools) != 14 {
+		t.Errorf("%d tools, want 14", len(tools.Tools))
 	}
 	// The principal from the bearer token reaches the tool handlers.
 	pub, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
@@ -147,5 +147,49 @@ func TestHTTPClient(t *testing.T) {
 	})
 	if pub.Artifact.Owner != "alice" || pub.URL != "https://over-http.art.test/" {
 		t.Errorf("create over HTTP = %+v", pub)
+	}
+}
+
+// Over the stateless HTTP transport, a 2026-07-28 client with form
+// elicitation is asked before a purge, and an older one is not (the server
+// cannot send it a request of its own).
+func TestHTTPHardDeleteConfirmation(t *testing.T) {
+	srv := newHTTPServer(t)
+	ctx := context.Background()
+	connect := func(version string, asked *int) *mcp.ClientSession {
+		t.Helper()
+		transport := &mcp.StreamableClientTransport{
+			Endpoint:             srv.URL,
+			HTTPClient:           &http.Client{Transport: bearer{"good", http.DefaultTransport}},
+			DisableStandaloneSSE: true,
+			MaxRetries:           -1,
+		}
+		c := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "v0"}, &mcp.ClientOptions{
+			ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+				*asked++
+				return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+			},
+		})
+		cs, err := c.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: version})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cs.Close() })
+		return cs
+	}
+	for _, c := range []struct {
+		version string
+		asks    int
+	}{{"2026-07-28", 1}, {"2025-11-25", 0}} {
+		var asked int
+		cs := connect(c.version, &asked)
+		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "purge-me", "name": "x", "description": "x",
+			"files": []map[string]any{{"path": "index.html", "content": "hi"}}})
+		out, res := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "purge-me", "hard": true})
+		if !out.OK || firstLine(res) != "Purged purge-me permanently." || asked != c.asks {
+			t.Errorf("%s: purge = %+v %q, asked %d times, want %d", c.version, out, firstLine(res), asked, c.asks)
+		}
+		// The tombstone blocks the slug; use a fresh one next round.
+		srv = newHTTPServer(t)
 	}
 }

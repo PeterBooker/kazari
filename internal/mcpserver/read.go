@@ -105,13 +105,22 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 		if err := requireScope(p, auth.ScopeRead); err != nil {
 			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 		}
-		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, in.Version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
+		a, _, err := b.d.Artifacts.Get(ctx, actor, in.Slug)
+		if err != nil {
+			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
+		}
+		version := in.Version
+		if version == 0 {
+			version = a.PublishedVersion
+		}
+		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
 		f := fc.file
-		out = ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash}
+		out = ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash,
+			Version: version, LatestVersion: a.LatestVersion}
 		switch {
 		case errors.Is(err, errTooLargeToInline):
 			out.Encoding = "url"
-			out.URL, err = b.downloadURL(ctx, actor, in.Slug, f.Path, in.Version)
+			out.URL, err = b.downloadURL(ctx, actor, in.Slug, f.Path, version)
 			if err != nil {
 				return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 			}
@@ -122,7 +131,11 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 		case fc.text:
 			out.Encoding = "utf8"
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(fc.data)}}}, out, nil
+			body := string(fc.data)
+			if in.Anchors {
+				body, out.Anchored = artifact.AnchorLines(body), true
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: body}}}, out, nil
 		default:
 			out.Encoding = "base64"
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{

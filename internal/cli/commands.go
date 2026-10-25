@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,7 +30,9 @@ func commands() map[string]commandFunc {
 		"unstale":    cmdUnstale,
 		"visibility": cmdVisibility,
 		"rollback":   cmdRollback,
+		"edit":       cmdEdit,
 		"files":      cmdFiles,
+		"skill":      cmdSkill,
 		"me":         cmdMe,
 		"keys":       cmdKeys,
 		"version":    cmdVersion,
@@ -516,16 +521,104 @@ func cmdRollback(r *runner, args []string) error {
 	return nil
 }
 
+func cmdEdit(r *runner, args []string) error {
+	fs := r.newFlags("edit", "edit <slug> <path> (--old TEXT | --start ANCHOR [--end ANCHOR]) --new TEXT [flags]\n"+
+		"       kazari edit <slug> <path> --edits FILE [flags]")
+	old := fs.String("old", "", "exact `text` to replace")
+	newText := fs.String("new", "", "replacement `text`; empty deletes")
+	all := fs.Bool("all", false, "replace every match of --old")
+	start := fs.String("start", "", "`anchor` of the first line to replace (from files cat --anchors)")
+	end := fs.String("end", "", "`anchor` of the last line to replace (default --start)")
+	editsFile := fs.String("edits", "", "read a JSON array of edits from `file` (- for stdin)")
+	label := fs.String("label", "", "version label")
+	expected := fs.Int("expected", 0, "fail unless the latest version is `N`")
+	keepStale := fs.Bool("keep-stale", false, "keep the stale mark")
+	pos, err := parse(fs, args, 2, 2)
+	if err != nil {
+		return err
+	}
+	var edits []api.Edit
+	single := flagSet(fs, "old") || flagSet(fs, "new") || flagSet(fs, "start") || flagSet(fs, "end") || *all
+	switch {
+	case *editsFile != "" && single:
+		return usagef("edit: --edits replaces --old, --new, --all, --start and --end")
+	case *editsFile != "":
+		if edits, err = r.readEdits(*editsFile); err != nil {
+			return err
+		}
+	case *old == "" && *start == "":
+		return usagef("edit: give --old or --start, with --new, or --edits FILE")
+	case !flagSet(fs, "new"):
+		return usagef("edit: --new is required; --new \"\" deletes")
+	default:
+		edits = []api.Edit{{OldText: *old, NewText: *newText, ReplaceAll: *all, Start: *start, End: *end}}
+	}
+	c, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	res, err := c.Edit(r.ctx, pos[0], api.EditRequest{
+		Path: pos[1], Edits: edits, Label: *label, ExpectedVersion: *expected, KeepStale: *keepStale,
+	})
+	if err != nil {
+		return err
+	}
+	if r.g.json {
+		return r.printJSON(res)
+	}
+	fmt.Fprintln(r.stdout, res.URL)
+	for i, e := range res.Edits {
+		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
+		if e.EndLine < e.StartLine {
+			where = fmt.Sprintf("removed at line %d", e.StartLine)
+		}
+		fmt.Fprintf(r.stdout, "edit %d: %s (%s", i+1, where, e.Match)
+		if e.Replacements > 1 {
+			fmt.Fprintf(r.stdout, ", %d places", e.Replacements)
+		}
+		fmt.Fprintln(r.stdout, ")")
+	}
+	return nil
+}
+
+// readEdits reads a JSON array of edits from name, or stdin for "-".
+func (r *runner) readEdits(name string) ([]api.Edit, error) {
+	var (
+		data []byte
+		err  error
+	)
+	if name == "-" {
+		data, err = io.ReadAll(r.stdin)
+	} else {
+		data, err = os.ReadFile(name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("edit: read edits: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var edits []api.Edit
+	if err := dec.Decode(&edits); err != nil {
+		return nil, usagef("edit: --edits must be a JSON array of {old_text, new_text, replace_all} or {start, end, new_text}: %v", err)
+	}
+	if len(edits) == 0 {
+		return nil, usagef("edit: --edits holds no edits")
+	}
+	return edits, nil
+}
+
 func cmdFiles(r *runner, args []string) error {
+	const usage = "files cat <slug> <path> [--version N] [--anchors]"
 	if len(args) == 0 || args[0] != "cat" {
 		if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
-			fmt.Fprintln(r.stderr, "usage: kazari files cat <slug> <path> [--version N]")
+			fmt.Fprintln(r.stderr, "usage: kazari "+usage)
 			return nil
 		}
-		return usagef("usage: kazari files cat <slug> <path> [--version N]")
+		return usagef("usage: kazari " + usage)
 	}
-	fs := r.newFlags("files cat", "files cat <slug> <path> [--version N]")
+	fs := r.newFlags("files cat", usage)
 	version := fs.Int("version", 0, "read from version `N` instead of the published one")
+	anchors := fs.Bool("anchors", false, "prefix each line with its anchor, for kazari edit --start and --end")
 	pos, err := parse(fs, args[1:], 2, 2)
 	if err != nil {
 		return err
@@ -534,7 +627,7 @@ func cmdFiles(r *runner, args []string) error {
 	if err != nil {
 		return err
 	}
-	body, _, err := c.ReadFile(r.ctx, pos[0], pos[1], *version)
+	body, _, err := c.ReadFile(r.ctx, pos[0], pos[1], *version, *anchors)
 	if err != nil {
 		return err
 	}
@@ -543,6 +636,23 @@ func cmdFiles(r *runner, args []string) error {
 		return fmt.Errorf("read %s: %w", pos[1], err)
 	}
 	return nil
+}
+
+func cmdSkill(r *runner, args []string) error {
+	fs := r.newFlags("skill", "skill")
+	if _, err := parse(fs, args, 0, 0); err != nil {
+		return err
+	}
+	c, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	md, err := c.Skill(r.ctx)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(r.stdout, md)
+	return err
 }
 
 func cmdMe(r *runner, args []string) error {

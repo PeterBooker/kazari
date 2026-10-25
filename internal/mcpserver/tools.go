@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"kazari/internal/api"
@@ -65,6 +67,44 @@ type UpdateInput struct {
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
 
+// EditInput is one edit of edit_file: a text edit (old_text) or an anchor
+// edit (start, end).
+type EditInput struct {
+	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: the exact text to replace, copied from the file; it must match once unless replace_all"`
+	NewText    string `json:"new_text" jsonschema:"the replacement; empty deletes the text or lines"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"text edit: replace every match of old_text"`
+	Start      string `json:"start,omitempty" jsonschema:"anchor edit: anchor of the first line to replace, e.g. 12:3fa0, from read_file with anchors: true"`
+	End        string `json:"end,omitempty" jsonschema:"anchor edit: anchor of the last line to replace, inclusive; default start"`
+}
+
+// EditFileInput is the input of edit_file.
+type EditFileInput struct {
+	Slug            string      `json:"slug" jsonschema:"artifact to change"`
+	Path            string      `json:"path" jsonschema:"text file to edit, e.g. index.html"`
+	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits, not both, applied to the latest version"`
+	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you read; a newer one fails with version_conflict"`
+	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
+	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
+}
+
+// editFileSchema is EditFileInput's schema with each edit constrained to
+// one kind: exactly one of a non-empty old_text and a non-empty start.
+func editFileSchema() *jsonschema.Schema {
+	s, err := jsonschema.For[EditFileInput](nil)
+	if err != nil {
+		panic(err) // a fixed struct always infers
+	}
+	one := 1
+	kind := func(field string) *jsonschema.Schema {
+		return &jsonschema.Schema{
+			Required:   []string{field},
+			Properties: map[string]*jsonschema.Schema{field: {Type: "string", MinLength: &one}},
+		}
+	}
+	s.Properties["edits"].Items.OneOf = []*jsonschema.Schema{kind("old_text"), kind("start")}
+	return s
+}
+
 // BeginUploadInput is the (empty) input of begin_upload.
 type BeginUploadInput struct{}
 
@@ -89,6 +129,7 @@ type ReadFileInput struct {
 	Slug    string `json:"slug" jsonschema:"artifact to read from"`
 	Path    string `json:"path" jsonschema:"file path, e.g. index.html"`
 	Version int    `json:"version,omitempty" jsonschema:"version number; default the published version"`
+	Anchors bool   `json:"anchors,omitempty" jsonschema:"prefix each line of a text file with its anchor (12:3fa0|) for edit_file"`
 }
 
 // ListInput is the input of list_artifacts.
@@ -139,18 +180,31 @@ type ReadFileResult struct {
 	// (embedded blob) or url (too large; download from URL).
 	Encoding string `json:"encoding"`
 	URL      string `json:"url,omitempty"`
+	// Anchored is true when the text carries line anchors.
+	Anchored bool `json:"anchored,omitempty"`
+	// Version is the version read; LatestVersion the one edit_file edits.
+	Version       int `json:"version"`
+	LatestVersion int `json:"latest_version"`
 }
 
 // handler is a tool body: it returns the structured result and a one-line
-// summary for the text content.
-type handler[In, Out any] func(ctx context.Context, in In) (Out, string, error)
+// summary for the text content. req is the call, for the few tools that
+// look at the client's protocol version, capabilities or input responses.
+type handler[In, Out any] func(ctx context.Context, req *mcp.CallToolRequest, in In) (Out, string, error)
+
+// inputRequired is returned by a handler that needs the user's answer
+// before it can act; register turns it into an input_required result
+// (SEP-2322) and the client calls again with the answers.
+type inputRequired struct{ requests mcp.InputRequestMap }
+
+func (*inputRequired) Error() string { return "mcpserver: input required" }
 
 // register adds a tool whose handler runs only for principals holding
-// scope, maps errors to "<code>: <message>" tool errors and returns the
-// summary line followed by the JSON of the result.
+// scope, maps errors to "<code>: <message>" tool errors with a next step
+// and returns the summary line followed by the JSON of the result.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
 	t.Description = b.text.tools[t.Name]
-	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
+	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
 		defer b.recoverTool(ctx, t.Name, func(e error) { res, out, err = nil, zero, e })
 		if err := requireScope(p, scope); err != nil {
@@ -158,11 +212,15 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 		}
 		if scope == auth.ScopeWrite || scope == auth.ScopeDelete {
 			if d := b.d.Writes.Reserve(ratelimit.CredentialKey(p)); d > 0 {
-				return nil, zero, &toolError{e: api.Error{Code: api.CodeRateLimited,
-					Message: "too many writes; retry in " + ratelimit.RetryAfter(d) + "s"}}
+				return nil, zero, b.toolError(ctx, t.Name, &api.Error{Code: api.CodeRateLimited,
+					Message: "too many writes; retry in " + ratelimit.RetryAfter(d) + "s"})
 			}
 		}
-		out, summary, err := h(ctx, in)
+		out, summary, err := h(ctx, req, in)
+		var ir *inputRequired
+		if errors.As(err, &ir) {
+			return &mcp.CallToolResult{InputRequests: ir.requests}, zero, nil
+		}
 		if err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, err)
 		}
@@ -187,7 +245,8 @@ func (b *builder) recoverTool(ctx context.Context, name string, fail func(error)
 		return
 	}
 	b.log.ErrorContext(ctx, "mcp handler panicked", "tool", name, "panic", v, "stack", string(debug.Stack()))
-	fail(&toolError{e: api.Error{Code: api.CodeInternal, Message: "internal error"}, cause: fmt.Errorf("panic: %v", v)})
+	fail(&toolError{e: api.Error{Code: api.CodeInternal, Message: "internal error"}, next: b.text.next[api.CodeInternal],
+		cause: fmt.Errorf("panic: %v", v)})
 }
 
 func requireScope(p auth.Principal, scope string) error {
@@ -198,9 +257,10 @@ func requireScope(p auth.Principal, scope string) error {
 }
 
 // toolError is the error a tool returns to the model: the wire error code
-// and message, plus where to resume after an offset mismatch.
+// and message, where to resume after an offset mismatch, and the next step.
 type toolError struct {
 	e     api.Error
+	next  string
 	cause error
 }
 
@@ -209,20 +269,30 @@ func (e *toolError) Error() string {
 	if e.e.Current != nil {
 		s += fmt.Sprintf(" (current=%d: resend this path from offset %d)", *e.e.Current, *e.e.Current)
 	}
+	if e.next != "" {
+		s += "\nNext step: " + e.next
+	}
 	return s
 }
 
 func (e *toolError) Unwrap() error { return e.cause }
 
-// toolError maps err with present.Error; internal errors are logged, as
-// their message is replaced by a generic one.
+// toolError maps err with present.Error and adds the next step for its
+// code; internal errors are logged, as their message is replaced by a
+// generic one.
 func (b *builder) toolError(ctx context.Context, tool string, err error) error {
-	_, e := present.Error(err)
+	var e api.Error
+	var wire *api.Error
+	if errors.As(err, &wire) {
+		e = *wire
+	} else {
+		_, e = present.Error(err)
+	}
 	if e.Code == api.CodeInternal {
 		b.log.ErrorContext(ctx, "mcp tool failed", "tool", tool, "err", err)
 	}
 	e.Message = strings.TrimPrefix(e.Message, e.Code+": ")
-	return &toolError{e: e, cause: err}
+	return &toolError{e: e, next: b.text.next[e.Code], cause: err}
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -241,8 +311,9 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	arts := b.d.Artifacts
 	links := b.d.Links
 
-	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false)},
-		auth.ScopeWrite, func(ctx context.Context, in CreateInput) (api.PublishResult, string, error) {
+	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false),
+		Meta: previewToolMeta()},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (api.PublishResult, string, error) {
 			files, cleanup, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
 			defer cleanup()
 			if err != nil {
@@ -264,8 +335,9 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return res, publishedLine(res), nil
 		})
 
-	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false)},
-		auth.ScopeWrite, func(ctx context.Context, in UpdateInput) (api.PublishResult, string, error) {
+	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
+		Meta: previewToolMeta()},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (api.PublishResult, string, error) {
 			files, cleanup, err := b.files(ctx, p, in.UploadID, in.Files)
 			defer cleanup()
 			if err != nil {
@@ -300,8 +372,31 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return res, publishedLine(res), nil
 		})
 
+	register(b, s, p, &mcp.Tool{Name: "edit_file", InputSchema: b.editSchema,
+		Annotations: annotations("Edit file", false, false, false), Meta: previewToolMeta()},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in EditFileInput) (api.EditResult, string, error) {
+			edits := make([]artifact.Edit, len(in.Edits))
+			for i, e := range in.Edits {
+				edits[i] = artifact.Edit(e)
+			}
+			a, v, outs, err := arts.Edit(ctx, actor, artifact.EditRequest{
+				Slug:            in.Slug,
+				Path:            in.Path,
+				Edits:           edits,
+				Label:           in.Label,
+				ExpectedVersion: in.ExpectedVersion,
+				KeepStale:       in.KeepStale,
+			})
+			if err != nil {
+				return api.EditResult{}, "", err
+			}
+			clean, _ := artifact.ValidatePath(in.Path) // valid: Edit accepted it
+			res := links.Edit(a, v.Number, clean, outs)
+			return res, editLine(res), nil
+		})
+
 	register(b, s, p, &mcp.Tool{Name: "begin_upload", Annotations: annotations("Begin chunked upload", false, false, false)},
-		auth.ScopeWrite, func(ctx context.Context, _ BeginUploadInput) (api.Upload, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, _ BeginUploadInput) (api.Upload, string, error) {
 			u, err := b.d.Uploads.Begin(ctx, p.Handle)
 			if err != nil {
 				return api.Upload{}, "", err
@@ -312,7 +407,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "upload_chunk", Annotations: annotations("Upload chunk", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, in ChunkInput) (api.ChunkResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ChunkInput) (api.ChunkResult, string, error) {
 			data, err := decode(in.Path, in.Content, in.Encoding)
 			if err != nil {
 				return api.ChunkResult{}, "", err
@@ -326,7 +421,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "get_artifact", Annotations: annotations("Get artifact", true, false, true)},
-		auth.ScopeRead, func(ctx context.Context, in GetInput) (api.ArtifactDetail, string, error) {
+		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in GetInput) (api.ArtifactDetail, string, error) {
 			d, err := b.detail(ctx, actor, in.Slug, in.IncludeFiles)
 			if err != nil {
 				return api.ArtifactDetail{}, "", err
@@ -337,7 +432,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	b.addReadFile(s, p, actor)
 
 	register(b, s, p, &mcp.Tool{Name: "list_artifacts", Annotations: annotations("List artifacts", true, false, true)},
-		auth.ScopeRead, func(ctx context.Context, in ListInput) (api.ArtifactList, string, error) {
+		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in ListInput) (api.ArtifactList, string, error) {
 			page, err := arts.List(ctx, actor, artifact.ListQuery{
 				Mine:     in.Mine,
 				Metadata: in.Metadata,
@@ -356,8 +451,9 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return out, line, nil
 		})
 
-	register(b, s, p, &mcp.Tool{Name: "publish_version", Annotations: annotations("Publish version", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, in PublishInput) (api.PublishResult, string, error) {
+	register(b, s, p, &mcp.Tool{Name: "publish_version", Annotations: annotations("Publish version", false, false, true),
+		Meta: previewToolMeta()},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in PublishInput) (api.PublishResult, string, error) {
 			a, err := arts.Publish(ctx, actor, in.Slug, in.Version)
 			if err != nil {
 				return api.PublishResult{}, "", err
@@ -367,7 +463,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "mark_stale", Annotations: annotations("Mark stale", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, in StaleInput) (api.StaleResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in StaleInput) (api.StaleResult, string, error) {
 			grace, err := parseGrace(in.Grace)
 			if err != nil {
 				return api.StaleResult{}, "", err
@@ -382,7 +478,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "unmark_stale", Annotations: annotations("Unmark stale", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, in SlugInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in SlugInput) (api.PublishResult, string, error) {
 			a, err := arts.UnmarkStale(ctx, actor, in.Slug)
 			if err != nil {
 				return api.PublishResult{}, "", err
@@ -392,7 +488,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "set_visibility", Annotations: annotations("Set visibility", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, in VisibilityInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in VisibilityInput) (api.PublishResult, string, error) {
 			a, err := arts.SetVisibility(ctx, actor, in.Slug, in.Visibility)
 			if err != nil {
 				return api.PublishResult{}, "", err
@@ -402,7 +498,16 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "delete_artifact", Annotations: annotations("Delete artifact", false, true, true)},
-		auth.ScopeDelete, func(ctx context.Context, in DeleteInput) (api.OK, string, error) {
+		auth.ScopeDelete, func(ctx context.Context, req *mcp.CallToolRequest, in DeleteInput) (api.OK, string, error) {
+			if in.Hard && canConfirm(req) {
+				answer, answered := req.Params.InputResponses[confirmPurge]
+				if !answered {
+					return api.OK{}, "", &inputRequired{requests: mcp.InputRequestMap{confirmPurge: purgeQuestion(in.Slug)}}
+				}
+				if !confirmed(answer) {
+					return api.OK{OK: false}, fmt.Sprintf("Not purged: the user did not confirm, so %s is unchanged.", in.Slug), nil
+				}
+			}
 			if err := arts.Delete(ctx, actor, in.Slug, in.Hard); err != nil {
 				return api.OK{}, "", err
 			}
@@ -411,6 +516,73 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			}
 			return api.OK{OK: true}, fmt.Sprintf("Deleted %s; it is offline and will be purged after the retention period.", in.Slug), nil
 		})
+}
+
+// confirmPurge is the id of the question delete_artifact asks before a
+// hard delete.
+const confirmPurge = "confirm_purge"
+
+// canConfirm reports whether the client can answer an input_required
+// result with a form. That needs protocol 2026-07-28 or later: this server
+// is stateless, so it cannot send older clients an elicitation request of
+// its own. A client that cannot is left to the tool's destructive hint.
+func canConfirm(req *mcp.CallToolRequest) bool {
+	if req == nil || req.ProtocolVersion() < "2026-07-28" {
+		return false
+	}
+	caps := req.ClientCapabilities()
+	// An empty elicitation capability means form elicitation.
+	return caps != nil && caps.Elicitation != nil && (caps.Elicitation.Form != nil || caps.Elicitation.URL == nil)
+}
+
+// purgeQuestion asks the user to confirm purging slug.
+func purgeQuestion(slug string) *mcp.ElicitParams {
+	return &mcp.ElicitParams{
+		Mode: "form",
+		Message: fmt.Sprintf("Permanently delete the artifact %q? Every version is deleted now and cannot be restored, "+
+			"and the slug stays blocked for a while.", slug),
+		RequestedSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"confirm": map[string]any{
+					"type":        "boolean",
+					"title":       "Delete " + slug + " permanently",
+					"description": "Tick to delete every version now.",
+					"default":     false,
+				},
+			},
+			"required": []string{"confirm"},
+		},
+	}
+}
+
+// confirmed reports whether the user accepted the purge question and
+// ticked the box.
+func confirmed(answer mcp.InputResponse) bool {
+	r, ok := answer.(*mcp.ElicitResult)
+	if !ok || r == nil || r.Action != "accept" {
+		return false
+	}
+	v, _ := r.Content["confirm"].(bool)
+	return v
+}
+
+// editLine is the summary of edit_file: where each edit landed and how
+// it matched, so a fuzzy match is never silent.
+func editLine(r api.EditResult) string {
+	parts := make([]string, len(r.Edits))
+	for i, e := range r.Edits {
+		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
+		if e.EndLine < e.StartLine {
+			where = fmt.Sprintf("removed at line %d", e.StartLine)
+		}
+		parts[i] = fmt.Sprintf("edit %d %s (%s", i+1, where, e.Match)
+		if e.Replacements > 1 {
+			parts[i] += fmt.Sprintf(", %d places", e.Replacements)
+		}
+		parts[i] += ")"
+	}
+	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, strings.Join(parts, "; "))
 }
 
 // publishedLine is the summary of every tool that returns a PublishResult.

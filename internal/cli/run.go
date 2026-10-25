@@ -372,9 +372,11 @@ Commands:
   unstale <slug>                clear the stale mark
   visibility <slug> <v>         set public, unlisted or unpublished
   rollback <slug> <version>     publish an earlier version
-  files cat <slug> <path>       write a file to stdout
+  edit <slug> <path>            change text in a file and publish it as a new version
+  files cat <slug> <path>       write a file to stdout (--anchors for edit --start)
   me                            show the caller's identity
   keys                          list the caller's API keys
+  skill                         print the instance's Agent Skill (SKILL.md)
   version                       print the client version
   admin <command>               admin API: users, keys, artifacts, transfer, hide,
                                 settings, jobs, audit, health

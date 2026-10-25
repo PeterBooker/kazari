@@ -1,11 +1,11 @@
 ---
 name: kazari
-description: Publish static web pages (HTML artifacts) to an Kazari instance through its MCP tools, and update, inspect, roll back, expire or delete them. Use when the user asks to publish, share, host or update a page, report or demo on Kazari, or mentions an Kazari URL or slug.
+description: Publish static web pages (HTML artifacts) to a Kazari instance through its MCP tools, and edit, inspect, roll back, expire or delete them. Use when the user asks to publish, share, host or change a page, report or demo on Kazari, or mentions a Kazari URL or slug.
 ---
 
 # Kazari
 
-Kazari hosts static web pages. Each artifact has a permanent **slug** and is served at `https://<slug>.<base>/` (the published version) and `https://<slug>--v<N>.<base>/` (a pinned version). The tool descriptions state this instance's exact limits and CSP; trust them over this file.
+Kazari hosts static web pages. Each artifact has a permanent **slug** and is served at `https://<slug>.<base>/` (the published version) and `https://<slug>--v<N>.<base>/` (a pinned version). This is a static example with the default settings. Every instance serves its own copy, generated from its configuration: `skill://kazari/SKILL.md` over MCP, the `get_guide` tool, or `kazari skill` on the command line. Prefer that copy, and trust the tool descriptions over this file.
 
 ## Connect (once)
 
@@ -13,7 +13,7 @@ Kazari hosts static web pages. Each artifact has a permanent **slug** and is ser
 claude mcp add --transport http kazari https://mcp.<base>/ --header "Authorization: Bearer <key>"
 ```
 
-`<key>` is an Kazari API key, issued by an admin (`POST /users/{handle}/keys` on the admin API). The tools then appear as `mcp__kazari__*`.
+`<key>` is a Kazari API key, issued by an admin (`POST /users/{handle}/keys` on the admin API). The tools then appear as `mcp__kazari__*`.
 
 ## Authoring conventions
 
@@ -31,7 +31,14 @@ The `publish-page` prompt carries the same conventions, generated from the insta
 
 **Publish a page.** `create_artifact` with `slug`, `name`, `description` and `files: [{path: "index.html", content: "..."}]`. Binary files use `encoding: "base64"`.
 
-**Update a page.** `get_artifact` to read `latest_version`, then `update_artifact` with `files` (changed files only; `{path, delete: true}` removes one; everything else carries over) and `expected_version: <latest_version>`. On `version_conflict`, fetch again, re-apply and retry. Without files only name, description, metadata or visibility change.
+**Change a page.** `read_file` with `anchors: true`, then `edit_file` with `expected_version` set to the `latest_version` the read returned:
+
+- Text edits `{old_text, new_text}`: `old_text` copied exactly from the file, matching once (or set `replace_all`). Whitespace-tolerant matches are reported in each edit's `match`.
+- Anchor edits `{start, end, new_text}`: the anchors (`12:3fa0`) prefix each line of the anchored read; the lines from `start` to `end` are replaced, an empty `new_text` deletes them. One call takes one kind of edit, at most 100.
+- The result carries the new `version` and an anchored `excerpt` per edit, enough for a follow-up anchor edit without reading again.
+- On `version_conflict`, `anchor_mismatch` or `edit_not_found`, read again and redo the edit; never resend it unchanged.
+
+**Add, replace or delete whole files.** `update_artifact` with `files` (`{path, delete: true}` removes one; everything else carries over) and `expected_version: <latest_version>`. Without files only name, description, metadata or visibility change.
 
 **Large content (any file or the total above 2 MiB by default): chunked upload.**
 
@@ -40,10 +47,10 @@ The `publish-page` prompt carries the same conventions, generated from the insta
 3. If a call fails or its result is lost, resend the same chunk at the same offset (a repeat is acknowledged, not written twice). On `upload_offset_mismatch ... current=<n>`, resume that path from offset `n`.
 4. `create_artifact` or `update_artifact` with `upload_id` (inline `files` in the same call are merged and win on a path clash). The call consumes the upload whether it succeeds or fails.
 
-**Inspect.** `get_artifact` (with `include_files`), `read_file` (text inline, small binaries as base64, large files as a REST download URL), `list_artifacts` (`mine: created|updated|any`, `metadata`, `stale`, `cursor`).
+**Inspect.** `get_artifact` (with `include_files`), `read_file` (text inline, `anchors: true` for edits, small binaries as base64, large files as a REST download URL; the result names `version` and `latest_version`), `list_artifacts` (`mine: created|updated|any`, `metadata`, `stale`, `cursor`).
 
-**Lifecycle.** `publish_version` rolls back or forward. `set_visibility unpublished` takes a page offline; `public` or `unlisted` brings it back. `mark_stale` (grace such as `72h` or `14d`) schedules expiry; `unmark_stale` or a new version cancels it. `delete_artifact` soft-deletes; `hard: true` purges permanently, so ask the user first.
+**Lifecycle.** `publish_version` rolls back or forward. `set_visibility unpublished` takes a page offline; `public` or `unlisted` brings it back. `mark_stale` (grace such as `72h` or `14d`) schedules expiry; `unmark_stale` or a new version cancels it. `delete_artifact` soft-deletes; `hard: true` purges permanently, so ask the user first (clients that support it also show the user a confirmation).
 
 ## Errors
 
-Tool errors read `<code>: <message>`. Common codes: `invalid_slug`, `slug_taken`, `version_conflict`, `too_large`, `too_many_files`, `quota_exceeded`, `upload_offset_mismatch`, `upload_not_found` (expired or already consumed: begin a new upload), `not_found`, `gone`, `forbidden` (the key lacks a scope).
+Tool errors read `<code>: <message>`, usually followed by `Next step: ...`; follow it. Common codes: `invalid_slug`, `slug_taken`, `version_conflict`, `edit_not_found` (names the closest lines), `edit_ambiguous`, `anchor_mismatch`, `too_large`, `too_many_files`, `quota_exceeded`, `upload_offset_mismatch`, `upload_not_found` (expired or already consumed: begin a new upload), `not_found`, `gone`, `forbidden` (the key lacks a scope).

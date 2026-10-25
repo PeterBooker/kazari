@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -610,4 +611,77 @@ func TestMe(t *testing.T) {
 	if !slices.Equal(roScopes, readOnly) {
 		t.Errorf("read-only key scopes = %v", roScopes)
 	}
+}
+
+func TestEdit(t *testing.T) {
+	e := newEnv(t, config{})
+	e.create(e.alice, "demo")
+
+	var res api.EditResult
+	e.call(http.MethodPost, e.u("/v1/artifacts/demo/edit"), e.alice, api.EditRequest{
+		Path:  "./index.html",
+		Label: "rename",
+		Edits: []api.Edit{{OldText: "<h1>demo", NewText: "<h1>Demo"}},
+	}, http.StatusOK, &res, "If-Match", `"1"`)
+	if res.Version != 2 || res.Path != "index.html" || len(res.Edits) != 1 || res.Edits[0].Match != artifact.MatchExact ||
+		res.Edits[0].StartLine != 1 || !strings.Contains(res.Edits[0].Excerpt, "|<h1>Demo</h1>") {
+		t.Fatalf("edit = %+v", res)
+	}
+	if got := e.read(e.alice, "demo", "index.html", 0); got != "<h1>Demo</h1>" {
+		t.Errorf("published index.html = %q", got)
+	}
+
+	resp := e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/demo/files/index.html?anchors=true"), token: e.alice})
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" ||
+		string(body) != artifact.AnchorLines("<h1>Demo</h1>") || resp.Header.Get("Content-Security-Policy") == "" {
+		t.Errorf("anchored read = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
+
+	anchor := artifact.Anchor(1, "<h1>Demo</h1>")
+	e.call(http.MethodPost, e.u("/v1/artifacts/demo/edit"), e.alice, api.EditRequest{
+		Path: "index.html", ExpectedVersion: 2, Edits: []api.Edit{{Start: anchor, NewText: "<h1>Anchored</h1>"}},
+	}, http.StatusOK, &res)
+	if res.Version != 3 || res.Edits[0].Match != artifact.MatchAnchor {
+		t.Errorf("anchor edit = %+v", res)
+	}
+
+	edit := func(r api.EditRequest) *http.Response {
+		return e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts/demo/edit"), token: e.alice,
+			body: bytes.NewReader(mustJSON(t, r)), contentType: "application/json"})
+	}
+	e.apiErr(edit(api.EditRequest{Path: "index.html", ExpectedVersion: 2,
+		Edits: []api.Edit{{OldText: "Anchored", NewText: "x"}}}), http.StatusPreconditionFailed, api.CodeVersionConflict)
+	e.apiErr(edit(api.EditRequest{Path: "index.html",
+		Edits: []api.Edit{{Start: anchor, NewText: "x"}}}), http.StatusConflict, api.CodeAnchorMismatch)
+	e.apiErr(edit(api.EditRequest{Path: "index.html",
+		Edits: []api.Edit{{OldText: "<h2>", NewText: "x"}}}), http.StatusUnprocessableEntity, api.CodeEditNotFound)
+	e.apiErr(edit(api.EditRequest{Path: "index.html",
+		Edits: []api.Edit{{OldText: "h1", NewText: "h2"}}}), http.StatusUnprocessableEntity, api.CodeEditAmbiguous)
+	e.apiErr(edit(api.EditRequest{Path: "missing.html",
+		Edits: []api.Edit{{OldText: "a", NewText: "b"}}}), http.StatusNotFound, api.CodeFileNotFound)
+
+	e.call(http.MethodPut, e.u("/v1/artifacts/demo"), e.alice, api.UpdateArtifactRequest{Files: []api.FileInput{
+		{Path: "logo.png", Content: base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 0, 0xff}), Encoding: "base64"}}}, http.StatusOK, nil)
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/demo/files/logo.png?anchors=true"), token: e.alice}),
+		http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+
+	reader := e.member("rita", []string{auth.ScopeRead})
+	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts/demo/edit"), token: reader,
+		body:        bytes.NewReader(mustJSON(t, api.EditRequest{Path: "index.html", Edits: []api.Edit{{OldText: "h1", NewText: "h2", ReplaceAll: true}}})),
+		contentType: "application/json"}), http.StatusForbidden, api.CodeForbidden)
+}
+
+func TestSkill(t *testing.T) {
+	e := newEnv(t, config{user: httpapi.UserOptions{Skill: "---\nname: kazari\n---\n# Kazari\n"}})
+	resp := e.send(req{method: http.MethodGet, url: e.u("/v1/skill"), token: e.alice})
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/markdown; charset=utf-8" ||
+		string(body) != "---\nname: kazari\n---\n# Kazari\n" {
+		t.Errorf("GET /v1/skill = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/skill")}), http.StatusUnauthorized, api.CodeUnauthorized)
+
+	none := newEnv(t, config{})
+	none.apiErr(none.send(req{method: http.MethodGet, url: none.u("/v1/skill"), token: none.alice}), http.StatusNotFound, api.CodeNotFound)
 }
