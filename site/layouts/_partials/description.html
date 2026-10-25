@@ -1,0 +1,10 @@
+{{- /* The page description: front matter, else the page's entry in data/nav.toml (the files in docs/
+       have no front matter), else the home page's. */ -}}
+{{- $d := .Description -}}
+{{- if not $d -}}
+  {{- $path := .Path -}}
+  {{- range hugo.Data.nav.sections -}}
+    {{- range .pages }}{{ if eq .path $path }}{{ $d = .description }}{{ end }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+{{- return (or $d site.Home.Description) -}}

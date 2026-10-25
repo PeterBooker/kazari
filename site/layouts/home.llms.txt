@@ -1,0 +1,17 @@
+{{- /* /llms.txt (llmstxt.org): what Kazari is and where each docs page is, for AI agents and
+       other readers that want text rather than the landing page. Groups and order from data/nav.toml. */ -}}
+# {{ site.Title }}
+
+> {{ .Description }}
+
+Kazari is open source (MIT) and runs as one Go binary with SQLite and a directory of files. Each artifact is served at its own subdomain under one wildcard certificate (`<slug>.art.example.com`), and every version keeps an address of its own (`<slug>--v3.art.example.com`). Agents publish through the MCP server at `mcp.`, scripts through the REST API at `api.` or the `kazari` CLI, and operators use the admin API at `admin.`. People sign in through the organisation's OpenID Connect provider; MCP clients use OAuth 2.1 or an API key.
+{{ range hugo.Data.nav.sections }}
+## {{ .title }}
+{{ range .pages }}{{ with site.GetPage .path }}
+- [{{ partial "title.html" . }}]({{ .Permalink }}): {{ partial "description.html" . }}
+{{- end }}{{ end }}
+{{ end }}
+## Optional
+
+- [Source code]({{ site.Params.repo }}): the repository, with the README, the security design and the architecture decision records
+- [Releases]({{ site.Params.repo }}/releases): binaries for Linux and macOS; the image is `ghcr.io/peterbooker/kazari`

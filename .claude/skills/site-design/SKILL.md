@@ -25,6 +25,7 @@ The site's mechanics (Hugo version, layout names, link rules, `nav.toml`) are in
 | `site/layouts/_partials/head.html` | Inline script before first paint: the remembered theme, and the term for the visitor's own date (the site is only rebuilt on push). Font preloads. |
 | `site/layouts/_partials/sekki-strip.html` | The season strip under the hero: the current term, a caption and 24 bars. |
 | `site/layouts/_partials/logo.html`, `site/static/favicon.svg` | The mark: a ring with one segment. The favicon is static (gentian, the term the design was made in). |
+| `site/social-card.html`, `site/social-card.sh` | The link preview image (`assets/images/social-card.png`, 1200x630: the hero's kicker and headline, the 飾り ghost and the strip in gentian) and the home screen icon (`static/apple-touch-icon.png`). Rerun the script after changing either source, the hero headline or the mark. |
 | `site/layouts/home.html` | The landing page. |
 | `site/layouts/_partials/docs.html`, `_markup/render-blockquote.html` | Docs layout (crumb, sidebar, "On this page", pager) and callouts. |
 | `site/data/nav.toml` | Sidebar groups; `ja` is each group's Japanese label for the crumb. |
@@ -34,7 +35,7 @@ The site's mechanics (Hugo version, layout names, link rules, `nav.toml`) are in
 
 ## Colour
 
-All colours are tokens on `:root` written with `light-dark()`; `data-theme` on `<html>` forces a scheme. Components never use a literal colour (the only exceptions are the strip's per-term hover colours, which come from `sekki.toml`, the favicon, and the search dialog's dimmed backdrop).
+All colours are tokens on `:root` written with `light-dark()`; `data-theme` on `<html>` forces a scheme. Components never use a literal colour (the only exceptions are the strip's per-term hover colours, which come from `sekki.toml`, the favicon and social card, and the search dialog's dimmed backdrop).
 
 Neutrals, a grey with green in it:
 

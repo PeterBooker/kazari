@@ -1,5 +1,8 @@
 # The documentation sidebar, in reading order. Previous and next links follow it too.
 # ja is the group's Japanese label, shown beside the group name above each of its pages (site-design skill).
+# description is the page's search snippet and link preview text, for the pages mounted from docs/,
+# which have no front matter; the pages in content/docs/ set theirs in front matter. Keep it under
+# about 155 characters, which is where search results cut it off.
 
 [[sections]]
   title = "Get started"
@@ -23,15 +26,19 @@
   [[sections.pages]]
     title = "Install"
     path = "/docs/install"
+    description = "Install Kazari on your own server: DNS and a wildcard certificate, the release binary under systemd or Docker, proxy mode, and the first admin user and key."
   [[sections.pages]]
     title = "Configuration"
     path = "/docs/configuration"
+    description = "Every Kazari configuration key: the YAML file, ${} environment references, .env files and KAZARI_ overrides, with defaults, validation rules and secrets."
   [[sections.pages]]
     title = "Sign-in and identity"
     path = "/docs/identity"
+    description = "How people and agents sign in to Kazari: API keys, OAuth 2.1 for MCP clients, OpenID Connect providers such as Entra ID and Google, and provisioning."
   [[sections.pages]]
     title = "Operations"
     path = "/docs/ops"
+    description = "Running Kazari: data layout, backups, upgrades, logs, Prometheus metrics, scheduled jobs, the page lifecycle, quotas, abuse response and the audit log."
 
 [[sections]]
   title = "Reference"
@@ -39,9 +46,12 @@
   [[sections.pages]]
     title = "MCP server"
     path = "/docs/mcp"
+    description = "Reference for Kazari's MCP server: connecting an agent over Streamable HTTP, its tools, editing files, the skill, the preview app, chunked uploads and errors."
   [[sections.pages]]
     title = "CLI"
     path = "/docs/cli"
+    description = "Reference for the kazari command line: publish, update, edit and roll back artifacts, admin commands, configuration, JSON output and exit codes."
   [[sections.pages]]
     title = "REST API"
     path = "/docs/api"
+    description = "Reference for Kazari's REST APIs: authentication and scopes, the artifact record, every user and admin API route, rate limits and error codes."

@@ -8,14 +8,28 @@ title = "Kazari"
 locale = "en-GB"
 disableKinds = ["taxonomy", "term", "rss"]
 enableRobotsTXT = true
+# Last-modified dates from git, for sitemap.xml and the docs pages' structured data; pages.yml checks
+# out the full history so that they are right.
+enableGitInfo = true
 
+# The site's description is the one in content/_index.md.
 [params]
-  description = "A self-hosted home for the pages AI agents build: prototypes, reports and dashboards on your own domain, with versions, sign-in through your identity provider and an MCP server, REST API and CLI."
   repo = "https://github.com/PeterBooker/kazari"
   branch = "main"
+  # The author named in the structured data (_partials/schema.html).
+  [params.author]
+    name = "Peter Booker"
+    url = "https://github.com/PeterBooker"
+
+# /llms.txt, from layouts/home.llms.txt.
+[outputFormats.llms]
+  mediaType = "text/plain"
+  baseName = "llms"
+  isPlainText = true
+  notAlternative = true
 
 [outputs]
-  home = ["html", "json"]
+  home = ["html", "json", "llms"]
   section = ["html"]
   page = ["html"]
 
