@@ -1,16 +1,14 @@
 {{ define "main" }}
 <main id="main" class="not-found">
-  <div class="container band">
-    <p class="tate" lang="ja" aria-hidden="true">見つかりません</p>
-    <div>
-      <p class="code-404">404</p>
-      <h1>Nothing at this address</h1>
-      <p>The page may have moved. Try the search, or start from the documentation.</p>
-      <p class="cta-row">
-        <a class="button button-primary" href="{{ (site.GetPage "/docs").RelPermalink }}">Documentation</a>
-        <a class="text-link" href="{{ site.Home.RelPermalink }}">Home</a>
-      </p>
-    </div>
+  <div class="container">
+    <p class="ja-label" lang="ja" aria-hidden="true">見つかりません</p>
+    <p class="code-404">404</p>
+    <h1>Nothing at <b>this address</b></h1>
+    <p>The page may have moved. Try the search, or start from the documentation.</p>
+    <p class="cta-row">
+      <a class="button button-primary" href="{{ (site.GetPage "/docs").RelPermalink }}">Documentation</a>
+      <a class="text-link" href="{{ site.Home.RelPermalink }}">Home</a>
+    </p>
   </div>
 </main>
 {{ end }}

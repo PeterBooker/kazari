@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 
 MIN = 4.5
-GROUNDS = ["bg", "bg-soft", "surface", "code-bg"]
+GROUNDS = ["bg", "bg-soft", "surface", "well", "code-bg"]
 # Tokens used for text. --season-mark is decoration only and is not checked.
 TEXT = ["text", "text-soft", "muted", "season", "ai", "matsu", "fuji", "kuchiba", "beni", "hl-comment", "hl-name"]
 
@@ -44,16 +44,16 @@ for theme, i in (("light", 0), ("dark", 1)):
     for t in TEXT:
         for g in GROUNDS:
             rows.append((ratio(tokens[t][i], tokens[g][i]), f"--{t} on --{g} ({theme})"))
+    # The primary button: --bg text on a --text fill, --text-soft on hover.
+    for fill in ("text", "text-soft"):
+        rows.append((ratio(tokens["bg"][i], tokens[fill][i]), f"--bg text on --{fill} (primary button, {theme})"))
 
 terms = tomllib.loads(Path("site/data/sekki.toml").read_text())["terms"]
-on_dark = tokens["bg"][1]
 for n, t in enumerate(terms):
     label = f"{n:2} {t['kanji']} {t['name']}"
     for g in GROUNDS:
         rows.append((ratio(t["light"], tokens[g][0]), f"{label}: light {t['light']} on --{g}"))
         rows.append((ratio(t["dark"], tokens[g][1]), f"{label}: dark {t['dark']} on --{g}"))
-    rows.append((ratio(t["light"], "#ffffff"), f"{label}: white text on light {t['light']} (buttons)"))
-    rows.append((ratio(t["dark"], on_dark), f"{label}: --on-season text on dark {t['dark']} (buttons)"))
 
 if len(terms) != 24:
     rows.append((0, f"sekki.toml has {len(terms)} terms, not 24"))

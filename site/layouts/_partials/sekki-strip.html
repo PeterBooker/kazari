@@ -1,0 +1,14 @@
+{{- /* The year as 24 bars, one per solar term from 立春: main.css raises the current one in the
+       season's colour (the :root[data-sekki] blocks) and lowers the rest by their distance from it,
+       and the labels above follow it. Hovering a bar shows that term's own colour. */ -}}
+<figure class="strip" id="season">
+  <figcaption>
+    <p class="strip-now"><span class="sekki-kanji" lang="ja"></span><span class="sekki-name"></span><span class="sekki-dates"></span></p>
+    <p class="strip-note">The colour of this site follows the 24 solar terms of the old Japanese calendar. <span class="sekki-note"></span></p>
+  </figcaption>
+  <ol class="strip-bars" aria-hidden="true">
+    {{- range $i, $t := hugo.Data.sekki.terms }}
+    <li data-n="{{ $i }}" style="{{ printf "--i: %d; --c: %s" $i $t.base | safeCSS }}" title="{{ $t.kanji }} {{ $t.name }}, {{ $t.motif_en }}"><span lang="ja">{{ $t.kanji }}</span></li>
+    {{- end }}
+  </ol>
+</figure>

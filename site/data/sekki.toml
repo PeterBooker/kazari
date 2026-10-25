@@ -6,12 +6,15 @@
 # start   first day, "MM-DD" (the dates move by a day between years; these are the usual ones)
 # kanji   the term, and reading / name its romanisation and English name
 # motif   the flower, plant or creature the colour is named after, and motif_en in English
-# base    the colour itself: the year wheel, and dots, rules and the logo wedge in the light theme
-# light   text-safe on the light theme: 4.6:1 or more on bg, surface and bg-soft, white text on it
-# dark    text-safe on the dark theme: 6.2:1 or more on bg, surface and bg-soft, bg-coloured text on it;
-#         also the dark theme's dots, rules and logo wedge
+# base    the colour itself: a bar's colour on hover in the season strip, and dots, rules, the current
+#         bar and the logo wedge in the light theme
+# light   base darkened in OKLCH (same hue) until it is text-safe on the light theme: 4.6:1 or more
+#         on bg, bg-soft, surface and code-bg
+# dark    base lightened the same way to 7:1 or more on the dark grounds; also the dark theme's dots,
+#         rules, current bar and logo wedge
 #
-# Check new colours with the contrast steps in .claude/skills/site-design/SKILL.md.
+# Derive light and dark with .claude/skills/site-design/sekki-colours.py --write, then check them with
+# check-colours.py beside it (the steps are in that folder's SKILL.md).
 
 [[terms]]
   start = "02-04"
@@ -21,8 +24,8 @@
   motif = "梅"
   motif_en = "plum blossom"
   base = "#c25478"
-  light = "#ac4065"
-  dark = "#ed7b9e"
+  light = "#ab3f64"
+  dark = "#fc88ab"
 
 [[terms]]
   start = "02-19"
@@ -32,8 +35,8 @@
   motif = "鶯"
   motif_en = "bush warbler"
   base = "#7f7a3a"
-  light = "#6e6828"
-  dark = "#a6a261"
+  light = "#6c6726"
+  dark = "#b3af6e"
 
 [[terms]]
   start = "03-05"
@@ -43,8 +46,8 @@
   motif = "萌黄"
   motif_en = "new shoots"
   base = "#7f9a2e"
-  light = "#5a7001"
-  dark = "#8eaa40"
+  light = "#586e01"
+  dark = "#9bb74e"
 
 [[terms]]
   start = "03-20"
@@ -54,8 +57,8 @@
   motif = "桜"
   motif_en = "cherry blossom"
   base = "#e08fa6"
-  light = "#9b5067"
-  dark = "#e08fa6"
+  light = "#984e65"
+  dark = "#e695ac"
 
 [[terms]]
   start = "04-04"
@@ -65,8 +68,8 @@
   motif = "若竹"
   motif_en = "young bamboo"
   base = "#3f9a74"
-  light = "#0b7652"
-  dark = "#56b089"
+  light = "#087451"
+  dark = "#63bd95"
 
 [[terms]]
   start = "04-20"
@@ -76,8 +79,8 @@
   motif = "藤"
   motif_en = "wisteria"
   base = "#8a78c2"
-  light = "#6e5ca3"
-  dark = "#a795e1"
+  light = "#6c5aa1"
+  dark = "#b3a1ef"
 
 [[terms]]
   start = "05-05"
@@ -87,8 +90,8 @@
   motif = "若葉"
   motif_en = "young leaves"
   base = "#6f9f3f"
-  light = "#467303"
-  dark = "#7cad4d"
+  light = "#447100"
+  dark = "#89bb5b"
 
 [[terms]]
   start = "05-21"
@@ -99,7 +102,7 @@
   motif_en = "iris"
   base = "#6a4c9c"
   light = "#6a4c9c"
-  dark = "#ae91e7"
+  dark = "#bb9df5"
 
 [[terms]]
   start = "06-05"
@@ -109,8 +112,8 @@
   motif = "紫陽花"
   motif_en = "hydrangea"
   base = "#5f7fc0"
-  light = "#4766a5"
-  dark = "#7e9fe3"
+  light = "#4664a3"
+  dark = "#8aacf1"
 
 [[terms]]
   start = "06-21"
@@ -120,8 +123,8 @@
   motif = "青竹"
   motif_en = "green bamboo"
   base = "#2f8f7f"
-  light = "#017566"
-  dark = "#52ae9d"
+  light = "#047364"
+  dark = "#61bcab"
 
 [[terms]]
   start = "07-07"
@@ -132,7 +135,7 @@
   motif_en = "morning glory"
   base = "#3f62b0"
   light = "#3f62b0"
-  dark = "#769ef1"
+  dark = "#84abff"
 
 [[terms]]
   start = "07-22"
@@ -142,7 +145,7 @@
   motif = "向日葵"
   motif_en = "sunflower"
   base = "#e0a81f"
-  light = "#846104"
+  light = "#836003"
   dark = "#e0a81f"
 
 [[terms]]
@@ -153,8 +156,8 @@
   motif = "撫子"
   motif_en = "pinks"
   base = "#d77a98"
-  light = "#a24a69"
-  dark = "#e183a1"
+  light = "#a04968"
+  dark = "#ef90ae"
 
 [[terms]]
   start = "08-23"
@@ -165,7 +168,7 @@
   motif_en = "bellflower"
   base = "#5a5aa8"
   light = "#5a5aa8"
-  dark = "#9598ec"
+  dark = "#a1a5fa"
 
 [[terms]]
   start = "09-07"
@@ -175,8 +178,8 @@
   motif = "露草"
   motif_en = "dayflower"
   base = "#3a7fc4"
-  light = "#236aad"
-  dark = "#5ea3ea"
+  light = "#2168ab"
+  dark = "#6cb1fa"
 
 [[terms]]
   start = "09-22"
@@ -186,8 +189,8 @@
   motif = "彼岸花"
   motif_en = "red spider lily"
   base = "#c23a3a"
-  light = "#bd3536"
-  dark = "#fe756f"
+  light = "#bb3334"
+  dark = "#ff8b84"
 
 [[terms]]
   start = "10-08"
@@ -197,8 +200,8 @@
   motif = "萩"
   motif_en = "bush clover"
   base = "#a4628f"
-  light = "#93527e"
-  dark = "#d08ab9"
+  light = "#90507c"
+  dark = "#dd96c5"
 
 [[terms]]
   start = "10-23"
@@ -209,7 +212,7 @@
   motif_en = "gentian"
   base = "#5b57a3"
   light = "#5b57a3"
-  dark = "#9998ea"
+  dark = "#a5a4f7"
 
 [[terms]]
   start = "11-07"
@@ -219,8 +222,8 @@
   motif = "紅葉"
   motif_en = "autumn maple"
   base = "#b4442e"
-  light = "#b2422c"
-  dark = "#f47e65"
+  light = "#b0402a"
+  dark = "#fe8d75"
 
 [[terms]]
   start = "11-22"
@@ -230,8 +233,8 @@
   motif = "銀杏"
   motif_en = "ginkgo"
   base = "#cf9f1c"
-  light = "#836304"
-  dark = "#cf9f1c"
+  light = "#816100"
+  dark = "#d5a526"
 
 [[terms]]
   start = "12-07"
@@ -242,7 +245,7 @@
   motif_en = "pine"
   base = "#2f5a43"
   light = "#2f5a43"
-  dark = "#7ca98f"
+  dark = "#89b79c"
 
 [[terms]]
   start = "12-21"
@@ -252,7 +255,7 @@
   motif = "柚子"
   motif_en = "yuzu"
   base = "#e0b21a"
-  light = "#7f6305"
+  light = "#7d6202"
   dark = "#e0b21a"
 
 [[terms]]
@@ -264,7 +267,7 @@
   motif_en = "camellia"
   base = "#b0283f"
   light = "#b0283f"
-  dark = "#fe727e"
+  dark = "#fe8a91"
 
 [[terms]]
   start = "01-20"
@@ -275,4 +278,4 @@
   motif_en = "ornamental kale"
   base = "#7b4f8f"
   light = "#7b4f8f"
-  dark = "#bd8fd4"
+  dark = "#ca9be0"

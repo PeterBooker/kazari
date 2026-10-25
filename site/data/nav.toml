@@ -1,5 +1,5 @@
 # The documentation sidebar, in reading order. Previous and next links follow it too.
-# ja is the group's Japanese label for the vertical running head on its pages (site-design skill).
+# ja is the group's Japanese label, shown beside the group name above each of its pages (site-design skill).
 
 [[sections]]
   title = "Get started"

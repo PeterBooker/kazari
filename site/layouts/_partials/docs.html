@@ -1,5 +1,5 @@
-{{- /* Documentation page: sidebar from data/nav.toml, the content with its vertical running head
-       (the group's Japanese label, from nav.toml), an "On this page" list, previous and next. */ -}}
+{{- /* Documentation page: sidebar from data/nav.toml, the content under a crumb with the group's
+       Japanese label (from nav.toml), an "On this page" list, previous and next. */ -}}
 {{- $page := . }}
 {{- $flat := slice }}
 {{- $group := "" }}
@@ -44,8 +44,7 @@
   <main id="main" class="docs-main">
     <article class="prose">
       {{- with $group }}
-      <p class="hashira" aria-hidden="true">{{ with $groupJa }}<span lang="ja">{{ . }}</span>{{ end }}{{ . }} · {{ partial "title.html" $page }}</p>
-      <p class="crumb">{{ . }}</p>
+      <p class="crumb">{{ with $groupJa }}<span lang="ja" aria-hidden="true">{{ . }}</span>{{ end }}{{ . }}</p>
       {{- end }}
       {{ $content | safeHTML }}
     </article>
