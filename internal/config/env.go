@@ -9,19 +9,16 @@ import (
 	"strings"
 )
 
-// envPrefix starts every environment override.
 const envPrefix = "KAZARI"
 
-// applyEnv overrides cfg from the environment. It walks the struct by its
-// yaml tags, so every leaf key, including ones added later, gets a variable
-// named KAZARI_<PATH> with the YAML path upper-cased and joined by "_".
+// applyEnv walks cfg by its yaml tags, so a new key gets its KAZARI_*
+// variable without further code.
 func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
 	_, err := applyEnvStruct(reflect.ValueOf(cfg).Elem(), envPrefix, lookup)
 	return err
 }
 
-// applyEnvStruct applies overrides to the fields of struct v and reports
-// whether any variable was set.
+// applyEnvStruct reports whether any variable was set.
 func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string, bool)) (bool, error) {
 	t := v.Type()
 	applied := false
@@ -36,8 +33,8 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 		fv := v.Field(i)
 		switch {
 		case f.Type.Kind() == reflect.Pointer && f.Type.Elem().Kind() == reflect.Struct:
-			// An optional mapping: work on a defaulted copy and keep it only
-			// if a variable for it was set.
+			// An optional mapping: fill a defaulted copy, kept only if one of
+			// its variables is set.
 			target := fv
 			if fv.IsNil() {
 				target = reflect.New(f.Type.Elem())
@@ -79,7 +76,6 @@ func isTextUnmarshaler(v reflect.Value) bool {
 	return ok
 }
 
-// setFromString parses raw into the leaf value v according to its type.
 func setFromString(v reflect.Value, raw string) error {
 	if u, ok := v.Addr().Interface().(encoding.TextUnmarshaler); ok {
 		return u.UnmarshalText([]byte(raw))

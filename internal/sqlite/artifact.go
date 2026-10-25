@@ -28,14 +28,13 @@ func NewArtifactStore(db *DB) *ArtifactStore {
 	return &ArtifactStore{db: db.DB}
 }
 
-// Listing limits; they match artifact.ListQuery's documentation.
+// Documented on artifact.ListQuery.
 const (
 	artifactListDefault = 50
 	artifactListMax     = 200
 )
 
-// artifactSelect selects every column scanArtifact reads. The derived
-// numbers come from subqueries over version so they are always current.
+// The derived numbers are subqueries over version so they are always current.
 const artifactSelect = `SELECT a.id, a.slug, a.name, a.description, u.handle, a.visibility,
 	COALESCE((SELECT pv.number FROM version pv WHERE pv.id = a.published_version_id), 0),
 	COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0),
@@ -103,7 +102,6 @@ func artifactIsUnique(err error) bool {
 	return errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) || errors.Is(err, sqlite3.CONSTRAINT_PRIMARYKEY)
 }
 
-// artifactUserID resolves a handle inside a transaction.
 func artifactUserID(ctx context.Context, tx *sql.Tx, handle string) (int64, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE handle = ?`, handle).Scan(&id)
@@ -124,7 +122,6 @@ func lookupArtifactID(ctx context.Context, q interface {
 	return id, err
 }
 
-// insertArtifactVersion writes the version, its files and the blob rows.
 func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number int, v *artifact.Version) (int64, error) {
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO version (artifact_id, number, label, created_by, created_at, size_bytes)
@@ -168,8 +165,7 @@ func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number in
 const artifactUpsertBlob = `INSERT INTO blob (hash, size, created_at) VALUES (?, ?, ?)
 	ON CONFLICT (hash) DO UPDATE SET created_at = MAX(blob.created_at, excluded.created_at)`
 
-// markArtifactActor records that handle created or updated the artifact.
-// An unknown handle (e.g. the scheduler) records nothing.
+// markArtifactActor records nothing for an unknown handle (e.g. the scheduler).
 func markArtifactActor(ctx context.Context, tx *sql.Tx, aid int64, handle string, created bool, at time.Time) error {
 	c, u := 0, 1
 	if created {
@@ -191,10 +187,8 @@ const artifactUsage = `SELECT COALESCE(SUM(v.size_bytes), 0) FROM version v
 	JOIN user u ON u.id = a.owner_id
 	WHERE u.handle = ?`
 
-// checkArtifactQuota fails with ErrQuotaExceeded when size more bytes would
-// take the owner's usage past quota (0 = unlimited). It runs inside the
-// write transaction, which is immediate, so concurrent publishes are
-// checked one after the other.
+// checkArtifactQuota runs inside the write transaction, which is immediate,
+// so concurrent publishes are checked one after the other.
 func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, size, quota int64) error {
 	if quota <= 0 {
 		return nil
@@ -209,7 +203,6 @@ func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, size, quo
 	return nil
 }
 
-// Create implements artifact.Store.
 func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) error {
 	meta, err := encodeArtifactMetadata(a.Metadata)
 	if err != nil {
@@ -260,7 +253,6 @@ func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *art
 	return nil
 }
 
-// artifactErr wraps unexpected errors and passes domain errors through.
 func artifactErr(op string, err error) error {
 	if artifact.CodeOf(err) != "" {
 		return err
@@ -268,7 +260,6 @@ func artifactErr(op string, err error) error {
 	return fmt.Errorf("sqlite: artifact %s: %w", op, err)
 }
 
-// Get implements artifact.Store.
 func (s *ArtifactStore) Get(ctx context.Context, slug string) (*artifact.Artifact, error) {
 	_, a, err := scanArtifact(s.db.QueryRowContext(ctx, artifactSelect+` WHERE a.slug = ?`, slug))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -280,7 +271,6 @@ func (s *ArtifactStore) Get(ctx context.Context, slug string) (*artifact.Artifac
 	return a, nil
 }
 
-// GetVersion implements artifact.Store.
 func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int) (*artifact.Version, error) {
 	aid, err := lookupArtifactID(ctx, s.db, slug)
 	if err != nil {
@@ -309,7 +299,6 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 	return &v, nil
 }
 
-// files returns a version's files sorted by path.
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT path, blob_hash, size, content_type FROM version_file WHERE version_id = ? ORDER BY path`, versionID)
@@ -328,7 +317,6 @@ func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.
 	return files, rows.Err()
 }
 
-// ListVersions implements artifact.Store.
 func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) ([]artifact.Version, error) {
 	aid, err := lookupArtifactID(ctx, s.db, slug)
 	if err != nil {
@@ -359,7 +347,6 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) ([]artifa
 	return out, nil
 }
 
-// readArtifactTx reads the row a write transaction is about to change.
 func readArtifactTx(ctx context.Context, tx *sql.Tx, slug string) (int64, *artifact.Artifact, error) {
 	aid, a, err := scanArtifact(tx.QueryRowContext(ctx, artifactSelect+` WHERE a.slug = ?`, slug))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -368,7 +355,6 @@ func readArtifactTx(ctx context.Context, tx *sql.Tx, slug string) (int64, *artif
 	return aid, a, err
 }
 
-// AddVersion implements artifact.Store.
 func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact.Version, expected int, quota int64,
 	fn func(a *artifact.Artifact) error) error {
 	var number int
@@ -423,7 +409,6 @@ func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact
 	return nil
 }
 
-// Update implements artifact.Store.
 func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *artifact.Artifact) error) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, a, err := readArtifactTx(ctx, tx, slug)
@@ -472,7 +457,6 @@ func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *
 	return artifactErrOrNil("update", err)
 }
 
-// Involved implements artifact.Store.
 func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (bool, error) {
 	var ok bool
 	err := s.db.QueryRowContext(ctx,
@@ -493,7 +477,6 @@ func artifactErrOrNil(op string, err error) error {
 	return artifactErr(op, err)
 }
 
-// artifactCursor is the position after the last item of a page.
 type artifactCursor struct {
 	UpdatedAt int64 `json:"u"`
 	ID        int64 `json:"i"`
@@ -516,17 +499,13 @@ func decodeArtifactCursor(s string) (artifactCursor, error) {
 	return c, nil
 }
 
-// List implements artifact.Store.
-//
-// Without All, a viewer sees artifacts it owns, created or updated, plus
+// List shows a viewer without All what it owns, created or updated, plus
 // public artifacts that are neither unpublished nor deleted.
 func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifact.ListPage, error) {
 	var (
 		where = []string{"a.purged_at IS NULL"}
 		args  []any
 	)
-	// involved matches artifacts the viewer has an actor row for, with an
-	// extra condition on the row.
 	involved := func(cond string) string {
 		return `EXISTS (SELECT 1 FROM artifact_actor aa JOIN user au ON au.id = aa.user_id
 			WHERE aa.artifact_id = a.id AND au.handle = ?` + cond + `)`
@@ -563,8 +542,8 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifac
 		if err := artifact.ValidateMetadataKey(k); err != nil {
 			return artifact.ListPage{}, err
 		}
-		// Quote the key so a dotted key such as kazari.spa is one member
-		// rather than a nested path. The key charset excludes quotes.
+		// Quoted so a dotted key such as kazari.spa is one member, not a
+		// nested path. The key charset excludes quotes.
 		where = append(where, `json_extract(a.metadata, '$."' || ? || '"') = ?`)
 		args = append(args, k, q.Metadata[k])
 	}
@@ -654,7 +633,6 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 	return &p, nil
 }
 
-// ResolvePublished implements artifact.Store.
 func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (*artifact.Published, error) {
 	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
 		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
@@ -668,8 +646,8 @@ func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (*art
 	return p, nil
 }
 
-// ResolveVersion implements artifact.Store. A tombstone resolves with
-// VersionID 0 and PurgedAt set, so the caller can answer 410.
+// ResolveVersion resolves a tombstone with VersionID 0 and PurgedAt set, so
+// the caller can answer 410.
 func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (*artifact.Published, error) {
 	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
 		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
@@ -686,7 +664,6 @@ func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number 
 	return p, nil
 }
 
-// Files implements artifact.Store.
 func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (map[string]artifact.File, error) {
 	files, err := s.files(ctx, versionID)
 	if err != nil {
@@ -699,7 +676,6 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (map[string]
 	return m, nil
 }
 
-// Usage implements artifact.Store.
 func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, artifactUsage, ownerHandle).Scan(&n)
@@ -729,26 +705,22 @@ func (s *ArtifactStore) listWhere(ctx context.Context, op, cond, order string, a
 	return out, nil
 }
 
-// ListExpired implements artifact.Store.
 func (s *ArtifactStore) ListExpired(ctx context.Context, now time.Time) ([]artifact.Artifact, error) {
 	return s.listWhere(ctx, "list expired",
 		"a.expires_at <= ? AND a.deleted_at IS NULL AND a.purged_at IS NULL", "a.expires_at", toNanos(now))
 }
 
-// ListRetentionDue implements artifact.Store.
 func (s *ArtifactStore) ListRetentionDue(ctx context.Context, before time.Time) ([]artifact.Artifact, error) {
 	return s.listWhere(ctx, "list retention due",
 		"a.deleted_at <= ? AND a.purged_at IS NULL", "a.deleted_at", toNanos(before))
 }
 
-// ListTombstonesDue implements artifact.Store.
 func (s *ArtifactStore) ListTombstonesDue(ctx context.Context, before time.Time) ([]artifact.Artifact, error) {
 	return s.listWhere(ctx, "list tombstones due", "a.purged_at <= ?", "a.purged_at", toNanos(before))
 }
 
-// Purge implements artifact.Store. It also sets deleted_at when it is not
-// already set, so a hard delete leaves the same tombstone as the sweep.
-// Purging a tombstone again keeps the original purged_at.
+// Purge also sets deleted_at if unset, so a hard delete leaves the same
+// tombstone as the sweep. Purging again keeps the original purged_at.
 func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, err := lookupArtifactID(ctx, tx, slug)
@@ -772,8 +744,7 @@ func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time) er
 	return artifactErrOrNil("purge", err)
 }
 
-// DeleteTombstone implements artifact.Store. Only a purged artifact can be
-// removed; anything else is ErrInvalidArgument.
+// DeleteTombstone returns ErrInvalidArgument unless the artifact is purged.
 func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var purged sql.NullInt64
@@ -793,13 +764,12 @@ func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) error 
 	return artifactErrOrNil("delete tombstone", err)
 }
 
-// RecordBlob implements artifact.Store. created_at only moves forward.
+// RecordBlob only moves created_at forward.
 func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
 	return artifactErrOrNil("record blob", err)
 }
 
-// UnreferencedBlobs implements artifact.Store.
 func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) ([]string, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -827,7 +797,6 @@ func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time,
 	return out, nil
 }
 
-// DeleteBlob implements artifact.Store.
 func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
 	return artifactErrOrNil("delete blob", err)

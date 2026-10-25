@@ -50,14 +50,11 @@ func userScan(s userRowScanner, u *user.User) error {
 	return nil
 }
 
-// userNullEmail stores an unknown email as NULL so the UNIQUE constraint
-// allows any number of users without one.
+// An unknown email is NULL so UNIQUE allows any number of users without one.
 func userNullEmail(email string) sql.NullString {
 	return sql.NullString{String: email, Valid: email != ""}
 }
 
-// userUniqueErr maps a UNIQUE violation on user.handle or user.email to the
-// user package's sentinels and returns any other error unchanged.
 func userUniqueErr(err error) error {
 	if !errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
 		return err
@@ -72,7 +69,6 @@ func userUniqueErr(err error) error {
 	return err
 }
 
-// userID returns the id of the user with handle, or user.ErrNotFound.
 func userLookupID(ctx context.Context, tx *sql.Tx, handle string) (int64, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE handle = ?`, handle).Scan(&id)
@@ -82,7 +78,6 @@ func userLookupID(ctx context.Context, tx *sql.Tx, handle string) (int64, error)
 	return id, err
 }
 
-// CreateUser inserts u and sets u.ID.
 func (s *UserStore) CreateUser(ctx context.Context, u *user.User) error {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user
 		(handle, email, display_name, role, quota_bytes, disabled_at, created_at)
@@ -98,7 +93,6 @@ func (s *UserStore) CreateUser(ctx context.Context, u *user.User) error {
 	return nil
 }
 
-// GetUser returns the user with handle, or user.ErrNotFound.
 func (s *UserStore) GetUser(ctx context.Context, handle string) (*user.User, error) {
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM user WHERE handle = ?`, handle)
@@ -111,7 +105,6 @@ func (s *UserStore) GetUser(ctx context.Context, handle string) (*user.User, err
 	return &u, nil
 }
 
-// GetUserByEmail matches the email case-insensitively.
 func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*user.User, error) {
 	var u user.User
 	row := s.db.QueryRowContext(ctx,
@@ -125,7 +118,6 @@ func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*user.Use
 	return &u, nil
 }
 
-// ListUsers returns every user ordered by handle.
 func (s *UserStore) ListUsers(ctx context.Context) ([]user.User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM user ORDER BY handle`)
 	if err != nil {
@@ -146,8 +138,6 @@ func (s *UserStore) ListUsers(ctx context.Context) ([]user.User, error) {
 	return users, nil
 }
 
-// UpdateUser writes email, display name, role, quota and disabled_at of the
-// user identified by u.Handle.
 func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE user
 		SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
@@ -163,7 +153,6 @@ func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) error {
 	return nil
 }
 
-// userOneRow returns notFound when res affected no rows.
 func userOneRow(res sql.Result, notFound error) error {
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -179,7 +168,6 @@ func userJoinScopes(scopes []string) string { return strings.Join(scopes, " ") }
 
 func userSplitScopes(s string) []string { return strings.Fields(s) }
 
-// CreateKey inserts k for the user k.UserHandle and sets k.ID.
 func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, k.UserHandle)
@@ -226,8 +214,6 @@ func userScanKey(s userRowScanner, k *user.APIKey, extra ...any) error {
 	return nil
 }
 
-// GetKey returns the key with prefix and its user, whatever the key's
-// state, or user.ErrKeyNotFound.
 func (s *UserStore) GetKey(ctx context.Context, prefix string) (*user.APIKey, *user.User, error) {
 	var (
 		k        user.APIKey
@@ -257,8 +243,6 @@ func (s *UserStore) GetKey(ctx context.Context, prefix string) (*user.APIKey, *u
 	return &k, &u, nil
 }
 
-// ListKeys returns a user's keys, newest first, or user.ErrNotFound when
-// the user does not exist.
 func (s *UserStore) ListKeys(ctx context.Context, handle string) ([]user.APIKey, error) {
 	var keys []user.APIKey
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -289,8 +273,6 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) ([]user.APIKey,
 	return keys, nil
 }
 
-// RevokeKey sets revoked_at on one key of the user. Revoking a revoked key
-// keeps the original time. user.ErrKeyNotFound when the user has no such key.
 func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE api_key
 		SET revoked_at = coalesce(revoked_at, ?)
@@ -305,8 +287,6 @@ func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at tim
 	return nil
 }
 
-// RevokeAllKeys revokes every live key of the user, or returns
-// user.ErrNotFound when the user does not exist.
 func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Time) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
@@ -324,7 +304,6 @@ func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Ti
 	return nil
 }
 
-// TouchKey sets last_used_at, or returns user.ErrKeyNotFound.
 func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE api_key SET last_used_at = ? WHERE prefix = ?`, toNanos(at), prefix)
@@ -337,8 +316,6 @@ func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) e
 	return nil
 }
 
-// GetIdentity returns the user linked to (issuer, subject), or
-// user.ErrNotFound.
 func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (*user.User, error) {
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+`
@@ -353,9 +330,6 @@ func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (*u
 	return &u, nil
 }
 
-// LinkIdentity upserts the link between (issuer, subject) and the user,
-// refreshing email_at_login and last_login_at. An identity linked to another
-// user moves to this one. user.ErrNotFound when the user does not exist.
 func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Identity) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
@@ -378,8 +352,6 @@ func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Ide
 	return nil
 }
 
-// UnlinkIdentity removes the link, or returns user.ErrNotFound when the
-// user has no such identity.
 func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM user_identity
 		WHERE issuer = ? AND subject = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
@@ -393,8 +365,6 @@ func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject 
 	return nil
 }
 
-// ListIdentities returns the user's linked identities ordered by issuer and
-// subject, or user.ErrNotFound when the user does not exist.
 func (s *UserStore) ListIdentities(ctx context.Context, handle string) ([]user.Identity, error) {
 	var ids []user.Identity
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {

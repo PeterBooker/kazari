@@ -18,7 +18,6 @@ import (
 	"kazari/internal/upload"
 )
 
-// clock is a fixed time that tests advance by hand.
 type clock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -43,8 +42,6 @@ type env struct {
 	clock *clock
 }
 
-// newEnv builds a Service over a real sqlite store with users alice and
-// bob. opts.Dir and opts.Now are filled in.
 func newEnv(t *testing.T, opts upload.Options) *env {
 	t.Helper()
 	ctx := context.Background()
@@ -95,7 +92,6 @@ func exists(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// readFiles drains the FileInputs into a path -> content map.
 func readFiles(t *testing.T, files []artifact.FileInput) map[string]string {
 	t.Helper()
 	got := map[string]string{}
@@ -136,14 +132,12 @@ func TestBegin(t *testing.T) {
 	if _, err := e.svc.Begin(ctx, "alice"); !errors.Is(err, artifact.ErrTooManyUploads) {
 		t.Errorf("third Begin: err = %v, want ErrTooManyUploads", err)
 	}
-	e.begin(t, "bob") // the limit is per owner
+	e.begin(t, "bob")
 	if _, err := e.svc.Begin(ctx, "nobody"); err == nil {
 		t.Error("Begin for unknown owner succeeded")
 	}
 }
 
-// Concurrent Begins cannot pass the per-owner limit between counting and
-// inserting.
 func TestBeginConcurrentLimit(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, upload.Options{MaxOpenPerOwner: 5})
@@ -175,16 +169,16 @@ func TestBeginConcurrentLimit(t *testing.T) {
 
 func TestAppendChunk(t *testing.T) {
 	type step struct {
-		owner       string        // default alice
-		advance     time.Duration // clock moves before the call
-		id          string        // default the upload's id
+		owner       string // default alice
+		advance     time.Duration
+		id          string // default the upload's id
 		path        string
 		offset      int64
 		data        string
 		contentType string
-		want        upload.StagedFile // checked when wantErr is nil
+		want        upload.StagedFile
 		wantErr     error
-		wantCurrent int64 // checked when wantErr is ErrOffsetMismatch
+		wantCurrent int64
 	}
 	tests := []struct {
 		name      string
@@ -302,8 +296,7 @@ func TestAppendChunk(t *testing.T) {
 			},
 		},
 		{
-			// The type is replayed as a Content-Type header at publish, so
-			// it is checked before anything is staged.
+			// The type is replayed as a Content-Type header at publish.
 			name: "invalid content types are refused",
 			steps: []step{
 				{path: "a", data: "a", contentType: "text/html\r\nSet-Cookie: a=b", wantErr: artifact.ErrInvalidArgument},
@@ -419,8 +412,6 @@ func TestFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Bytes past the recorded size (a write whose row update failed) are
-	// not part of the file.
 	extra, err := os.OpenFile(filepath.Join(e.dir, u.ID, "0"), os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -520,7 +511,6 @@ func TestExpireStale(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, upload.Options{TTL: time.Hour})
 
-	// No staging directory yet: nothing to do.
 	if n, err := e.svc.ExpireStale(ctx); err != nil || n != 0 {
 		t.Fatalf("ExpireStale on empty = %d, %v; want 0, nil", n, err)
 	}
@@ -530,7 +520,7 @@ func TestExpireStale(t *testing.T) {
 	e.clock.Advance(30 * time.Minute)
 	fresh := e.begin(t, "alice")
 	e.appendChunk(t, fresh.ID, "a", 0, "abc")
-	e.clock.Advance(31 * time.Minute) // old is past its TTL, fresh is not
+	e.clock.Advance(31 * time.Minute)
 
 	orphan := filepath.Join(e.dir, "orphanorphanorphan0000")
 	if err := os.MkdirAll(orphan, 0o700); err != nil {
@@ -577,7 +567,6 @@ func TestAppendChunkConcurrent(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, upload.Options{})
 	u := e.begin(t, "alice")
-	// The same chunk sent many times at once is written exactly once.
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {

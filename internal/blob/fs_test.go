@@ -36,7 +36,6 @@ func TestFSLayout(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, hash[:2], hash)); err != nil {
 		t.Fatalf("blob not at dir/<hash[0:2]>/<hash>: %v", err)
 	}
-	// No temp files are left behind, including after an idempotent Put.
 	if _, _, err := fs.Put(context.Background(), strings.NewReader("layout")); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +50,6 @@ func TestFSLayout(t *testing.T) {
 	}
 }
 
-// Temp files a crashed Put left behind are removed once they are old
-// enough; blobs and anything else are left alone.
 func TestFSRemoveStaleTemp(t *testing.T) {
 	dir := t.TempDir()
 	fs, err := blob.NewFS(dir)

@@ -23,8 +23,6 @@ import (
 	"kazari/internal/user"
 )
 
-// DefaultIPRatePerMinute is the per-IP request rate of the user API when
-// UserOptions.IPRatePerMinute is zero.
 const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
 
 // UserDeps are the collaborators of the user API.
@@ -35,33 +33,30 @@ type UserDeps struct {
 	Auth      auth.Authenticator // API keys and OAuth tokens, already chained
 	Links     present.Links
 	Logger    *slog.Logger
-	// Writes limits write requests per credential. It is shared with the
-	// MCP server so that a key has one budget on both; nil disables it.
+	// Writes is shared with the MCP server so a key has one write budget on
+	// both; nil disables it.
 	Writes *ratelimit.Limiter
 }
 
 // UserOptions tunes the user API. Zero fields take the defaults noted.
 type UserOptions struct {
 	// MaxBodyBytes caps JSON bodies with inline files, the multipart stream
-	// and the uncompressed size of a bundle. Default: the artifact
-	// service's default version size plus 1 MiB of headroom.
+	// and a bundle's uncompressed size. Default: the default version size
+	// plus 1 MiB.
 	MaxBodyBytes int64
-	// MaxChunkBytes caps one raw-body upload chunk. Default: the upload
-	// service's chunk limit.
+	// MaxChunkBytes caps one upload chunk. Default: the upload service's.
 	MaxChunkBytes int64
-	// MaxTotalBytes is echoed in POST /v1/uploads. Default:
+	// MaxTotalBytes is only echoed in POST /v1/uploads. Default:
 	// upload.DefaultMaxTotalBytes.
 	MaxTotalBytes int64
-	// IPRatePerMinute limits requests per client IP before authentication.
-	// 0 means DefaultIPRatePerMinute; a negative value disables it.
+	// IPRatePerMinute applies per client IP, before authentication. 0 means
+	// DefaultIPRatePerMinute; negative disables it.
 	IPRatePerMinute int
-	// TempDir is where multipart bundles are spilled while they are
-	// published. Default: os.TempDir().
+	// TempDir holds spilled multipart bundles. Default: os.TempDir().
 	TempDir string
-	// Now is the clock of the rate limiters. Default: time.Now.
+	// Now clocks the rate limiters. Default: time.Now.
 	Now func() time.Time
-	// Skill is the instance's Agent Skill (a SKILL.md) served at
-	// GET /v1/skill; empty answers 404.
+	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
 	Skill string
 }
 
@@ -93,9 +88,9 @@ type userAPI struct {
 	o UserOptions
 }
 
-// NewUserAPI returns the handler for /v1/... on the api host. Every route
-// requires a bearer credential; reads need artifacts:read, writes
-// artifacts:write and deletes artifacts:delete.
+// NewUserAPI returns the /v1 handler of the api host. Every route requires a
+// bearer credential and, except /me, artifacts:read, artifacts:write or
+// artifacts:delete.
 func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
 	h := &userAPI{base: newBase(d.Logger, d.Links), d: d, o: o}
@@ -129,7 +124,6 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	return handler
 }
 
-// guard wraps fn with the scope check and, for writes, the per-key limit.
 func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
 	next := h.serve(fn)
 	if write {
@@ -141,13 +135,11 @@ func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
 	return next
 }
 
-// keyOf is the per-credential rate-limit bucket.
 func keyOf(r *http.Request) string {
 	p, _ := auth.FromContext(r.Context())
 	return ratelimit.CredentialKey(p)
 }
 
-// limit rejects requests over l's rate with 429 and Retry-After.
 func (b *base) limit(l *ratelimit.Limiter, key func(*http.Request) string) func(http.Handler) http.Handler {
 	return ratelimit.Middleware(l, key, func(w http.ResponseWriter, r *http.Request, d time.Duration) {
 		b.writeError(w, r, &statusError{status: http.StatusTooManyRequests,
@@ -155,7 +147,7 @@ func (b *base) limit(l *ratelimit.Limiter, key func(*http.Request) string) func(
 	})
 }
 
-// mediaType is the request's media type; an absent Content-Type is JSON.
+// mediaType treats an absent Content-Type as JSON.
 func mediaType(r *http.Request) string {
 	ct := r.Header.Get("Content-Type")
 	if ct == "" {
@@ -289,7 +281,6 @@ func sortedFiles(m map[string]artifact.File) []artifact.File {
 	return out
 }
 
-// updateArtifact is PUT: files and fields, from JSON or multipart.
 func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	var (
 		req    api.UpdateArtifactRequest
@@ -331,7 +322,6 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	return h.update(w, r, p, req, files)
 }
 
-// patchArtifact is PATCH: fields only, including visibility "unpublished".
 func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	var req api.UpdateArtifactRequest
 	if err := decodeJSON(w, r, jsonLimit, &req, false); err != nil {
@@ -343,10 +333,8 @@ func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.P
 	return h.update(w, r, p, req, nil)
 }
 
-// update applies an update request. Visibility goes through
-// SetVisibility, so "unpublished" works and "public" or "unlisted" also
-// re-publish an unpublished artifact; it is applied after the other
-// changes, so a restore comes first.
+// update applies visibility through SetVisibility, so "unpublished" works and
+// "public" or "unlisted" re-publish, and last, so a restore comes first.
 func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principal, req api.UpdateArtifactRequest, files []artifact.FileInput) error {
 	slug := r.PathValue("slug")
 	expected, err := expectedVersion(r, req.ExpectedVersion)
@@ -418,8 +406,6 @@ func expectedVersion(r *http.Request, fromBody int) (int, error) {
 	return n, nil
 }
 
-// editFile is POST /artifacts/{slug}/edit: edits to one text file of the
-// latest version, published as a new version.
 func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	var req api.EditRequest
 	if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
@@ -449,7 +435,6 @@ func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	return nil
 }
 
-// skill is GET /skill: the instance's Agent Skill, as Markdown.
 func (h *userAPI) skill(w http.ResponseWriter, _ *http.Request, _ auth.Principal) error {
 	if h.o.Skill == "" {
 		return artifact.Errorf(artifact.ErrNotFound, "this instance serves no skill")
@@ -555,9 +540,8 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	return nil
 }
 
-// writeAnchored writes a text file with every line prefixed by its anchor
-// (artifact.AnchorLines), the form edit anchors refer to. The anchored text
-// is streamed: it can be several times the size of the file.
+// writeAnchored streams because the anchored text can be several times the
+// size of the file.
 func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.Reader) error {
 	data, err := io.ReadAll(rc) // stored files are at most limits.max_file_bytes
 	if err != nil {
@@ -573,12 +557,10 @@ func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.Reader) error {
 	return nil
 }
 
-// setUntrustedHeaders sets the headers of a response carrying artifact
-// bytes on the api origin.
 func setUntrustedHeaders(hdr http.Header) {
 	hdr.Set("X-Content-Type-Options", "nosniff")
-	// Artifact bytes are untrusted; on the api origin they must never run
-	// as a document, whatever their stored type.
+	// Untrusted artifact bytes must never run as a document on the api origin,
+	// whatever their stored type.
 	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	hdr.Set("Cache-Control", "private, no-cache")
 }
@@ -611,8 +593,7 @@ func (h *userAPI) uploadChunk(w http.ResponseWriter, r *http.Request, p auth.Pri
 	if mt, _, err := mime.ParseMediaType(ct); err == nil && mt == "application/octet-stream" {
 		ct = "" // unspecified: derive from the extension at publish time
 	}
-	// One byte over the chunk cap lets the service see the overflow and
-	// answer too_large rather than truncating.
+	// One byte over the cap lets the service answer too_large, not truncate.
 	body := http.MaxBytesReader(w, r.Body, h.o.MaxChunkBytes+1)
 	f, err := h.d.Uploads.AppendChunk(r.Context(), p.Handle, r.PathValue("id"), r.PathValue("path"), offset, body, ct)
 	if err != nil {
@@ -633,7 +614,6 @@ func (h *userAPI) abortUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 	return nil
 }
 
-// me reports the caller and how much of its quota is in use.
 func (h *userAPI) me(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	used, err := h.d.Artifacts.Usage(r.Context(), p.Handle)
 	if err != nil {
@@ -643,7 +623,6 @@ func (h *userAPI) me(w http.ResponseWriter, r *http.Request, p auth.Principal) e
 	return nil
 }
 
-// myKeys lists the caller's API keys; OAuth callers get an empty list.
 func (h *userAPI) myKeys(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	out := []api.APIKey{}
 	if p.Source == auth.SourceAPIKey && h.d.Users != nil {

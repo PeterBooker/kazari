@@ -21,14 +21,10 @@ import (
 	"kazari/internal/artifact"
 )
 
-// manifestLimit caps the manifest part of a multipart publish.
 const manifestLimit = 64 << 10
 
-// spillPrefix names the temporary files bundles are spilled to.
 const spillPrefix = "kazari-bundle-"
 
-// inlineFiles converts the files[] of a JSON body. Delete entries are only
-// allowed on update.
 func inlineFiles(in []api.FileInput, allowDelete bool) ([]artifact.FileInput, error) {
 	out := make([]artifact.FileInput, 0, len(in))
 	for _, f := range in {
@@ -57,8 +53,7 @@ func inlineFiles(in []api.FileInput, allowDelete bool) ([]artifact.FileInput, er
 	return out, nil
 }
 
-// mergeFiles returns primary plus every entry of secondary whose path
-// primary does not already name; primary wins a clash.
+// mergeFiles keeps primary on a path clash.
 func mergeFiles(primary, secondary []artifact.FileInput) []artifact.FileInput {
 	if len(secondary) == 0 {
 		return primary
@@ -76,8 +71,8 @@ func mergeFiles(primary, secondary []artifact.FileInput) []artifact.FileInput {
 	return out
 }
 
-// normPath compares paths the way the service will store them; an invalid
-// path is left as it is for the service to reject.
+// normPath compares paths as the service stores them; an invalid path is left
+// for the service to reject.
 func normPath(p string) string {
 	if clean, err := artifact.ValidatePath(p); err == nil {
 		return clean
@@ -85,9 +80,8 @@ func normPath(p string) string {
 	return p
 }
 
-// withUpload merges the staged files of upload id under inline. The
-// returned done func removes the staging directory; the caller must call
-// it once the publish has succeeded or failed.
+// withUpload merges upload id's staged files under inline. The caller must
+// call done once the publish has succeeded or failed.
 func (h *userAPI) withUpload(ctx context.Context, owner, id string, inline []artifact.FileInput) ([]artifact.FileInput, func(), error) {
 	if id == "" {
 		return inline, func() {}, nil
@@ -107,8 +101,6 @@ func (h *userAPI) withUpload(ctx context.Context, owner, id string, inline []art
 	return mergeFiles(inline, staged), done, nil
 }
 
-// readManifest reads the first part of a multipart publish, which must be
-// "manifest", as strict JSON into v.
 func readManifest(mr *multipart.Reader, v any) error {
 	p, err := mr.NextPart()
 	if errors.Is(err, io.EOF) {
@@ -131,8 +123,7 @@ func readManifest(mr *multipart.Reader, v any) error {
 	return decodeStrict(bytes.NewReader(raw), v, false)
 }
 
-// nextBundle reads the part after the manifest, which must be "bundle",
-// into a spilled bundle. It returns nil when the body has no further part.
+// nextBundle returns nil when the body has no further part.
 func (h *userAPI) nextBundle(mr *multipart.Reader) (*bundle, error) {
 	p, err := mr.NextPart()
 	if errors.Is(err, io.EOF) {
@@ -148,22 +139,17 @@ func (h *userAPI) nextBundle(mr *multipart.Reader) (*bundle, error) {
 	return readBundle(p, h.o.TempDir, h.o.MaxBodyBytes)
 }
 
-// bundle is the regular files of a tar.gz bundle.
-//
-// The artifact service validates every path of a version before it reads
-// any content, and a tar stream only reveals the next path after the
-// previous file's bytes, so the entries are spilled to one temporary file
-// (never memory) and handed over as sections of it.
+// bundle spills its entries to one temporary file, never memory: the service
+// validates every path before it reads any content, and a tar stream reveals
+// the next path only after the previous file's bytes.
 type bundle struct {
 	f     *os.File
 	files []artifact.FileInput
 }
 
-// readBundle decodes gzip -> tar from r, keeping regular files only
-// (directories, links and anything else are skipped) and stripping "./"
-// prefixes. limit caps the decompressed stream: every byte tar reads,
-// headers, long-name and PAX records and the data of skipped entries
-// included, so a gzip bomb stops at the same size as the request body.
+// readBundle keeps regular files only. limit caps every decompressed byte tar
+// reads, headers, PAX records and skipped entries included, so a gzip bomb
+// stops at the size of the request body.
 func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -180,7 +166,7 @@ func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	if err := b.fill(tar.NewReader(capped)); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
-	// Drain to the end of the gzip stream so its checksum is verified.
+	// Drain so the gzip checksum is verified.
 	if _, err := io.Copy(io.Discard, capped); err != nil {
 		if artifact.CodeOf(err) == "" {
 			err = bodyErr("the bundle is corrupt", err)
@@ -210,8 +196,8 @@ func (b *bundle) fill(tr *tar.Reader) error {
 		if name == "" {
 			continue
 		}
-		// Every kept name is held until the service validates the paths,
-		// so one the service would refuse for its length is refused now.
+		// Names are held until the service validates paths, so refuse an
+		// overlong one now.
 		if len(name) > artifact.PathMaxBytes {
 			return artifact.Errorf(artifact.ErrInvalidPath, "bundle entry name longer than %d bytes", artifact.PathMaxBytes)
 		}
@@ -224,8 +210,7 @@ func (b *bundle) fill(tr *tar.Reader) error {
 	}
 }
 
-// tarErr passes the cap's domain error through, reports a failed spill
-// write as an internal error and anything else as a malformed archive.
+// tarErr reports a *fs.PathError as a failed spill write, not a bad archive.
 func tarErr(err error) error {
 	var pe *fs.PathError
 	switch {
@@ -237,7 +222,6 @@ func tarErr(err error) error {
 	return bodyErr("the bundle is not a valid tar archive", err)
 }
 
-// capReader fails with err once more than left bytes have been read.
 type capReader struct {
 	r    io.Reader
 	left int64
@@ -248,7 +232,7 @@ func (c *capReader) Read(p []byte) (int, error) {
 	if c.left < 0 {
 		return 0, c.err
 	}
-	// Read at most one byte past the cap: enough to detect overflow.
+	// One byte past the cap is enough to detect overflow.
 	if int64(len(p)) > c.left+1 {
 		p = p[:c.left+1]
 	}
@@ -265,10 +249,9 @@ func (b *bundle) Close() error {
 	return errors.Join(b.f.Close(), os.Remove(b.f.Name()))
 }
 
-// RemoveStaleSpills removes the bundle spill files in dir (UserOptions.
-// TempDir) last written before the given time. A request removes its own
-// spill file, so these are what a crash left behind. It returns how many
-// it removed and carries on past errors.
+// RemoveStaleSpills removes the spill files in dir (UserOptions.TempDir) last
+// written before the given time, which a crash left behind. It returns how
+// many it removed and carries on past errors.
 func RemoveStaleSpills(dir string, before time.Time) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -304,7 +287,6 @@ func RemoveStaleSpills(dir string, before time.Time) (int, error) {
 	return n, errors.Join(errs...)
 }
 
-// closeBundle closes b, logging a failure; b may be nil.
 func (h *userAPI) closeBundle(ctx context.Context, b *bundle) {
 	if b == nil {
 		return

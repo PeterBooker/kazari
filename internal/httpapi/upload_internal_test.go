@@ -59,8 +59,8 @@ func many(n int, typ byte) []tarEntry {
 	return out
 }
 
-// Header blocks count against the uncompressed cap, so a bundle of many
-// empty or skipped entries stops early instead of decoding without bound.
+// Header blocks count against the cap, so many empty or skipped entries
+// cannot decode without bound.
 func TestReadBundleEntryCap(t *testing.T) {
 	const limit = 64 << 10
 	tests := []struct {
@@ -96,8 +96,7 @@ func TestReadBundleEntryCap(t *testing.T) {
 	}
 }
 
-// gzipStream gzips the archive write produces, followed by trailer zero
-// bytes after the end of the archive.
+// gzipStream appends trailer zero bytes after the archive.
 func gzipStream(t *testing.T, write func(tw *tar.Writer) error, trailer int) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -118,7 +117,6 @@ func gzipStream(t *testing.T, write func(tw *tar.Writer) error, trailer int) []b
 	return buf.Bytes()
 }
 
-// regular writes one regular file entry in the given format.
 func regular(tw *tar.Writer, name string, body []byte, format tar.Format) error {
 	hdr := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body)), Format: format}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -128,10 +126,8 @@ func regular(tw *tar.Writer, name string, body []byte, format tar.Format) error 
 	return err
 }
 
-// The cap counts every decompressed byte of the tar stream, including what
-// tar.Reader reads inside Next (PAX and GNU long-name records, the data of
-// skipped entries) and anything after the archive, not just the headers
-// and file bodies the bundle code sees.
+// The cap counts every byte tar.Reader reads inside Next and anything after
+// the archive, not just what the bundle code sees.
 func TestReadBundleCapsWholeStream(t *testing.T) {
 	const limit = 64 << 10
 	longName := strings.Repeat("a", 2*limit)
@@ -194,8 +190,6 @@ func TestReadBundleCapsWholeStream(t *testing.T) {
 	}
 }
 
-// Spill files a crash left behind are removed once they are old enough;
-// anything else in the directory is left alone.
 func TestRemoveStaleSpills(t *testing.T) {
 	dir := t.TempDir()
 	cutoff := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)

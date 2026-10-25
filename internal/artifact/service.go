@@ -14,7 +14,6 @@ import (
 	"kazari/internal/blob"
 )
 
-// Write policies for Options.WritePolicy.
 const (
 	// WriteShared lets any authenticated actor change any artifact.
 	WriteShared = "shared"
@@ -22,7 +21,6 @@ const (
 	WriteOwner = "owner"
 )
 
-// Defaults applied by New to zero-valued Options fields.
 const (
 	DefaultMaxVersionBytes = 50 << 20
 	DefaultMaxFileBytes    = 25 << 20
@@ -32,14 +30,13 @@ const (
 	DefaultBlobGrace       = time.Hour
 )
 
-// gcBatch is how many blobs CollectGarbage asks for at a time.
 const gcBatch = 1000
 
-// Options configures a Service. Zero values get the defaults above.
+// Options configures a Service. Zero values get the Default* values.
 type Options struct {
-	MaxVersionBytes  int64 // total size of one version
-	MaxFileBytes     int64 // size of one file
-	MaxFiles         int   // files in one version
+	MaxVersionBytes  int64
+	MaxFileBytes     int64
+	MaxFiles         int
 	MaxMetadataPairs int
 	ReservedSlugs    []string
 	DefaultGrace     time.Duration // MarkStale grace when the caller gives none
@@ -48,7 +45,7 @@ type Options struct {
 	BlobGrace        time.Duration // how long an unreferenced blob survives GC
 	WritePolicy      string        // WriteShared (default) or WriteOwner
 	Now              func() time.Time
-	Logger           *slog.Logger // audit failures are logged here; default slog.Default()
+	Logger           *slog.Logger // audit failures; default slog.Default()
 }
 
 func (o Options) withDefaults() Options {
@@ -88,23 +85,22 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Service implements the artifact operations on top of a Store and a blob
-// store. It is safe for concurrent use; the store resolves races.
+// Service implements the artifact operations. It is safe for concurrent
+// use; the store resolves races.
 type Service struct {
 	store Store
 	blobs blob.Store
 	rec   audit.Recorder
 	opts  Options
 
-	// blobMu orders publishes against the garbage collector. A Put of
-	// content that is already stored writes nothing, so between that Put
-	// and the commit of the version that references it the blob looks
-	// unreferenced. Publishes hold the read side over that window (see
-	// holdBlobs); CollectGarbage holds the write side over each batch.
+	// blobMu orders publishes against the garbage collector: a Put of stored
+	// content writes nothing, so the blob looks unreferenced until its
+	// version commits. Publishes hold the read side over that window,
+	// CollectGarbage the write side over each batch.
 	blobMu sync.RWMutex
 }
 
-// New returns a Service. rec may be nil, which discards audit events.
+// New returns a Service; a nil rec discards audit events.
 func New(store Store, blobs blob.Store, rec audit.Recorder, opts Options) *Service {
 	if rec == nil {
 		rec = audit.Nop{}
@@ -114,7 +110,6 @@ func New(store Store, blobs blob.Store, rec audit.Recorder, opts Options) *Servi
 
 func (s *Service) now() time.Time { return s.opts.Now().UTC() }
 
-// canWrite is the single write-policy check for every mutation.
 func (s *Service) canWrite(actor Actor, a *Artifact) bool {
 	if s.opts.WritePolicy == WriteShared {
 		return true
@@ -122,9 +117,8 @@ func (s *Service) canWrite(actor Actor, a *Artifact) bool {
 	return actor.Admin || actor.Handle == a.OwnerHandle
 }
 
-// record writes an audit event, adding the actor's credential to the
-// details. The store change it describes has already happened, so a
-// failure is logged rather than returned.
+// record logs a failure rather than returning it: the change it describes
+// has already happened.
 func (s *Service) record(ctx context.Context, actor Actor, action, slug string, details map[string]string) {
 	if actor.Credential != "" {
 		details = maps.Clone(details)
@@ -165,16 +159,15 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 			return nil, nil, Errorf(ErrInvalidArgument, "cannot delete %q from a new artifact", in.Path)
 		}
 	}
-	// Fail before streaming anything when the slug is obviously taken; the
-	// store's unique constraint is the real guard.
+	// Fail before streaming when the slug is taken; the store's unique
+	// constraint is the real guard.
 	if _, err := s.store.Get(ctx, req.Slug); err == nil {
 		return nil, nil, Errorf(ErrSlugTaken, "slug %q is already taken", req.Slug)
 	} else if CodeOf(err) != ErrNotFound.Code {
 		return nil, nil, err
 	}
 
-	// The early quota check stops an upload that cannot fit; the store
-	// repeats it inside the transaction that inserts the version.
+	// Checked early to spare a doomed upload; the store re-checks.
 	quota, err := s.quotaLeft(ctx, actor)
 	if err != nil {
 		return nil, nil, err
@@ -214,19 +207,15 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 	return got, v, nil
 }
 
-// holdBlobs runs fn, which puts blobs and commits the version that
-// references them, under the read side of blobMu, so CollectGarbage cannot
-// delete a blob that fn found already stored before fn's commit makes it
-// referenced. Every content reader the service is given is local (memory,
-// a spilled bundle or a staged upload), so the hold is bounded by disk
-// speed, not by a client.
+// holdBlobs runs fn under blobMu's read side. Every content reader is local
+// (memory, a spilled bundle or a staged upload), so the hold is bounded by
+// disk speed, not by a client.
 func (s *Service) holdBlobs(fn func() error) error {
 	s.blobMu.RLock()
 	defer s.blobMu.RUnlock()
 	return fn()
 }
 
-// validateTexts checks the free-text fields of a create.
 func validateTexts(name, description, label string) error {
 	if err := ValidateName(name); err != nil {
 		return err
@@ -244,8 +233,7 @@ func versionDetails(v *Version) map[string]string {
 	}
 }
 
-// quotaLeft returns how many more bytes the actor may store, or nil when
-// the actor has no quota.
+// quotaLeft is nil when the actor has no quota.
 func (s *Service) quotaLeft(ctx context.Context, actor Actor) (*int64, error) {
 	if actor.QuotaBytes <= 0 {
 		return nil, nil
@@ -258,17 +246,15 @@ func (s *Service) quotaLeft(ctx context.Context, actor Actor) (*int64, error) {
 	return &left, nil
 }
 
-// Update changes an artifact's fields and, when req.Files is not empty,
-// adds a version built from the latest version's files plus the changes.
-// The returned version is nil for a fields-only update.
+// Update changes fields and, unless req.Files is empty, adds a version of
+// the latest files plus the changes; otherwise the version is nil.
 func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*Artifact, *Version, error) {
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
 	}
 	now := s.now()
-	// apply checks and changes a; the store calls it on the row it writes,
-	// inside the write's transaction, so a concurrent change to another
-	// field (a transfer, a delete) is neither lost nor ignored.
+	// The store calls apply on the row it writes, inside its transaction, so
+	// a concurrent transfer or delete is neither lost nor ignored.
 	var restoring bool
 	apply := func(a *Artifact) error {
 		if a.PurgedAt != nil {
@@ -310,9 +296,8 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 		return got, nil, nil
 	}
 
-	// Run the checks on a first read, so a request that will fail does not
-	// upload for nothing, and take the base files and quota from it. The
-	// store repeats the checks inside its transaction.
+	// Check a first read so a doomed request uploads nothing; the store
+	// repeats the checks in its transaction.
 	a, err := s.store.Get(ctx, req.Slug)
 	if err != nil {
 		return nil, nil, err
@@ -333,9 +318,8 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 			base[f.Path] = f
 		}
 	}
-	// The quota is the acting user's; it applies when they add to their
-	// own artifact. Under the shared policy another user's version is
-	// charged to the owner, whose quota the actor does not carry.
+	// The actor carries only its own quota; another user's version is
+	// charged to the owner.
 	var (
 		quota      *int64
 		quotaBytes int64
@@ -385,7 +369,6 @@ func (s *Service) recordUpdate(ctx context.Context, actor Actor, slug string, v 
 	s.record(ctx, actor, audit.ArtifactUpdate, slug, details)
 }
 
-// applyFields copies the requested field changes onto a and validates them.
 func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 	if req.Name != nil {
 		if err := ValidateName(*req.Name); err != nil {
@@ -426,9 +409,6 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 	return nil
 }
 
-// checkWritable is the gate of a lifecycle mutation: tombstones are gone,
-// soft-deleted artifacts are not found unless allowDeleted, and the write
-// policy applies.
 func (s *Service) checkWritable(actor Actor, a *Artifact, allowDeleted bool) error {
 	if a.PurgedAt != nil {
 		return ErrGone
@@ -442,14 +422,11 @@ func (s *Service) checkWritable(actor Actor, a *Artifact, allowDeleted bool) err
 	return nil
 }
 
-// errUnchanged is returned by a change func to skip the write and the
-// audit event.
+// errUnchanged from a change func skips the write and the audit event.
 var errUnchanged = errors.New("artifact: unchanged")
 
-// modify runs checkWritable and change on the current row of slug inside
-// the store's write transaction, writes the result, records action with
-// the details change returns and returns the stored state. A change that
-// returns errUnchanged writes and records nothing.
+// modify runs checkWritable and change on the current row inside the
+// store's transaction, then records action with change's details.
 func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDeleted bool, action string,
 	change func(a *Artifact) (map[string]string, error)) (*Artifact, error) {
 	var details map[string]string

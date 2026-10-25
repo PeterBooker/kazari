@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// Actions recorded by the system.
 const (
 	ArtifactCreate     = "artifact.create"
 	ArtifactUpdate     = "artifact.update"
@@ -35,8 +34,8 @@ type Event struct {
 	Details map[string]string
 }
 
-// Recorder appends events. Rows are written after the store call that they
-// describe, outside its transaction; a crash in that window loses one row.
+// Recorder appends events. Rows are written after the store call they
+// describe, outside its transaction, so a crash in between loses one row.
 type Recorder interface {
 	Record(ctx context.Context, e Event) error
 }

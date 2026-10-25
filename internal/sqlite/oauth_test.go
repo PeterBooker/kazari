@@ -16,8 +16,6 @@ import (
 
 var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
-// oauthTestStores opens a fresh database with users alice and bob and a
-// client "dcr_test".
 func oauthTestStores(t *testing.T) *OAuthStore {
 	t.Helper()
 	ctx := context.Background()
@@ -56,7 +54,6 @@ func TestOAuthStoreClient(t *testing.T) {
 		t.Errorf("GetClient (-want +got):\n%s", diff)
 	}
 
-	// An upsert refreshes name, URIs and fetch time but keeps created_at.
 	refetched := oauthT0.Add(2 * time.Hour)
 	update := &oauth.Client{ID: want.ID, Name: "Renamed", RedirectURIs: []string{"https://x.example/cb"},
 		CreatedAt: oauthT0.Add(time.Hour), FetchedAt: &refetched}
@@ -183,8 +180,6 @@ func TestOAuthStoreConsumeCodeConcurrent(t *testing.T) {
 	}
 }
 
-// The approving API key travels from the code to every token of the grant,
-// so the service can end the grant with the key.
 func TestOAuthStoreKeyPrefix(t *testing.T) {
 	ctx := context.Background()
 	s := oauthTestStores(t)
@@ -260,7 +255,6 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("GetToken(nope) err = %v, want ErrNotFound", err)
 	}
 
-	// Rotate r1 into r2.
 	t1 := oauthT0.Add(time.Hour)
 	a2, r2 := oauthPair("alice", scopes, t1, 1)
 	if err := s.Rotate(ctx, r1.ID, t1, a2, r2); err != nil {
@@ -287,7 +281,6 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("Rotate of access token err = %v, want ErrNotFound", err)
 	}
 
-	// A second family for alice and one for bob.
 	a4, r4 := oauthPair("alice", scopes, t1.Add(time.Minute), 3)
 	if err := s.CreateTokens(ctx, a4, r4); err != nil {
 		t.Fatal(err)
@@ -316,7 +309,6 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("ListGrants after expiry = %v, want none", got)
 	}
 
-	// Revoking a grant kills its whole family, access tokens included.
 	if err := s.RevokeGrant(ctx, r2.ID, t1); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +328,6 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("RevokeGrant(access token) err = %v, want ErrNotFound", err)
 	}
 
-	// RevokeFamily, then RevokeAllForUser, leave bob alone.
 	if err := s.RevokeFamily(ctx, r4.FamilyID, t1); err != nil {
 		t.Fatal(err)
 	}
@@ -369,8 +360,7 @@ func TestOAuthStoreDeleteExpired(t *testing.T) {
 	if err := s.CreateCode(ctx, &oauth.Code{Hash: "old", ClientID: "dcr_test", UserHandle: "alice", RedirectURI: "u", CodeChallenge: "c", ExpiresAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}
-	// Access expires in 1h (gone), refresh in 30 days (kept); r1 is rotated
-	// into r2 so replaced_by references survive the delete.
+	// r1 is rotated into r2 so replaced_by references survive the delete.
 	a1, r1 := oauthPair("alice", nil, oauthT0.Add(-time.Hour), 0)
 	if err := s.CreateTokens(ctx, a1, r1); err != nil {
 		t.Fatal(err)

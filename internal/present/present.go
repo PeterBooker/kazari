@@ -1,6 +1,5 @@
-// Package present converts domain types to the wire types in package api
-// and maps domain errors to HTTP statuses. Both the REST API and the MCP
-// server use it, so an artifact looks the same on every surface.
+// Package present converts domain types to the api wire types and domain errors
+// to HTTP statuses, so the REST API and the MCP server agree.
 package present
 
 import (
@@ -25,7 +24,7 @@ type Links struct {
 	URL func(sub string) string
 }
 
-// ArtifactURL is the latest-version URL of a slug.
+// ArtifactURL is the URL of a slug's published version.
 func (l Links) ArtifactURL(slug string) string {
 	if l.URL == nil {
 		return ""
@@ -77,7 +76,7 @@ func (l Links) Artifacts(p artifact.ListPage) api.ArtifactList {
 	return out
 }
 
-// Version converts a version; Files are included when present.
+// Version converts a version.
 func (l Links) Version(slug string, v artifact.Version) api.Version {
 	out := api.Version{
 		Number:    v.Number,
@@ -107,9 +106,8 @@ func (l Links) Detail(a *artifact.Artifact, vs []artifact.Version) api.ArtifactD
 	return d
 }
 
-// Result converts the outcome of a create, update or publish. version is
-// the version the call produced or moved to (0 falls back to the published
-// version).
+// Result converts the outcome of a create, update or publish; version 0 means the
+// published version.
 func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 	if version == 0 {
 		version = a.PublishedVersion
@@ -198,10 +196,8 @@ func Actor(p auth.Principal) artifact.Actor {
 	return artifact.Actor{Handle: p.Handle, Admin: p.Admin, QuotaBytes: p.QuotaBytes, Credential: credential(p)}
 }
 
-// credential names the credential behind p for the audit trail: the source
-// and the key id, "api_key:<prefix>", "oauth:<id>", or the source alone
-// ("admin_token") when there is no key id. A key id that already starts
-// with the source is used as it is.
+// credential names p's credential in the audit trail: "api_key:<prefix>",
+// "oauth:<id>", or the source alone ("admin_token") without a key id.
 func credential(p auth.Principal) string {
 	switch {
 	case p.Source == "":

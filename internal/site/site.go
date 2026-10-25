@@ -1,9 +1,6 @@
-// Package site serves published artifacts on their wildcard hosts:
-// <slug>.<base> for the published version and <slug>--v<N>.<base> for a
-// pinned one. It resolves the host to a version, maps the request path to a
-// file in that version and streams the blob with caching and security
-// headers. It never serves control-plane hosts; the host router keeps
-// those away from it.
+// Package site serves published artifacts at <slug>.<base> and pinned
+// versions at <slug>--v<N>.<base>. The host router keeps control-plane hosts
+// away from it.
 package site
 
 import (
@@ -24,41 +21,33 @@ import (
 	"kazari/internal/blob"
 )
 
-// Resolver looks up what to serve for a slug. artifact.Service implements
-// it; ResolvePublished and ResolveVersion return artifact.ErrNotFound or
-// artifact.ErrVersionNotFound for unknown slugs and versions.
+// Resolver looks up what to serve for a slug. ResolvePublished and
+// ResolveVersion return artifact.ErrNotFound or artifact.ErrVersionNotFound.
 type Resolver interface {
 	ResolvePublished(ctx context.Context, slug string) (*artifact.Published, error)
 	ResolveVersion(ctx context.Context, slug string, n int) (*artifact.Published, error)
 	Files(ctx context.Context, versionID int64) (map[string]artifact.File, error)
 }
 
-// Options configures the handler. The zero value works, except that
-// BaseDomain must be set for any host to match.
+// Options configures the handler. Only BaseDomain is required.
 type Options struct {
-	// BaseDomain is the domain artifact hosts sit under, e.g. "art.example".
 	BaseDomain string
-	// DefaultCSP is the Content-Security-Policy sent with every response.
-	// Empty sends none unless an artifact supplies its own.
+	// DefaultCSP is sent with every response; empty sends none unless the
+	// artifact has its own.
 	DefaultCSP string
 	// AllowCSPOverride lets an artifact's kazari.csp metadata replace
 	// DefaultCSP for its own files.
 	AllowCSPOverride bool
-	// NotFoundPage is the instance 404 page; nil uses a built-in page.
-	NotFoundPage []byte
-	// GonePage is the instance 410 page for purged artifacts; nil uses a
-	// built-in page.
-	GonePage []byte
-	// Logger receives serving errors; nil uses slog.Default().
-	Logger *slog.Logger
-	// ImmutableMaxAge is how long browsers and caches may keep a pinned
-	// version's responses; zero means MaxImmutableAge. Keep it no longer
-	// than the tombstone period: once a slug is freed, another owner's
-	// <slug>--v1 must not be answered from a cache of the old one.
+	NotFoundPage     []byte       // nil uses a built-in page
+	GonePage         []byte       // 410 for purged artifacts; nil uses a built-in page
+	Logger           *slog.Logger // nil uses slog.Default()
+	// ImmutableMaxAge caps caching of pinned versions; zero means
+	// MaxImmutableAge. Keep it within the tombstone period, or a freed
+	// slug's <slug>--v1 may be answered from a cache of the old owner's.
 	ImmutableMaxAge time.Duration
 }
 
-// MaxImmutableAge is the longest, and the default, ImmutableMaxAge.
+// MaxImmutableAge is the default and the cap of ImmutableMaxAge.
 const MaxImmutableAge = 365 * 24 * time.Hour
 
 var (
@@ -68,8 +57,6 @@ var (
 	defaultGonePage []byte
 )
 
-// cacheLatest is the Cache-Control value of the latest host; pinned
-// versions get "public, max-age=<ImmutableMaxAge>, immutable".
 const cacheLatest = "no-cache"
 
 const indexFile = "index.html"
@@ -79,7 +66,7 @@ type handler struct {
 	blobs     blob.Store
 	opts      Options
 	log       *slog.Logger
-	immutable string // Cache-Control of pinned versions
+	immutable string
 }
 
 // NewHandler returns the artifact-serving handler.
@@ -104,9 +91,8 @@ func NewHandler(r Resolver, blobs blob.Store, opts Options) http.Handler {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {
-		// GET and HEAD carry no body. Closing after the reply stops
-		// net/http from waiting, without a deadline, to discard a body
-		// that a client announces and never sends.
+		// GET and HEAD carry no body. Closing stops net/http waiting, with
+		// no deadline, to discard a body the client announces but never sends.
 		w.Header().Set("Connection", "close")
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -155,7 +141,6 @@ func (h *handler) resolve(ctx context.Context, slug string, version int) (*artif
 	return h.resolver.ResolveVersion(ctx, slug, version)
 }
 
-// serveVersion applies the path rules to one version's file map.
 func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifact.Published, pinned bool, files map[string]artifact.File) {
 	clean, dir, ok := cleanPath(r.URL.Path)
 	if !ok {
@@ -172,8 +157,8 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 		return
 	}
 
-	// A directory requested without its slash: redirect so relative links
-	// inside its index.html resolve against the directory.
+	// Redirect so relative links in the directory's index.html resolve
+	// against it.
 	if !dir {
 		if _, ok := files[clean+"/"+indexFile]; ok {
 			h.redirectDir(w, r, p, pinned, clean)
@@ -196,11 +181,10 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 	h.writeError(w, r, http.StatusNotFound)
 }
 
-// cleanPath normalises a request path. It returns the file path without a
-// leading slash ("" for the root), whether the request names a directory
-// (root or trailing slash), and false for paths that can never be served:
-// ".." segments, NUL or other control characters, and backslashes, which no
-// stored path contains and which browsers read as "/" in a Location header.
+// cleanPath returns the path without its leading slash ("" for the root)
+// and whether it names a directory. ok is false for "..", control
+// characters and backslashes, which no stored path contains and browsers
+// read as "/" in a Location header.
 func cleanPath(p string) (clean string, dir bool, ok bool) {
 	for i := 0; i < len(p); i++ {
 		if p[i] < 0x20 || p[i] == 0x7f || p[i] == '\\' {
@@ -227,8 +211,6 @@ func (h *handler) redirectDir(w http.ResponseWriter, r *http.Request, p *artifac
 	w.WriteHeader(http.StatusMovedPermanently)
 }
 
-// serveFile streams one file with http.ServeContent, which handles HEAD,
-// ranges and If-None-Match against the ETag.
 func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.Published, pinned bool, f artifact.File) {
 	rc, err := h.blobs.Open(r.Context(), f.Hash)
 	if err != nil {
@@ -247,8 +229,7 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.
 	http.ServeContent(w, r, f.Path, time.Time{}, rc)
 }
 
-// serveNotFoundFile sends the artifact's own 404.html with status 404.
-// ServeContent cannot be used because it always answers 200 or 206.
+// serveNotFoundFile avoids ServeContent, which always answers 200 or 206.
 func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *artifact.Published, f artifact.File) {
 	rc, err := h.blobs.Open(r.Context(), f.Hash)
 	if err != nil {
@@ -269,9 +250,8 @@ func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *a
 	}
 }
 
-// writeError sends an instance page (404 or 410) or a bare status line.
-// Instance pages always use DefaultCSP, never an artifact's override,
-// because their content is the instance's, not the artifact's.
+// writeError always uses DefaultCSP: the page is the instance's, not the
+// artifact's.
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, status int) {
 	var body []byte
 	switch status {
@@ -302,7 +282,6 @@ func (h *handler) internalError(w http.ResponseWriter, r *http.Request, err erro
 	h.writeError(w, r, http.StatusInternalServerError)
 }
 
-// setCommonHeaders sets the headers every artifact response carries.
 func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published, pinned bool) {
 	hdr := w.Header()
 	hdr.Set("X-Content-Type-Options", "nosniff")
@@ -317,15 +296,11 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 	}
 }
 
-// setErrorHeaders sets the headers of every error response: never cached
-// for long, never indexed.
 func (h *handler) setErrorHeaders(w http.ResponseWriter, p *artifact.Published) {
 	h.setCommonHeaders(w, p, false)
 	w.Header().Set("X-Robots-Tag", "noindex")
 }
 
-// csp picks the policy for a response: the artifact's own when it has one
-// and overrides are allowed, else the instance default.
 func (h *handler) csp(p *artifact.Published) string {
 	if p != nil && p.CSP != "" && h.opts.AllowCSPOverride {
 		return p.CSP
@@ -333,8 +308,6 @@ func (h *handler) csp(p *artifact.Published) string {
 	return h.opts.DefaultCSP
 }
 
-// contentType returns ct with "; charset=utf-8" added to textual types that
-// carry no charset. An empty ct is served as application/octet-stream.
 func contentType(ct string) string {
 	if ct == "" {
 		return "application/octet-stream"

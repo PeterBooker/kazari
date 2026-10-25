@@ -67,8 +67,7 @@ type UpdateInput struct {
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
 
-// EditInput is one edit of edit_file: a text edit (old_text) or an anchor
-// edit (start, end).
+// EditInput is one edit of edit_file: a text edit or an anchor edit.
 type EditInput struct {
 	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: the exact text to replace, copied from the file; it must match once unless replace_all"`
 	NewText    string `json:"new_text" jsonschema:"the replacement; empty deletes the text or lines"`
@@ -87,8 +86,7 @@ type EditFileInput struct {
 	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
 
-// editFileSchema is EditFileInput's schema with each edit constrained to
-// one kind: exactly one of a non-empty old_text and a non-empty start.
+// editFileSchema constrains each edit to exactly one of a non-empty old_text and start.
 func editFileSchema() *jsonschema.Schema {
 	s, err := jsonschema.For[EditFileInput](nil)
 	if err != nil {
@@ -176,32 +174,26 @@ type ReadFileResult struct {
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 	Hash        string `json:"hash"`
-	// Encoding says where the content is: utf8 (inline text), base64
-	// (embedded blob) or url (too large; download from URL).
+	// Encoding is utf8 (inline text), base64 (embedded blob) or url (download from URL).
 	Encoding string `json:"encoding"`
 	URL      string `json:"url,omitempty"`
-	// Anchored is true when the text carries line anchors.
-	Anchored bool `json:"anchored,omitempty"`
+	Anchored bool   `json:"anchored,omitempty"`
 	// Version is the version read; LatestVersion the one edit_file edits.
 	Version       int `json:"version"`
 	LatestVersion int `json:"latest_version"`
 }
 
-// handler is a tool body: it returns the structured result and a one-line
-// summary for the text content. req is the call, for the few tools that
-// look at the client's protocol version, capabilities or input responses.
+// handler returns a tool's structured result and a one-line summary for the text content.
 type handler[In, Out any] func(ctx context.Context, req *mcp.CallToolRequest, in In) (Out, string, error)
 
-// inputRequired is returned by a handler that needs the user's answer
-// before it can act; register turns it into an input_required result
-// (SEP-2322) and the client calls again with the answers.
+// inputRequired asks for the user's answers first: register turns it into an
+// input_required result (SEP-2322) and the client calls again with them.
 type inputRequired struct{ requests mcp.InputRequestMap }
 
 func (*inputRequired) Error() string { return "mcpserver: input required" }
 
-// register adds a tool whose handler runs only for principals holding
-// scope, maps errors to "<code>: <message>" tool errors with a next step
-// and returns the summary line followed by the JSON of the result.
+// register adds a tool limited to principals holding scope. Its text content is
+// the summary line followed by the result's JSON.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
 	t.Description = b.text.tools[t.Name]
 	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
@@ -235,10 +227,8 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 	})
 }
 
-// recoverTool turns a panic in a handler into an internal error passed to
-// fail. The SDK runs handlers on goroutines of its own, outside net/http's
-// and middleware.Recover's reach, so an unrecovered panic would end the
-// process. Call it deferred.
+// recoverTool, deferred, hands a panic to fail as an internal error: the SDK runs
+// handlers outside net/http's and middleware.Recover's reach, so it would end the process.
 func (b *builder) recoverTool(ctx context.Context, name string, fail func(error)) {
 	v := recover()
 	if v == nil {
@@ -256,8 +246,7 @@ func requireScope(p auth.Principal, scope string) error {
 	return nil
 }
 
-// toolError is the error a tool returns to the model: the wire error code
-// and message, where to resume after an offset mismatch, and the next step.
+// toolError is the error a tool returns to the model.
 type toolError struct {
 	e     api.Error
 	next  string
@@ -277,9 +266,8 @@ func (e *toolError) Error() string {
 
 func (e *toolError) Unwrap() error { return e.cause }
 
-// toolError maps err with present.Error and adds the next step for its
-// code; internal errors are logged, as their message is replaced by a
-// generic one.
+// toolError adds the next step for err's code and logs internal errors, since
+// present.Error hides their message.
 func (b *builder) toolError(ctx context.Context, tool string, err error) error {
 	var e api.Error
 	var wire *api.Error
@@ -518,14 +506,11 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 }
 
-// confirmPurge is the id of the question delete_artifact asks before a
-// hard delete.
 const confirmPurge = "confirm_purge"
 
-// canConfirm reports whether the client can answer an input_required
-// result with a form. That needs protocol 2026-07-28 or later: this server
-// is stateless, so it cannot send older clients an elicitation request of
-// its own. A client that cannot is left to the tool's destructive hint.
+// canConfirm reports whether the client can answer an input_required form. Older
+// protocols need an elicitation request, which a stateless server cannot send;
+// those clients are left to the tool's destructive hint.
 func canConfirm(req *mcp.CallToolRequest) bool {
 	if req == nil || req.ProtocolVersion() < "2026-07-28" {
 		return false
@@ -535,7 +520,6 @@ func canConfirm(req *mcp.CallToolRequest) bool {
 	return caps != nil && caps.Elicitation != nil && (caps.Elicitation.Form != nil || caps.Elicitation.URL == nil)
 }
 
-// purgeQuestion asks the user to confirm purging slug.
 func purgeQuestion(slug string) *mcp.ElicitParams {
 	return &mcp.ElicitParams{
 		Mode: "form",
@@ -556,8 +540,6 @@ func purgeQuestion(slug string) *mcp.ElicitParams {
 	}
 }
 
-// confirmed reports whether the user accepted the purge question and
-// ticked the box.
 func confirmed(answer mcp.InputResponse) bool {
 	r, ok := answer.(*mcp.ElicitResult)
 	if !ok || r == nil || r.Action != "accept" {
@@ -567,8 +549,7 @@ func confirmed(answer mcp.InputResponse) bool {
 	return v
 }
 
-// editLine is the summary of edit_file: where each edit landed and how
-// it matched, so a fuzzy match is never silent.
+// editLine names each edit's match so a fuzzy match is never silent.
 func editLine(r api.EditResult) string {
 	parts := make([]string, len(r.Edits))
 	for i, e := range r.Edits {
@@ -585,7 +566,6 @@ func editLine(r api.EditResult) string {
 	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, strings.Join(parts, "; "))
 }
 
-// publishedLine is the summary of every tool that returns a PublishResult.
 func publishedLine(r api.PublishResult) string {
 	line := fmt.Sprintf("Published %s (version %d)", r.URL, r.Version)
 	switch {
@@ -597,7 +577,6 @@ func publishedLine(r api.PublishResult) string {
 	return line
 }
 
-// artifactLine summarises an artifact record.
 func artifactLine(a api.Artifact) string {
 	line := fmt.Sprintf("%s: %s serves version %d of %d (%s)", a.Slug, a.URL, a.PublishedVersion, a.LatestVersion, a.Visibility)
 	switch {
@@ -612,8 +591,6 @@ func artifactLine(a api.Artifact) string {
 	return line + "."
 }
 
-// detail returns an artifact with its versions, optionally with each
-// version's files sorted by path.
 func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string, withFiles bool) (api.ArtifactDetail, error) {
 	a, vs, err := b.d.Artifacts.Get(ctx, actor, slug)
 	if err != nil {
@@ -633,10 +610,9 @@ func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string,
 	return b.d.Links.Detail(a, vs), nil
 }
 
-// files decodes the inline files and merges them with the staged files of
-// uploadID (if any), inline winning on a path clash. The returned cleanup
-// removes the upload; it is never nil and must be called even when err is
-// set, so a failed call still consumes the upload.
+// files merges the inline files with uploadID's staged ones, inline winning on a
+// path clash. The cleanup removes the upload; it is never nil and must be called
+// even on error, so a failed call still consumes the upload.
 func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(), error) {
 	cleanup := func() {}
 	var staged []artifact.FileInput
@@ -668,8 +644,7 @@ func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, 
 	return inline, cleanup, nil
 }
 
-// cleanPath normalises a path for clash detection; an invalid path is kept
-// as is and rejected later by the service.
+// cleanPath keeps an invalid path as is; the service rejects it later.
 func cleanPath(p string) string {
 	if c, err := artifact.ValidatePath(p); err == nil {
 		return c
@@ -685,7 +660,6 @@ func createFiles(in []FileInput) []UpdateFileInput {
 	return out
 }
 
-// inlineFiles decodes inline files into service inputs.
 func inlineFiles(in []UpdateFileInput) ([]artifact.FileInput, error) {
 	out := make([]artifact.FileInput, 0, len(in))
 	for _, f := range in {
@@ -702,8 +676,7 @@ func inlineFiles(in []UpdateFileInput) ([]artifact.FileInput, error) {
 	return out, nil
 }
 
-// decode returns content as raw bytes (in a string) per encoding. Base64
-// may be padded or not and may contain line breaks.
+// decode returns raw bytes in a string; base64 may be unpadded and contain line breaks.
 func decode(path, content, encoding string) (string, error) {
 	switch strings.ToLower(encoding) {
 	case "", "utf8", "utf-8", "text":
@@ -727,8 +700,7 @@ func decode(path, content, encoding string) (string, error) {
 	return "", artifact.Errorf(artifact.ErrInvalidArgument, "encoding of %q must be utf8 or base64, not %q", path, encoding)
 }
 
-// parseGrace accepts a Go duration or a whole number of days ("14d").
-// Empty means the instance default.
+// parseGrace accepts a Go duration or whole days ("14d"); empty returns 0, the instance default.
 func parseGrace(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

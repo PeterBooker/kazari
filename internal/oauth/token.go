@@ -20,8 +20,6 @@ type tokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
-// serveToken is the token endpoint: authorization_code and refresh_token
-// grants for public clients.
 func (s *Service) serveToken(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := r.ParseForm(); err != nil {
@@ -152,8 +150,8 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 		return
 	}
 	if old.ReplacedBy != nil {
-		// A rotated token came back: either the client or an attacker holds
-		// a stolen copy. Kill the whole chain (OAuth 2.1 section 4.3.1).
+		// A rotated token came back, so someone holds a stolen copy:
+		// revoke the whole family (OAuth 2.1 section 4.3.1).
 		s.log.WarnContext(ctx, "oauth: refresh token replay, revoking family",
 			"client_id", clientID, "user", old.UserHandle, "family", old.FamilyID)
 		if err := s.store.RevokeFamily(ctx, old.FamilyID, now); err != nil {
@@ -214,9 +212,8 @@ func (s *Service) userActive(w http.ResponseWriter, r *http.Request, handle stri
 	return true
 }
 
-// keyActive writes invalid_grant when the grant was approved with an API key
-// that is no longer active. It returns the key's expiry, nil when it has none
-// or the grant has no key.
+// keyActive writes invalid_grant when the approving API key is no longer
+// active, and returns its expiry: nil when it has none or there is no key.
 func (s *Service) keyActive(w http.ResponseWriter, r *http.Request, prefix, handle string) (*time.Time, bool) {
 	expires, live, err := s.approvingKey(r.Context(), prefix, handle)
 	if err != nil {
@@ -230,16 +227,13 @@ func (s *Service) keyActive(w http.ResponseWriter, r *http.Request, prefix, hand
 	return expires, true
 }
 
-// issued is a token row with its secret, before the secret is thrown away.
 type issued struct {
 	Token
 	secret string
 }
 
-// newPair issues an access and a refresh token for grant (client, user,
-// scopes, resource and approving key). Scopes are capped at the offered
-// ones; each token expires after its lifetime, or at notAfter (the
-// approving key's expiry) when that comes first.
+// newPair caps scopes at the offered ones, and each token expires after its
+// lifetime or at notAfter (the approving key's expiry), whichever is first.
 func (s *Service) newPair(grant Token, notAfter *time.Time, now time.Time) (access, refresh issued) {
 	scopes := intersect(grant.Scopes, s.opts.Scopes)
 	mk := func(kind string, ttl time.Duration) issued {

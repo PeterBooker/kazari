@@ -15,19 +15,17 @@ import (
 	"time"
 )
 
-// SelfSigned serves a single self-signed certificate generated at startup.
-// It is meant for development and tests; clients must trust it explicitly.
+// SelfSigned serves one certificate generated at startup, for development
+// and tests.
 type SelfSigned struct {
 	cert *tls.Certificate
 }
 
 var _ Source = (*SelfSigned)(nil)
 
-// NewSelfSigned generates an ECDSA P-256 certificate valid for one year.
-// Its SANs are every given domain plus the wildcard "*.<domain>" for each,
-// so "localhost" also covers "demo.localhost", and the IPs 127.0.0.1 and
-// ::1. Domains that are IP addresses become IP SANs. With no domains it
-// uses "localhost".
+// NewSelfSigned generates a certificate valid for one year for each domain
+// and its wildcard (so "localhost" covers "demo.localhost"), 127.0.0.1 and
+// ::1. IP domains become IP SANs; no domains means "localhost".
 func NewSelfSigned(domains ...string) (*SelfSigned, error) {
 	der, key, err := selfSignedDER(time.Now(), domains)
 	if err != nil {
@@ -55,8 +53,6 @@ func (s *SelfSigned) Run(ctx context.Context) error {
 	return nil
 }
 
-// selfSignedDER builds the self-signed certificate and returns its DER
-// encoding and private key.
 func selfSignedDER(now time.Time, domains []string) ([]byte, *ecdsa.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -90,8 +86,6 @@ func selfSignedDER(now time.Time, domains []string) ([]byte, *ecdsa.PrivateKey, 
 	return der, key, nil
 }
 
-// selfSignedSANs normalises domains into DNS SANs (each with its wildcard)
-// and IP SANs (always including the loopback addresses).
 func selfSignedSANs(domains []string) ([]string, []net.IP) {
 	if len(domains) == 0 {
 		domains = []string{"localhost"}

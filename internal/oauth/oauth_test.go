@@ -167,7 +167,6 @@ func TestAuthorizeClientErrorsRenderHTML(t *testing.T) {
 	}
 }
 
-// checkPageHeaders asserts the security headers every HTML page carries.
 func checkPageHeaders(t *testing.T, resp *http.Response) {
 	t.Helper()
 	for k, want := range map[string]string{
@@ -261,10 +260,9 @@ func TestAuthorizeAccepts(t *testing.T) {
 	}
 }
 
-// Regression: the cookie was a plain host cookie on path /oauth, which a
-// page on a sibling host (an artifact) could overwrite with one set for
-// Domain=<base> and so defeat the consent form check. Browsers refuse a
-// __Host- cookie that has a Domain, lacks Secure or is not on path /.
+// An artifact on a sibling host must not overwrite the cookie via
+// Domain=<base> and so defeat the consent form check: browsers refuse a
+// __Host- cookie with a Domain, without Secure or off path /.
 func TestRequestCookie(t *testing.T) {
 	for _, insecure := range []bool{false, true} {
 		e := newEnv(t, envOptions{})
@@ -298,8 +296,6 @@ func TestRequestCookie(t *testing.T) {
 	}
 }
 
-// responseRecorder captures headers without httptest (to stay on the
-// public surface it is just enough of an http.ResponseWriter).
 type responseRecorder struct {
 	header http.Header
 	status int
@@ -518,7 +514,6 @@ func TestConsentCSRF(t *testing.T) {
 			}
 		})
 	}
-	// The real request is untouched and can still be approved.
 	if code := e.approve(nil); code == "" {
 		t.Error("approve after rejected posts gave no code")
 	}
@@ -631,7 +626,6 @@ func TestRefreshRotation(t *testing.T) {
 		t.Errorf("new access token: %v", err)
 	}
 
-	// Narrowing works; widening does not.
 	third := e.refresh(clientID, second.RefreshToken, "artifacts:read")
 	if third.status != http.StatusOK || third.Scope != "artifacts:read" {
 		t.Fatalf("narrowing refresh = %d %q %q", third.status, third.Error, third.Scope)
@@ -646,7 +640,6 @@ func TestRefreshRotation(t *testing.T) {
 		t.Errorf("refresh with an access token = %q, want invalid_grant", tr.Error)
 	}
 
-	// Replaying a rotated refresh token revokes the whole family.
 	if tr := e.refresh(clientID, first.RefreshToken, ""); tr.status != http.StatusBadRequest || tr.Error != "invalid_grant" {
 		t.Errorf("replay = %d %q, want invalid_grant", tr.status, tr.Error)
 	}
@@ -756,7 +749,6 @@ func TestAPIKeyFallback(t *testing.T) {
 		t.Fatalf("consent page has no API key field:\n%s", page)
 	}
 
-	// A bad key re-renders the page with an error.
 	resp, body := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}, "api_key": {"kzk_wrong"}})
 	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "not accepted") || !strings.Contains(body, `name="api_key"`) {
 		t.Errorf("bad key: status %d:\n%s", resp.StatusCode, body)
@@ -795,7 +787,7 @@ func TestAPIKeyRefusedWithIdentityProvider(t *testing.T) {
 	}
 	clientID := e.register("https://app.example/cb")
 	resp, _ := e.get("/oauth/authorize?" + authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")).Encode())
-	location(t, resp) // at the identity provider, not signed in yet
+	location(t, resp)
 	resp, _ = e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}, "api_key": {key}})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
@@ -857,7 +849,6 @@ func TestCleanup(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
 	clientID, tr := e.flow("")
-	// A pending request that never completes.
 	resp, _ := e.get("/oauth/authorize?" + authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")).Encode())
 	location(t, resp)
 
@@ -879,8 +870,8 @@ func TestCleanup(t *testing.T) {
 	}
 }
 
-// adminHostStatus is the status of an admin-host request bearing token,
-// guarded as internal/app guards it when no admin token is configured.
+// adminHostStatus guards the request as internal/app does when no admin
+// token is configured.
 func adminHostStatus(a auth.Authenticator, token string) int {
 	h := auth.RequireAdmin("", a)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -892,9 +883,8 @@ func adminHostStatus(a auth.Authenticator, token string) int {
 	return rec.Code
 }
 
-// Regression: an empty scope meant every offered scope and admin was
-// offered, so an admin who approved any client (registration is open)
-// handed it a token that the admin host accepted.
+// Registration is open, so a client an admin approves must not get a token
+// the admin host accepts.
 func TestAdminScopeNeverGranted(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
@@ -907,8 +897,8 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 		t.Errorf("admin host with an admin's OAuth token: status %d, want 403", got)
 	}
 
-	// Tokens stored with admin before this rule are capped as well, and so
-	// is what their refresh token issues.
+	// Tokens stored with admin before the rule are capped too, and so are
+	// their refreshes.
 	accessSecret, refreshSecret := strings.Repeat("a", 43), strings.Repeat("b", 43)
 	now := e.clock.Now()
 	stored := func(secret, kind string) *oauth.Token {
@@ -937,7 +927,6 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 		t.Errorf("refresh of a stored admin-scoped grant = %d %q scope %q, want the member scopes", r.status, r.Error, r.Scope)
 	}
 
-	// Configured with admin, the server still does not offer it.
 	svc := oauth.New(e.store, e.users, nil, nil, nil, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL + "/", Scopes: auth.AllScopes})
 	rec := httptest.NewRecorder()
 	svc.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
@@ -952,7 +941,6 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 	}
 }
 
-// failingKeys fails every KeyStatus with err.
 type failingKeys struct {
 	oauth.Keys
 	err error
@@ -962,15 +950,14 @@ func (k failingKeys) KeyStatus(context.Context, string) (user.KeyStatus, error) 
 	return user.KeyStatus{}, k.err
 }
 
-// Regression: a grant approved with an API key recorded nothing about the
-// key, and every refresh slid its 30-day expiry, so revoking the key or
-// letting it expire did not end the grant.
+// A grant approved with an API key must end when the key is revoked or
+// expires, however often it is refreshed.
 func TestGrantEndsWithApprovingKey(t *testing.T) {
 	ctx := context.Background()
 	const redirect = "http://localhost/callback"
 	p := newPKCE("apikey")
-	// approved returns an env and a code approved with a new key of
-	// carol's that expires after expiresIn (0 = never).
+	// approved approves with a new key of carol's that expires after
+	// expiresIn (0 = never).
 	approved := func(t *testing.T, expiresIn time.Duration) (*env, *user.APIKey, string, string) {
 		t.Helper()
 		e := newEnv(t, envOptions{noIDP: true})
@@ -1067,9 +1054,8 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 	})
 }
 
-// Regression: KeyID was the access token's row id, which changes on every
-// refresh, so a client could reset its per-credential write rate limit (and
-// split its audit trail) by refreshing.
+// A KeyID that changed on refresh would let a client reset its
+// per-credential write rate limit and split its audit trail.
 func TestKeyIDStableAcrossRefresh(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
@@ -1099,8 +1085,7 @@ func TestKeyIDStableAcrossRefresh(t *testing.T) {
 	}
 }
 
-// Regression: disabling a user only suspended their OAuth grants, so
-// enabling them again brought back a grant an attacker held.
+// Re-enabling a user must not bring back a grant an attacker held.
 func TestDisableRevokesGrants(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
@@ -1122,20 +1107,15 @@ func TestDisableRevokesGrants(t *testing.T) {
 	if ev := e.rec.actions(oauth.ActionRevoke); len(ev) != 1 || ev[0].Details["user"] != "alice" {
 		t.Errorf("revoke audit = %+v", ev)
 	}
-	// Signing in again gives a working grant.
 	_, fresh := e.flow("")
 	if _, err := e.svc.Authenticate(ctx, fresh.AccessToken); err != nil {
 		t.Errorf("new grant after enable: %v", err)
 	}
 }
 
-// mcpOrigin is where the authorization server runs in mcpHost; artifacts
-// run member-authored script on sibling hosts such as
-// https://evil.art.example.com.
 const mcpOrigin = "https://mcp.art.example.com"
 
-// mcpHost is the authorization server as deployed (https, Secure cookies),
-// driven without a network. Without an identity provider, carol approves
+// mcpHost is the server as deployed (https, Secure cookies); carol approves
 // with her API key.
 type mcpHost struct {
 	t        *testing.T
@@ -1165,8 +1145,6 @@ func (h *mcpHost) serve(req *http.Request) *http.Response {
 	return rec.Result()
 }
 
-// authorize starts an authorization and returns the request id the browser
-// got in the __Host- cookie.
 func (h *mcpHost) authorize(p pkce) string {
 	h.t.Helper()
 	q := authorizeParams(h.clientID, "https://app.example/cb", "", p)
@@ -1180,8 +1158,7 @@ func (h *mcpHost) authorize(p pkce) string {
 	return ""
 }
 
-// consent posts Approve for request id, sending the id in a cookie named
-// cookie, with the headers a browser would add.
+// consent posts Approve for request id, sent in a cookie named cookie.
 func (h *mcpHost) consent(id, cookie string, header http.Header) *http.Response {
 	form := url.Values{"request_id": {id}, "action": {"approve"}, "api_key": {h.key}}
 	req := httptest.NewRequest(http.MethodPost, mcpOrigin+"/oauth/consent", strings.NewReader(form.Encode()))
@@ -1193,11 +1170,9 @@ func (h *mcpHost) consent(id, cookie string, header http.Header) *http.Response 
 	return h.serve(req)
 }
 
-// Regression: the consent post was bound to the browser only by the
-// cookie, and a page on a sibling host is same-site, so SameSite=Lax let
-// its posts through. Only the server's own page may post the form; the
-// token and registration endpoints, called by non-browser clients and by
-// browser clients through CORS, do not care.
+// A sibling host is same-site, so SameSite=Lax lets its posts through: only
+// the server's own page may post the consent form. The token and
+// registration endpoints serve CORS and non-browser clients and do not care.
 func TestConsentRequiresSameOrigin(t *testing.T) {
 	h := newMCPHost(t)
 	id := h.authorize(newPKCE("v"))
@@ -1226,8 +1201,7 @@ func TestConsentRequiresSameOrigin(t *testing.T) {
 		header http.Header
 	}{
 		{"same origin", http.Header{"Origin": {mcpOrigin}, "Sec-Fetch-Site": {"same-origin"}}},
-		// What browsers send from the consent page, whose Referrer-Policy
-		// is no-referrer.
+		// The consent page's no-referrer policy makes browsers send this.
 		{"null origin, same-origin fetch", http.Header{"Origin": {"null"}, "Sec-Fetch-Site": {"same-origin"}}},
 		{"no browser headers", nil},
 	}
@@ -1264,12 +1238,9 @@ func TestConsentRequiresSameOrigin(t *testing.T) {
 	}
 }
 
-// Regression: a script on a sibling host could set the consent cookie for
-// Domain=<base> to the id of an authorization request it had started
-// itself, sign the visitor in for that request at the identity provider and
-// post the consent form: the cookie and the form agreed. Over https the
-// cookie is read only under its __Host- name, which browsers never accept
-// from a Set-Cookie with a Domain.
+// A sibling-host script could set a Domain=<base> cookie to a request it
+// started, sign the visitor in for it and post the form. Over https only the
+// __Host- name is read, which browsers never accept with a Domain.
 func TestConsentIgnoresTossedCookie(t *testing.T) {
 	h := newMCPHost(t)
 	id := h.authorize(newPKCE("v"))

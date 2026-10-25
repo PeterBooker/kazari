@@ -9,26 +9,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// expandNode replaces variable references in every scalar value of the
-// parsed YAML document n from the config file at path, resolving names
-// through lookup:
-//
-//   - ${NAME} is the value of NAME, which must be set (it may be empty);
-//   - ${NAME:-default} is the value of NAME, or default when NAME is unset
-//     or empty; default may be empty and may hold any character but "}";
-//   - $$ is a literal "$";
-//   - any other "$", including a bare $NAME, is left as it is.
-//
-// NAME matches [A-Za-z_][A-Za-z0-9_]*. Mapping keys and comments are not
-// expanded, so a commented-out example may name an unset variable. Values
-// are substituted after parsing, so a value containing ": ", " #" or a
-// newline cannot change the document's structure. When a plain (unquoted,
-// untagged) scalar changes, its tag is cleared so that YAML resolves the
-// type again from the new text: external_port: ${PORT:-8080} is an integer,
-// while a quoted "${NAME}" always stays a string. A reference inside a flow
-// collection must be quoted (["${A}", b]), since YAML does not allow "{" or
-// "}" in a plain scalar there. Every unset variable is reported once; the
-// errors are joined.
+// expandNode replaces references in the scalar values of n through lookup:
+// ${NAME} (must be set, may be empty), ${NAME:-default} (default when unset
+// or empty) and $$ for "$"; any other "$" is kept. Keys and comments are not
+// expanded. Substituting after parsing keeps a value from changing the
+// document's structure. A changed plain scalar has its tag cleared so YAML
+// resolves its type again (${PORT:-8080} is an integer); quoted ones stay
+// strings. A reference in a flow collection must be quoted (["${A}", b]), as
+// YAML forbids "{" in a plain scalar there. Each unset variable is reported once.
 func expandNode(n *yaml.Node, path string, lookup func(string) (string, bool)) error {
 	e := expander{path: path, lookup: lookup, unset: map[string]bool{}}
 	e.walk(n)
@@ -55,7 +43,7 @@ func (e *expander) walk(n *yaml.Node) {
 			n.Tag = ""
 		}
 	case yaml.MappingNode:
-		// Values only; keys sit at even positions.
+		// Keys, at even positions, are not expanded.
 		for i := 1; i < len(n.Content); i += 2 {
 			e.walk(n.Content[i])
 		}
@@ -64,11 +52,10 @@ func (e *expander) walk(n *yaml.Node) {
 			e.walk(c)
 		}
 	}
-	// An AliasNode shares its anchor's node, which is expanded where it is defined.
+	// An AliasNode's target is expanded where it is defined.
 }
 
-// expand expands the references in s, a scalar starting on the given line,
-// and reports whether anything changed.
+// expand reports whether s changed.
 func (e *expander) expand(s string, line int) (string, bool) {
 	if !strings.Contains(s, "$") {
 		return s, false
@@ -130,11 +117,8 @@ func isEnvName(s string) bool {
 	return true
 }
 
-// checkKeys reports every mapping key in the document n from the file at
-// path that has no field in Config, by its dotted path and its line in the
-// file, as "config: kazari.yaml: line 3: unknown key listen.htps". The
-// strict decoder rejects the same keys, but it runs on re-encoded YAML
-// whose line numbers no longer match the file.
+// checkKeys reports every unknown key with its line in the file, which the
+// strict decoder cannot: it runs on re-encoded YAML.
 func checkKeys(n *yaml.Node, path string) error {
 	var errs []error
 	checkKeysIn(n, reflect.TypeFor[Config](), "", map[*yaml.Node]bool{}, &errs)

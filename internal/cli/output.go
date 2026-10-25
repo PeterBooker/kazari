@@ -13,7 +13,6 @@ import (
 	"kazari/internal/api"
 )
 
-// printJSON writes v pretty-printed.
 func (r *runner) printJSON(v any) error {
 	enc := json.NewEncoder(r.stdout)
 	enc.SetIndent("", "  ")
@@ -24,18 +23,15 @@ func (r *runner) printJSON(v any) error {
 	return nil
 }
 
-// newTable returns an aligned table over w. Its cells hold names,
-// descriptions and labels other members wrote, so the text goes through
-// termSafe on its way to the terminal.
+// newTable goes through termSafe because its cells hold text other members
+// wrote.
 func newTable(w io.Writer) *tabwriter.Writer {
 	return tabwriter.NewWriter(termSafe{w}, 0, 0, 2, ' ', 0)
 }
 
-// termSafe is a writer that replaces every control character but tab and
-// newline, and the Unicode bidirectional controls, with U+FFFD, so text from
-// the server cannot move the cursor, retitle the window, write the
-// clipboard or reorder what the terminal shows. Writes must not split a
-// UTF-8 sequence, which tabwriter, writing whole cells, never does.
+// termSafe replaces control characters but tab and newline, and the bidi
+// controls, with U+FFFD, so server text cannot drive or reorder the terminal.
+// Writes must not split a UTF-8 sequence; tabwriter writes whole cells.
 type termSafe struct{ w io.Writer }
 
 func (t termSafe) Write(p []byte) (int, error) {
@@ -54,7 +50,6 @@ func (t termSafe) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// unsafeRune reports a rune termSafe replaces.
 func unsafeRune(r rune) bool {
 	switch {
 	case r == '\t' || r == '\n':
@@ -67,8 +62,7 @@ func unsafeRune(r rune) bool {
 	return false
 }
 
-// oneLine flattens tabs and line breaks in a value printed into one table
-// cell, so it cannot shift columns or fake rows.
+// oneLine stops a cell value shifting columns or faking rows.
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\t' || r == '\n' || r == '\r' {
@@ -78,7 +72,6 @@ func oneLine(s string) string {
 	}, s)
 }
 
-// fmtTime renders t in local time as RFC 3339, or "-" when zero.
 func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return "-"
@@ -100,7 +93,6 @@ func dash(s string) string {
 	return s
 }
 
-// humanSize renders n bytes with binary units: 512 B, 1.5 KiB, 20.0 MiB.
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -114,7 +106,6 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-// fmtQuota renders used of quota; a zero quota is unlimited.
 func fmtQuota(used, quota int64) string {
 	if quota <= 0 {
 		return humanSize(used) + " used (no quota)"
@@ -122,8 +113,6 @@ func fmtQuota(used, quota int64) string {
 	return fmt.Sprintf("%s of %s used", humanSize(used), humanSize(quota))
 }
 
-// parseSize accepts plain bytes or a number with a unit: KB, MB, GB, TB
-// (powers of 1000) or KiB, MiB, GiB, TiB (powers of 1024), case-insensitive.
 func parseSize(s string) (int64, error) {
 	t := strings.TrimSpace(s)
 	units := []struct {
@@ -151,7 +140,6 @@ func parseSize(s string) (int64, error) {
 	return int64(f * float64(mult)), nil
 }
 
-// shortHash trims a content hash for display, keeping any "algo:" prefix.
 func shortHash(h string) string {
 	algo, sum, ok := strings.Cut(h, ":")
 	if !ok {
@@ -166,7 +154,6 @@ func shortHash(h string) string {
 	return algo + ":" + sum
 }
 
-// artifactState summarises the lifecycle timestamps.
 func artifactState(a *api.Artifact) string {
 	switch {
 	case a.PurgedAt != nil:

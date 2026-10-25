@@ -15,7 +15,6 @@ import (
 	"kazari/internal/upload"
 )
 
-// uploadTestStore opens a fresh database and creates the given users.
 func uploadTestStore(t *testing.T, handles ...string) *UploadStore {
 	t.Helper()
 	ctx := context.Background()
@@ -248,8 +247,6 @@ func TestUploadStoreCountOpen(t *testing.T) {
 	}
 }
 
-// The open-upload limit is checked in the transaction that inserts, so
-// concurrent creates never take an owner past it.
 func TestUploadStoreCreateLimit(t *testing.T) {
 	ctx := context.Background()
 	s := uploadTestStore(t, "alice", "bob")

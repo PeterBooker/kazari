@@ -1,20 +1,6 @@
-# The 24 solar terms (二十四節気) of the old Japanese calendar, from 立春 (index 0).
-# The site's accent follows the term in force: layouts/baseof.html sets data-sekki on <html> at build
-# time, an inline script in _partials/head.html corrects it from the visitor's date, and
-# assets/css/main.css turns each entry into a :root[data-sekki="N"] block.
-#
-# start   first day, "MM-DD" (the dates move by a day between years; these are the usual ones)
-# kanji   the term, and reading / name its romanisation and English name
-# motif   the flower, plant or creature the colour is named after, and motif_en in English
-# base    the colour itself: a bar's colour on hover in the season strip, and dots, rules, the current
-#         bar and the logo wedge in the light theme
-# light   base darkened in OKLCH (same hue) until it is text-safe on the light theme: 4.6:1 or more
-#         on bg, bg-soft, surface and code-bg
-# dark    base lightened the same way to 7:1 or more on the dark grounds; also the dark theme's dots,
-#         rules, current bar and logo wedge
-#
-# Derive light and dark with .claude/skills/site-design/sekki-colours.py --write, then check them with
-# check-colours.py beside it (the steps are in that folder's SKILL.md).
+# The 24 solar terms (二十四節気) from 立春 (index 0). start is the usual first day; the real one moves
+# by a day between years. light and dark are base made text-safe on each theme: derive them with
+# .claude/skills/site-design/sekki-colours.py --write, then run check-colours.py beside it.
 
 [[terms]]
   start = "02-04"

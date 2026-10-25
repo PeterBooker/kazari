@@ -155,7 +155,6 @@ func TestNilRun(t *testing.T) {
 	}
 }
 
-// waitFor polls cond until it is true or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

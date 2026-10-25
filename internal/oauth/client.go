@@ -14,25 +14,23 @@ import (
 	"time"
 )
 
-// Client ID metadata document fetch limits.
 const (
 	cimdTimeout  = 10 * time.Second
 	cimdMaxBytes = 64 << 10
 	cimdMaxAge   = time.Hour
 )
 
-// Registration limits.
 const (
 	maxRedirectURIs  = 20
 	maxClientNameLen = 200
 )
 
-// errInvalidClient means the client id is unknown or its metadata document
-// could not be used. The message is safe to show.
+// errInvalidClient means an unknown client id or an unusable metadata
+// document; its message is safe to show.
 var errInvalidClient = errors.New("unknown client")
 
-// clientMetadata is the subset of RFC 7591 client metadata Kazari reads,
-// both from a registration request and from a client ID metadata document.
+// clientMetadata is the subset of RFC 7591 client metadata read from
+// registrations and client ID metadata documents.
 type clientMetadata struct {
 	ClientID                string   `json:"client_id,omitempty"`
 	ClientName              string   `json:"client_name,omitempty"`
@@ -42,8 +40,7 @@ type clientMetadata struct {
 	ResponseTypes           []string `json:"response_types,omitempty"`
 }
 
-// validate checks the metadata of a public client and returns the RFC 7591
-// error code and a description on failure.
+// validate returns an RFC 7591 error code and description, or "" if valid.
 func (m *clientMetadata) validate() (code, desc string) {
 	if m.TokenEndpointAuthMethod != "" && m.TokenEndpointAuthMethod != "none" {
 		return "invalid_client_metadata", "only public clients (token_endpoint_auth_method \"none\") are supported"
@@ -75,8 +72,6 @@ func (m *clientMetadata) validate() (code, desc string) {
 	return "", ""
 }
 
-// validRedirectURI accepts https URLs and http loopback URLs, without a
-// fragment or user info.
 func validRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || !u.IsAbs() || u.Host == "" {
@@ -98,9 +93,8 @@ func isLoopback(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
-// matchRedirectURI reports whether requested equals one of the registered
-// URIs. For http loopback URIs the port is ignored (RFC 8252 section 7.3);
-// scheme, host, path and query must still match.
+// matchRedirectURI matches exactly, except that the port of an http loopback
+// URI is ignored (RFC 8252 section 7.3).
 func matchRedirectURI(registered []string, requested string) bool {
 	if slices.Contains(registered, requested) {
 		return true
@@ -121,15 +115,12 @@ func matchRedirectURI(registered []string, requested string) bool {
 	return false
 }
 
-// isMetadataURL reports whether a client id names a client ID metadata
-// document.
 func isMetadataURL(id string) bool {
 	return strings.HasPrefix(id, "https://")
 }
 
-// resolveClient returns a registered client, or fetches (and caches) the
-// metadata document of a URL client id. Any failure is errInvalidClient,
-// wrapped with the reason.
+// resolveClient fetches and caches the metadata document of a URL client id.
+// Errors other than the store's wrap errInvalidClient with the reason.
 func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: client_id is required", errInvalidClient)
@@ -160,8 +151,6 @@ func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error)
 	return fetched, nil
 }
 
-// fetchClient downloads and validates the client ID metadata document at
-// id.
 func (s *Service) fetchClient(ctx context.Context, id string) (*Client, error) {
 	u, err := url.Parse(id)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {

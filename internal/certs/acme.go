@@ -15,26 +15,21 @@ import (
 
 // ACMEConfig configures an ACME source.
 type ACMEConfig struct {
-	// Email is the ACME account contact address. Optional.
-	Email string
-	// CA is "letsencrypt" (the default when empty), "letsencrypt-staging",
-	// or an ACME directory URL.
-	CA string
-	// Domains are the names to manage, normally the base domain and its
-	// wildcard ("art.example.com", "*.art.example.com").
-	Domains []string
+	Email string // account contact; optional
+	// CA is "letsencrypt" (default), "letsencrypt-staging" or an ACME
+	// directory URL.
+	CA      string
+	Domains []string // normally the base domain and its wildcard
 	// StorageDir holds the ACME account, certificates and locks.
 	StorageDir string
-	// Sync makes Run obtain or renew every certificate before it starts
-	// waiting, and return the error if that fails. By default certificates
-	// are obtained in the background and failures are only logged.
-	Sync bool
-	// Logger receives CertMagic's logs. Nil means slog.Default().
-	Logger *slog.Logger
+	// Sync makes Run obtain or renew every certificate before waiting, and
+	// fail if that fails. Otherwise failures are only logged.
+	Sync   bool
+	Logger *slog.Logger // nil means slog.Default()
 }
 
-// ACME obtains and renews certificates from an ACME CA using the DNS-01
-// challenge, which is what wildcard certificates require.
+// ACME obtains and renews certificates by DNS-01, which wildcard
+// certificates require.
 type ACME struct {
 	magic      *certmagic.Config
 	cache      *certmagic.Cache
@@ -45,9 +40,8 @@ type ACME struct {
 
 var _ Source = (*ACME)(nil)
 
-// NewACME configures CertMagic with file storage in cfg.StorageDir and an
-// ACME issuer that solves DNS-01 challenges through dns. It does no network
-// I/O; certificates are obtained when Run starts.
+// NewACME solves DNS-01 challenges through dns. It does no network I/O;
+// certificates are obtained when Run starts.
 func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 	if dns == nil {
 		return nil, errors.New("certs: acme: a DNS provider is required")
@@ -68,8 +62,8 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 	}
 	zl := newZapLogger(logger.With("component", "certmagic"))
 
-	// The cache asks for the config of each certificate it maintains; there
-	// is only one. The pointer is set after the cache exists, hence atomic.
+	// The cache asks for each certificate's one config, which exists only
+	// after the cache does, hence atomic.
 	var current atomic.Pointer[certmagic.Config]
 	cache := certmagic.NewCache(certmagic.CacheOptions{
 		GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) {
@@ -106,11 +100,9 @@ func (a *ACME) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, err
 	return a.magic.GetCertificate(hello)
 }
 
-// Run starts managing the configured domains (loading certificates from
-// storage, obtaining or renewing them as needed) and blocks until ctx is
-// done, renewing in the background. It stops CertMagic's maintenance on
-// return. With ACMEConfig.Sync it returns an error if the initial obtain
-// fails.
+// Run manages the domains until ctx is done, then stops CertMagic's
+// maintenance. With ACMEConfig.Sync it returns an error if the initial
+// obtain fails.
 func (a *ACME) Run(ctx context.Context) error {
 	defer a.stop()
 	manage := a.magic.ManageAsync
@@ -127,12 +119,10 @@ func (a *ACME) Run(ctx context.Context) error {
 	return nil
 }
 
-// stop ends CertMagic's cache maintenance goroutine; safe to call twice.
 func (a *ACME) stop() {
 	a.stopOnce.Do(a.cache.Stop)
 }
 
-// caURL maps the configured CA name to an ACME directory URL.
 func caURL(ca string) (string, error) {
 	switch ca {
 	case "", "letsencrypt":

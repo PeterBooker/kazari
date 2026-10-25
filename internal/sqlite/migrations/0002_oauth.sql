@@ -1,7 +1,6 @@
--- OAuth 2.1 authorization server (Phase 2b). Timestamps are INTEGER unix
--- nanoseconds (UTC); scopes are space-separated.
+-- Scopes are space-separated.
 
--- DCR registrations and cached client ID metadata documents (fetched_at set).
+-- fetched_at is set for cached client ID metadata documents, NULL for DCR.
 CREATE TABLE oauth_client (
     id            TEXT    PRIMARY KEY,
     name          TEXT    NOT NULL DEFAULT '',
@@ -10,8 +9,7 @@ CREATE TABLE oauth_client (
     fetched_at    INTEGER
 );
 
--- A pending authorize request while the browser is at the identity provider
--- or on the consent page. user_id is bound at the callback.
+-- user_id is bound at the callback.
 CREATE TABLE oauth_request (
     id                TEXT    PRIMARY KEY,
     client_id         TEXT    NOT NULL REFERENCES oauth_client(id) ON DELETE CASCADE,
@@ -28,7 +26,7 @@ CREATE TABLE oauth_request (
 );
 CREATE INDEX oauth_request_expires ON oauth_request(expires_at);
 
--- Authorization codes, single use: used_at is set atomically on redemption.
+-- Single use: used_at is set atomically on redemption.
 CREATE TABLE oauth_code (
     code_hash      TEXT    PRIMARY KEY,
     client_id      TEXT    NOT NULL REFERENCES oauth_client(id) ON DELETE CASCADE,
@@ -42,9 +40,8 @@ CREATE TABLE oauth_code (
 ) WITHOUT ROWID;
 CREATE INDEX oauth_code_expires ON oauth_code(expires_at);
 
--- Opaque access and refresh tokens. family_id is the id of the first refresh
--- token of a rotation chain; replaced_by points a rotated refresh token at
--- its successor.
+-- family_id: the first refresh token of the rotation chain; replaced_by: a
+-- rotated refresh token's successor.
 CREATE TABLE oauth_token (
     id          INTEGER PRIMARY KEY,
     token_hash  TEXT    NOT NULL UNIQUE,

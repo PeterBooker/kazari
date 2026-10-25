@@ -11,8 +11,7 @@ import (
 	"kazari/internal/audit"
 )
 
-// AuditStore implements audit.Recorder and audit.Reader over the
-// audit_event table.
+// AuditStore implements audit.Recorder and audit.Reader.
 type AuditStore struct {
 	db *sql.DB
 }
@@ -27,8 +26,7 @@ func NewAuditStore(db *DB) *AuditStore {
 	return &AuditStore{db: db.DB}
 }
 
-// Record appends e. A zero e.At is stamped with the current time; e.ID is
-// ignored.
+// Record stamps a zero e.At with the current time and ignores e.ID.
 func (s *AuditStore) Record(ctx context.Context, e audit.Event) error {
 	if e.At.IsZero() {
 		e.At = time.Now()
@@ -48,14 +46,12 @@ func (s *AuditStore) Record(ctx context.Context, e audit.Event) error {
 	return nil
 }
 
-// Query limits.
 const (
 	defaultAuditLimit = 100
 	maxAuditLimit     = 1000
 )
 
-// List returns events matching q, newest first. Since is inclusive; Slug
-// and Actor match exactly when set.
+// List treats Since as inclusive; Slug and Actor match exactly.
 func (s *AuditStore) List(ctx context.Context, q audit.Query) ([]audit.Event, error) {
 	var (
 		where []string

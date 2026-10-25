@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// writePair writes a fresh self-signed certificate for cn and its key as
-// PEM to certFile and keyFile, and stamps both with mtime so a poll always
-// sees the change regardless of filesystem timestamp granularity.
+// writePair stamps both files with mtime so a poll sees the change whatever
+// the filesystem's timestamp granularity.
 func writePair(t *testing.T, certFile, keyFile, cn string, mtime time.Time) {
 	t.Helper()
 	der, key, err := selfSignedDER(time.Now(), []string{cn})

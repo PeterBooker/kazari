@@ -11,7 +11,6 @@ import (
 	"github.com/libdns/libdns"
 )
 
-// fakeDNS satisfies certmagic.DNSProvider without touching the network.
 type fakeDNS struct{}
 
 func (fakeDNS) AppendRecords(_ context.Context, _ string, recs []libdns.Record) ([]libdns.Record, error) {
@@ -67,7 +66,6 @@ func TestNewACME(t *testing.T) {
 		t.Errorf("domains = %v", a.domains)
 	}
 
-	// Nothing is managed yet, so a handshake gets an error, not a network call.
 	addr := serveTLS(t, a)
 	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: "demo.art.example.com", InsecureSkipVerify: true})
 	if err == nil {

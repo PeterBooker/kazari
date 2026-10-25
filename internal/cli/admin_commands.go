@@ -30,7 +30,6 @@ Commands:
   health
 `
 
-// cmdAdmin dispatches "admin <group> [<action>]".
 func cmdAdmin(r *runner, args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(r.stderr, adminUsage)
@@ -345,8 +344,6 @@ func cmdAdminSettings(r *runner, args []string) error {
 	return tw.Flush()
 }
 
-// flatten turns nested settings into dotted keys; leaves are rendered as
-// JSON-ish scalars and lists.
 func flatten(prefix string, v any, out map[string]string) {
 	switch t := v.(type) {
 	case map[string]any:

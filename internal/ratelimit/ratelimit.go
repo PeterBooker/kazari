@@ -1,6 +1,5 @@
-// Package ratelimit provides the token-bucket limiters that every HTTP
-// surface shares: per client IP before authentication, and per credential
-// for writes.
+// Package ratelimit provides the token-bucket limiters every HTTP surface
+// shares: per client IP before authentication, per credential for writes.
 package ratelimit
 
 import (
@@ -18,16 +17,11 @@ import (
 	"kazari/internal/middleware"
 )
 
-// DefaultIPPerMinute is the per-IP request rate the control-plane hosts
-// apply before authentication.
 const DefaultIPPerMinute = 120
 
-// Limiter housekeeping: once the map holds more than sweepAt entries,
-// inserting a new one drops those idle for idle, at most once per
-// sweepEvery so a flood of new keys cannot make every insert scan the whole
-// map. MaxEntries is a hard cap: at the cap an arbitrary entry is dropped
-// before a new one is added, bounding memory whatever the number of
-// distinct keys.
+// Past sweepAt entries a new key evicts those idle for idle, at most once per
+// sweepEvery so a flood of new keys cannot make every insert scan the map.
+// MaxEntries bounds memory: at the cap an arbitrary entry is dropped first.
 const (
 	idle       = 10 * time.Minute
 	sweepAt    = 1024
@@ -35,9 +29,8 @@ const (
 	MaxEntries = 1 << 16
 )
 
-// Limiter is a set of token buckets keyed by caller (client IP or
-// credential), each allowing perMinute requests a minute with a burst of
-// perMinute. A nil *Limiter allows everything.
+// Limiter holds a token bucket per key, each allowing perMinute requests a
+// minute with a burst of perMinute. A nil *Limiter allows everything.
 type Limiter struct {
 	perMinute int
 	now       func() time.Time
@@ -52,8 +45,8 @@ type entry struct {
 	seen time.Time
 }
 
-// New returns nil when perMinute <= 0, which disables limiting. now is the
-// clock; nil means time.Now.
+// New returns nil, which allows everything, when perMinute <= 0. A nil now
+// means time.Now.
 func New(perMinute int, now func() time.Time) *Limiter {
 	if perMinute <= 0 {
 		return nil
@@ -64,8 +57,8 @@ func New(perMinute int, now func() time.Time) *Limiter {
 	return &Limiter{perMinute: perMinute, now: now, entries: map[string]*entry{}}
 }
 
-// Reserve takes a token for key. It returns 0 when the request may
-// proceed, otherwise how long until it could.
+// Reserve takes a token for key and returns 0, or returns how long until the
+// request could proceed.
 func (l *Limiter) Reserve(key string) time.Duration {
 	if l == nil {
 		return 0
@@ -80,7 +73,7 @@ func (l *Limiter) Reserve(key string) time.Duration {
 			l.lastSweep = now
 		}
 		if len(l.entries) >= MaxEntries {
-			for k := range l.entries { // map order is random: drop any one
+			for k := range l.entries {
 				delete(l.entries, k)
 				break
 			}
@@ -118,9 +111,8 @@ func (l *Limiter) evict(now time.Time) {
 	}
 }
 
-// Middleware rejects requests over l's rate. key picks the bucket; reject
-// writes the refusal and defaults to WriteTooMany. A nil limiter passes
-// everything through.
+// Middleware rejects requests over l's rate with reject, nil meaning
+// WriteTooMany. key picks the bucket; a nil l passes everything.
 func Middleware(l *Limiter, key func(*http.Request) string, reject func(http.ResponseWriter, *http.Request, time.Duration)) func(http.Handler) http.Handler {
 	if reject == nil {
 		reject = WriteTooMany
@@ -139,8 +131,7 @@ func Middleware(l *Limiter, key func(*http.Request) string, reject func(http.Res
 	}
 }
 
-// WriteTooMany answers 429 with Retry-After and the JSON error body every
-// Kazari API uses.
+// WriteTooMany answers 429 with Retry-After and the API's JSON error.
 func WriteTooMany(w http.ResponseWriter, _ *http.Request, retryAfter time.Duration) {
 	w.Header().Set("Retry-After", RetryAfter(retryAfter))
 	w.Header().Set("Content-Type", "application/json")
@@ -148,13 +139,12 @@ func WriteTooMany(w http.ResponseWriter, _ *http.Request, retryAfter time.Durati
 	_ = json.NewEncoder(w).Encode(api.ErrorResponse{Error: api.Error{Code: api.CodeRateLimited, Message: "too many requests"}})
 }
 
-// RetryAfter renders d as a Retry-After value: whole seconds, at least 1.
+// RetryAfter renders d as whole seconds, rounded up, at least 1.
 func RetryAfter(d time.Duration) string {
 	return strconv.Itoa(max(1, int((d+time.Second-1)/time.Second)))
 }
 
-// CredentialKey is the per-credential bucket: the key prefix or OAuth grant
-// id, else the handle.
+// CredentialKey is the key prefix or OAuth grant id, else the handle.
 func CredentialKey(p auth.Principal) string {
 	if p.KeyID != "" {
 		return p.KeyID
@@ -162,9 +152,8 @@ func CredentialKey(p auth.Principal) string {
 	return p.Handle
 }
 
-// IPKey is the per-IP bucket: the client address, with IPv6 addresses
-// reduced to their /64 so one host cannot mint fresh buckets by rotating
-// through the addresses of its own prefix.
+// IPKey is the client address, IPv6 reduced to its /64 so one host cannot
+// mint fresh buckets by rotating through its own prefix.
 func IPKey(r *http.Request) string {
 	ip := middleware.ClientIP(r)
 	addr, err := netip.ParseAddr(ip)

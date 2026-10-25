@@ -15,7 +15,6 @@ func newZapLogger(l *slog.Logger) *zap.Logger {
 	return zap.New(slogCore{h: l.Handler()})
 }
 
-// slogCore is a zapcore.Core that forwards entries to a slog.Handler.
 type slogCore struct {
 	h slog.Handler
 }
@@ -59,7 +58,7 @@ func slogLevel(l zapcore.Level) slog.Level {
 	}
 }
 
-// slogAttrs encodes zap fields to attrs, sorted by key for stable output.
+// slogAttrs sorts by key for stable output.
 func slogAttrs(fields []zapcore.Field) []slog.Attr {
 	if len(fields) == 0 {
 		return nil

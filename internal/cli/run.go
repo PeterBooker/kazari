@@ -17,15 +17,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Exit codes returned by Run.
 const (
 	exitOK    = 0
 	exitError = 1
 	exitUsage = 2
 )
 
-// usageError is a mistake in the command line or the client configuration;
-// Run prints it and exits 2.
+// usageError is a command-line or configuration mistake; Run exits 2.
 type usageError struct{ msg string }
 
 func (e *usageError) Error() string { return e.msg }
@@ -45,7 +43,6 @@ type globals struct {
 	json                 bool
 }
 
-// settings is the resolved client configuration.
 type settings struct {
 	URL, Token, AdminURL, AdminToken string
 }
@@ -58,7 +55,6 @@ type fileConfig struct {
 	AdminToken string `yaml:"admin_token"`
 }
 
-// runner carries the I/O and configuration of one Run.
 type runner struct {
 	ctx       context.Context
 	stdin     io.Reader
@@ -70,10 +66,9 @@ type runner struct {
 	g         globals
 }
 
-// Run executes one kazari client command and returns the process exit code:
-// 0 on success, 1 when the command or the server fails, 2 for usage and
-// configuration errors. args excludes the program name, for example
-// []string{"--json", "get", "my-slug"}. lookupEnv is normally os.LookupEnv.
+// Run executes one client command and returns the exit code: 0 on success,
+// 1 when the command or the server fails, 2 for usage and configuration
+// errors. args excludes the program name.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) int {
 	r := &runner{
 		ctx:       context.Background(),
@@ -123,7 +118,6 @@ func (r *runner) run(args []string) error {
 	return cmd(r, rest)
 }
 
-// exit prints err and maps it to an exit code.
 func (r *runner) exit(err error) int {
 	var ue *usageError
 	var he *HTTPError
@@ -144,7 +138,6 @@ func (r *runner) exit(err error) int {
 	}
 }
 
-// env returns a non-empty environment variable.
 func (r *runner) env(name string) string {
 	if r.lookupEnv == nil {
 		return ""
@@ -153,8 +146,8 @@ func (r *runner) env(name string) string {
 	return v
 }
 
-// configPath returns the config file path and whether it was named
-// explicitly (in which case it must exist).
+// configPath reports whether the path was named explicitly, in which case it
+// must exist.
 func (r *runner) configPath() (string, bool) {
 	if r.g.config != "" {
 		return r.g.config, true
@@ -168,8 +161,8 @@ func (r *runner) configPath() (string, bool) {
 	return "", false
 }
 
-// loadConfigFile reads the YAML config file, if any. Unknown keys are an
-// error; a missing file is skipped unless it was named with --config.
+// loadConfigFile rejects unknown keys and skips a missing file unless it was
+// named with --config.
 func (r *runner) loadConfigFile() (fileConfig, error) {
 	var fc fileConfig
 	path, explicit := r.configPath()
@@ -191,10 +184,9 @@ func (r *runner) loadConfigFile() (fileConfig, error) {
 	return fc, nil
 }
 
-// settings resolves each value from the flag, then the environment, then
-// the config file. A missing admin token falls back to the user token (an
-// admin-role key works on the admin host), and a missing admin URL is
-// derived from an api.<base> user URL as admin.<base>.
+// settings prefers the flag, then the environment, then the config file. A
+// missing admin token falls back to the user token: an admin-role key works on
+// the admin host.
 func (r *runner) settings() (settings, error) {
 	fc, err := r.loadConfigFile()
 	if err != nil {
@@ -224,7 +216,6 @@ func (r *runner) settings() (settings, error) {
 	return s, nil
 }
 
-// adminFromUserURL maps https://api.<base> to https://admin.<base>.
 func adminFromUserURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.HasPrefix(u.Host, "api.") {
@@ -234,7 +225,6 @@ func adminFromUserURL(raw string) string {
 	return u.String()
 }
 
-// userClient returns a client for the user API.
 func (r *runner) userClient() (*Client, error) {
 	s, err := r.settings()
 	if err != nil {
@@ -249,7 +239,6 @@ func (r *runner) userClient() (*Client, error) {
 	return NewClient(s.URL, s.Token, r.hc), nil
 }
 
-// adminClient returns a client for the admin API.
 func (r *runner) adminClient() (*Client, error) {
 	s, err := r.settings()
 	if err != nil {
@@ -271,8 +260,8 @@ func (r *runner) configHint() string {
 	return "~/.config/kazari/config.yaml"
 }
 
-// newFlags returns a flag set for a subcommand. usage is the synopsis after
-// "kazari ". Every subcommand also accepts --json after its name.
+// newFlags takes usage as the synopsis after "kazari ". Every subcommand also
+// accepts --json after its name.
 func (r *runner) newFlags(name, usage string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(r.stderr)
@@ -289,9 +278,8 @@ func (r *runner) newFlags(name, usage string) *flag.FlagSet {
 	return fs
 }
 
-// parse parses flags interspersed with positional arguments (so both
-// "publish ./site --slug x" and "publish --slug x ./site" work) and checks
-// that there are between min and max positionals (max < 0: no limit).
+// parse accepts flags after positionals ("publish ./site --slug x") and
+// requires min to max positionals; max < 0 is no limit.
 func parse(fs *flag.FlagSet, args []string, min, max int) ([]string, error) {
 	var pos []string
 	for {
@@ -319,7 +307,7 @@ func parse(fs *flag.FlagSet, args []string, min, max int) ([]string, error) {
 	return pos, nil
 }
 
-// flagSet reports whether the named flag was given on the command line.
+// flagSet reports whether name was given on the command line.
 func flagSet(fs *flag.FlagSet, name string) bool {
 	set := false
 	fs.Visit(func(f *flag.Flag) {
@@ -330,7 +318,6 @@ func flagSet(fs *flag.FlagSet, name string) bool {
 	return set
 }
 
-// listFlag is a repeatable string flag.
 type listFlag []string
 
 func (l *listFlag) String() string { return strings.Join(*l, ",") }
@@ -340,7 +327,6 @@ func (l *listFlag) Set(v string) error {
 	return nil
 }
 
-// metaFlag is a repeatable k=v flag.
 type metaFlag map[string]string
 
 func (m metaFlag) String() string {

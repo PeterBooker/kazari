@@ -1,5 +1,4 @@
-# The documentation sidebar, in reading order. Previous and next links follow it too.
-# ja is the group's Japanese label, shown beside the group name above each of its pages (site-design skill).
+# Reading order, which previous and next links follow too. ja: the group's Japanese label.
 
 [[sections]]
   title = "Get started"

@@ -11,17 +11,14 @@ import (
 	"github.com/libdns/route53"
 )
 
-// DNSProviders lists the names NewDNSProvider accepts.
 var DNSProviders = []string{"cloudflare", "route53", "hetzner"}
 
-// NewDNSProvider returns the libdns provider called name, for the ACME
-// DNS-01 challenge:
+// NewDNSProvider returns the libdns provider called name. apiToken is:
 //
-//   - cloudflare: apiToken is an API token with Zone.DNS:Edit.
-//   - hetzner: apiToken is a Hetzner DNS API token.
-//   - route53: an empty apiToken uses the AWS default credential chain
-//     (environment, shared config, instance role); otherwise it must be
-//     "ACCESS_KEY_ID:SECRET_ACCESS_KEY".
+//   - cloudflare: an API token with Zone.DNS:Edit.
+//   - hetzner: a Hetzner DNS API token.
+//   - route53: "ACCESS_KEY_ID:SECRET_ACCESS_KEY", or empty for the AWS
+//     default credential chain.
 func NewDNSProvider(name, apiToken string) (certmagic.DNSProvider, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "cloudflare":

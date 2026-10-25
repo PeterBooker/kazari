@@ -19,8 +19,7 @@ import (
 	"kazari/internal/present"
 )
 
-// Resource URIs. The file template uses reserved expansion ({+path}) so a
-// path may contain slashes, e.g. kazari://artifacts/demo/files/assets/app.js.
+// {+path} is reserved expansion, so a path may contain slashes.
 const (
 	resourcePrefix       = "kazari://artifacts/"
 	artifactTemplate     = resourcePrefix + "{slug}"
@@ -29,16 +28,12 @@ const (
 	artifactResourceMIME = "application/json"
 )
 
-// errTooLargeToInline reports a file too large to return in a result.
 var errTooLargeToInline = errors.New("too large to return inline")
 
-// fileURI is the resource URI of one file.
 func fileURI(slug, path string) string {
 	return resourcePrefix + slug + filesSegment + path
 }
 
-// isText reports whether a content type names text a model can read
-// inline.
 func isText(contentType string) bool {
 	mt, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -56,16 +51,14 @@ func isText(contentType string) bool {
 	return strings.HasSuffix(mt, "+json") || strings.HasSuffix(mt, "+xml")
 }
 
-// fileContent is one opened file read for inline return.
 type fileContent struct {
 	file artifact.File
 	data []byte
 	text bool // data is valid UTF-8 of a textual type
 }
 
-// readInline opens a file and reads it when it fits: text up to textLimit,
-// anything else up to blobLimit. Otherwise it returns the file entry with
-// errTooLargeToInline.
+// readInline reads a file if it fits: text up to textLimit, anything else up to
+// blobLimit. Otherwise it returns the file entry with errTooLargeToInline.
 func (b *builder) readInline(ctx context.Context, actor artifact.Actor, slug, path string, version int, textLimit, blobLimit int64) (fileContent, error) {
 	f, rc, err := b.d.Artifacts.OpenFile(ctx, actor, slug, path, version)
 	if err != nil {
@@ -147,7 +140,7 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 	})
 }
 
-// downloadURL is the REST URL of a file at a definite version number.
+// downloadURL pins version 0 to the published version.
 func (b *builder) downloadURL(ctx context.Context, actor artifact.Actor, slug, path string, version int) (string, error) {
 	if version == 0 {
 		a, _, err := b.d.Artifacts.Get(ctx, actor, slug)
@@ -232,8 +225,6 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 	})
 }
 
-// resourceError maps not-found errors to the protocol's resource-not-found
-// error and everything else to a coded error.
 func (b *builder) resourceError(ctx context.Context, uri string, err error) error {
 	switch artifact.CodeOf(err) {
 	case api.CodeNotFound, api.CodeFileNotFound, api.CodeVersionNotFound, api.CodeGone:
@@ -242,8 +233,7 @@ func (b *builder) resourceError(ctx context.Context, uri string, err error) erro
 	return b.toolError(ctx, "resource", err)
 }
 
-// parseFileURI splits kazari://artifacts/<slug>/files/<path>; the path may
-// be percent-encoded.
+// parseFileURI splits a file URI; the path may be percent-encoded.
 func parseFileURI(uri string) (slug, path string, ok bool) {
 	rest, ok := strings.CutPrefix(uri, resourcePrefix)
 	if !ok {

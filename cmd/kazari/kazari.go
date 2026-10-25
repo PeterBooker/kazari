@@ -17,12 +17,8 @@ import (
 	"kazari/internal/config"
 )
 
-// defaultConfigPath is read by serve when neither --config nor
-// $KAZARI_CONFIG names a file and it exists.
 const defaultConfigPath = "/etc/kazari/kazari.yaml"
 
-// defaultEnvFile is loaded when neither --env-file nor $KAZARI_ENV_FILE
-// names a file and it exists in the working directory.
 const defaultEnvFile = ".env"
 
 const usage = `usage: kazari <command> [arguments]
@@ -61,8 +57,7 @@ func main() {
 	}
 }
 
-// serve runs the server and returns the exit code: 2 for a configuration
-// error, 1 for a runtime error.
+// serve returns exit code 2 for a configuration error, 1 for a runtime error.
 func serve(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("config", "", "config file (default $KAZARI_CONFIG, then "+defaultConfigPath+" if it exists)")
@@ -100,8 +95,6 @@ func serve(args []string) int {
 	return 0
 }
 
-// configPath picks the config file: the flag, then $KAZARI_CONFIG, then
-// the default path if it exists, else none (environment only).
 func configPath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -115,8 +108,7 @@ func configPath(flagValue string) string {
 	return ""
 }
 
-// envFilePath picks the dotenv file: the flag, then $KAZARI_ENV_FILE, else
-// "" which lets config.Load use ./.env when it exists.
+// envFilePath returns "" when unset so that config.Load falls back to ./.env.
 func envFilePath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -124,9 +116,8 @@ func envFilePath(flagValue string) string {
 	return os.Getenv("KAZARI_ENV_FILE")
 }
 
-// clientEnv is the environment lookup for client commands: the process
-// environment first, then ./.env (or $KAZARI_ENV_FILE) when it exists, so a
-// local .env can hold KAZARI_URL and KAZARI_TOKEN.
+// clientEnv lets a local .env (or $KAZARI_ENV_FILE) hold KAZARI_URL and
+// KAZARI_TOKEN; the process environment wins.
 func clientEnv() func(string) (string, bool) {
 	path := os.Getenv("KAZARI_ENV_FILE")
 	if path == "" {

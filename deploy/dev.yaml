@@ -1,10 +1,5 @@
-# Local development: plain HTTP in proxy mode on port 8080, data in ./.data,
-# URLs like http://demo.localhost:8080/ (browsers resolve *.localhost to
-# loopback). Run with: go run ./cmd/kazari serve --config deploy/dev.yaml
-# or, from the Docker image, docker compose up --build (compose.yml mounts
-# this file; the image's KAZARI_DATA_DIR=/var/lib/kazari replaces ./.data).
-# Set KAZARI_AUTH_ADMIN_TOKEN in the environment or a .env file to override
-# the development admin token.
+# Local development at http://<slug>.localhost:8080/ (browsers resolve *.localhost to loopback).
+# compose.yml mounts this file too; the image's KAZARI_DATA_DIR replaces ./.data.
 
 base_domain: localhost
 data_dir: ./.data
@@ -12,9 +7,8 @@ external_scheme: http
 external_port: 8080
 
 listen:
-  # Loopback only: the admin token below is public knowledge, so nothing
-  # else on the network may reach this port. compose.yml listens on every
-  # interface inside the container and publishes the port on loopback.
+  # Loopback only, as the admin token below is public. compose.yml publishes
+  # the container's port on loopback instead.
   http: "127.0.0.1:8080"
   proxy_mode: true
 

@@ -14,10 +14,8 @@ import (
 	"time"
 )
 
-// bundleFiles returns the slash-separated paths, relative to dir and sorted,
-// of the regular files TarGz includes. Symlinks and other non-regular files
-// are skipped, as is anything whose name starts with a dot (.git, .DS_Store),
-// except .well-known, which websites need.
+// bundleFiles returns the sorted, slash-separated relative paths TarGz
+// includes.
 func bundleFiles(dir string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -37,7 +35,7 @@ func bundleFiles(dir string) ([]string, error) {
 			return nil
 		}
 		if !d.Type().IsRegular() {
-			return nil // directories are implicit; symlinks, devices, sockets skipped
+			return nil // directories are implicit
 		}
 		rel, err := filepath.Rel(dir, p)
 		if err != nil {
@@ -58,10 +56,9 @@ func hidden(name string) bool {
 }
 
 // TarGz writes the regular files under dir to w as a gzip-compressed tar.
-// Entries are relative, slash-separated and sorted, with zero ownership, mode
-// 0644 and the Unix epoch as mtime, so the same tree always yields the same
-// bytes. Dotfiles and dot-directories (except .well-known) and symlinks are
-// skipped.
+// Entries are sorted, with zero ownership, mode 0644 and epoch mtime, so the
+// same tree always yields the same bytes. Dotfiles (except .well-known, which
+// websites need) and symlinks are skipped.
 func TarGz(dir string, w io.Writer) error {
 	files, err := bundleFiles(dir)
 	if err != nil {
@@ -113,9 +110,8 @@ func addFile(tw *tar.Writer, dir, name string) error {
 	return nil
 }
 
-// TarGzReader streams TarGz(dir) through a pipe, so a large directory is
-// never held in memory. Closing the reader early stops the writer; a walk or
-// read error surfaces from Read.
+// TarGzReader streams TarGz(dir) without holding it in memory. Closing the
+// reader early stops the writer; walk and read errors surface from Read.
 func TarGzReader(dir string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {

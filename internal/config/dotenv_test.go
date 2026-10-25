@@ -132,7 +132,6 @@ func TestLoadEnvFileOption(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("KAZARI_TEST_DOMAIN=from.envfile\nKAZARI_AUTH_ADMIN_TOKEN=adm-0123456789abcdef0123456789ab\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A ./.env in the working directory is ignored when envFile is named.
 	t.Chdir(t.TempDir())
 	writeEnvFile(t, ".", "KAZARI_TEST_DOMAIN=from.dotenv\n")
 
@@ -162,7 +161,6 @@ func TestLoadDefaultEnvFile(t *testing.T) {
 	cfgPath := writeYAML(t, loadTestYAML)
 	t.Chdir(t.TempDir())
 
-	// No ./.env: skipped silently, so the reference is unset.
 	_, err := Load(cfgPath, "")
 	if want := "${KAZARI_TEST_DOMAIN} is not set"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("without .env: err = %v, want %q", err, want)

@@ -13,8 +13,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// writeTree creates files (slash paths relative to a temp dir) and returns
-// the dir.
 func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -100,7 +98,6 @@ func TestTarGzReproducible(t *testing.T) {
 	if err := TarGz(writeTree(t, files), &first); err != nil {
 		t.Fatal(err)
 	}
-	// A second tree with the same content but different mtimes and modes.
 	dir := writeTree(t, files)
 	old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := os.Chtimes(filepath.Join(dir, "index.html"), old, old); err != nil {

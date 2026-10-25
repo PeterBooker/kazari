@@ -2,8 +2,6 @@ package oauth
 
 import "testing"
 
-// The CIMD fetch must not reach internal networks. Before the fix CGNAT,
-// "this network", NAT64 and the other special ranges below were allowed.
 func TestPublicAddr(t *testing.T) {
 	tests := []struct {
 		host string

@@ -16,13 +16,11 @@ import (
 	"kazari/internal/auth"
 )
 
-// Handle length limits.
 const (
 	MinHandleLen = 2
 	MaxHandleLen = 32
 )
 
-// touchInterval is how often last_used_at is written for one key.
 const touchInterval = time.Minute
 
 var handleRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
@@ -37,8 +35,7 @@ func ValidateHandle(h string) error {
 	return nil
 }
 
-// Options configures a Service. The zero value is usable: no default quota,
-// no domain restriction for linking, no auto-provisioning.
+// Options configures a Service. The zero value is usable.
 type Options struct {
 	// DefaultQuota is the quota of users created without one (0 = unlimited).
 	DefaultQuota int64
@@ -50,19 +47,16 @@ type Options struct {
 	AutoProvision bool
 	// AdminEmails are provisioned as admins.
 	AdminEmails []string
-	// OnDisable, when set, runs after a user is disabled and their keys are
-	// revoked, to revoke credentials held elsewhere (OAuth grants). An error
-	// fails the update; the user stays disabled.
+	// OnDisable, if set, runs after a user is disabled and their keys revoked,
+	// to revoke credentials held elsewhere (OAuth grants). An error fails the
+	// update; the user stays disabled.
 	OnDisable func(ctx context.Context, handle string) error
-	// Now is the clock (default time.Now).
+	// Now defaults to time.Now.
 	Now func() time.Time
 }
 
-// Service manages users, API keys and identity links. It implements
-// auth.Authenticator for API keys.
-//
-// Audit events are best-effort: they are recorded after the store call and
-// a failure to record does not fail the operation.
+// Service manages users, API keys and identity links. Audit events are
+// best-effort: a failure to record one does not fail the operation.
 type Service struct {
 	store Store
 	audit audit.Recorder
@@ -96,8 +90,8 @@ type CreateUserRequest struct {
 	QuotaBytes  *int64 // nil = Options.DefaultQuota
 }
 
-// CreateUser validates req and creates the user. ErrInvalidHandle,
-// ErrInvalidRole, ErrHandleTaken, ErrEmailTaken.
+// CreateUser creates a user. ErrInvalidHandle, ErrInvalidRole,
+// ErrHandleTaken, ErrEmailTaken.
 func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
 	if err := ValidateHandle(req.Handle); err != nil {
 		return nil, err
@@ -159,9 +153,9 @@ type UpdateUserRequest struct {
 	Disabled    *bool
 }
 
-// UpdateUser applies req to the user. Disabling a user stamps DisabledAt,
-// revokes every key and runs Options.OnDisable; enabling clears DisabledAt
-// (revoked keys and grants stay revoked).
+// UpdateUser applies req. Disabling stamps DisabledAt, revokes every key and
+// runs Options.OnDisable; enabling clears DisabledAt (revoked keys and grants
+// stay revoked).
 func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (*User, error) {
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
@@ -215,8 +209,7 @@ func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserR
 	return u, nil
 }
 
-// ScopesFor returns the scopes the user's role allows: members get
-// auth.MemberScopes, admins auth.AllScopes.
+// ScopesFor returns the scopes u's role allows.
 func ScopesFor(u *User) []string {
 	if u.Role == RoleAdmin {
 		return slices.Clone(auth.AllScopes)
@@ -224,10 +217,9 @@ func ScopesFor(u *User) []string {
 	return slices.Clone(auth.MemberScopes)
 }
 
-// IssueKey creates an API key for the user and returns it with the key
-// string, which is never available again. Empty scopes mean
-// auth.MemberScopes; expiresIn <= 0 means no expiry. ErrNotFound,
-// ErrDisabled, ErrInvalidScope.
+// IssueKey creates an API key and returns it with the key string, which is
+// never available again. Empty scopes mean auth.MemberScopes; expiresIn <= 0
+// means no expiry. ErrNotFound, ErrDisabled, ErrInvalidScope.
 func (s *Service) IssueKey(ctx context.Context, handle, label string, scopes []string, expiresIn time.Duration) (*APIKey, string, error) {
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
@@ -298,9 +290,9 @@ func (s *Service) RevokeKey(ctx context.Context, handle, prefix string) error {
 }
 
 // Authenticate verifies an API key. A malformed, unknown, revoked or expired
-// key, a wrong secret, or a disabled owner yield auth.ErrInvalidToken; other
-// store errors are returned wrapped. The principal's scopes are the key's
-// scopes capped at ScopesFor the owner's current role.
+// key, a wrong secret or a disabled owner yield auth.ErrInvalidToken; other
+// store errors are wrapped. Scopes are capped at the owner's current role, so
+// a demoted admin's key loses the admin scope.
 func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principal, error) {
 	prefix, _, ok := ParseKey(token)
 	if !ok {
@@ -321,14 +313,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	s.touch(ctx, k, now)
-	// Cap the key's scopes at what the role allows now, so an admin key of
-	// a user later demoted to member loses the admin scope.
 	allowed := ScopesFor(u)
 	scopes := slices.DeleteFunc(slices.Clone(k.Scopes), func(sc string) bool {
 		return !slices.Contains(allowed, sc)
 	})
-	// Admin powers travel with the admin scope: an admin's key issued with
-	// member scopes acts as a member, so a narrowed key stays narrow.
+	// An admin's key issued with member scopes acts as a member, so a
+	// narrowed key stays narrow.
 	return auth.Principal{
 		Handle:     u.Handle,
 		Admin:      u.Role == RoleAdmin && slices.Contains(scopes, auth.ScopeAdmin),
@@ -339,9 +329,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	}, nil
 }
 
-// KeyStatus reports on the key with prefix without its secret, for a
-// credential derived from the key: an OAuth grant approved with it lives
-// only while the key is active. ErrKeyNotFound.
+// KeyStatus reports on the key with prefix, for credentials derived from it
+// (an OAuth grant lives only while its key is active). ErrKeyNotFound.
 func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, error) {
 	k, u, err := s.store.GetKey(ctx, prefix)
 	if err != nil {
@@ -350,14 +339,12 @@ func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, erro
 	return KeyStatus{Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt}, nil
 }
 
-// keyActive reports whether k is neither revoked nor expired at now and its
-// owner u is not disabled.
 func keyActive(k *APIKey, u *User, now time.Time) bool {
 	return k.RevokedAt == nil && (k.ExpiresAt == nil || now.Before(*k.ExpiresAt)) && u.DisabledAt == nil
 }
 
-// touch writes last_used_at at most once per touchInterval per key. A
-// failed write is retried on the next use and never fails authentication.
+// touch writes last_used_at at most once per touchInterval per key. A failed
+// write is retried on the next use and never fails authentication.
 func (s *Service) touch(ctx context.Context, k *APIKey, now time.Time) {
 	s.mu.Lock()
 	last, seen := s.touched[k.Prefix]
@@ -381,18 +368,12 @@ func (s *Service) touch(ctx context.Context, k *APIKey, now time.Time) {
 	}
 }
 
-// ResolveIdentity maps an upstream identity to a user:
-//
-//  1. an identity already linked by (issuer, subject) resolves to its user;
-//  2. otherwise a verified email from an allowed domain (any domain when
-//     AllowedDomains is empty) links to the user with that email;
-//  3. otherwise, with AutoProvision on and a verified email from an allowed
-//     domain, a new user is created (an admin when the email is in
-//     AdminEmails) with a handle derived from the email;
-//  4. otherwise ErrNotProvisioned.
-//
-// A disabled user yields ErrDisabled. On success the identity link is
-// refreshed so last_login_at moves.
+// ResolveIdentity maps an upstream identity to, in order: the user linked to
+// (issuer, subject); the user with its verified email, if the domain is
+// allowed (any domain when AllowedDomains is empty); a new user, an admin if
+// in AdminEmails, when AutoProvision is on and the domain is listed; else
+// ErrNotProvisioned. A disabled user yields ErrDisabled. Success refreshes the
+// link's last_login_at.
 func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User, error) {
 	u, err := s.store.GetIdentity(ctx, id.Issuer, id.Subject)
 	switch {
@@ -438,7 +419,6 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User,
 	return s.login(ctx, u, id)
 }
 
-// login refuses a disabled user and refreshes the identity link.
 func (s *Service) login(ctx context.Context, u *User, id auth.Identity) (*User, error) {
 	if u.DisabledAt != nil {
 		return nil, fmt.Errorf("user: sign in as %q: %w", u.Handle, ErrDisabled)
@@ -455,19 +435,17 @@ func (s *Service) login(ctx context.Context, u *User, id auth.Identity) (*User, 
 	return u, nil
 }
 
-// ErrInvalidIdentity is returned by LinkIdentity and UnlinkIdentity when the
-// issuer or subject is empty.
 var ErrInvalidIdentity = errors.New("user: identity needs an issuer and a subject")
 
-// ListIdentities returns the user's linked identities ordered by issuer and
-// subject. ErrNotFound when the user does not exist.
+// ListIdentities returns the user's identities ordered by issuer and
+// subject. ErrNotFound if the user does not exist.
 func (s *Service) ListIdentities(ctx context.Context, handle string) ([]Identity, error) {
 	return s.store.ListIdentities(ctx, handle)
 }
 
-// LinkIdentity links an upstream (issuer, subject) to the user by hand, so
-// an admin can pre-provision who may sign in as whom. An identity linked to
-// another user moves to this one. ErrInvalidIdentity, ErrNotFound.
+// LinkIdentity links (issuer, subject) to the user by hand, so an admin can
+// pre-provision who may sign in as whom. An identity linked to another user
+// moves to this one. ErrInvalidIdentity, ErrNotFound.
 func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, email string) error {
 	issuer, subject = strings.TrimSpace(issuer), strings.TrimSpace(subject)
 	if issuer == "" || subject == "" {
@@ -488,8 +466,8 @@ func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, ema
 	return nil
 }
 
-// UnlinkIdentity removes a linked identity from the user. ErrInvalidIdentity,
-// or ErrNotFound when the user has no such identity.
+// UnlinkIdentity returns ErrInvalidIdentity, or ErrNotFound when the user has
+// no such identity.
 func (s *Service) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error {
 	issuer, subject = strings.TrimSpace(issuer), strings.TrimSpace(subject)
 	if issuer == "" || subject == "" {
@@ -504,11 +482,8 @@ func (s *Service) UnlinkIdentity(ctx context.Context, handle, issuer, subject st
 	return nil
 }
 
-// maxHandleAttempts bounds the numeric suffix search.
 const maxHandleAttempts = 1000
 
-// provision creates a user for email, suffixing the derived handle until it
-// is free.
 func (s *Service) provision(ctx context.Context, email, name string, role Role) (*User, error) {
 	base := DeriveHandle(email)
 	for n := 1; n <= maxHandleAttempts; n++ {
@@ -537,10 +512,8 @@ func (s *Service) provision(ctx context.Context, email, name string, role Role) 
 		email, maxHandleAttempts, ErrHandleTaken)
 }
 
-// DeriveHandle turns an email's local part into a valid handle: lower-cased,
-// characters outside [a-z0-9_-] replaced by "-", leading "-" and "_" and
-// trailing "-" trimmed, truncated to MaxHandleLen. A result shorter than
-// MinHandleLen becomes "user".
+// DeriveHandle turns an email's local part into a valid handle, or "user"
+// when too little of it survives.
 func DeriveHandle(email string) string {
 	local := strings.ToLower(strings.TrimSpace(email))
 	if i := strings.LastIndex(local, "@"); i >= 0 {
@@ -563,8 +536,6 @@ func DeriveHandle(email string) string {
 	return h
 }
 
-// handleWithSuffix returns base for n == 1 and base-n otherwise, shortening
-// base so the result fits MaxHandleLen.
 func handleWithSuffix(base string, n int) string {
 	if n == 1 {
 		return base
@@ -576,7 +547,6 @@ func handleWithSuffix(base string, n int) string {
 	return base + suffix
 }
 
-// actorFrom names the caller for audit: the principal in ctx, else fallback.
 func actorFrom(ctx context.Context, fallback string) string {
 	if p, ok := auth.FromContext(ctx); ok && p.Handle != "" {
 		return p.Handle
@@ -585,6 +555,6 @@ func actorFrom(ctx context.Context, fallback string) string {
 }
 
 func (s *Service) record(ctx context.Context, actor, action string, details map[string]string) {
-	// Best-effort by design: see Service.
+	// Best-effort: see Service.
 	_ = s.audit.Record(ctx, audit.Event{At: s.now(), Actor: actor, Action: action, Details: details})
 }

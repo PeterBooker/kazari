@@ -37,7 +37,6 @@ func TestAdminUsersAndKeys(t *testing.T) {
 		t.Errorf("users = %+v", users)
 	}
 
-	// The issued key works on the user API.
 	var issued api.IssuedKey
 	e.call(http.MethodPost, e.a("/v1/users/carol/keys"), adminToken, api.IssueKeyRequest{
 		Label: "laptop", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, ExpiresIn: "720h",
@@ -56,7 +55,6 @@ func TestAdminUsersAndKeys(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/carol/keys"), token: adminToken, contentType: "application/json",
 		body: strings.NewReader(`{"scopes":["admin"]}`)}), 422, api.CodeInvalidArgument)
 
-	// A key with defaults from an empty body, then revoked.
 	var second api.IssuedKey
 	e.call(http.MethodPost, e.a("/v1/users/carol/keys"), adminToken, nil, http.StatusCreated, &second)
 	if !slices.Equal(second.APIKey.Scopes, auth.MemberScopes) {
@@ -72,7 +70,6 @@ func TestAdminUsersAndKeys(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodDelete, url: e.a("/v1/users/carol/keys/nope1234"), token: adminToken}), 404, api.CodeNotFound)
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users/nobody/keys"), token: adminToken}), 404, api.CodeNotFound)
 
-	// Identities.
 	e.call(http.MethodPost, e.a("/v1/users/carol/identities"), adminToken,
 		api.LinkIdentityRequest{Issuer: "https://idp.test", Subject: "c-1", Email: "carol@example.com"}, http.StatusNoContent, nil)
 	e.call(http.MethodGet, e.a("/v1/users/carol"), adminToken, nil, http.StatusOK, &u)
@@ -90,7 +87,6 @@ func TestAdminUsersAndKeys(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/carol/identities/unlink"), token: adminToken, contentType: "application/json",
 		body: strings.NewReader(`{"issuer":"https://idp.test","subject":"c-1"}`)}), 404, api.CodeNotFound)
 
-	// Disabling the user breaks the key.
 	e.call(http.MethodPatch, e.a("/v1/users/carol"), adminToken, api.UpdateUserRequest{Disabled: ptr(true), DisplayName: ptr("Carol")}, http.StatusOK, &u)
 	if u.DisabledAt == nil || u.DisplayName != "Carol" {
 		t.Errorf("disabled user = %+v", u)
@@ -167,7 +163,6 @@ func TestAdminJobsAuditSettingsHealth(t *testing.T) {
 		t.Errorf("settings = %v", settings)
 	}
 
-	// Health and metrics are open; everything else needs the admin role.
 	for _, p := range []string{"/health", "/v1/health"} {
 		var h api.Health
 		e.call(http.MethodGet, e.a(p), "", nil, http.StatusOK, &h)
@@ -183,7 +178,6 @@ func TestAdminJobsAuditSettingsHealth(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "wrong"}), 401, api.CodeUnauthorized)
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users")}), 401, api.CodeUnauthorized)
 
-	// An admin-role key is accepted instead of the token.
 	if _, err := e.users.CreateUser(e.ctx, userReq("root", "admin")); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +187,6 @@ func TestAdminJobsAuditSettingsHealth(t *testing.T) {
 	}
 	e.call(http.MethodGet, e.a("/v1/users"), rootKey, nil, http.StatusOK, nil)
 
-	// Routing: unknown routes, wrong methods, absent optional routes.
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/nothing"), token: adminToken}), 404, api.CodeNotFound)
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users/alice/grants"), token: adminToken}), 404, api.CodeNotFound)
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/nothing")}), 404, api.CodeNotFound)
@@ -223,7 +216,6 @@ func TestAdminJobRunning(t *testing.T) {
 	wg.Wait()
 }
 
-// fakeGrants is an in-memory GrantStore.
 type fakeGrants struct {
 	mu     sync.Mutex
 	grants []api.OAuthGrant
@@ -271,14 +263,11 @@ func TestAdminGrants(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users/nobody/grants"), token: adminToken}), 404, api.CodeNotFound)
 }
 
-// httpapiAdmin serves an admin API over d alone and returns its URL.
 func httpapiAdmin(t *testing.T, d httpapi.AdminDeps) string {
 	t.Helper()
 	return httptestServer(t, httpapi.NewAdminAPI(d, httpapi.AdminOptions{AdminToken: adminToken}))
 }
 
-// Wrong admin tokens are throttled per client IP, so a token cannot be
-// guessed at speed; the health checks stay open.
 func TestAdminIPRateLimit(t *testing.T) {
 	e := newEnv(t, config{admin: httpapi.AdminOptions{IPRatePerMinute: 2}})
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "guess-1"}), http.StatusUnauthorized, api.CodeUnauthorized)

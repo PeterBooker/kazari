@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// recordHandler is a slog.Handler that keeps every record it handles.
 type recordHandler struct {
 	mu      sync.Mutex
 	records []slog.Record
@@ -27,13 +26,12 @@ func (h *recordHandler) Handle(_ context.Context, r slog.Record) error {
 }
 
 func (h *recordHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	// Shares the record list with the parent so tests can read one place.
+	// Shares the parent's records so tests read one place.
 	return &withAttrs{parent: h, attrs: attrs}
 }
 
 func (h *recordHandler) WithGroup(string) slog.Handler { return h }
 
-// has reports whether a record with the given message has been handled.
 func (h *recordHandler) has(msg string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -70,7 +68,6 @@ func (w *withAttrs) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (w *withAttrs) WithGroup(string) slog.Handler { return w }
 
-// waitFor polls cond until it is true or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

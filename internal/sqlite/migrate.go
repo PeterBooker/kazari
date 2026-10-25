@@ -14,8 +14,8 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// Migrate applies every migrations/NNNN_*.sql not yet recorded in
-// schema_migration, in numeric order, each in its own transaction.
+// Migrate applies every migrations/NNNN_*.sql not yet in schema_migration,
+// in numeric order, each in its own transaction.
 func Migrate(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migration (
 		version INTEGER PRIMARY KEY,

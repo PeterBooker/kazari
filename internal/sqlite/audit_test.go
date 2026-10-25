@@ -94,7 +94,7 @@ func TestAuditStoreListLimits(t *testing.T) {
 	ctx := context.Background()
 	s := auditTestStore(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	// Insert directly: 1001 rows through Record would be slow under -race.
+	// Direct inserts: 1001 Record calls are slow under -race.
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		for i := range 1001 {
 			if _, err := tx.ExecContext(ctx,

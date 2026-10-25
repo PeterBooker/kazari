@@ -19,14 +19,10 @@ import (
 //go:embed apex.html
 var apexPage string
 
-// hosts are the fully wrapped handlers of each surface.
 type hosts struct {
 	api, mcp, admin, apex, site http.Handler
 }
 
-// routes returns the host router: api., mcp. and admin. hosts and the apex
-// by host pattern, every other host (the artifacts) to the site handler.
-// Host names are lower-cased and stripped of a trailing dot first.
 func (a *App) routes(h hosts) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(a.cfg.Host("api")+"/", h.api)
@@ -37,8 +33,6 @@ func (a *App) routes(h hosts) http.Handler {
 	return normalizeHost(mux)
 }
 
-// surface wraps a host's handler with the shared middleware stack and
-// its metrics; control-plane hosts also get the security headers.
 func (a *App) surface(m *metrics.Metrics, name string, control bool, h http.Handler) http.Handler {
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
@@ -53,8 +47,7 @@ func (a *App) surface(m *metrics.Metrics, name string, control bool, h http.Hand
 	return middleware.Chain(h, mws...)
 }
 
-// mcpMux serves the OAuth metadata and endpoints beside the MCP endpoint,
-// which answers on every other path ("/" and "/mcp" alike).
+// mcpMux answers MCP on every non-OAuth path, "/" and "/mcp" alike.
 func mcpMux(oauthH, mcpH http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/.well-known/", oauthH)
@@ -63,8 +56,8 @@ func mcpMux(oauthH, mcpH http.Handler) http.Handler {
 	return mux
 }
 
-// normalizeHost lower-cases r.Host and drops a trailing dot so that host
-// patterns match API.Example.com and example.com. alike.
+// normalizeHost makes host patterns match API.Example.com and example.com.
+// alike.
 func normalizeHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if host := canonicalHost(r.Host); host != r.Host {
@@ -77,8 +70,6 @@ func normalizeHost(next http.Handler) http.Handler {
 	})
 }
 
-// canonicalHost lower-cases host and removes a trailing dot from its name,
-// keeping any port.
 func canonicalHost(host string) string {
 	host = strings.ToLower(host)
 	if name, port, err := net.SplitHostPort(host); err == nil {
@@ -87,7 +78,6 @@ func canonicalHost(host string) string {
 	return strings.TrimSuffix(host, ".")
 }
 
-// hostname returns host without its port.
 func hostname(host string) string {
 	if name, _, err := net.SplitHostPort(host); err == nil {
 		return name
@@ -95,8 +85,7 @@ func hostname(host string) string {
 	return host
 }
 
-// apexHandler serves the base domain: /health and a static page naming
-// the instance at /; everything else is a plain 404. Neither discloses the
+// apexHandler serves /health and the instance page; neither discloses the
 // version.
 func apexHandler(cfg config.Config) (http.Handler, error) {
 	t, err := template.New("apex").Parse(apexPage)
@@ -122,9 +111,6 @@ func apexHandler(cfg config.Config) (http.Handler, error) {
 	return mux, nil
 }
 
-// redirectHandler is the plain-HTTP listener outside proxy mode: /health
-// answers directly, every other request for the base domain or one of its
-// subdomains is sent permanently to the same host and path over https.
 func redirectHandler(cfg config.Config) http.Handler {
 	port := ""
 	if p := cfg.ExternalPort; cfg.ExternalScheme == "https" && p != 0 && p != 443 {

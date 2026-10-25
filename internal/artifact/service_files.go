@@ -16,10 +16,9 @@ import (
 // sniffLen is how much of a file http.DetectContentType looks at.
 const sniffLen = 512
 
-// buildFiles validates inputs, streams additions into the blob store and
-// returns the resulting file list (sorted by path) and its total size.
-// base is the previous version's file map (nil on create). quotaLeft is the
-// number of bytes the owner may still add, or nil for unlimited.
+// buildFiles applies inputs to base (nil on create), streaming additions
+// into the blob store, and returns the files sorted by path with their
+// total size. A nil quotaLeft is unlimited.
 func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs []FileInput, quotaLeft *int64) ([]File, int64, error) {
 	type addition struct {
 		path string
@@ -93,8 +92,8 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 	return files, total, nil
 }
 
-// putFile streams one file through the size limits into the blob store and
-// records the blob row so the garbage collector's grace window starts now.
+// putFile records the blob row so the garbage collector's grace window
+// starts now.
 func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64) (File, error) {
 	fileLeft := s.opts.MaxFileBytes
 	var r io.Reader = &limitReader{r: in.Content, left: &fileLeft,
@@ -130,8 +129,8 @@ func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLe
 	return File{Path: p, Hash: hash, Size: size, ContentType: ct}, nil
 }
 
-// domainErr unwraps an *Error that travelled through another layer (the
-// blob store wraps reader errors) so callers see the domain error itself.
+// domainErr unwraps an *Error the blob store wrapped, so callers see the
+// domain error itself.
 func domainErr(err error) error {
 	var e *Error
 	if errors.As(err, &e) {
@@ -140,8 +139,8 @@ func domainErr(err error) error {
 	return err
 }
 
-// limitReader fails with err as soon as more than *left bytes have been
-// read. left may be shared between readers to enforce a total across files.
+// limitReader fails with err once more than *left bytes are read; left may
+// be shared to enforce a total across files.
 type limitReader struct {
 	r    io.Reader
 	left *int64

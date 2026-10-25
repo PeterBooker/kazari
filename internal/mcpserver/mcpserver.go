@@ -1,12 +1,5 @@
-// Package mcpserver is the MCP surface of Kazari: fourteen tools, two
-// resource templates, one prompt, the instance's Agent Skill (Skills
-// extension) and a preview app (MCP Apps extension) over the Streamable HTTP
-// transport, running stateless. Each request builds a fresh server whose
-// tool handlers close over the authenticated principal, so no session state
-// exists anywhere.
-//
-// Every tool calls the same artifact and upload services as the REST API and
-// returns the same wire types from package api.
+// Package mcpserver is Kazari's MCP surface over stateless Streamable HTTP. Each
+// request builds a fresh server closed over its principal, so no session state exists.
 package mcpserver
 
 import (
@@ -29,17 +22,14 @@ import (
 	"kazari/internal/upload"
 )
 
-// Defaults applied to zero Options fields.
 const (
 	DefaultInlineGuidanceBytes = 2 << 20
 	DefaultMaxInlineReadBytes  = 1 << 20
-	// MaxInlineBlobBytes is the largest binary file read_file returns as a
-	// base64 blob; larger binaries get a download URL instead.
+	// MaxInlineBlobBytes is the largest binary read_file embeds; larger ones get a download URL.
 	MaxInlineBlobBytes = 256 << 10
 )
 
-// bodyOverhead is the room left in the request body limit for the JSON-RPC
-// envelope and the non-content arguments of a call.
+// bodyOverhead leaves room for the JSON-RPC envelope and non-content arguments.
 const bodyOverhead = 1 << 20
 
 // Deps are the services the MCP server calls.
@@ -49,44 +39,36 @@ type Deps struct {
 	Auth      auth.Authenticator
 	Links     present.Links
 	Logger    *slog.Logger
-	// Writes limits write and delete tool calls per credential. It is the
-	// user API's limiter, so a key has one budget on both; nil disables it.
+	// Writes limits write and delete calls per credential; it is the user API's
+	// limiter, so a key has one budget on both. Nil disables it.
 	Writes *ratelimit.Limiter
 }
 
-// Options configures the server. Limits are only described to the model
-// here; the services enforce the real ones, so they should be set to the
-// same values the services use.
+// Options configures the server. Its limits only describe the services' limits to
+// the model, so set them to the same values.
 type Options struct {
-	// BaseDomain is the artifact domain, e.g. art.example.com, used to show
-	// the URL shape https://<slug>.<base>/ in descriptions.
+	// BaseDomain is the artifact domain, e.g. art.example.com, shown in descriptions.
 	BaseDomain string
 	// ResourceMetadataURL is advertised on 401 responses, e.g.
 	// https://mcp.<base>/.well-known/oauth-protected-resource.
 	ResourceMetadataURL string
-	// AllowedOrigins are Origin header values accepted besides an absent
-	// header and the MCP host itself (https://<request host>).
+	// AllowedOrigins are accepted besides an absent Origin and https://<request host>.
 	AllowedOrigins []string
-	// InlineGuidanceBytes is the size above which descriptions tell the
-	// model to switch to begin_upload. Default 2 MiB.
+	// InlineGuidanceBytes is the size above which descriptions advise begin_upload.
 	InlineGuidanceBytes int64
 	MaxVersionBytes     int64
 	MaxFileBytes        int64
 	MaxFiles            int
 	MaxChunkBytes       int64
 	MaxTotalBytes       int64
-	// CSP is the instance default Content-Security-Policy.
-	CSP           string
-	ReservedSlugs []string
-	// MaxInlineReadBytes is the largest text file read_file returns inline
-	// (default 1 MiB), and the largest file of any kind the file resource
-	// returns.
+	CSP                 string
+	ReservedSlugs       []string
+	// MaxInlineReadBytes is the largest text file read_file returns inline and the
+	// largest file of any kind the file resource returns.
 	MaxInlineReadBytes int64
-	// APIBaseURL is the REST API root, e.g. https://api.<base>/v1, used
-	// for read_file download links.
+	// APIBaseURL is the REST API root for download links, e.g. https://api.<base>/v1.
 	APIBaseURL string
-	// MCPURL is this server's URL, e.g. https://mcp.<base>/, which the
-	// skill gives as the address to connect to. Optional.
+	// MCPURL is the address the skill gives for connecting, e.g. https://mcp.<base>/; optional.
 	MCPURL string
 }
 
@@ -119,18 +101,17 @@ func (o Options) withDefaults(d Deps) Options {
 	return o
 }
 
-// builder holds what every per-request server shares: the dependencies,
-// the options, the generated texts, the preview page and the schemas.
+// builder holds what every per-request server shares.
 type builder struct {
 	d          Deps
 	o          Options
 	log        *slog.Logger
-	sdkLog     *slog.Logger // log filtered to warnings: the SDK logs every stateless connect at info
+	sdkLog     *slog.Logger // warnings only: the SDK logs every stateless connect at info
 	text       texts
 	schema     *mcp.SchemaCache
-	editSchema *jsonschema.Schema // edit_file's input, with oneOf for the two kinds of edit
-	preview    string             // the preview app's HTML
-	previewUI  map[string]any     // the preview resource's _meta.ui
+	editSchema *jsonschema.Schema
+	preview    string
+	previewUI  map[string]any
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -154,8 +135,7 @@ func newBuilder(d Deps, o Options) *builder {
 	}
 }
 
-// NewServer builds an MCP server whose handlers act as p. NewHandler calls
-// it once per request; tests use it with in-memory transports.
+// NewServer builds an MCP server whose handlers act as p.
 func NewServer(d Deps, o Options, p auth.Principal) *mcp.Server {
 	return newBuilder(d, o).server(p)
 }
@@ -181,9 +161,8 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 	return s
 }
 
-// NewHandler returns the HTTP handler for the MCP endpoint ("/" on the mcp
-// host): Origin check, MCP-Protocol-Version check, bearer authentication,
-// then the stateless Streamable HTTP transport with one server per request.
+// NewHandler returns the handler for the MCP endpoint. It checks Origin and
+// MCP-Protocol-Version before bearer authentication, then builds one server per request.
 func NewHandler(d Deps, o Options) http.Handler {
 	b := newBuilder(d, o)
 	stream := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
@@ -196,8 +175,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 		Stateless:    true,
 		JSONResponse: false,
 		Logger:       b.sdkLog,
-		// The Origin check below replaces the SDK's localhost protection,
-		// which would reject every request behind a local reverse proxy.
+		// checkOrigin replaces the SDK's localhost protection, which breaks local reverse proxies.
 		DisableLocalhostProtection: true,
 		MaxRequestBodyBytes:        b.bodyLimit(),
 	})
@@ -205,15 +183,14 @@ func NewHandler(d Deps, o Options) http.Handler {
 	return b.checkOrigin(checkProtocolVersion(authed))
 }
 
-// bodyLimit lets one request carry a whole version inline in base64 or one
-// full chunk, whichever is larger; the services enforce the real limits.
+// bodyLimit fits a whole version or a full chunk in base64, whichever is larger;
+// the services enforce the real limits.
 func (b *builder) bodyLimit() int64 {
 	n := max(b.o.MaxVersionBytes, b.o.MaxChunkBytes)
 	return (n+2)/3*4 + bodyOverhead
 }
 
-// checkOrigin rejects requests whose Origin header is present and is
-// neither the MCP host itself nor in AllowedOrigins (DNS rebinding defence).
+// checkOrigin rejects a foreign Origin header, defending against DNS rebinding.
 func (b *builder) checkOrigin(next http.Handler) http.Handler {
 	allowed := make([]string, 0, len(b.o.AllowedOrigins))
 	for _, o := range b.o.AllowedOrigins {
@@ -236,8 +213,6 @@ func normalizeOrigin(o string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(o), "/"))
 }
 
-// checkProtocolVersion rejects an MCP-Protocol-Version header naming a
-// version the SDK does not speak.
 func checkProtocolVersion(next http.Handler) http.Handler {
 	supported := mcp.SupportedProtocolVersions()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +225,6 @@ func checkProtocolVersion(next http.Handler) http.Handler {
 	})
 }
 
-// minLevel drops records below min.
 type minLevel struct {
 	min slog.Level
 	slog.Handler

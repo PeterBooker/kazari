@@ -18,15 +18,13 @@ var (
 	bossPrincipal  = auth.Principal{Handle: "boss", Admin: true, Scopes: []string{auth.ScopeAdmin}, Source: auth.SourceAPIKey, KeyID: "bosskey1"}
 )
 
-// tokens is an Authenticator over a fixed token table. "broken" fails with
-// a non-token error.
 var tokens = auth.AuthenticatorFunc(func(_ context.Context, token string) (auth.Principal, error) {
 	switch token {
 	case "alice-token":
 		return alicePrincipal, nil
 	case "narrow-boss-token":
-		// An admin-role key issued with member scopes only. A real
-		// authenticator leaves Admin false here; the guard must not rely on it.
+		// An admin with member scopes only. A real authenticator leaves Admin
+		// false here; the guard must not rely on it.
 		return auth.Principal{Handle: "boss", Admin: true, Scopes: []string{auth.ScopeRead}, Source: auth.SourceAPIKey, KeyID: "bossnarw"}, nil
 	case "boss-token":
 		return bossPrincipal, nil
@@ -36,7 +34,6 @@ var tokens = auth.AuthenticatorFunc(func(_ context.Context, token string) (auth.
 	return auth.Principal{}, auth.ErrInvalidToken
 })
 
-// echo is the protected handler: it reports the principal it sees.
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
@@ -49,8 +46,8 @@ var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 type result struct {
 	status    int
 	challenge string
-	code      string          // error code from the JSON body, if any
-	principal *auth.Principal // principal seen by the handler, on 200
+	code      string
+	principal *auth.Principal
 }
 
 func serve(t *testing.T, h http.Handler, authz string, ctx context.Context) result {
@@ -184,7 +181,6 @@ func TestRequireScope(t *testing.T) {
 		})
 	}
 
-	// Composed after RequireBearer, as the router wires it.
 	chained := auth.RequireBearer(tokens, auth.BearerOptions{})(auth.RequireScope(auth.ScopeRead)(echo))
 	if got := serve(t, chained, "Bearer alice-token", nil); got.status != 200 {
 		t.Errorf("bearer + scope: status %d", got.status)

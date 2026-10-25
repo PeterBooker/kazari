@@ -150,9 +150,6 @@ func TestValidateMetadata(t *testing.T) {
 	}
 }
 
-// Names, descriptions and labels are returned by every listing and shown
-// in terminals and pages: short, UTF-8, and without characters that
-// change how the text around them reads.
 func TestValidateText(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -248,7 +245,6 @@ func TestErrorIs(t *testing.T) {
 	}
 }
 
-// kazari.csp is sent verbatim as a header: only printable ASCII is allowed.
 func TestValidateMetadataCSP(t *testing.T) {
 	tests := []struct {
 		name string

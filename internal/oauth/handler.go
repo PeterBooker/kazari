@@ -19,13 +19,11 @@ const (
 	PathToken          = "/oauth/token"
 )
 
-// maxBodyBytes caps every request body.
 const maxBodyBytes = 64 << 10
 
-// Handler serves the metadata documents and the /oauth/ endpoints. Mount it
-// at the root of the MCP host, beside the MCP endpoint; it claims
-// /.well-known/oauth-authorization-server,
-// /.well-known/oauth-protected-resource (and paths below it) and /oauth/.
+// Handler serves the metadata documents and /oauth/. Mount it at the root of
+// the MCP host beside the MCP endpoint; it also claims paths below
+// PathResourceMeta.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET "+PathAuthServerMeta, cors(http.HandlerFunc(s.serveAuthServerMeta)))
@@ -44,8 +42,8 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
-// cors lets browser-based MCP clients read the JSON endpoints. None of them
-// use cookies, so any origin is fine.
+// cors lets browser-based MCP clients call the JSON endpoints; none use
+// cookies, so any origin is fine.
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -116,7 +114,6 @@ type registrationResponse struct {
 	ResponseTypes           []string `json:"response_types"`
 }
 
-// serveRegister is dynamic client registration for public clients.
 func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request) {
 	var m clientMetadata
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
@@ -166,8 +163,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// oauthError is the RFC 6749 section 5.2 / RFC 7591 section 3.2.2 error
-// body.
+// oauthError is the RFC 6749 section 5.2 / RFC 7591 section 3.2.2 body.
 type oauthError struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description,omitempty"`

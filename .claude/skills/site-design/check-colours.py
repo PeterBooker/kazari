@@ -13,7 +13,7 @@ from pathlib import Path
 
 MIN = 4.5
 GROUNDS = ["bg", "bg-soft", "surface", "well", "code-bg"]
-# Tokens used for text. --season-mark is decoration only and is not checked.
+# Text tokens; --season-mark is decoration only, so it is not checked.
 TEXT = ["text", "text-soft", "muted", "season", "ai", "matsu", "fuji", "kuchiba", "beni", "hl-comment", "hl-name"]
 
 

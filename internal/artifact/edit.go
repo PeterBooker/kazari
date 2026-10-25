@@ -14,16 +14,16 @@ import (
 	"unicode/utf8"
 )
 
-// MaxEdits is the largest number of edits one EditRequest may carry, and
-// MaxReplacements the most places one edit may change with ReplaceAll.
+// MaxEdits caps the edits in one request, MaxReplacements the places one
+// ReplaceAll edit may change.
 const (
 	MaxEdits        = 100
 	MaxReplacements = 10000
 )
 
-// How an edit matched, as reported in EditOutcome.Match. Text edits try
-// MatchExact first, then compare whole lines ignoring trailing whitespace,
-// then ignoring indentation (re-indenting the new text to fit).
+// EditOutcome.Match values. Text edits try an exact match, then whole lines
+// ignoring trailing whitespace, then ignoring indentation (re-indenting the
+// new text).
 const (
 	MatchExact              = "exact"
 	MatchTrailingWhitespace = "trailing_whitespace"
@@ -31,11 +31,8 @@ const (
 	MatchAnchor             = "anchor"
 )
 
-// Excerpts show excerptContext unchanged lines around an edit and at most
-// excerptMax lines of its new text, each clipped to excerptLineBytes.
-// Similarity looks at the first similarityBytes of a line. Whitespace-
-// tolerant and closest matches are tried for an old text of at most
-// maxFuzzyLines lines, which bounds their memory.
+// maxFuzzyLines caps the old text that whitespace-tolerant and closest
+// matching try, bounding their memory.
 const (
 	excerptContext   = 2
 	excerptMax       = 24
@@ -44,11 +41,10 @@ const (
 	maxFuzzyLines    = 2000
 )
 
-// Edit is one change to a text file. A text edit sets OldText: it is
-// replaced by NewText, and must match once unless ReplaceAll. An anchor
-// edit sets Start (and optionally End, default Start): the lines from Start
-// to End inclusive are replaced by NewText. Anchors ("12:3fa0") come from
-// AnchorLines; one request uses one kind of edit.
+// Edit is one change to a text file: NewText replaces OldText, which must
+// match once unless ReplaceAll, or the lines Start to End inclusive (End
+// defaults to Start). Anchors ("12:3fa0") come from AnchorLines; one request
+// uses one kind of edit.
 type Edit struct {
 	OldText    string
 	NewText    string
@@ -61,19 +57,16 @@ type Edit struct {
 type EditOutcome struct {
 	Match        string
 	Replacements int
-	// StartLine and EndLine are the 1-based lines the new text of the
-	// edit's first replacement occupies in the edited file. EndLine is
-	// StartLine-1 when the edit left no text.
+	// StartLine and EndLine are the 1-based lines of the first replacement's
+	// new text in the edited file; EndLine is StartLine-1 when it is empty.
 	StartLine int
 	EndLine   int
-	// Excerpt is those lines and a few around them, each prefixed with its
-	// anchor as AnchorLines writes it, so a follow-up anchor edit needs no
-	// fresh read. Long lines are clipped, with a note of what is left out.
+	// Excerpt is those lines and a few around them, anchored as by
+	// AnchorLines (long lines clipped) so an anchor edit needs no fresh read.
 	Excerpt string
 }
 
-// EditRequest changes one text file of an artifact's latest version and
-// publishes the result as a new version.
+// EditRequest edits one text file of the latest version into a new version.
 type EditRequest struct {
 	Slug            string
 	Path            string
@@ -83,14 +76,10 @@ type EditRequest struct {
 	KeepStale       bool // a new version normally clears stale_at/expires_at
 }
 
-// editAttempts bounds how often Edit re-applies the edits when another
-// publish lands between its read and its write and the caller gave no
-// ExpectedVersion.
 const editAttempts = 3
 
 // Edit applies req.Edits to a file of the latest version and publishes the
-// result as a new version, carrying every other file over as Update does.
-// It returns the new state, the new version and an outcome per edit.
+// result as a new version, returning an outcome per edit.
 func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (*Artifact, *Version, []EditOutcome, error) {
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, nil, err
@@ -102,7 +91,7 @@ func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (*Arti
 	for attempt := 1; ; attempt++ {
 		a, v, out, err := s.editOnce(ctx, actor, req, clean)
 		if CodeOf(err) == ErrVersionConflict.Code && req.ExpectedVersion == 0 && attempt < editAttempts {
-			continue // a publish raced the read; apply the edits to the newer content
+			continue // a publish raced the read: re-apply to the newer content
 		}
 		return a, v, out, err
 	}
@@ -143,7 +132,6 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	return got, v, out, nil
 }
 
-// readLatest returns the content of one text file of a's latest version.
 func (s *Service) readLatest(ctx context.Context, a *Artifact, p string) (string, File, error) {
 	v, err := s.store.GetVersion(ctx, a.Slug, a.LatestVersion)
 	if err != nil {
@@ -172,12 +160,10 @@ func (s *Service) readLatest(ctx context.Context, a *Artifact, p string) (string
 	return string(data), f, nil
 }
 
-// ApplyEdits applies edits to content, the text of the file name (used in
-// messages), and returns the edited text and an outcome per edit. Text
-// edits apply in order, each to the result of the one before. Anchor edits
-// all refer to content as given, must not overlap, and apply together. An
-// edit that would make the text larger than maxBytes fails with
-// ErrTooLarge before the text is built; 0 means no limit.
+// ApplyEdits edits content; name is only for messages. Text edits apply in
+// order, each to the previous result; anchor edits all refer to content as
+// given, must not overlap and apply together. A result over maxBytes is
+// ErrTooLarge; 0 means no limit.
 func ApplyEdits(name, content string, edits []Edit, maxBytes int64) (string, []EditOutcome, error) {
 	if len(edits) == 0 {
 		return "", nil, Errorf(ErrInvalidArgument, "at least one edit is required")
@@ -217,7 +203,6 @@ func ApplyEdits(name, content string, edits []Edit, maxBytes int64) (string, []E
 	if err != nil {
 		return "", nil, err
 	}
-	// Line numbers for every range end in one pass over the text.
 	offs := make([]int, 0, 2*len(out))
 	for _, r := range ed.ranges {
 		offs = append(offs, r[0], max(r[1]-1, r[0]))
@@ -235,19 +220,17 @@ func ApplyEdits(name, content string, edits []Edit, maxBytes int64) (string, []E
 	return ed.text, out, nil
 }
 
-// editor holds the text being edited and, per applied edit, the byte range
-// its (first) new text occupies, kept current as later edits move it.
+// editor keeps, per applied edit, the byte range of its first new text,
+// moved as later edits change the text.
 type editor struct {
 	name   string
 	text   string
-	max    int64 // largest text allowed; 0 = no limit
+	max    int64 // 0 = no limit
 	ranges [][2]int
 }
 
-// apply replaces every match in one pass (they are sorted and do not
-// overlap), moves the tracked ranges with the text, and returns the range
-// each match's new text occupies. It fails before building anything if the
-// result would exceed ed.max.
+// apply replaces ms, which must be sorted and not overlap, moves ed.ranges
+// with the text and returns where each new text landed.
 func (ed *editor) apply(ms []match) ([][2]int, error) {
 	size := int64(len(ed.text))
 	for _, m := range ms {
@@ -268,9 +251,9 @@ func (ed *editor) apply(ms []match) ([][2]int, error) {
 		prev = m.end
 	}
 	b.WriteString(ed.text[prev:])
-	// move maps an offset of the old text into the new one; an offset
-	// inside a replaced span goes to the start (or, for an end, the end) of
-	// its new text, so a range that overlaps a change grows to cover it.
+	// An offset inside a replaced span moves to the start (or, for an end,
+	// the end) of its new text, so a range overlapping a change grows to
+	// cover it.
 	move := func(off int, end bool) int {
 		k := sort.Search(len(moved), func(k int) bool { return moved[k][1] > off })
 		if k < len(moved) && moved[k][0] < off {
@@ -310,8 +293,6 @@ func (ed *editor) applyTexts(edits []Edit) ([]EditOutcome, error) {
 	return out, nil
 }
 
-// match is one place an edit's old text was found: the byte range to
-// replace and the text to put there.
 type match struct {
 	start, end int
 	repl       string
@@ -365,8 +346,7 @@ func (ed *editor) applyText(n int, e Edit) (EditOutcome, error) {
 	return EditOutcome{Match: kind, Replacements: len(matches)}, nil
 }
 
-// exactMatches finds the non-overlapping occurrences of old in text, up to
-// one more than MaxReplacements.
+// exactMatches stops at MaxReplacements+1, enough to detect the cap.
 func exactMatches(text, old, repl string) []match {
 	var out []match
 	for off := 0; len(out) <= MaxReplacements; {
@@ -381,11 +361,9 @@ func exactMatches(text, old, repl string) []match {
 	return out
 }
 
-// lineMatches finds the runs of whole lines of text that equal the lines of
-// e.OldText after norm, and returns them with e.NewText, re-indented to the
-// file's indentation when reindent is set and given the file's line breaks.
-// It is a Knuth-Morris-Pratt search over the lines, so a repetitive file
-// costs linear time, and it stops after MaxReplacements+1 runs.
+// lineMatches finds runs of whole lines equal to e.OldText's after norm. It
+// is a Knuth-Morris-Pratt search over lines, so a repetitive file stays
+// linear, and stops after MaxReplacements+1 runs.
 func lineMatches(text string, e Edit, norm func(string) string, reindent bool) []match {
 	oldLines := splitLines(e.OldText)
 	if len(oldLines) == 0 {
@@ -400,8 +378,7 @@ func lineMatches(text string, e Edit, norm func(string) string, reindent bool) [
 	if blank {
 		return nil // whitespace only: would match any blank run
 	}
-	// fail[i] is the length of the longest proper prefix of want[:i+1]
-	// that is also its suffix.
+	// fail is the KMP failure function of want.
 	fail := make([]int, len(want))
 	for i, k := 1, 0; i < len(want); i++ {
 		for k > 0 && want[i] != want[k] {
@@ -432,8 +409,7 @@ func lineMatches(text string, e Edit, norm func(string) string, reindent bool) [
 		k = 0 // matches do not overlap
 		first := starts[(i-n+1)%n]
 		crlf := endsCRLF(text, first)
-		// Replace up to the end of the last line's text, keeping its line
-		// break unless the old text included one.
+		// Keep the last line's break unless the old text included one.
 		end := start + len(strings.TrimSuffix(line, "\r"))
 		repl := e.NewText
 		if withNL {
@@ -454,16 +430,12 @@ func lineMatches(text string, e Edit, norm func(string) string, reindent bool) [
 
 func trimTrailing(s string) string { return strings.TrimRight(s, " \t\r") }
 
-// leading is the indentation of s.
 func leading(s string) string { return s[:len(s)-len(strings.TrimLeft(s, " \t"))] }
 
-// reindentText fits newText to the indentation of fileLines, the lines that
-// oldLines matched ignoring indentation. Its first line takes the file's
-// first line's indentation in place of the old text's. The later lines are
-// shifted by the difference between the old text's and the file's first
-// non-blank later line: text copied from a page often starts after its
-// first line's indentation, so the first line says nothing about the rest.
-// Without such a line, the first line's difference applies to all.
+// reindentText fits newText to fileLines, the lines oldLines matched. Its
+// first line takes the file's first indentation; later lines shift by the
+// difference at the first non-blank later line (else the first line's),
+// since text copied from a page often starts after its first indentation.
 func reindentText(newText string, oldLines, fileLines []string) string {
 	from0, to0 := leading(oldLines[0]), leading(fileLines[0])
 	from, to := from0, to0
@@ -489,14 +461,11 @@ func reindentText(newText string, oldLines, fileLines []string) string {
 	return strings.Join(lines, "\n")
 }
 
-// endsCRLF reports whether the line starting at off ends with "\r\n".
 func endsCRLF(text string, off int) bool {
 	k := strings.IndexByte(text[off:], '\n')
 	return k > 0 && text[off+k-1] == '\r'
 }
 
-// fitBreaks gives s the file's "\r\n" line breaks when crlf, unless s
-// already uses them.
 func fitBreaks(s string, crlf bool) string {
 	if !crlf || strings.Contains(s, "\r\n") {
 		return s
@@ -504,8 +473,6 @@ func fitBreaks(s string, crlf bool) string {
 	return strings.ReplaceAll(s, "\n", "\r\n")
 }
 
-// notFound builds the edit_not_found error, naming the most similar run of
-// lines so the caller can correct old_text or switch to anchors.
 func notFound(name string, n int, text, old string) error {
 	c := closest(text, old)
 	if c.score < 0.5 {
@@ -521,22 +488,19 @@ func notFound(name string, n int, text, old string) error {
 		Anchor(first, c.lines[0]), Anchor(last, c.lines[len(c.lines)-1]))
 }
 
-// closestCandidates is how many window starts closest scores in full for
-// each of the old text's first and last lines.
+// closestCandidates is how many windows closest scores in full for each of
+// the old text's first and last lines.
 const closestCandidates = 20
 
-// near is a run of lines similar to an old text: its 0-based first line,
-// its lines and a similarity from 0 to 1.
 type near struct {
-	start int
+	start int // 0-based line
 	lines []string
-	score float64
+	score float64 // 0 to 1
 }
 
-// closest finds the run of lines of text most similar to old. Scoring every
-// window would cost lines(text) x lines(old) comparisons, so one pass picks
-// the windows whose first or last line best matches old's, and a second
-// pass scores only those.
+// closest finds the run of lines most similar to old. Scoring every window
+// costs lines(text) x lines(old), so one pass picks the windows whose first
+// or last line matches best and a second scores only those.
 func closest(text, old string) near {
 	want := splitLines(old)
 	for i := range want {
@@ -559,7 +523,7 @@ func closest(text, old string) near {
 	windows := total - n + 1
 	firstGrams, lastGrams := bigrams(nil, want[first]), bigrams(nil, want[last])
 	best1, best2 := &top{}, &top{}
-	var g []uint16 // reused for every line
+	var g []uint16
 	eachLine(text, func(i, _ int, line string) bool {
 		g = bigrams(g[:0], similarityKey(line))
 		if w := i - first; w >= 0 && w < windows {
@@ -606,7 +570,6 @@ func closest(text, old string) near {
 	return best
 }
 
-// similarityKey is the part of a line similarity looks at.
 func similarityKey(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > similarityBytes {
@@ -635,8 +598,8 @@ func (t *top) add(w int, score float64) {
 
 func (t *top) starts() []int { return t.ws }
 
-// bigrams appends the sorted byte pairs of s to dst; a string shorter than
-// two bytes is its own single "pair".
+// bigrams appends the byte pairs of s to dst, sorted; a 1-byte s is its own
+// pair.
 func bigrams(dst []uint16, s string) []uint16 {
 	if len(s) < 2 {
 		if s == "" {
@@ -673,7 +636,6 @@ func dice(a, b []uint16) float64 {
 	return 2 * float64(common) / float64(len(a)+len(b))
 }
 
-// anchorEdit is an anchor edit resolved to the byte range it replaces.
 type anchorEdit struct {
 	idx        int // position in the request
 	from, to   int // 1-based lines
@@ -681,12 +643,10 @@ type anchorEdit struct {
 	repl       string
 }
 
-// lineSpan is one line of a text: where it starts, its content and where
-// the next line starts.
 type lineSpan struct {
 	start int
 	text  string
-	next  int
+	next  int // start of the next line
 }
 
 func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
@@ -711,7 +671,6 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 		}
 		ps[i] = parsed{from, to}
 	}
-	// One pass collects the anchored lines.
 	spans := map[int]lineSpan{}
 	total := 0
 	eachLine(ed.text, func(i, start int, line string) bool {
@@ -768,8 +727,7 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 	return out, nil
 }
 
-// checkAnchor checks anchor against the line it names. On a mismatch it
-// looks for the line within 50 lines, in case it moved.
+// checkAnchor, on a mismatch, looks within 50 lines for where the line moved.
 func (ed *editor) checkAnchor(n int, anchor string, spans map[int]lineSpan, total int) error {
 	line, hash, _ := ParseAnchor(anchor) // parsed before
 	if line > total {
@@ -805,7 +763,6 @@ func abs(n int) int {
 	return n
 }
 
-// clip shortens a line for an error message.
 func clip(s string) string {
 	const limit = 80
 	if len(s) <= limit {
@@ -818,13 +775,13 @@ func clip(s string) string {
 	return s[:cut] + "…"
 }
 
-// lineHash is the 4-hex-digit hash of one line without its line break.
+// lineHash hashes a line without its line break.
 func lineHash(line string) string {
 	var buf [4]byte
 	return string(appendHash(buf[:0], line))
 }
 
-// appendHash appends lineHash(line): 32-bit FNV-1a, folded to 16 bits.
+// appendHash appends line's 32-bit FNV-1a, folded to 16 bits, in hex.
 func appendHash(dst []byte, line string) []byte {
 	v := uint32(2166136261)
 	for i := 0; i < len(line); i++ {
@@ -847,8 +804,8 @@ func appendAnchor(dst []byte, n int, line string) []byte {
 	return appendHash(dst, line)
 }
 
-// ParseAnchor splits "12:3fa0" into its line number and hash. Anything
-// from a "|" on is ignored, so a whole line copied from AnchorLines works.
+// ParseAnchor splits "12:3fa0" into line number and hash, ignoring anything
+// from a "|" on so a whole line copied from AnchorLines works.
 func ParseAnchor(s string) (int, string, error) {
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "|")
 	num, hash, ok := strings.Cut(s, ":")
@@ -860,17 +817,15 @@ func ParseAnchor(s string) (int, string, error) {
 	return n, hash, nil
 }
 
-// AnchorLines prefixes every line of content with its anchor and "|", e.g.
-// "12:3fa0|<h1>Title</h1>". The line breaks are kept; a final line break
-// adds no extra line.
+// AnchorLines prefixes every line with its anchor and "|", e.g.
+// "12:3fa0|<h1>Title</h1>"; a final line break adds no extra line.
 func AnchorLines(content string) string {
 	var b strings.Builder
 	_ = WriteAnchored(&b, content) // a strings.Builder does not fail
 	return b.String()
 }
 
-// WriteAnchored writes AnchorLines(content) to w line by line, without
-// holding the result in memory.
+// WriteAnchored streams AnchorLines(content) to w.
 func WriteAnchored(w io.Writer, content string) error {
 	bw := bufio.NewWriter(w)
 	var prefix []byte
@@ -886,15 +841,14 @@ func WriteAnchored(w io.Writer, content string) error {
 	return bw.Flush() // reports the first write error
 }
 
-// excerpt renders the lines that the range r of text occupies, from
-// startLine to endLine, with excerptContext lines around them, anchored. It
-// reads only the lines it shows.
+// excerpt anchors the lines r spans, startLine to endLine, with context,
+// reading only the lines it shows.
 func excerpt(text string, r [2]int, startLine, endLine int) string {
 	if text == "" {
 		return ""
 	}
-	// The first and last byte of the new text, inside the text: an edit
-	// that removed the last lines starts past the end.
+	// a and e are the first and last byte of the new text; an edit that
+	// removed the last lines starts past the end.
 	a, aLine := r[0], startLine
 	if a >= len(text) {
 		a = len(text) - 1
@@ -949,9 +903,8 @@ func lineEndForward(text string, off, n int) int {
 	return end
 }
 
-// anchored renders lines numbered from first, each as anchor|content with
-// long content clipped. When skip is positive, that many lines in the
-// middle are replaced by a note.
+// anchored renders lines numbered from first; skip > 0 elides that many
+// lines in the middle.
 func anchored(lines []string, first, skip int) string {
 	var b strings.Builder
 	cut := -1
@@ -974,8 +927,8 @@ func anchored(lines []string, first, skip int) string {
 	return b.String()
 }
 
-// clipLine shortens a long line in an excerpt and says how much is left
-// out; its anchor still names the whole line.
+// clipLine notes the bytes it leaves out; the anchor still hashes the whole
+// line.
 func clipLine(s string) string {
 	if len(s) <= excerptLineBytes {
 		return s
@@ -987,9 +940,8 @@ func clipLine(s string) string {
 	return fmt.Sprintf("%s…[+%d bytes]", s[:cut], len(s)-cut)
 }
 
-// eachLine calls fn with the 0-based index, the start offset and the
-// content (without its line break) of every line of text, in order, until
-// fn returns false. A final line break does not start a new line.
+// eachLine calls fn for each line (0-based, without its break) until fn
+// returns false; a final line break starts no new line.
 func eachLine(text string, fn func(i, start int, line string) bool) {
 	for i, off := 0, 0; off < len(text); i++ {
 		end, next := len(text), len(text)
@@ -1003,8 +955,7 @@ func eachLine(text string, fn func(i, start int, line string) bool) {
 	}
 }
 
-// splitLines splits text at "\n"; a final line break does not start a new
-// line, so "a\nb\n" is two lines and "" is none.
+// splitLines counts "a\nb\n" as two lines and "" as none.
 func splitLines(text string) []string {
 	if text == "" {
 		return nil
@@ -1012,7 +963,7 @@ func splitLines(text string) []string {
 	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 }
 
-// lineCount is the number of lines splitLines would return.
+// lineCount is len(splitLines(s)).
 func lineCount(s string) int {
 	n := strings.Count(s, "\n")
 	if s != "" && !strings.HasSuffix(s, "\n") {
@@ -1021,12 +972,12 @@ func lineCount(s string) int {
 	return n
 }
 
-// lineAt returns the 1-based line holding byte offset off.
+// lineAt is 1-based.
 func lineAt(text string, off int) int {
 	return strings.Count(text[:min(off, len(text))], "\n") + 1
 }
 
-// linesAt is lineAt for many offsets in one pass over text.
+// linesAt is lineAt for many offsets in one pass.
 func linesAt(text string, offs []int) []int {
 	order := make([]int, len(offs))
 	for i := range order {

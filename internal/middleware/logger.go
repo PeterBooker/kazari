@@ -9,10 +9,7 @@ import (
 
 const maxUserAgent = 200
 
-// Logger writes one line per request after it completes: method, host,
-// path, status, bytes, duration_ms, request_id, ip and user_agent
-// (truncated to 200 bytes). 5xx responses are logged at Error, the rest at
-// Info.
+// Logger writes one line per completed request, at Error for 5xx.
 func Logger(l *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -40,7 +40,7 @@ var (
 	member   = auth.Principal{Handle: "alice", Scopes: auth.MemberScopes, Source: auth.SourceAPIKey}
 	readOnly = auth.Principal{Handle: "alice", Scopes: []string{auth.ScopeRead}, Source: auth.SourceAPIKey}
 
-	// pngBytes starts like a PNG and is not valid UTF-8.
+	// pngBytes is not valid UTF-8.
 	pngBytes = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R', 0xff, 0xfe}
 )
 
@@ -88,8 +88,6 @@ func newEnv(t *testing.T) *env {
 	}
 }
 
-// connect runs a server for p over in-memory transports and returns a
-// connected client session.
 func (e *env) connect(t *testing.T, p auth.Principal) *mcp.ClientSession {
 	t.Helper()
 	st, ct := mcp.NewInMemoryTransports()
@@ -125,7 +123,6 @@ func text(res *mcp.CallToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
-// ok calls a tool, requires success and decodes the structured result.
 func ok[Out any](t *testing.T, cs *mcp.ClientSession, name string, args any) (Out, *mcp.CallToolResult) {
 	t.Helper()
 	res := call(t, cs, name, args)
@@ -143,7 +140,6 @@ func ok[Out any](t *testing.T, cs *mcp.ClientSession, name string, args any) (Ou
 	return out, res
 }
 
-// fails calls a tool, requires a tool error and returns its text.
 func fails(t *testing.T, cs *mcp.ClientSession, name string, args any) string {
 	t.Helper()
 	res := call(t, cs, name, args)
@@ -392,7 +388,6 @@ func TestReadOnlyPrincipal(t *testing.T) {
 	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !strings.Contains(msg, `scope "artifacts:delete" required`) {
 		t.Errorf("delete as reader = %q", msg)
 	}
-	// Reading is allowed: the error is about the missing artifact.
 	if msg := fails(t, cs, "get_artifact", map[string]any{"slug": "demo"}); !strings.HasPrefix(msg, "not_found: ") {
 		t.Errorf("get as reader = %q", msg)
 	}
@@ -427,7 +422,6 @@ func TestChunkedPublish(t *testing.T) {
 	if !strings.HasPrefix(msg, "upload_offset_mismatch: ") || !strings.Contains(msg, "current=1048576") {
 		t.Fatalf("mismatch = %q", msg)
 	}
-	// A resend of the last chunk is acknowledged without writing.
 	if got, _ := ok[api.ChunkResult](t, cs, "upload_chunk", chunk(0, data[:n])); got.BytesReceived != n {
 		t.Fatalf("retry = %+v", got)
 	}
@@ -460,7 +454,6 @@ func TestChunkedPublish(t *testing.T) {
 		t.Errorf("index.html = %q", text(res))
 	}
 
-	// The upload was consumed by the publish.
 	if msg := fails(t, cs, "upload_chunk", chunk(0, data[:10])); !strings.HasPrefix(msg, "upload_not_found: ") {
 		t.Errorf("chunk after publish = %q", msg)
 	}
@@ -478,7 +471,6 @@ func TestUploadCleanedUpOnFailure(t *testing.T) {
 		t.Errorf("reuse after failure = %q", msg)
 	}
 
-	// A bad inline file also consumes the upload.
 	up, _ = ok[api.Upload](t, cs, "begin_upload", map[string]any{})
 	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "x"})
 	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x", "upload_id": up.UploadID,
@@ -561,8 +553,6 @@ func TestResourcesAndPrompt(t *testing.T) {
 	}
 }
 
-// Writes and deletes share the per-credential limiter with the user API;
-// reads are not limited.
 func TestWriteRateLimit(t *testing.T) {
 	e := newEnv(t)
 	now := time.Unix(0, 0)
@@ -579,14 +569,11 @@ func TestWriteRateLimit(t *testing.T) {
 		t.Errorf("delete over the limit = %q", msg)
 	}
 	ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{})
-	// Another credential has its own bucket.
 	other := member
 	other.KeyID = "efgh5678"
 	ok[api.Upload](t, e.connect(t, other), "begin_upload", map[string]any{})
 }
 
-// A panicking handler becomes an internal tool error instead of ending the
-// process: the SDK runs handlers outside net/http's recovery.
 func TestToolPanicRecovered(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Uploads = nil // begin_upload now dereferences a nil service
@@ -594,6 +581,5 @@ func TestToolPanicRecovered(t *testing.T) {
 	if msg := fails(t, cs, "begin_upload", map[string]any{}); !strings.HasPrefix(msg, "internal: internal error\nNext step: ") {
 		t.Errorf("panicking tool = %q", msg)
 	}
-	// The session still works.
 	ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{})
 }

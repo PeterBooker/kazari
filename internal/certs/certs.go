@@ -1,6 +1,5 @@
-// Package certs provides the TLS certificate sources Kazari can serve from:
-// a self-signed certificate for development, certificate files on disk
-// reloaded when they change, and ACME (DNS-01, wildcard) through CertMagic.
+// Package certs provides TLS certificate sources: self-signed for
+// development, files reloaded on change, and ACME DNS-01 through CertMagic.
 package certs
 
 import (
@@ -10,11 +9,8 @@ import (
 
 // Source supplies the serving certificate for TLS handshakes.
 type Source interface {
-	// GetCertificate returns the certificate for a handshake. It has the
-	// signature of tls.Config.GetCertificate.
 	GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error)
-	// Run performs background maintenance (renewal or file watching). It
-	// blocks until ctx is done and then returns nil.
+	// Run renews or watches the certificate until ctx is done.
 	Run(ctx context.Context) error
 }
 

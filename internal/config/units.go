@@ -8,13 +8,11 @@ import (
 	"time"
 )
 
-// Bytes is a size in bytes. In YAML and environment variables it is written
-// as a plain integer or an integer with a unit: B, KiB, MiB, GiB, TiB
-// (powers of 1024) or KB, MB, GB, TB (powers of 1000), case-insensitive,
-// with an optional space, e.g. "50MiB" or "2 GiB".
+// Bytes is a size in bytes, written as an integer with an optional
+// case-insensitive unit: B, KiB to TiB (powers of 1024) or KB to TB (powers
+// of 1000), e.g. "50MiB" or "2 GiB".
 type Bytes int64
 
-// Binary size units.
 const (
 	KiB Bytes = 1 << (10 * (iota + 1))
 	MiB
@@ -56,8 +54,7 @@ func ParseBytes(s string) (Bytes, error) {
 	return Bytes(n) * mult, nil
 }
 
-// String renders the size with the largest binary unit that divides it
-// exactly, e.g. "50MiB", "1536KiB" or "1000B".
+// String uses the largest binary unit that divides b exactly, e.g. "1536KiB".
 func (b Bytes) String() string {
 	for _, u := range []struct {
 		size   Bytes
@@ -96,8 +93,8 @@ const maxDays = math.MaxInt64 / int64(day)
 // "336h") with an optional leading whole-day component ("14d", "1d12h").
 type Duration time.Duration
 
-// ParseDuration parses a duration as time.ParseDuration does, also
-// accepting a leading number of whole days with the suffix "d".
+// ParseDuration is time.ParseDuration plus an optional leading whole-day
+// count ("14d").
 func ParseDuration(s string) (Duration, error) {
 	t := strings.TrimSpace(s)
 	var days time.Duration
@@ -137,8 +134,7 @@ func isDigits(s string) bool {
 // Std returns d as a time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
-// String renders d like time.Duration.String without trailing zero units:
-// "1h", "15m", "1h30m", "336h".
+// String is time.Duration.String without trailing zero units: "1h", not "1h0m0s".
 func (d Duration) String() string {
 	s := time.Duration(d).String()
 	if strings.HasSuffix(s, "m0s") {

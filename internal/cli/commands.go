@@ -16,7 +16,6 @@ import (
 	"kazari/internal/buildinfo"
 )
 
-// commandFunc runs one subcommand with the arguments after its name.
 type commandFunc func(r *runner, args []string) error
 
 func commands() map[string]commandFunc {
@@ -130,7 +129,6 @@ func cmdPublish(r *runner, args []string) error {
 	return r.printResult(res)
 }
 
-// removedFiles lists files of the latest version that are not in local.
 func removedFiles(cur *api.ArtifactDetail, local []string) []string {
 	var out []string
 	for _, v := range cur.Versions {
@@ -153,7 +151,6 @@ func nilIfEmpty(m map[string]string) map[string]string {
 	return m
 }
 
-// printResult prints a publish result: the URL, or the JSON.
 func (r *runner) printResult(res *api.PublishResult) error {
 	if r.g.json {
 		return r.printJSON(res)
@@ -269,7 +266,6 @@ func cmdGet(r *runner, args []string) error {
 	return nil
 }
 
-// printArtifact prints one artifact as aligned key: value lines.
 func (r *runner) printArtifact(a *api.Artifact) {
 	tw := newTable(r.stdout)
 	kv := func(k, v string) {
@@ -307,8 +303,6 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	tw.Flush()
 }
 
-// listOptions registers the list filter flags shared by list and admin
-// artifacts list.
 type listOptions struct {
 	params ListParams
 	meta   metaFlag
@@ -334,7 +328,6 @@ func addListFlags(r *runner, name, usage string) (*listOptions, func([]string) e
 	}
 }
 
-// fetchList pages through list when --all is set.
 func (r *runner) fetchList(o *listOptions, list func(ListParams) (*api.ArtifactList, error)) (*api.ArtifactList, error) {
 	p := o.params
 	out, err := list(p)
@@ -581,7 +574,6 @@ func cmdEdit(r *runner, args []string) error {
 	return nil
 }
 
-// readEdits reads a JSON array of edits from name, or stdin for "-".
 func (r *runner) readEdits(name string) ([]api.Edit, error) {
 	var (
 		data []byte
@@ -722,7 +714,6 @@ func cmdVersion(r *runner, args []string) error {
 	return nil
 }
 
-// fmtMap renders a map as sorted k=v pairs.
 func fmtMap(m map[string]string) string {
 	keys := slices.Sorted(maps.Keys(m))
 	parts := make([]string, len(keys))

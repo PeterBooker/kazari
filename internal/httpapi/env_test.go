@@ -37,19 +37,16 @@ var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
 const adminToken = "admin-secret"
 
-// config tweaks one env.
 type config struct {
 	artifact artifact.Options
 	upload   upload.Options
 	user     httpapi.UserOptions
 	admin    httpapi.AdminOptions
 	grants   httpapi.GrantStore
-	// writeRate is the per-credential write limit; 0 disables it.
+	// writeRate is per credential; 0 disables it.
 	writeRate int
 }
 
-// env is a user API and an admin API over real services, SQLite and a
-// blob directory, all in t.TempDir(), with a fixed clock.
 type env struct {
 	t       *testing.T
 	ctx     context.Context
@@ -59,7 +56,7 @@ type env struct {
 	jobRuns *atomic.Int32
 	userURL string
 	admURL  string
-	// alice is a member with every member scope.
+	// alice is the key of a member with every member scope.
 	alice string
 }
 
@@ -130,8 +127,7 @@ func newEnv(t *testing.T, c config) *env {
 	return e
 }
 
-// member creates a member and returns a key with scopes (nil = all member
-// scopes).
+// member returns a key with scopes, nil meaning every member scope.
 func (e *env) member(handle string, scopes []string) string {
 	e.t.Helper()
 	if _, err := e.users.GetUser(e.ctx, handle); err != nil {
@@ -146,7 +142,6 @@ func (e *env) member(handle string, scopes []string) string {
 	return key
 }
 
-// req describes one call.
 type req struct {
 	method, url, token string
 	body               io.Reader
@@ -177,8 +172,6 @@ func (e *env) send(r req) *http.Response {
 	return resp
 }
 
-// call sends in as JSON (nil sends no body), checks the status and decodes
-// the response into out when out is not nil.
 func (e *env) call(method, url, token string, in any, want int, out any, header ...string) *http.Response {
 	e.t.Helper()
 	var body io.Reader
@@ -198,7 +191,6 @@ func (e *env) call(method, url, token string, in any, want int, out any, header 
 	return e.expect(resp, want, out)
 }
 
-// expect checks the status and decodes the JSON body into out.
 func (e *env) expect(resp *http.Response, want int, out any) *http.Response {
 	e.t.Helper()
 	raw, err := io.ReadAll(resp.Body)
@@ -217,7 +209,6 @@ func (e *env) expect(resp *http.Response, want int, out any) *http.Response {
 	return resp
 }
 
-// apiErr expects an error response with status and code.
 func (e *env) apiErr(resp *http.Response, status int, code string) api.Error {
 	e.t.Helper()
 	var body api.ErrorResponse
@@ -231,7 +222,7 @@ func (e *env) apiErr(resp *http.Response, status int, code string) api.Error {
 	return body.Error
 }
 
-// with returns e reporting to t, for use inside subtests.
+// with reports to t, for use inside subtests.
 func (e *env) with(t *testing.T) *env {
 	c := *e
 	c.t = t
@@ -241,7 +232,6 @@ func (e *env) with(t *testing.T) *env {
 func (e *env) u(path string) string { return e.userURL + path }
 func (e *env) a(path string) string { return e.admURL + path }
 
-// create publishes slug with one index.html through the JSON API.
 func (e *env) create(token, slug string, extra ...func(*api.CreateArtifactRequest)) api.PublishResult {
 	e.t.Helper()
 	r := api.CreateArtifactRequest{Slug: slug, Files: []api.FileInput{{Path: "index.html", Content: "<h1>" + slug + "</h1>"}}}
@@ -253,7 +243,6 @@ func (e *env) create(token, slug string, extra ...func(*api.CreateArtifactReques
 	return out
 }
 
-// read fetches a file through the API and returns its body.
 func (e *env) read(token, slug, path string, version int) string {
 	e.t.Helper()
 	url := e.u("/v1/artifacts/" + slug + "/files/" + path)
@@ -272,7 +261,6 @@ func (e *env) read(token, slug, path string, version int) string {
 	return string(b)
 }
 
-// tarEntry is one entry of a test bundle.
 type tarEntry struct {
 	name   string
 	body   string
@@ -312,7 +300,6 @@ func tarGz(t *testing.T, entries ...tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// part is one multipart part.
 type part struct {
 	name string
 	body []byte

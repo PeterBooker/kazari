@@ -1,8 +1,6 @@
-// Package config loads, validates and describes Kazari's configuration: one
-// YAML file whose ${NAME} references are filled from the environment, an
-// optional .env file, and KAZARI_* environment overrides. Nothing else in
-// the code reads files or the environment for settings; internal/app passes
-// the loaded Config to every constructor.
+// Package config loads and validates Kazari's configuration from a YAML file
+// with ${NAME} references, an optional .env file and KAZARI_* overrides. No
+// other package reads settings from files or the environment.
 package config
 
 import (
@@ -23,8 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultCSP is the Content-Security-Policy sent with every artifact unless
-// serve.csp or a permitted per-artifact override replaces it.
+// DefaultCSP is the default serve.csp.
 const DefaultCSP = "default-src 'self'; " +
 	"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; " +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
@@ -33,25 +30,18 @@ const DefaultCSP = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"frame-ancestors 'none'"
 
-// defaultReservedSlugs are the hosts no artifact may claim.
 var defaultReservedSlugs = []string{
 	"api", "mcp", "admin", "www", "mail", "ns1", "ns2", "autoconfig", "autodiscover", "localhost",
 }
 
-// Config is the effective configuration. Field tags give the YAML key; the
-// environment variable for a key is KAZARI_ followed by the key's full path,
-// upper-cased and joined with underscores (see LoadWith).
+// Config is the effective configuration. The yaml tags also name the KAZARI_*
+// overrides, and fields tagged secret:"true" are redacted.
 type Config struct {
-	// BaseDomain is the domain every artifact is served under, as
-	// <slug>.<base_domain>. Lower-case, no scheme, port or trailing dot.
-	BaseDomain string `yaml:"base_domain"`
-	// DataDir holds kazari.db, blobs/, uploads/ and certmagic/.
-	DataDir string `yaml:"data_dir"`
-	// ExternalScheme is the scheme used when building public URLs:
-	// "https" (default) or "http" for a plain-HTTP development setup.
+	// Lower-case, without scheme, port or trailing dot.
+	BaseDomain     string `yaml:"base_domain"`
+	DataDir        string `yaml:"data_dir"`
 	ExternalScheme string `yaml:"external_scheme"`
-	// ExternalPort is appended to public URLs when non-zero and not the
-	// scheme's default port, e.g. 8080 for http://demo.localhost:8080/.
+	// 0 or the scheme's default port is left out of public URLs.
 	ExternalPort int `yaml:"external_port"`
 
 	Listen    Listen    `yaml:"listen"`
@@ -66,36 +56,28 @@ type Config struct {
 
 // Listen holds the public listener addresses.
 type Listen struct {
-	// HTTPS is the TLS listener address, e.g. ":443".
 	HTTPS string `yaml:"https"`
-	// HTTP is the plain listener: a redirect to HTTPS normally, the only
-	// listener in proxy mode. Empty disables it outside proxy mode.
+	// Redirects to HTTPS, or is the only listener in proxy mode; empty
+	// disables the redirect.
 	HTTP string `yaml:"http"`
-	// ProxyMode serves plain HTTP on HTTP and trusts X-Forwarded-* headers
-	// from a TLS-terminating reverse proxy.
+	// Plain HTTP only, trusting X-Forwarded-* from a TLS-terminating proxy.
 	ProxyMode bool `yaml:"proxy_mode"`
 }
 
 // TLS selects where certificates come from.
 type TLS struct {
-	// Mode is acme, files or self-signed.
-	Mode string `yaml:"mode"`
-	// Email is the ACME account contact.
-	Email string `yaml:"email"`
-	// CA is letsencrypt, letsencrypt-staging or an https ACME directory URL.
-	CA string `yaml:"ca"`
-	// DNSProvider is the libdns provider for DNS-01: cloudflare, route53 or hetzner.
+	Mode        string `yaml:"mode"`
+	Email       string `yaml:"email"`
+	CA          string `yaml:"ca"`
 	DNSProvider string `yaml:"dns_provider"`
-	// CertFile and KeyFile are PEM files for mode files.
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
-	DNS      DNS    `yaml:"dns"`
+	CertFile    string `yaml:"cert_file"`
+	KeyFile     string `yaml:"key_file"`
+	DNS         DNS    `yaml:"dns"`
 }
 
 // DNS holds the DNS provider credentials.
 type DNS struct {
-	// APIToken is the provider's API token (unused for route53, which reads
-	// the standard AWS credential chain).
+	// Unused for route53, which reads the AWS credential chain.
 	APIToken string `yaml:"api_token" secret:"true"`
 }
 
@@ -124,63 +106,48 @@ type Lifecycle struct {
 
 // Serve controls headers on served artifacts and which slugs are reserved.
 type Serve struct {
-	// CSP is the instance default Content-Security-Policy; empty sends none.
-	CSP string `yaml:"csp"`
-	// AllowCSPOverride lets kazari.csp metadata replace CSP per artifact.
-	AllowCSPOverride bool `yaml:"allow_csp_override"`
-	// ReservedSlugs may not be used as artifact slugs.
-	ReservedSlugs []string `yaml:"reserved_slugs"`
+	CSP              string   `yaml:"csp"` // empty sends none
+	AllowCSPOverride bool     `yaml:"allow_csp_override"`
+	ReservedSlugs    []string `yaml:"reserved_slugs"`
 }
 
 // Auth holds the write policy, the admin token and the optional identity provider.
 type Auth struct {
-	// WritePolicy is shared (any writer may update any artifact) or owner.
 	WritePolicy string `yaml:"write_policy"`
-	// AdminToken is accepted as a bearer token on the admin host.
-	AdminToken string `yaml:"admin_token" secret:"true"`
-	// OIDC is nil when the auth.oidc mapping is absent, which falls back
-	// to API-key sign-in on the OAuth consent page.
+	AdminToken  string `yaml:"admin_token" secret:"true"`
+	// Nil when auth.oidc is absent: sign-in falls back to API keys.
 	OIDC *OIDC `yaml:"oidc"`
 }
 
 // OIDC configures the upstream OpenID Connect provider users sign in with.
 type OIDC struct {
-	// Issuer is the provider's https issuer URL, used for discovery.
-	Issuer       string `yaml:"issuer"`
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret" secret:"true"`
-	// AllowedDomains are the verified email domains that may sign in.
+	Issuer         string   `yaml:"issuer"`
+	ClientID       string   `yaml:"client_id"`
+	ClientSecret   string   `yaml:"client_secret" secret:"true"`
 	AllowedDomains []string `yaml:"allowed_domains"`
-	// AutoProvision creates a member on first sign-in from an allowed
-	// domain. Defaults to true when the mapping is present.
-	AutoProvision bool `yaml:"auto_provision"`
-	// AdminEmails are provisioned with the admin role.
-	AdminEmails []string `yaml:"admin_emails"`
+	AutoProvision  bool     `yaml:"auto_provision"` // true by default once auth.oidc is present
+	AdminEmails    []string `yaml:"admin_emails"`
 }
 
-// applyDefaults fills the defaults that apply once the auth.oidc mapping exists.
+// applyDefaults sets the defaults of a present auth.oidc mapping.
 func (o *OIDC) applyDefaults() {
 	o.AutoProvision = true
 }
 
 // Admin configures the admin host.
 type Admin struct {
-	// Listen is an optional listener for the admin host only, e.g.
-	// "127.0.0.1:9443". When it is set, the public listener no longer
-	// serves the admin host.
+	// When set, the admin host is served only on this listener.
 	Listen string `yaml:"listen"`
 }
 
 // Log configures the slog logger.
 type Log struct {
-	// Level is debug, info, warn or error.
-	Level string `yaml:"level"`
-	// Format is text or json.
+	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
 }
 
-// Default returns the configuration used before the file and environment
-// are applied. BaseDomain and DataDir are empty and must be set.
+// Default returns the built-in defaults; BaseDomain and DataDir are left
+// empty and must be set.
 func Default() Config {
 	return Config{
 		ExternalScheme: "https",
@@ -227,17 +194,12 @@ func Default() Config {
 	}
 }
 
-// DefaultEnvFile is the dotenv file Load reads when no env file is named
-// and the file exists in the working directory.
+// DefaultEnvFile is the dotenv file Load reads by default.
 const DefaultEnvFile = ".env"
 
-// Load reads the configuration from path (skipped when empty), with ${NAME}
-// references and KAZARI_* overrides resolved from the process environment
-// and a dotenv file, then validates it.
-//
-// The dotenv file is envFile when it is not empty, and then it must exist;
-// otherwise it is ./.env (DefaultEnvFile) if that file exists. Variables in
-// the process environment always win over the dotenv file (see EnvLookup).
+// Load is LoadWith over the process environment and a dotenv file: envFile,
+// which must exist, or else DefaultEnvFile if it exists. The process
+// environment wins over the dotenv file.
 func Load(path, envFile string) (Config, error) {
 	dotenv, err := loadDotenv(envFile)
 	if err != nil {
@@ -246,8 +208,6 @@ func Load(path, envFile string) (Config, error) {
 	return LoadWith(path, EnvLookup(dotenv))
 }
 
-// loadDotenv reads envFile, or DefaultEnvFile when envFile is empty and
-// DefaultEnvFile exists.
 func loadDotenv(envFile string) (map[string]string, error) {
 	if envFile != "" {
 		return LoadEnvFile(envFile)
@@ -259,20 +219,11 @@ func loadDotenv(envFile string) (map[string]string, error) {
 	return m, err
 }
 
-// LoadWith is Load with the variable lookup supplied by the caller instead
-// of the process environment and dotenv file.
-//
-// The order is: Default, then the YAML file at path if path is not empty,
-// then overrides, then Validate. A missing file is an error satisfying
-// fs.ErrNotExist. ${NAME} and ${NAME:-default} references in the file's
-// scalar values are replaced through lookup (see expandNode); decoding is
-// strict, so an unknown key is an error naming it.
-//
-// Every leaf key has an override named KAZARI_ plus its YAML path
-// upper-cased with "." replaced by "_", for example KAZARI_LISTEN_PROXY_MODE
-// for listen.proxy_mode and KAZARI_TLS_DNS_API_TOKEN for tls.dns.api_token.
-// Overrides are read through lookup too. Lists are comma-separated. Setting
-// any KAZARI_AUTH_OIDC_* variable enables the auth.oidc mapping.
+// LoadWith applies, in order, Default, the YAML file at path (skipped when
+// empty; a missing file satisfies fs.ErrNotExist; unknown keys are errors),
+// the KAZARI_<PATH> overrides (lists comma-separated; any KAZARI_AUTH_OIDC_*
+// enables auth.oidc), then Validate. lookup resolves both ${NAME}
+// references and overrides.
 func LoadWith(path string, lookup func(key string) (string, bool)) (Config, error) {
 	cfg := Default()
 	if path != "" {
@@ -289,10 +240,6 @@ func LoadWith(path string, lookup func(key string) (string, bool)) (Config, erro
 	return cfg, nil
 }
 
-// decodeFile decodes the YAML file at path over cfg: it parses the file,
-// checks its keys, expands ${NAME} references in scalar values (see
-// expandNode), re-encodes the result and decodes that strictly, rejecting
-// unknown keys.
 func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -315,8 +262,8 @@ func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) er
 	if err != nil {
 		return fmt.Errorf("config: %s: %w", path, err)
 	}
-	// Decode into a pre-filled OIDC so its defaults survive a mapping that
-	// omits them, then drop it again if the mapping was absent or null.
+	// Pre-filled so its defaults survive a mapping that omits them; dropped
+	// below if the mapping is absent or null.
 	oidc := &OIDC{}
 	oidc.applyDefaults()
 	cfg.Auth.OIDC = oidc
@@ -339,11 +286,10 @@ func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) er
 	return nil
 }
 
-// yamlLine matches the "line N: " prefix of a yaml.TypeError entry.
 var yamlLine = regexp.MustCompile(`^line \d+: `)
 
-// withoutLines drops the line numbers from a decoding error: they refer to
-// the re-encoded document, not to the file.
+// withoutLines drops line numbers from a decoding error: they refer to the
+// re-encoded document, not to the file.
 func withoutLines(err error) error {
 	var te *yaml.TypeError
 	if !errors.As(err, &te) {
@@ -376,9 +322,8 @@ func (c Config) Host(sub string) string {
 	return sub + "." + c.BaseDomain
 }
 
-// ExternalURL returns the public root URL of a host, such as
-// https://demo.art.example.com/ or, with external_scheme = "http" and
-// external_port = 8080, http://demo.localhost:8080/.
+// ExternalURL returns the public root URL of host sub, ending in "/", such as
+// http://demo.localhost:8080/.
 func (c Config) ExternalURL(sub string) string {
 	scheme := c.ExternalScheme
 	if scheme == "" {
@@ -416,9 +361,8 @@ func (c Config) Logger(w io.Writer) *slog.Logger {
 }
 
 // Redacted returns the configuration as a JSON-friendly map keyed like the
-// YAML file, with secrets (tls.dns.api_token, auth.admin_token,
-// auth.oidc.client_secret) replaced by "***" when set. Sizes and durations
-// are rendered as strings ("50MiB", "336h"); a missing auth.oidc is nil.
+// YAML file, with set secrets as "***", sizes and durations as strings
+// ("50MiB", "336h") and a missing auth.oidc as nil.
 func (c Config) Redacted() map[string]any {
 	return redactStruct(reflect.ValueOf(c))
 }

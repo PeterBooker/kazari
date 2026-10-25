@@ -8,18 +8,13 @@ import (
 	"kazari/internal/artifact"
 )
 
-// maxVersionDigits bounds the version suffix so it always fits in an int.
+// maxVersionDigits keeps the version within an int.
 const maxVersionDigits = 9
 
-// ParseHost extracts the artifact slug and pinned version from a request
-// host of the form <slug>.<base> or <slug>--v<N>.<base>. The host is
-// lower-cased and its port stripped. version is 0 for the latest host.
-//
-// ok is false for anything that is not exactly one plausible slug label in
-// front of base: the apex, deeper subdomains, another domain, a version of
-// zero or with leading zeros, and labels with a stray "--". Reserved hosts
-// such as api.<base> parse like any other label; the host router sends them
-// elsewhere before this is called.
+// ParseHost parses <slug>.<base> or <slug>--v<N>.<base>, ignoring case and
+// port; version is 0 for the latest host. ok is false unless host is one
+// valid slug label under base with a canonical version. Reserved labels such
+// as api parse like any other.
 func ParseHost(host, base string) (slug string, version int, ok bool) {
 	host = strings.ToLower(host)
 	base = strings.TrimSuffix(strings.ToLower(base), ".")
@@ -54,8 +49,8 @@ func ParseHost(host, base string) (slug string, version int, ok bool) {
 			slug, version = label[:i], n
 		}
 	}
-	// ValidateSlug rejects any "--" left in the slug, so a label with a
-	// stray separator or a non-numeric "--v" suffix fails here.
+	// ValidateSlug rejects any "--" left, so stray separators and
+	// non-numeric "--v" suffixes fail here.
 	if artifact.ValidateSlug(slug, nil) != nil {
 		return "", 0, false
 	}

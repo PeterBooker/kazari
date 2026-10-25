@@ -22,8 +22,8 @@ type Metrics struct {
 	jobTime  *prometheus.HistogramVec
 }
 
-// New registers the collectors on a fresh registry, including the Go and
-// process collectors.
+// New registers the collectors, Go and process ones included, on a fresh
+// registry.
 func New() *Metrics {
 	m := &Metrics{
 		reg: prometheus.NewRegistry(),
@@ -66,8 +66,7 @@ func (m *Metrics) Handler() http.Handler {
 // Registry exposes the registry for additional collectors.
 func (m *Metrics) Registry() *prometheus.Registry { return m.reg }
 
-// HTTP returns a middleware that records requests under the given surface
-// name ("site", "api", "mcp", "admin").
+// HTTP returns a middleware that records requests under surface.
 func (m *Metrics) HTTP(surface string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,9 +83,8 @@ func (m *Metrics) HTTP(surface string) func(http.Handler) http.Handler {
 	}
 }
 
-// methodLabel maps a request method to a fixed set of label values. net/http
-// accepts any token as a method, so using it as given would let a client
-// create a new series, which is never freed, with every request.
+// methodLabel bounds the label values: net/http accepts any token as a
+// method, and each new one would create a series that is never freed.
 func methodLabel(method string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
@@ -131,7 +129,6 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Flush supports streaming handlers.
 func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

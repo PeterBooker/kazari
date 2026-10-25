@@ -1,8 +1,5 @@
 @charset "UTF-8";
-/* Kazari site, "Ma" design: the rules are in .claude/skills/site-design/SKILL.md.
-   Plain CSS run through Hugo as a template (font URLs, the 24 solar terms from data/sekki.toml).
-   Colours are tokens with light-dark(); data-theme on <html> forces one scheme, and data-sekki on
-   <html> picks the solar term whose colour becomes --season. */
+/* Rules: .claude/skills/site-design/SKILL.md. A Hugo template: font URLs and data/sekki.toml fill it. */
 
 @font-face {
   font-family: "Manrope";
@@ -39,34 +36,33 @@
 :root {
   color-scheme: light dark;
 
-  /* neutrals: a grey with a little green in it; light is Ma, dark is Yūgure (Ma at dusk) */
   --bg: light-dark(#edefea, #191c1a);
-  --bg-soft: light-dark(#f6f7f3, #1f2320);    /* alternate landing bands */
-  --surface: light-dark(#f6f7f3, #1f2320);    /* boxes: hosts, prompt demo, search */
-  --well: light-dark(#e6e9e2, #282d29);       /* the user's chat bubble, hover fills */
+  --bg-soft: light-dark(#f6f7f3, #1f2320);
+  --surface: light-dark(#f6f7f3, #1f2320);
+  --well: light-dark(#e6e9e2, #282d29);
   --text: light-dark(#222621, #e4e7e1);
   --text-soft: light-dark(#50574d, #a9b0a5);
   --muted: light-dark(#5e655b, #8e968a);
   --border: light-dark(#c9cfc4, #2e332f);
   --border-strong: light-dark(#adb5a8, #444b45);
-  --box-border: light-dark(transparent, #2e332f); /* light boxes are fills, dark ones are outlines */
+  --box-border: light-dark(transparent, #2e332f); /* light boxes are fills, dark ones outlines */
   --code-bg: light-dark(#e4e7df, #141715);
-  --ghost: light-dark(#dee2d9, #232724);      /* the large 飾り behind the hero: decoration only */
-  --rest: light-dark(#c9cfc4, #363c37);       /* the season strip's bars at rest */
+  --ghost: light-dark(#dee2d9, #232724);      /* decoration only */
+  --rest: light-dark(#c9cfc4, #363c37);
   --shadow-lg: light-dark(0 18px 40px -18px rgb(30 40 25 / 28%), 0 18px 40px -18px rgb(0 0 0 / 70%));
 
-  /* the season (rindō, gentian, until the data-sekki blocks below take over) */
-  --season: light-dark(#5b57a3, #a5a4f7);       /* text, links, step numbers */
-  --season-mark: light-dark(#5b57a3, #a5a4f7);  /* decoration only: logo wedge, dots, the current bar */
+  /* fallback until a data-sekki block applies */
+  --season: light-dark(#5b57a3, #a5a4f7);
+  --season-mark: light-dark(#5b57a3, #a5a4f7);  /* decoration only */
   --season-soft: color-mix(in srgb, var(--season) 10%, var(--surface));
   --sekki-turn: 17;
 
-  /* fixed colours with traditional names: callouts and syntax, never seasonal */
-  --ai: light-dark(#3b5a8f, #9db6e3);       /* indigo: note, keywords */
-  --matsu: light-dark(#3e6b4f, #93c7a3);    /* pine: tip, strings */
-  --fuji: light-dark(#6b5aa6, #b3a6ec);     /* wisteria: important, tags */
-  --kuchiba: light-dark(#8a5a12, #e0a768);  /* fallen leaf: warning, numbers */
-  --beni: light-dark(#b0283f, #f08c9a);     /* safflower red: caution */
+  /* never seasonal */
+  --ai: light-dark(#3b5a8f, #9db6e3);
+  --matsu: light-dark(#3e6b4f, #93c7a3);
+  --fuji: light-dark(#6b5aa6, #b3a6ec);
+  --kuchiba: light-dark(#8a5a12, #e0a768);
+  --beni: light-dark(#b0283f, #f08c9a);
   --hl-comment: light-dark(#5e675b, #8e968a);
   --hl-name: light-dark(#8a3f6a, #e09ac6);
 
@@ -80,7 +76,7 @@
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 
-/* The 24 solar terms. --sekki-* strings feed the season labels through ::before { content }. */
+/* The 24 solar terms: the colour scripts split the file at this comment. */
 {{- $terms := hugo.Data.sekki.terms }}
 {{- range $i, $t := $terms }}
 {{- $next := index $terms (mod (add $i 1) (len $terms)) }}
@@ -97,8 +93,6 @@
 .sekki-name::before { content: var(--sekki-name, "Frost descends"); }
 .sekki-dates::before { content: var(--sekki-dates, ""); }
 .sekki-note::before { content: var(--sekki-note, ""); }
-
-/* ---------- base ---------- */
 
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: calc(var(--header-h) + 1rem); }
@@ -134,11 +128,9 @@ p, li { text-wrap: pretty; }
 .skip-link:focus { top: .75rem; }
 .container { max-width: 1240px; margin: 0 auto; padding: 0 var(--gutter); }
 
-/* A small label in mono, for audiences, sidebar groups and footer columns. */
 .kicker, .nav-group h2, .docs-toc h2, .footer-links h2 {
   margin: 0; font: 400 .78rem/1.4 var(--font-mono); letter-spacing: .04em; color: var(--muted);
 }
-/* The Japanese word over a section heading; the English heading carries the meaning. */
 .ja-label { margin: 0 0 1rem; font: 400 .95rem/1.4 var(--font-ja); letter-spacing: .3em; color: var(--muted); }
 
 .button {
@@ -166,8 +158,6 @@ p, li { text-wrap: pretty; }
 }
 .card-link .icon { width: 1rem; height: 1rem; transition: transform .15s; }
 .card-link:hover .icon { transform: translateX(3px); }
-
-/* ---------- header ---------- */
 
 .site-header {
   position: sticky; top: 0; z-index: 50;
@@ -226,9 +216,6 @@ p, li { text-wrap: pretty; }
 :root[data-theme="dark"] .theme-icon-light { display: none; }
 :root[data-theme="dark"] .theme-icon-dark { display: inline; }
 
-/* ---------- landing ---------- */
-
-/* Headings are light, with the end of the phrase in <b> at a medium weight. */
 .hero h1, .section-head h2, .cta-band h2, .not-found h1 { margin: 0; font-weight: 300; }
 .hero h1 b, .section-head h2 b, .cta-band h2 b, .not-found h1 b { font-weight: 500; }
 
@@ -252,8 +239,6 @@ p, li { text-wrap: pretty; }
   font: 400 .8rem/1.5 var(--font-mono); letter-spacing: .02em; color: var(--muted);
 }
 
-/* The year as 24 bars, one per solar term: the current one tall and in the season's colour, the
-   others shorter the further away they are. --sekki-turn and the data-sekki blocks drive it. */
 .strip-band { padding: 1.5rem 0 6.5rem; }
 .strip { margin: 0; overflow-x: clip; }
 .strip figcaption {
@@ -270,6 +255,7 @@ p, li { text-wrap: pretty; }
   margin: 0; padding: 0; list-style: none;
 }
 .strip-bars li {
+  /* shorter with circular distance from the current term */
   --a: max(var(--i) - var(--sekki-turn), var(--sekki-turn) - var(--i));
   --h: max(1rem, 2.75rem - min(var(--a), 24 - var(--a)) * .25rem);
   display: flex; flex-direction: column; align-items: center; gap: .65rem; min-width: 0;
@@ -295,7 +281,6 @@ p, li { text-wrap: pretty; }
 .split .section-head > p { margin: 0 0 1rem; max-width: 30em; }
 .section-head .card-link { margin-top: .75rem; }
 
-/* Columns divided by hairlines under one rule across the top. */
 .ruled {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border);
@@ -397,8 +382,6 @@ p, li { text-wrap: pretty; }
 .not-found .code-404 { margin: 0 0 .75rem; font: 500 .9rem var(--font-mono); color: var(--season); }
 .not-found .cta-row { margin-top: 2rem; }
 
-/* ---------- footer ---------- */
-
 .site-footer { border-top: 1px solid var(--border); padding: 3.5rem 0 4rem; font-size: .92rem; }
 .footer-inner { display: grid; grid-template-columns: 1.2fr 2fr; gap: 3rem; }
 .footer-brand p { max-width: 24rem; margin: 1.1rem 0 0; color: var(--muted); }
@@ -411,8 +394,6 @@ p, li { text-wrap: pretty; }
 .footer-links h2 { margin-bottom: .8rem; }
 .footer-links a { display: block; padding: .2rem 0; color: var(--text-soft); text-decoration: none; }
 .footer-links a:hover { color: var(--text); }
-
-/* ---------- code ---------- */
 
 .code { position: relative; margin: 1.25rem 0; }
 .code pre, .prose pre {
@@ -441,8 +422,6 @@ p, li { text-wrap: pretty; }
 .chroma .na, .chroma .m, .chroma .mi, .chroma .mf, .chroma .mh, .chroma .il, .chroma .mo, .chroma .l, .chroma .ld { color: var(--kuchiba); }
 .chroma .err { color: inherit; }
 .chroma .gh, .chroma .gu { font-weight: 500; }
-
-/* ---------- docs layout ---------- */
 
 .docs-layout {
   display: grid; grid-template-columns: 240px minmax(0, 1fr) 210px; gap: 3.5rem;
@@ -501,8 +480,6 @@ p, li { text-wrap: pretty; }
 .pager span { font: 400 .75rem var(--font-mono); letter-spacing: .04em; color: var(--muted); }
 .pager-next { grid-column: 2; text-align: right; }
 
-/* ---------- prose ---------- */
-
 .prose { position: relative; max-width: 46rem; font-size: 1rem; }
 .crumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .8rem; margin: 0 0 1rem; font: 400 .8rem var(--font-mono); letter-spacing: .04em; color: var(--muted); }
 .crumb [lang="ja"] { font: 500 .95rem var(--font-ja); letter-spacing: .25em; color: var(--season); }
@@ -548,7 +525,7 @@ p, li { text-wrap: pretty; }
 .prose td code { white-space: nowrap; }
 .prose td:not(:first-child) code { white-space: normal; }
 
-/* GitHub alerts; each kind keeps one fixed colour, so a warning never takes the season's. */
+/* Fixed colours, so a warning never takes the season's. */
 .callout { --c: var(--ai); margin: 1.5rem 0; padding: 1rem 1.3rem 1.1rem; border-radius: 14px; background: color-mix(in srgb, var(--c) 8%, var(--surface)); }
 .callout > :last-child { margin-bottom: 0; }
 .callout-title { display: flex; align-items: baseline; gap: .55rem; margin: 0 0 .35rem !important; font-weight: 600; font-size: .92rem; color: var(--c); }
@@ -567,8 +544,6 @@ p, li { text-wrap: pretty; }
 .paths a:hover { border-color: var(--border-strong); }
 .paths strong { font-weight: 600; font-size: 1.05rem; line-height: 1.35; }
 .paths span { color: var(--text-soft); font-size: .93rem; line-height: 1.55; }
-
-/* ---------- search ---------- */
 
 .search-dialog {
   width: min(640px, calc(100vw - 2rem)); max-height: min(560px, calc(100vh - 6rem));
@@ -592,8 +567,6 @@ p, li { text-wrap: pretty; }
 .search-results .r-snippet { font-size: .85rem; color: var(--text-soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .search-results mark { background: none; color: var(--season); font-weight: 600; }
 .search-empty { margin: 0; padding: 1.25rem 1.25rem 1.5rem; color: var(--muted); font-size: .92rem; }
-
-/* ---------- responsive ---------- */
 
 @media (max-width: 1240px) {
   .docs-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 3rem; }

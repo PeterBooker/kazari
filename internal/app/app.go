@@ -1,6 +1,5 @@
-// Package app wires every Kazari component from a config.Config, routes the
-// public hosts to their handlers, runs the listeners, the scheduler and the
-// certificate source, and shuts them down gracefully.
+// Package app wires every Kazari component from a config.Config and runs the
+// listeners, the scheduler and the certificate source.
 package app
 
 import (
@@ -35,24 +34,19 @@ import (
 	"kazari/internal/user"
 )
 
-// Fixed job intervals; sweep and gc come from the lifecycle config.
 const (
 	uploadsExpireEvery = 10 * time.Minute
 	oauthCleanupEvery  = time.Hour
-	staleTempAge       = time.Hour // temp files older than this are crash leftovers
+	staleTempAge       = time.Hour // older temp files are crash leftovers
 )
 
 // Options are the process-level inputs that do not belong in the config.
 type Options struct {
-	// Now is the clock of every service and the scheduler; nil means
-	// time.Now. Tests pass a fake clock to drive the lifecycle.
-	Now func() time.Time
-	// Logger receives every log line; nil means slog.Default().
-	Logger *slog.Logger
+	Now    func() time.Time // nil means time.Now
+	Logger *slog.Logger     // nil means slog.Default()
 }
 
-// Addrs are the bound listener addresses. A field is empty when that
-// listener is not configured.
+// Addrs are the bound listener addresses, empty for one not configured.
 type Addrs struct {
 	HTTPS string
 	HTTP  string
@@ -63,13 +57,13 @@ type Addrs struct {
 type App struct {
 	cfg  config.Config
 	log  *slog.Logger
-	mode string // acme | files | self-signed | proxy
+	mode string
 
 	db      *sqlite.DB
 	sched   *scheduler.Scheduler
 	certs   certs.Source // nil in proxy mode
 	router  http.Handler
-	admin   http.Handler // the admin host chain: on cfg.Admin.Listen when set, else on the router
+	admin   http.Handler // on cfg.Admin.Listen when set, else on the router
 	oidcOn  bool
 	started chan struct{}
 
@@ -81,9 +75,7 @@ type App struct {
 }
 
 // New validates cfg, creates the data directories, opens the database and
-// builds every service and handler. It fails on a bad config, an unusable
-// data directory or database, a failed OIDC discovery or a certificate
-// source that cannot be set up. Nothing listens until Run.
+// runs OIDC discovery; nothing listens until Run.
 func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("app: invalid config:\n%w", err)
@@ -115,7 +107,6 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	return a, nil
 }
 
-// build constructs the service graph over the open database.
 func (a *App) build(ctx context.Context, now func() time.Time) error {
 	cfg, log := a.cfg, a.log
 
@@ -155,8 +146,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		userOpts.AutoProvision = o.AutoProvision
 		userOpts.AdminEmails = o.AdminEmails
 	}
-	// Disabling a user ends their OAuth grants, so enabling them again does
-	// not bring the grants back. oauthSvc is set below, before any request.
+	// oauthSvc is set below, before any request.
 	var oauthSvc *oauth.Service
 	userOpts.OnDisable = func(ctx context.Context, handle string) error {
 		return oauthSvc.RevokeAllForUser(ctx, handle)
@@ -204,7 +194,6 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			if n > 0 {
 				log.InfoContext(ctx, "gc", "blobs_deleted", n)
 			}
-			// Temporary files a crash left in the blob and spill directories.
 			cutoff := now().Add(-staleTempAge)
 			puts, perr := blobs.RemoveStaleTemp(cutoff)
 			spills, serr := httpapi.RemoveStaleSpills(tempDir(cfg), cutoff)
@@ -284,11 +273,10 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	a.admin = a.surface(m, "admin", true, adminH)
 	publicAdmin := a.admin
 	if cfg.Admin.Listen != "" {
-		// The admin host is served on its own listener only.
 		publicAdmin = a.surface(m, "admin", true, http.NotFoundHandler())
 	}
-	// The OAuth endpoints and the MCP endpoint share one per-IP budget,
-	// applied before authentication, like the user API's.
+	// One per-IP budget for OAuth and MCP, applied before authentication
+	// like the user API's.
 	mcpLimit := ratelimit.Middleware(ratelimit.New(ratelimit.DefaultIPPerMinute, now), ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
 		api:   a.surface(m, "api", true, apiH),
@@ -308,14 +296,12 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	return nil
 }
 
-// job wraps fn as a scheduler job that records metrics under name.
 func job(m *metrics.Metrics, name string, every time.Duration, fn func(context.Context) error) scheduler.Job {
 	return scheduler.Job{Name: name, Every: every, Run: func(ctx context.Context) error {
 		return m.Job(name, func() error { return fn(ctx) })()
 	}}
 }
 
-// certSource builds the certificate source for tls.mode.
 func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
 	switch cfg.TLS.Mode {
 	case "self-signed":
@@ -351,7 +337,6 @@ func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
 	}
 }
 
-// tempDir is where the user API spills multipart bundles.
 func tempDir(cfg config.Config) string { return filepath.Join(cfg.DataDir, "tmp") }
 
 // Handler returns the host router that the public listener serves.
@@ -363,16 +348,14 @@ func (a *App) Scheduler() *scheduler.Scheduler { return a.sched }
 // Started is closed once every listener of Run is bound.
 func (a *App) Started() <-chan struct{} { return a.started }
 
-// Addrs returns the bound listener addresses. They are complete once
-// Started is closed.
+// Addrs returns the bound addresses, complete once Started is closed.
 func (a *App) Addrs() Addrs {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.addrs
 }
 
-// Close closes the database. It is safe to call more than once; Run calls
-// it on exit.
+// Close closes the database; it is idempotent and Run calls it on exit.
 func (a *App) Close() error {
 	a.closeOnce.Do(func() {
 		if err := a.db.Close(); err != nil {
@@ -385,7 +368,6 @@ func (a *App) Close() error {
 // grantStore adapts oauth.Service to httpapi.GrantStore.
 type grantStore struct{ svc *oauth.Service }
 
-// ListGrants returns the user's live grants with their client names.
 func (g grantStore) ListGrants(ctx context.Context, handle string) ([]api.OAuthGrant, error) {
 	toks, err := g.svc.ListGrants(ctx, handle)
 	if err != nil {
@@ -415,8 +397,6 @@ func (g grantStore) ListGrants(ctx context.Context, handle string) ([]api.OAuthG
 	return out, nil
 }
 
-// RevokeGrant revokes a grant, mapping an unknown id to
-// httpapi.ErrGrantNotFound.
 func (g grantStore) RevokeGrant(ctx context.Context, id int64) error {
 	err := g.svc.RevokeGrant(ctx, id)
 	if errors.Is(err, oauth.ErrNotFound) {
