@@ -11,8 +11,8 @@
     title = "Quick start"
     path = "/docs/quickstart"
   [[sections.pages]]
-    title = "Publish with Claude"
-    path = "/docs/publish-with-claude"
+    title = "Publish with an agent"
+    path = "/docs/publish-with-an-agent"
   [[sections.pages]]
     title = "Publish from code"
     path = "/docs/publish-from-code"
@@ -32,9 +32,6 @@
   [[sections.pages]]
     title = "Operations"
     path = "/docs/ops"
-  [[sections.pages]]
-    title = "Security"
-    path = "/docs/security"
 
 [[sections]]
   title = "Reference"
@@ -48,13 +45,3 @@
   [[sections.pages]]
     title = "REST API"
     path = "/docs/api"
-
-[[sections]]
-  title = "Decisions"
-  ja = "設計記録"
-  [[sections.pages]]
-    title = "Go as the language"
-    path = "/docs/adr/0001-language"
-  [[sections.pages]]
-    title = "SQLite and blobs"
-    path = "/docs/adr/0002-storage"

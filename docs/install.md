@@ -221,7 +221,7 @@ curl -sI https://hello.art.example.com/
 curl -s https://art.example.com/health
 ```
 
-Then connect Claude ([README](../README.md#connecting-claude), [mcp.md](mcp.md)) and, if you want claude.ai users to sign in with their organisation account, configure an identity provider ([identity.md](identity.md)).
+Then connect your agent ([mcp.md](mcp.md)) and, if you want people to sign in with their organisation account, configure an identity provider ([identity.md](identity.md)).
 
 ## Local development
 

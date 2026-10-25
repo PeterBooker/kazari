@@ -2,23 +2,36 @@
 
 Kazari exposes its artifact operations as an MCP server at `https://mcp.<base>/` over Streamable HTTP. The server is stateless: every POST builds a fresh server for the authenticated caller, so there is no session to keep and `GET`/`DELETE` on the endpoint answer `405`.
 
-Authentication is a bearer token: an Kazari API key, or an OAuth access token once OAuth is set up. OAuth sign-in (for claude.ai and other clients that discover the authorization server) is documented in [identity.md](identity.md).
+Authentication is a bearer token: a Kazari API key, or an OAuth access token once OAuth is set up. OAuth sign-in (for MCP clients that discover the authorization server) is documented in [identity.md](identity.md).
 
 ## Connecting
 
-### Claude Code
+Any agent or MCP client that supports Streamable HTTP can connect, whether it runs in the cloud or on your own machine. It authenticates in one of two ways.
 
-```sh
-claude mcp add --transport http kazari https://mcp.<base>/ --header "Authorization: Bearer <key>"
+### With an API key
+
+Agents that take the server in their configuration can send a key as an `Authorization` header. Many take a JSON entry along these lines:
+
+```json
+{
+  "mcpServers": {
+    "kazari": {
+      "url": "https://mcp.<base>/",
+      "headers": { "Authorization": "Bearer <key>" }
+    }
+  }
+}
 ```
+
+Claude Code, for example, takes the same with `claude mcp add --transport http kazari https://mcp.<base>/ --header "Authorization: Bearer <key>"`.
 
 Issue the key with `POST /users/{handle}/keys` on the admin API (or the CLI's admin commands); the secret is shown once. A key carries scopes: `artifacts:read` for the read tools, `artifacts:write` for publishing and lifecycle changes, `artifacts:delete` for `delete_artifact`.
 
-The repository has an example Claude Code skill in `examples/kazari/SKILL.md` with the authoring conventions and tool recipes; copy it to `~/.claude/skills/kazari/` or a project's `.claude/skills/`.
+The repository has an example skill in `examples/kazari/SKILL.md` with the authoring conventions and tool recipes, for agents that read skills; for Claude Code, copy it to `~/.claude/skills/kazari/` or a project's `.claude/skills/`.
 
-### claude.ai
+### With OAuth
 
-claude.ai connectors authenticate with OAuth. Add a custom connector with the URL `https://mcp.<base>/`; a request without a token gets `401` with `WWW-Authenticate: Bearer resource_metadata="https://mcp.<base>/.well-known/oauth-protected-resource"`, from which the client discovers the authorization server. See [identity.md](identity.md).
+Cloud agents' custom connectors, and agents configured without a key, authenticate with OAuth. Add the URL `https://mcp.<base>/`; a request without a token gets `401` with `WWW-Authenticate: Bearer resource_metadata="https://mcp.<base>/.well-known/oauth-protected-resource"`, from which the client discovers the authorization server. See [identity.md](identity.md).
 
 ## Tools
 

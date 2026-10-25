@@ -8,9 +8,9 @@
     <div class="container">
       <p class="hero-ghost" lang="ja" aria-hidden="true">飾り</p>
       <div class="hero-copy">
-        <p class="hero-kicker">Self-hosted publishing for the pages Claude builds</p>
-        <h1>Ask Claude for a page. <b>Share it on your domain.</b></h1>
-        <p class="lede">Kazari is a small, self-hosted home for what Claude builds: prototypes, reports, dashboards and demos. Every page gets its own address, every change is kept as a version, and people can sign in with the work account they already have.</p>
+        <p class="hero-kicker">Self-hosted publishing for the pages AI agents build</p>
+        <h1>Ask your agent for a page. <b>Share it on your domain.</b></h1>
+        <p class="lede">Kazari is a small, self-hosted home for what AI agents build: prototypes, reports, dashboards and demos. It works with any agent, in the cloud or self-hosted. Every page gets its own address, every change is kept as a version, and people can sign in with the work account they already have.</p>
         <p class="cta-row">
           <a class="button button-primary" href="{{ $quick.RelPermalink }}">Get started {{ partial "icon.html" "arrow" }}</a>
           <a class="text-link" href="{{ $docs.RelPermalink }}">Read the docs</a>
@@ -41,17 +41,17 @@
         <li>
           <span class="step-n">1</span>
           <h3>Connect</h3>
-          <p>Add Kazari to claude.ai as a custom connector, or to Claude Code with one command, and sign in with your work account or an API key.</p>
+          <p>Add Kazari's MCP address to your agent, in the cloud or on your own machine, and sign in with your work account or an API key.</p>
         </li>
         <li>
           <span class="step-n">2</span>
           <h3>Ask</h3>
-          <p>Describe what you want. Claude writes the page, publishes it with Kazari's tools and replies with the link.</p>
+          <p>Describe what you want. Your agent writes the page, publishes it with Kazari's tools and replies with the link.</p>
         </li>
         <li>
           <span class="step-n">3</span>
           <h3>Iterate and share</h3>
-          <p>Ask for changes and Claude publishes a new version. The link stays the same, and every version keeps an address of its own.</p>
+          <p>Ask for changes and your agent publishes a new version. The link stays the same, and every version keeps an address of its own.</p>
         </li>
       </ol>
     </div>
@@ -75,13 +75,13 @@
             <li>No repository, build step or hosting account</li>
             <li>Go back to any earlier version by asking</li>
           </ul>
-          <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
+          <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-an-agent").RelPermalink }}">Publish with an agent {{ partial "icon.html" "arrow" }}</a>
         </article>
         <article>
           <p class="kicker">Vibe coders</p>
           <h3>From prompt to URL</h3>
           <ul>
-            <li>Claude Code builds the site and ships it with a tool call</li>
+            <li>A coding agent builds the site and ships it with a tool call</li>
             <li>Large bundles upload in resumable chunks</li>
             <li>Single-page apps route correctly</li>
           </ul>
@@ -133,7 +133,7 @@
           </div>
           <div class="host">
             <code><b class="sys">mcp</b><span class="base">.art.example.com</span></code>
-            <p>The MCP server for Claude, beside <code>api.</code> for the REST API and <code>admin.</code> for operators.</p>
+            <p>The MCP server for agents, beside <code>api.</code> for the REST API and <code>admin.</code> for operators.</p>
           </div>
         </div>
         <div class="versions" aria-label="Versions 1 to 4, with version 4 published">
@@ -155,33 +155,36 @@
       </div>
       <div class="tabs" data-tabs>
         <div class="tab-list" role="tablist" aria-label="Ways to publish">
-          <button role="tab" type="button" id="tab-claude" aria-controls="panel-claude" aria-selected="true">claude.ai</button>
-          <button role="tab" type="button" id="tab-code" aria-controls="panel-code" aria-selected="false" tabindex="-1">Claude Code</button>
+          <button role="tab" type="button" id="tab-cloud" aria-controls="panel-cloud" aria-selected="true">Cloud agents</button>
+          <button role="tab" type="button" id="tab-self" aria-controls="panel-self" aria-selected="false" tabindex="-1">Self-hosted agents</button>
           <button role="tab" type="button" id="tab-cli" aria-controls="panel-cli" aria-selected="false" tabindex="-1">CLI</button>
           <button role="tab" type="button" id="tab-rest" aria-controls="panel-rest" aria-selected="false" tabindex="-1">REST API</button>
         </div>
-        <div class="tab-panel" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
+        <div class="tab-panel" role="tabpanel" id="panel-cloud" aria-labelledby="tab-cloud">
           <div class="panel-text">
             <p>Add a custom connector with your instance's MCP address, sign in once, then ask in plain words.</p>
-            <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-claude").RelPermalink }}">Publish with Claude {{ partial "icon.html" "arrow" }}</a>
+            <a class="card-link" href="{{ (site.GetPage "/docs/publish-with-an-agent").RelPermalink }}">Publish with an agent {{ partial "icon.html" "arrow" }}</a>
           </div>
           <div class="prompt-demo">
             <p class="connector"><span>Connector URL</span><code>https://mcp.art.example.com/</code></p>
             <div class="msg msg-user"><span class="who">You</span><p>Turn the attached CSV into a dashboard with a chart per region and publish it to Kazari as q3-dashboard.</p></div>
-            <div class="msg msg-claude"><span class="who">Claude</span><p>Published <span class="link">https://q3-dashboard.art.example.com/</span> (version 1)</p></div>
+            <div class="msg msg-agent"><span class="who">Agent</span><p>Published <span class="link">https://q3-dashboard.art.example.com/</span> (version 1)</p></div>
           </div>
         </div>
-        <div class="tab-panel" role="tabpanel" id="panel-code" aria-labelledby="tab-code" hidden>
+        <div class="tab-panel" role="tabpanel" id="panel-self" aria-labelledby="tab-self" hidden>
           <div class="panel-text">
-            <p>One command adds the server. Without a key, Claude Code signs you in through OAuth the first time it uses it.</p>
+            <p>Agents on your own machine or servers take the MCP address in their configuration, and sign in through OAuth or with an API key.</p>
             <a class="card-link" href="{{ (site.GetPage "/docs/mcp").RelPermalink }}">MCP server reference {{ partial "icon.html" "arrow" }}</a>
           </div>
-          {{ partial "snippet.html" (dict "lang" "sh" "code" `
-claude mcp add --transport http kazari https://mcp.art.example.com/
-
-# or with an API key instead of OAuth
-claude mcp add --transport http kazari https://mcp.art.example.com/ \
-  --header "Authorization: Bearer kzk_..."` ) }}
+          {{ partial "snippet.html" (dict "lang" "json" "code" `
+{
+  "mcpServers": {
+    "kazari": {
+      "url": "https://mcp.art.example.com/",
+      "headers": { "Authorization": "Bearer kzk_..." }
+    }
+  }
+}` ) }}
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
           <div class="panel-text">

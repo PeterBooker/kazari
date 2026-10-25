@@ -1,6 +1,7 @@
 # The Kazari website and documentation at https://kazari.io/, published to GitHub Pages by
 # .github/workflows/pages.yml. Build: hugo --source site. Preview: hugo server --source site.
-# The reference pages are the Markdown files in ../docs, mounted under /docs/.
+# The reference pages are the Markdown files in ../docs, mounted under /docs/, except the security
+# design and the architecture decision records, which stay on GitHub only.
 
 baseURL = "https://kazari.io/"
 title = "Kazari"
@@ -9,7 +10,7 @@ disableKinds = ["taxonomy", "term", "rss"]
 enableRobotsTXT = true
 
 [params]
-  description = "A self-hosted home for the pages Claude builds: prototypes, reports and dashboards on your own domain, with versions, sign-in through your identity provider and an MCP server, REST API and CLI."
+  description = "A self-hosted home for the pages AI agents build: prototypes, reports and dashboards on your own domain, with versions, sign-in through your identity provider and an MCP server, REST API and CLI."
   repo = "https://github.com/PeterBooker/kazari"
   branch = "main"
 
@@ -37,3 +38,4 @@ enableRobotsTXT = true
   [[module.mounts]]
     source = "../docs"
     target = "content/docs"
+    files = ["! security.md", "! adr/**"]

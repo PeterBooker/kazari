@@ -5,7 +5,7 @@ description: Publish to Kazari from a terminal, a script or CI with the kazari C
 
 # Publish from code
 
-Everything Claude can do through the MCP server, you can do from a terminal, a script or a CI job with the `kazari` CLI or the REST API. They share one service layer, so an artifact published one way can be updated any other way.
+Everything an agent can do through the MCP server, you can do from a terminal, a script or a CI job with the `kazari` CLI or the REST API. They share one service layer, so an artifact published one way can be updated any other way.
 
 ## Get a key
 
@@ -62,7 +62,7 @@ url=$(kazari --json publish ./dist --slug q3-report --update | jq -r .url)
 
 ### Avoid overwriting someone else's work
 
-Two people (or a person and Claude) can publish to the same artifact. To make sure you are building on the version you think you are, pass the latest version you saw; the call fails with `version_conflict` if someone else published in between:
+Two people (or a person and an agent) can publish to the same artifact. To make sure you are building on the version you think you are, pass the latest version you saw; the call fails with `version_conflict` if someone else published in between:
 
 ```sh
 kazari update q3-report ./dist --expected 4

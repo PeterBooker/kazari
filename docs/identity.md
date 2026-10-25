@@ -2,8 +2,8 @@
 
 Kazari has two kinds of credential:
 
-- **API keys** (`kzk_...`), issued by an admin, sent as `Authorization: Bearer`. They work on every surface and suit the CLI, scripts and Claude Code.
-- **OAuth access tokens**, which MCP clients such as claude.ai and Claude Code obtain by sending the person through a sign-in flow. This page is about those.
+- **API keys** (`kzk_...`), issued by an admin, sent as `Authorization: Bearer`. They work on every surface and suit the CLI, scripts and agents that take a key in their configuration.
+- **OAuth access tokens**, which MCP clients (cloud agents' connectors, and agents on your machine configured without a key) obtain by sending the person through a sign-in flow. This page is about those.
 
 ## How sign-in works
 
@@ -24,7 +24,7 @@ MCP client ──1──▶ mcp.<base>/            401 + resource_metadata
 2. The client reads the protected-resource metadata, then `https://mcp.<base>/.well-known/oauth-authorization-server`. The issuer is `https://mcp.<base>`.
 3. The browser goes to `/oauth/authorize` with PKCE (S256 only). Kazari checks the client, the redirect URI, the scopes and the `resource`, stores the request, sets a short-lived cookie (`__Host-kazari_oauth`, `HttpOnly`, `Secure`, `SameSite=Lax`, path `/`, ten minutes; plain `kazari_oauth` on a plain-HTTP development instance) and redirects to the IdP with its own `state`, `nonce` and PKCE pair. The `__Host-` prefix means no other host, such as an artifact page on `<slug>.<base>`, can set that cookie.
 4. The person signs in at the IdP, which returns to **`https://mcp.<base>/oauth/callback`**: this is the redirect URI to register at the IdP.
-5. Kazari redeems the code, verifies the ID token (signature against the IdP's keys, issuer, audience, expiry, nonce) and maps the person to an Kazari user by the [provisioning policy](#provisioning-policy).
+5. Kazari redeems the code, verifies the ID token (signature against the IdP's keys, issuer, audience, expiry, nonce) and maps the person to a Kazari user by the [provisioning policy](#provisioning-policy).
 6. A consent page names the client, the account and the scopes. **Approve** issues a single-use code (five minutes); **Deny** returns `access_denied` to the client. The form is accepted only from the consent page itself: a post whose `Origin` is another origin, or whose `Sec-Fetch-Site` is not `same-origin`, gets "Request rejected".
 7. The client exchanges the code at `/oauth/token` and receives an access token and a refresh token.
 
@@ -132,7 +132,7 @@ curl -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: ap
 
 ## Without an identity provider: API-key sign-in
 
-When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes. The grant lives only as long as the key: once the key is revoked or expires, or its user is disabled, the grant's access and refresh tokens stop working, and no token outlives the key's expiry. A one-person or small instance can therefore connect claude.ai with no IdP set up: issue yourself a key, add the connector, paste the key once. The consent is recorded in the audit log as `oauth.grant` with `via: api_key` and the key's `key_prefix`.
+When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes. The grant lives only as long as the key: once the key is revoked or expires, or its user is disabled, the grant's access and refresh tokens stop working, and no token outlives the key's expiry. A one-person or small instance can therefore connect a cloud agent with no IdP set up: issue yourself a key, add the connector, paste the key once. The consent is recorded in the audit log as `oauth.grant` with `via: api_key` and the key's `key_prefix`.
 
 ## MCP clients
 
@@ -143,9 +143,9 @@ When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the conse
 
 Redirect URIs must be `https`, or `http` on `localhost`, `127.0.0.1` or `::1`. They must match a registered URI exactly, except that for loopback URIs the port is ignored (RFC 8252), since native clients pick a free port each time.
 
-**claude.ai**: add a custom connector with the URL `https://mcp.<base>/`. claude.ai identifies itself with a Client ID Metadata Document when the server advertises support (Kazari does), and falls back to registration otherwise; the person signs in at your IdP and approves the consent page once per connection.
+**Cloud agents**: add a custom connector with the URL `https://mcp.<base>/`. A client that supports Client ID Metadata Documents identifies itself with one when the server advertises support (Kazari does), and others fall back to registration; the person signs in at your IdP and approves the consent page once per connection. claude.ai, for example, uses a metadata document.
 
-**Claude Code**: `claude mcp add --transport http kazari https://mcp.<base>/` without a header makes Claude Code run the same flow itself, with a loopback redirect, when you first use the server (or via `/mcp`). With `--header "Authorization: Bearer kzk_..."` it uses the API key and skips OAuth. See [mcp.md](mcp.md).
+**Agents on your machine**: an agent configured with the URL and no `Authorization` header runs the same flow itself when you first use the server, usually with a loopback redirect. With an `Authorization: Bearer kzk_...` header it uses the API key and skips OAuth. Claude Code, for example, signs in this way after `claude mcp add --transport http kazari https://mcp.<base>/`. See [mcp.md](mcp.md).
 
 ## Tokens, lifetimes and rotation
 

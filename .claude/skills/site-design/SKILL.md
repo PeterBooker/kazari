@@ -9,7 +9,7 @@ description: The "Ma" design system of the Kazari website (site/, kazari.io) - l
 
 Everything else is *ma* (間), the space between things: a pale grey-green ground, ink text, large headlines in a light sans with the end of the phrase a step heavier, generous bands of space instead of rules, and one faint, very large 飾り behind the hero. The dark theme is *Yūgure* (夕暮れ, dusk): the same page at dusk, with lighter, softer season colours. Only colour tokens differ between the two; layout and type are shared.
 
-The audience is developers, designers and admin staff making prototypes with Claude, and the IT people who decide whether to run it. It must read as calm and trustworthy first, and Japanese second.
+The audience is developers, designers and admin staff making prototypes with AI agents (any agent, in the cloud or self-hosted, not one vendor's), and the IT people who decide whether to run it. It must read as calm and trustworthy first, and Japanese second.
 
 This replaced two designs, and must not drift back to either (see "Never" at the end): a default Claude artifact look (warm cream, light serif, terracotta, capitalised labels over every heading, rounded cards), then "Sekki" (heavy mincho headings, vertical Japanese labels beside every section, hairlines between sections, a colour wheel).
 
@@ -160,7 +160,7 @@ Japanese is a typographic device here, used sparingly and always correctly: comm
 | Self-hosting | 運用 | un'yō | operation |
 | Closing call to action | はじめる | hajimeru | to begin |
 | 404 | 見つかりません | mitsukarimasen | not found |
-| Docs groups | はじめに / 運用 / 参照 / 設計記録 | hajime ni / un'yō / sanshō / sekkei kiroku | introduction / operation / reference / design records |
+| Docs groups | はじめに / 運用 / 参照 | hajime ni / un'yō / sanshō | introduction / operation / reference |
 | Callouts | 注 / ヒント / 重要 / 警告 / 注意 | chū / hinto / jūyō / keikoku / chūi | note / tip / important / warning / caution |
 | Season strip, header, footer | the 24 term names (立春 ... 大寒) | from `sekki.toml` | the solar terms |
 
@@ -168,7 +168,7 @@ For a new label, prefer a word already in the table; otherwise choose a short, c
 
 ## Voice
 
-Plain, direct and specific, from the reader's side: "Publish with Claude", not "Leverage our MCP integration". Short sentences, active voice, no em-dash asides, no "not X but Y", no exclamation marks. Name the real thing (`q3-dashboard`, `art.example.com`, `kazari publish`) rather than a placeholder. The season is mentioned lightly and never explained twice on a page.
+Plain, direct and specific, from the reader's side: "Publish with an agent", not "Leverage our MCP integration". Say "your agent" or "an AI agent", not a product name; name a product only as one example among others, as the agent guide does with claude.ai and Claude Code. Short sentences, active voice, no em-dash asides, no "not X but Y", no exclamation marks. Name the real thing (`q3-dashboard`, `art.example.com`, `kazari publish`) rather than a placeholder. The season is mentioned lightly and never explained twice on a page.
 
 ## Checks before a change ships
 

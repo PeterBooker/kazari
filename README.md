@@ -1,6 +1,6 @@
 # Kazari
 
-Kazari is a self-hosted artifact host for pages written by LLMs. One Go binary serves every artifact as its own static site at `<slug>.<base>` under a single wildcard certificate, takes new artifacts and versions over a REST API, an MCP server and a CLI, and retires pages nobody needs any more through a reversible stale, soft-delete and purge lifecycle. It exists so that a team can let Claude (or any MCP client) publish HTML pages, dashboards and small sites on its own domain, signed in through its own identity provider, without handing the content to a third party.
+Kazari is a self-hosted artifact host for pages written by LLMs. One Go binary serves every artifact as its own static site at `<slug>.<base>` under a single wildcard certificate, takes new artifacts and versions over a REST API, an MCP server and a CLI, and retires pages nobody needs any more through a reversible stale, soft-delete and purge lifecycle. It exists so that a team can let any AI agent, in the cloud or self-hosted, publish HTML pages, dashboards and small sites on its own domain, signed in through its own identity provider, without handing the content to a third party.
 
 > *Kazari* (飾り) is Japanese for a decoration set out on display, like the dolls and New Year pieces that are brought out for a season and then put away. Kazari does the same for pages: it puts them on show for as long as they are wanted, then retires them.
 
@@ -76,20 +76,28 @@ auth:
 
 Secrets stay out of the file: `${NAME}` is replaced by the environment variable `NAME`, read from the process environment or a `.env` file (`/etc/kazari/kazari.env` under systemd). Every key can also be set directly as `KAZARI_<SECTION>_<KEY>`. See [docs/configuration.md](docs/configuration.md).
 
-## Connecting Claude
+## Connecting an agent
 
-**Claude Code**, with an API key:
+Kazari works with any agent that can use a remote MCP server over Streamable HTTP, whether it runs in the cloud or on your own machine. The server is at `https://mcp.art.example.com/`.
 
-```sh
-claude mcp add --transport http kazari https://mcp.art.example.com/ \
-  --header "Authorization: Bearer kzk_..."
+**Cloud agents**: add a custom connector with that URL. The agent discovers the authorization server, sends you to your organisation's identity provider and shows Kazari's consent page. With no identity provider configured, the consent page asks for an API key instead. In claude.ai, for example, custom connectors are under Settings → Connectors.
+
+**Self-hosted agents**: add the server to the agent's configuration, with an API key. Many agents take a JSON entry along these lines:
+
+```json
+{
+  "mcpServers": {
+    "kazari": {
+      "url": "https://mcp.art.example.com/",
+      "headers": { "Authorization": "Bearer kzk_..." }
+    }
+  }
+}
 ```
 
-Leave out `--header` to let Claude Code sign in through OAuth instead.
+Leave out `headers` to sign in through OAuth instead, if your agent supports it. Claude Code, for example, adds the server with `claude mcp add --transport http kazari https://mcp.art.example.com/`, plus `--header "Authorization: Bearer kzk_..."` for a key.
 
-**claude.ai**: add a custom connector with the URL `https://mcp.art.example.com/`. claude.ai discovers the authorization server, sends you to your organisation's identity provider and shows Kazari's consent page. With no identity provider configured, the consent page asks for an API key instead.
-
-Tools, resources and the authoring conventions are in [docs/mcp.md](docs/mcp.md); sign-in is in [docs/identity.md](docs/identity.md). An example Claude Code skill is in `examples/kazari/SKILL.md`.
+Tools, resources and the authoring conventions are in [docs/mcp.md](docs/mcp.md); sign-in is in [docs/identity.md](docs/identity.md). An example skill, for agents that read skills, is in `examples/kazari/SKILL.md`.
 
 ## CLI
 
@@ -121,7 +129,7 @@ Releases are cut by pushing a `v*` tag; GitHub Actions runs goreleaser. The full
 
 ### Website
 
-The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, so a change to `docs/` is a change to the site. The landing page and the guides (quick start, publishing with Claude, publishing from code) live in `site/content/`. Building it needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node, no theme.
+The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, except `security.md` and `adr/`, so a change to `docs/` is a change to the site. The landing page and the guides (quick start, publishing with an agent, publishing from code) live in `site/content/`. Building it needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node, no theme.
 
 ```sh
 go install github.com/gohugoio/hugo@v0.168.0   # Hugo at the version CI uses
@@ -136,7 +144,7 @@ hugo --source site --gc --minify               # build into site/public/ as CI d
 
 ## Documentation
 
-The documentation is published, with guides for publishing with Claude and from code, at <https://kazari.io/docs/>. The reference pages are the files in `docs/`:
+The documentation is published, with guides for publishing with an agent and from code, at <https://kazari.io/docs/>. The reference pages are the files in `docs/`; the security design and the decision records are only here, not on the website:
 
 | Document                                     | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |

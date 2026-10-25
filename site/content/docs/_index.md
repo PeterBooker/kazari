@@ -1,15 +1,15 @@
 ---
 title: Documentation
-description: Start here. Pick a path for publishing with Claude, publishing from code, or running your own Kazari instance.
+description: Start here. Pick a path for publishing with an AI agent, publishing from code, or running your own Kazari instance.
 ---
 
 # Documentation
 
-Kazari hosts static web pages. Claude, the CLI or the REST API publishes a page, and Kazari serves it at its own address on your domain, keeps every version, and retires it when you are done with it. Pick the path that fits what you want to do.
+Kazari hosts static web pages. An AI agent, the CLI or the REST API publishes a page, and Kazari serves it at its own address on your domain, keeps every version, and retires it when you are done with it. Pick the path that fits what you want to do.
 
 <div class="paths">
   <a href="quickstart/"><strong>Try it on your machine</strong><span>Run Kazari locally with Docker and publish a first page in about five minutes.</span></a>
-  <a href="publish-with-claude/"><strong>Make pages with Claude</strong><span>Connect claude.ai or Claude Code, ask for a page, change it, share it and tidy it away.</span></a>
+  <a href="publish-with-an-agent/"><strong>Make pages with an agent</strong><span>Connect any agent, in the cloud or self-hosted, ask for a page, change it, share it and tidy it away.</span></a>
   <a href="publish-from-code/"><strong>Publish from code and CI</strong><span>The CLI, preview deployments from GitHub Actions, and the REST API.</span></a>
   <a href="install/"><strong>Run it for your team</strong><span>DNS, certificates, Docker or systemd, the first admin user, then sign-in.</span></a>
 </div>
@@ -40,4 +40,3 @@ Kazari hosts static web pages. Claude, the CLI or the REST API publishes a page,
 | [Configuration](configuration.md) | Every YAML key, `${}` environment references, `.env`, overrides   |
 | [Sign-in and identity](identity.md) | OAuth for MCP clients, OpenID Connect providers, provisioning   |
 | [Operations](ops.md)              | Data layout, backup, upgrades, logs, metrics, jobs, quotas, abuse |
-| [Security](security.md)           | Threat model, origin isolation, headers, limits, operator checklist |
