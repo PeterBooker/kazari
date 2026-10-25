@@ -16,30 +16,24 @@ import (
 	"kazari/internal/user"
 )
 
-// Names of the cookie that holds the id of the pending authorization
-// request. Browsers accept a __Host- cookie only when it is Secure, has no
-// Domain and has path /, so a page on a sibling host (an artifact at
-// <slug>.<base>, which runs member-authored script) cannot plant one for
-// mcp.<base> with Domain=<base>. Over plain http (Options.InsecureCookies)
-// the prefix is unusable and the plain name is used.
+// Names of the pending request's cookie. Browsers accept a __Host- cookie
+// only when it is Secure, on path / and without Domain, so script in an
+// artifact on a sibling host cannot plant one with Domain=<base>. Plain http
+// (Options.InsecureCookies) cannot use the prefix.
 const (
 	CookieName         = "__Host-kazari_oauth"
 	InsecureCookieName = "kazari_oauth"
 )
 
-// pkceValue matches an S256 challenge or a code verifier (RFC 7636): 43 to
-// 128 characters of [A-Za-z0-9-._~].
+// pkceValue matches an S256 challenge or a code verifier (RFC 7636).
 var pkceValue = regexp.MustCompile(`^[A-Za-z0-9._~-]{43,128}$`)
 
-// serveAuthorize validates an authorization request, stores it and sends
-// the browser to the identity provider, or to the API-key consent page when
-// none is configured.
 func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
 
-	// Client and redirect URI problems are shown here and never redirected:
-	// the redirect target is not trustworthy yet.
+	// Client and redirect URI errors are shown, never redirected: the target
+	// is not trusted yet.
 	c, err := s.resolveClient(ctx, q.Get("client_id"))
 	if err != nil {
 		if errors.Is(err, errInvalidClient) {
@@ -123,8 +117,8 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 	s.renderConsent(w, http.StatusOK, c, req, "", scopes, "")
 }
 
-// parseScopes splits a scope parameter and orders it like Options.Scopes.
-// Empty means every supported scope; an unknown scope fails.
+// parseScopes orders scopes like Options.Scopes; empty means all of them and
+// an unknown one fails.
 func (s *Service) parseScopes(param string) ([]string, bool) {
 	fields := strings.Fields(param)
 	if len(fields) == 0 {
@@ -138,8 +132,8 @@ func (s *Service) parseScopes(param string) ([]string, bool) {
 	return intersect(s.opts.Scopes, fields), true
 }
 
-// checkResource accepts an absent resource or Options.Resource with or
-// without a trailing slash, and returns the canonical value to store.
+// checkResource accepts "" or Options.Resource with or without a trailing
+// slash, and returns the value to store.
 func (s *Service) checkResource(param string) (string, bool) {
 	if param == "" {
 		return "", true
@@ -150,8 +144,7 @@ func (s *Service) checkResource(param string) (string, bool) {
 	return "", false
 }
 
-// redirectError sends the browser back to the client with an RFC 6749
-// section 4.1.2.1 error.
+// redirectError sends an RFC 6749 section 4.1.2.1 error to the client.
 func redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
 	v := url.Values{"error": {code}}
 	if desc != "" {
@@ -163,7 +156,6 @@ func redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, c
 	http.Redirect(w, r, withQuery(redirectURI, v), http.StatusFound)
 }
 
-// withQuery appends v to the query of raw.
 func withQuery(raw string, v url.Values) string {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -211,8 +203,8 @@ func (s *Service) setNamedCookie(w http.ResponseWriter, name, value string, ttl 
 
 func (s *Service) clearCookie(w http.ResponseWriter) { s.setCookie(w, "", -1) }
 
-// pendingRequest loads the live request named by the cookie. ok is false
-// after a page has been written.
+// pendingRequest loads the live request named by the cookie; when ok is
+// false a page has been written.
 func (s *Service) pendingRequest(w http.ResponseWriter, r *http.Request) (*Request, bool) {
 	ck, err := r.Cookie(s.cookieName())
 	if err != nil || ck.Value == "" {
@@ -238,8 +230,6 @@ func (s *Service) pendingRequest(w http.ResponseWriter, r *http.Request) (*Reque
 	return req, true
 }
 
-// serveCallback finishes the upstream sign-in, resolves the person to a
-// user and shows the consent page.
 func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if s.idp == nil {
@@ -348,13 +338,11 @@ func (s *Service) renderConsent(w http.ResponseWriter, status int, c *Client, re
 	}, req.RedirectURI)
 }
 
-// sameOrigin reports whether a browser form post comes from a page of this
-// server. Same-site is not enough: artifacts on sibling hosts run
-// member-authored script. Browsers send Origin on a POST, but "null" from a
-// page with Referrer-Policy no-referrer (the consent page itself), so then
-// Sec-Fetch-Site decides. A request with neither header comes from a
-// non-browser client or a browser too old to send them, where the __Host-
-// cookie still holds.
+// sameOrigin reports whether a form post comes from this server's pages.
+// Same-site is not enough: artifacts on sibling hosts run member-authored
+// script. The consent page's no-referrer policy makes Origin "null", so then
+// Sec-Fetch-Site decides; with neither header (a non-browser client or an
+// old browser) the __Host- cookie still holds.
 func (s *Service) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" && o != "null" {
 		return strings.EqualFold(o, s.origin)
@@ -363,7 +351,6 @@ func (s *Service) sameOrigin(r *http.Request) bool {
 	return site == "" || site == "same-origin"
 }
 
-// serveConsent handles Approve and Deny on the consent page.
 func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if !s.sameOrigin(r) {
@@ -376,8 +363,8 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		s.message(w, http.StatusBadRequest, "Bad request", "The form could not be read.", "")
 		return
 	}
-	// The request id in the form must equal the cookie: another page can
-	// neither read the cookie nor, with the __Host- prefix, set it.
+	// The form's request id must equal the cookie, which another page can
+	// neither read nor, with the __Host- prefix, set.
 	ck, err := r.Cookie(s.cookieName())
 	formID := r.PostForm.Get("request_id")
 	if err != nil || formID == "" || subtle.ConstantTimeCompare([]byte(formID), []byte(ck.Value)) != 1 {
@@ -446,7 +433,6 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, withQuery(req.RedirectURI, v), http.StatusFound)
 }
 
-// approval is who approved a request and what its code carries.
 type approval struct {
 	handle    string
 	scopes    []string
@@ -454,10 +440,9 @@ type approval struct {
 	keyPrefix string // the approving API key, "" via oidc
 }
 
-// approver decides who approves the request and which scopes the code
-// carries: the user bound at the callback (capped by role), or the owner of
-// the API key in the form (capped at the key's scopes), whose grant then
-// lives only as long as the key. ok is false after a page has been written.
+// approver is the user bound at the callback (scopes capped by role) or the
+// owner of the form's API key (capped at the key's scopes), whose grant then
+// lives only as long as the key. When ok is false a page has been written.
 func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request) (approval, bool) {
 	ctx := r.Context()
 	if req.UserHandle != "" {
@@ -478,7 +463,6 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		return approval{handle: u.Handle, scopes: intersect(req.Scopes, user.ScopesFor(u)), via: "oidc"}, true
 	}
 
-	// API-key fallback: only when no identity provider is configured.
 	if s.idp != nil || s.keys == nil {
 		s.message(w, http.StatusForbidden, "Sign-in required",
 			"Sign in at the identity provider first. Start again from your application.", "")

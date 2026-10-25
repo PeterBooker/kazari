@@ -28,7 +28,6 @@ import (
 
 const adminToken = "test-admin"
 
-// clock is an advanceable fake clock.
 type clock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -46,8 +45,6 @@ func (c *clock) Advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// testConfig is a proxy-mode instance for base domain localhost with a
-// fresh data directory, listening on a free loopback port.
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
 	cfg := config.Default()
@@ -63,15 +60,13 @@ func testConfig(t *testing.T) config.Config {
 		DefaultGrace: config.Duration(14 * 24 * time.Hour),
 		Retention:    config.Duration(30 * 24 * time.Hour),
 		Tombstone:    config.Duration(90 * 24 * time.Hour),
-		// Long intervals keep scheduled runs out of the test; jobs are
-		// triggered through the admin API instead.
+		// Never due: the tests trigger jobs through the admin API.
 		SweepInterval: config.Duration(1000 * time.Hour),
 		GCInterval:    config.Duration(1000 * time.Hour),
 	}
 	return cfg
 }
 
-// instance is a running App.
 type instance struct {
 	app   *app.App
 	clock *clock
@@ -79,7 +74,6 @@ type instance struct {
 	done  chan error
 }
 
-// start builds and runs an App for cfg and stops it when the test ends.
 func start(t *testing.T, cfg config.Config) *instance {
 	t.Helper()
 	clk := &clock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
@@ -120,8 +114,7 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
-// pinnedTransport dials addr whatever host a URL names, so
-// http://demo.localhost/ reaches the test server without DNS or ports.
+// pinnedTransport dials addr for every host, so test URLs need no DNS or port.
 func pinnedTransport(addr string) *http.Transport {
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -131,7 +124,6 @@ func pinnedTransport(addr string) *http.Transport {
 	}
 }
 
-// client is an HTTP client pinned to addr that does not follow redirects.
 func client(addr string) *http.Client {
 	return &http.Client{
 		Transport:     pinnedTransport(addr),
@@ -140,7 +132,6 @@ func client(addr string) *http.Client {
 	}
 }
 
-// response is a fully read response.
 type response struct {
 	status int
 	header http.Header
@@ -190,7 +181,6 @@ func truncate(s string) string {
 	return s
 }
 
-// bundle returns a tar.gz of the given files.
 func bundle(t *testing.T, files map[string]string) *bytes.Buffer {
 	t.Helper()
 	dir := t.TempDir()
@@ -206,7 +196,6 @@ func bundle(t *testing.T, files map[string]string) *bytes.Buffer {
 	return &buf
 }
 
-// bearer adds an Authorization header to every request.
 type bearer struct {
 	token string
 	next  http.RoundTripper
@@ -234,7 +223,6 @@ func TestEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	const day = 24 * time.Hour
 
-	// Admin: a user and a key.
 	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter", Email: "peter@example.com"}); err != nil {
 		t.Fatalf("create user: %v", err)
@@ -246,7 +234,6 @@ func TestEndToEnd(t *testing.T) {
 	key := issued.Key
 	user := cli.NewClient("http://api.localhost", key, hc)
 
-	// Publish a bundle over the REST API.
 	files := map[string]string{"index.html": indexHTML, "style.css": styleCSS}
 	res, err := user.CreateBundle(ctx, api.CreateManifest{Slug: "demo", Name: "Demo", Description: "e2e demo"}, bundle(t, files))
 	if err != nil {
@@ -256,7 +243,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("create = %+v", res)
 	}
 
-	// Serve it.
 	page := get(t, hc, "http://demo.localhost/")
 	wantStatus(t, page, http.StatusOK, "GET demo /")
 	if page.body != indexHTML {
@@ -284,7 +270,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("style.css = %q (%s)", css.body, css.header.Get("Content-Type"))
 	}
 
-	// Apex.
 	health := get(t, hc, "http://localhost/health")
 	wantStatus(t, health, http.StatusOK, "apex /health")
 	var h api.Health
@@ -299,7 +284,6 @@ func TestEndToEnd(t *testing.T) {
 	}
 	wantStatus(t, get(t, hc, "http://localhost/nope"), http.StatusNotFound, "apex /nope")
 
-	// MCP: add about.html as version 2.
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "v0"}, nil).Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:             "http://mcp.localhost/",
 		HTTPClient:           &http.Client{Transport: bearer{key, pinnedTransport(addr)}},
@@ -341,7 +325,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("get demo: %d versions, latest %d", len(detail.Versions), detail.Artifact.LatestVersion)
 	}
 
-	// Lifecycle: stale -> soft-deleted -> purged -> slug freed.
 	stale, err := user.MarkStale(ctx, "demo", "")
 	if err != nil {
 		t.Fatalf("mark stale: %v", err)
@@ -389,13 +372,11 @@ func TestEndToEnd(t *testing.T) {
 	}
 	wantStatus(t, get(t, hc, "http://demo.localhost/"), http.StatusOK, "re-created")
 
-	// Authentication.
 	wantStatus(t, do(t, hc, http.MethodPost, "http://api.localhost/v1/artifacts", "", ""), http.StatusUnauthorized, "unauthenticated create")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://api.localhost/v1/artifacts", "kzk_bogus", ""), http.StatusUnauthorized, "bogus key")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://admin.localhost/v1/users", "", ""), http.StatusUnauthorized, "admin without token")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://admin.localhost/v1/users", key, ""), http.StatusForbidden, "admin with member key")
 
-	// OAuth metadata on the mcp host.
 	meta := get(t, hc, "http://mcp.localhost/.well-known/oauth-protected-resource")
 	wantStatus(t, meta, http.StatusOK, "protected resource metadata")
 	var rm struct {
@@ -414,7 +395,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("WWW-Authenticate = %q", got)
 	}
 
-	// Metrics on the admin host, open.
 	metrics := get(t, hc, "http://admin.localhost/metrics")
 	wantStatus(t, metrics, http.StatusOK, "metrics")
 	for _, want := range []string{"kazari_http_requests_total", `surface="site"`, `surface="mcp"`, `job="sweep"`} {
@@ -423,7 +403,6 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 
-	// A non-API path on the API host is a JSON 404, not an artifact page.
 	notAPI := do(t, hc, http.MethodGet, "http://api.localhost/", key, "")
 	wantStatus(t, notAPI, http.StatusNotFound, "api /")
 	if !strings.HasPrefix(notAPI.header.Get("Content-Type"), "application/json") {
@@ -433,7 +412,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("api / lacks the control-plane headers: %v", notAPI.header)
 	}
 
-	// Host matching ignores case and a trailing dot.
 	mixed := do(t, hc, http.MethodGet, "http://api.localhost/health", "", "Admin.Localhost")
 	wantStatus(t, mixed, http.StatusOK, "Admin.Localhost /health")
 	wantStatus(t, do(t, hc, http.MethodGet, "http://api.localhost/v1/users", adminToken, "ADMIN.localhost."), http.StatusOK, "ADMIN.localhost. /v1/users")
@@ -512,14 +490,11 @@ func TestAdminListener(t *testing.T) {
 		}
 	}
 
-	// With its own listener, the admin host is gone from the public one:
-	// neither /metrics nor the admin token works there.
 	pub := client(in.app.Addrs().HTTP)
 	wantStatus(t, get(t, pub, "http://admin.localhost/metrics"), http.StatusNotFound, "public admin /metrics")
 	wantStatus(t, do(t, pub, http.MethodGet, "http://admin.localhost/v1/users", adminToken, ""), http.StatusNotFound, "public admin /v1/users")
 }
 
-// A credential has one write budget across the user API and MCP.
 func TestWriteBudgetShared(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Limits.WriteRatePerMinute = 2

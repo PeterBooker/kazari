@@ -1,4 +1,4 @@
-{{- /* The page title: front matter, else the first "# " heading of the Markdown (the files in docs/ have no front matter). */ -}}
+{{- /* docs/ files have no front matter, so fall back to the first "# " heading. */ -}}
 {{- $t := .Title -}}
 {{- if not $t -}}
   {{- with findRESubmatch `(?m)^# +(.+?)\s*$` .RawContent 1 -}}

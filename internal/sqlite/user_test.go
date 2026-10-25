@@ -14,7 +14,6 @@ import (
 
 var userT0 = time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)
 
-// userTestStore opens a fresh database and returns a user store over it.
 func userTestStore(t *testing.T) *UserStore {
 	t.Helper()
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
@@ -65,7 +64,7 @@ func TestUserStoreCreateGet(t *testing.T) {
 		t.Errorf("GetUser (-want +got):\n%s", diff)
 	}
 
-	// Users without an email do not collide on the UNIQUE email column.
+	// Users without an email do not collide on UNIQUE email.
 	userMustCreate(t, s, "bob", "", user.RoleMember)
 	userMustCreate(t, s, "carol", "", user.RoleMember)
 	bob, err := s.GetUser(ctx, "bob")
@@ -200,7 +199,6 @@ func TestUserStoreUpdateUser(t *testing.T) {
 		t.Errorf("after update (-want +got):\n%s", diff)
 	}
 
-	// Clearing the email and enabling again.
 	u.Email = ""
 	u.DisabledAt = nil
 	if err := s.UpdateUser(ctx, u); err != nil {
@@ -264,8 +262,6 @@ func TestUserStoreKeys(t *testing.T) {
 		t.Errorf("ListKeys newest first (-want +got):\n%s", diff)
 	}
 
-	// Revoke: another user's key is not found; a second revoke keeps the
-	// original time.
 	if err := s.RevokeKey(ctx, "bob", "aaaaaaaa", userT0); !errors.Is(err, user.ErrKeyNotFound) {
 		t.Errorf("RevokeKey by another user = %v, want ErrKeyNotFound", err)
 	}
@@ -280,7 +276,6 @@ func TestUserStoreKeys(t *testing.T) {
 		t.Errorf("RevokedAt = %v, want %v", gotK.RevokedAt, r1)
 	}
 
-	// RevokeAllKeys revokes live keys only and leaves other users alone.
 	r2 := userT0.Add(2 * time.Hour)
 	if err := s.RevokeAllKeys(ctx, "alice", r2); err != nil {
 		t.Fatal(err)
@@ -336,7 +331,6 @@ func TestUserStoreIdentities(t *testing.T) {
 		t.Errorf("GetIdentity (-want +got):\n%s", diff)
 	}
 
-	// Linking again refreshes email_at_login and last_login_at.
 	again := first
 	again.EmailAtLogin = "Alice@Example.com"
 	again.LastLoginAt = userT0.Add(time.Hour)
@@ -351,7 +345,6 @@ func TestUserStoreIdentities(t *testing.T) {
 		t.Errorf("ListIdentities (-want +got):\n%s", diff)
 	}
 
-	// Linking to another user moves the identity.
 	if err := s.LinkIdentity(ctx, "bob", other); err != nil {
 		t.Fatal(err)
 	}

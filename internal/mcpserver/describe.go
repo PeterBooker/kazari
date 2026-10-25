@@ -9,8 +9,7 @@ import (
 	"kazari/internal/present"
 )
 
-// texts are the descriptions, instructions and prompt conventions, all
-// generated from Options so they always state the configured limits.
+// texts are generated from Options so they state the configured limits.
 type texts struct {
 	pageURL    string // https://<slug>.<base>/
 	versionURL string // https://<slug>--v<N>.<base>/
@@ -26,7 +25,7 @@ type texts struct {
 
 	instructions string
 	tools        map[string]string
-	next         map[string]string // next step per error code
+	next         map[string]string
 	frontmatter  skillFrontmatter
 	skill        string // SKILL.md
 }
@@ -88,8 +87,7 @@ func newTexts(links present.Links, o Options) texts {
 		"the error says current=<n>: resume that path from offset n.",
 		size(o.MaxChunkBytes), size(o.MaxTotalBytes))
 
-	// The instructions say how the tools fit together; what each one does
-	// is in its own description.
+	// How the tools fit together; each tool's own description says what it does.
 	t.instructions = fmt.Sprintf("Kazari hosts static web pages at %s (the published version) and %s (version N). "+
 		"Work in this order:\n"+
 		"- New page: create_artifact, then report the url from the result to the user.\n"+
@@ -247,7 +245,6 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 	}
 }
 
-// promptText is the body of the publish-page prompt.
 func (t texts) promptText(o Options, topic string) string {
 	var b strings.Builder
 	if topic != "" {
@@ -272,9 +269,7 @@ func (t texts) promptText(o Options, topic string) string {
 	return b.String()
 }
 
-// hostURL renders the root URL of a host label for descriptions. The
-// links know the public scheme and port (http://<slug>.localhost:8080/ in
-// development), so they come first.
+// hostURL prefers links: they know the public scheme and port, e.g. in development.
 func hostURL(links present.Links, base, sub string) string {
 	if links.URL != nil {
 		return links.URL(sub)
@@ -285,7 +280,6 @@ func hostURL(links present.Links, base, sub string) string {
 	return "https://" + sub + ".<base>/"
 }
 
-// size renders a byte count the way a person writes it: 2 MiB, 256 KiB.
 func size(n int64) string {
 	switch {
 	case n >= 1<<30 && n%(1<<30) == 0:
@@ -298,9 +292,7 @@ func size(n int64) string {
 	return fmt.Sprintf("%d bytes", n)
 }
 
-// cspDirectives are the directives worth explaining to an author, in order,
-// with the noun used for them. Optional ones are described only when the
-// policy names them.
+// cspDirectives are explained in this order; optional ones only when the policy names them.
 var cspDirectives = []struct {
 	name, what string
 	optional   bool
@@ -314,8 +306,6 @@ var cspDirectives = []struct {
 	{"frame-src", "frames", true},
 }
 
-// describeCSP explains a Content-Security-Policy in a sentence per
-// directive, naming the CDN hosts verbatim, and quotes the policy.
 func describeCSP(csp string) string {
 	csp = strings.TrimSpace(csp)
 	if csp == "" {
@@ -349,8 +339,7 @@ func describeCSP(csp string) string {
 	return b.String()
 }
 
-// parseCSP splits a policy into directive name -> source list. A repeated
-// directive keeps its first occurrence, as browsers do.
+// parseCSP keeps the first of a repeated directive, as browsers do.
 func parseCSP(csp string) map[string][]string {
 	out := map[string][]string{}
 	for _, d := range strings.Split(csp, ";") {

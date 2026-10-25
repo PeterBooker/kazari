@@ -22,17 +22,14 @@ func newPages() *pages {
 	return &pages{tmpl: template.Must(template.ParseFS(templateFS, "templates/pages.html"))}
 }
 
-// messagePage is a page with a title and a short explanation.
 type messagePage struct {
 	Title, Message, Detail string
 }
 
-// scopeView is a scope with its human description.
 type scopeView struct {
 	Name, Description string
 }
 
-// consentPage lists what the client will be allowed to do.
 type consentPage struct {
 	ClientName   string
 	ClientID     string
@@ -78,10 +75,9 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'sel
 // safeOrigin matches an origin that can be put in a CSP source list as is.
 var safeOrigin = regexp.MustCompile(`^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$|^http://\[::1\](:[0-9]+)?$`)
 
-// render writes an HTML page with the security headers every page carries.
-// formTarget, when set, is a URL the page's form may end up redirecting to;
-// its origin is added to form-action because browsers apply form-action to
-// the redirect after a form submission.
+// render writes an HTML page with its security headers. formTarget's origin,
+// when set, joins form-action because browsers apply it to the redirect
+// after a form submission.
 func (p *pages) render(w http.ResponseWriter, status int, name string, data any, formTarget string) {
 	var buf bytes.Buffer
 	if err := p.tmpl.ExecuteTemplate(&buf, name, data); err != nil {

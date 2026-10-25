@@ -51,8 +51,7 @@ func post(t *testing.T, url string, header map[string]string) (*http.Response, a
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	// Our own rejections are api.ErrorResponse; SDK answers are JSON-RPC
-	// messages, which leave body zero.
+	// SDK answers are JSON-RPC, not api.ErrorResponse, and leave body zero.
 	var body api.ErrorResponse
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		_ = json.NewDecoder(resp.Body).Decode(&body)
@@ -82,7 +81,6 @@ func TestHTTPOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden || body.Error.Code != api.CodeForbidden {
 		t.Errorf("bad origin: status %d, body %+v", resp.StatusCode, body)
 	}
-	// The check runs before authentication.
 	if resp, _ := post(t, srv.URL, map[string]string{"Origin": "https://evil.example"}); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("bad origin without token: status %d", resp.StatusCode)
 	}
@@ -107,7 +105,6 @@ func TestHTTPProtocolVersion(t *testing.T) {
 	}
 }
 
-// bearer adds an Authorization header to every request.
 type bearer struct {
 	token string
 	next  http.RoundTripper
@@ -140,7 +137,6 @@ func TestHTTPClient(t *testing.T) {
 	if len(tools.Tools) != 17 {
 		t.Errorf("%d tools, want 17", len(tools.Tools))
 	}
-	// The principal from the bearer token reaches the tool handlers.
 	pub, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
 		"slug": "over-http", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "hi"}},
@@ -150,9 +146,6 @@ func TestHTTPClient(t *testing.T) {
 	}
 }
 
-// Over the stateless HTTP transport, a 2026-07-28 client with form
-// elicitation is asked before a purge, and an older one is not (the server
-// cannot send it a request of its own).
 func TestHTTPHardDeleteConfirmation(t *testing.T) {
 	srv := newHTTPServer(t)
 	ctx := context.Background()
@@ -189,7 +182,7 @@ func TestHTTPHardDeleteConfirmation(t *testing.T) {
 		if !out.OK || firstLine(res) != "Purged purge-me permanently." || asked != c.asks {
 			t.Errorf("%s: purge = %+v %q, asked %d times, want %d", c.version, out, firstLine(res), asked, c.asks)
 		}
-		// The tombstone blocks the slug; use a fresh one next round.
+		// The purge tombstone blocks the slug for the next round.
 		srv = newHTTPServer(t)
 	}
 }

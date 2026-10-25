@@ -40,7 +40,7 @@
 <link rel="apple-touch-icon" href="{{ "apple-touch-icon.png" | relURL }}">
 <link rel="preload" href="{{ "fonts/manrope.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{ "fonts/noto-sans-jp.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
-{{- /* Before first paint: the remembered theme, and the solar term for the visitor's date (see _partials/sekki.html). */}}
+{{- /* Inline so the theme and term apply before first paint; mirrors _partials/sekki.html. */}}
 {{- $starts := slice }}{{ range hugo.Data.sekki.terms }}{{ $starts = $starts | append .start }}{{ end }}
 <script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}(function(s){var d=new Date(),k=("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2),n=-1,b="",l="",m=0;s.forEach(function(x,i){if(x<=k&&x>b){b=x;n=i}if(x>l){l=x;m=i}});document.documentElement.dataset.sekki=n<0?m:n})({{ $starts | jsonify | safeJS }})</script>
 {{- $css := resources.Get "css/main.css" | resources.ExecuteAsTemplate "css/main.css" . }}

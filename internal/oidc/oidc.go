@@ -1,7 +1,5 @@
 // Package oidc is the OpenID Connect relying party that the OAuth
-// authorization server signs people in with. It implements
-// oauth.IdentityProvider: it builds the provider's authorization URL and
-// turns the callback code into a verified auth.Identity.
+// authorization server signs people in with, as an oauth.IdentityProvider.
 package oidc
 
 import (
@@ -21,41 +19,33 @@ import (
 	"kazari/internal/auth"
 )
 
-// DefaultScopes are requested when Config.Scopes is empty.
 var DefaultScopes = []string{gooidc.ScopeOpenID, "email", "profile"}
 
-// googleHost issues Google tokens. A Google account's email_verified only
-// proves the person once received mail at that address: a consumer account
-// created on a work address stays verified after the person leaves. Only the
-// hd (hosted domain) claim shows that the domain's Workspace manages the
-// account, so a non-Google address counts as verified only when hd equals
-// its domain.
+// googleHost issues Google tokens. Google's email_verified only proves the
+// person once received mail there, and a consumer account on a work address
+// stays verified after they leave; so a non-Google address counts as
+// verified only when the hd (hosted domain) claim equals its domain.
 const googleHost = "accounts.google.com"
 
-// googleConsumerDomains are the addresses Google itself owns, which carry
-// no hd claim.
+// googleConsumerDomains are Google's own domains, which carry no hd claim.
 var googleConsumerDomains = []string{"gmail.com", "googlemail.com"}
 
-// entraHost issues Microsoft Entra ID tokens. Entra single-tenant apps do
-// not send email_verified, and the tenant's mail addresses are verified.
+// entraHost issues Microsoft Entra ID tokens. Single-tenant apps get no
+// email_verified, but the tenant's mail addresses are verified.
 const entraHost = "login.microsoftonline.com"
 
 // Config describes the upstream provider.
 type Config struct {
-	// Issuer is the provider's issuer URL; discovery reads
-	// <Issuer>/.well-known/openid-configuration.
 	Issuer       string
 	ClientID     string
 	ClientSecret string
 	// RedirectURL is https://mcp.<base>/oauth/callback.
 	RedirectURL string
 	// Scopes default to DefaultScopes.
-	Scopes []string
-	// HTTPClient is used for discovery, JWKS and token requests (default
-	// http.DefaultClient).
+	Scopes     []string
 	HTTPClient *http.Client
-	// InsecureSkipIssuerCheck accepts a discovery document and ID tokens
-	// whose issuer differs from Issuer. For tests only.
+	// InsecureSkipIssuerCheck accepts a discovery document and ID tokens of
+	// another issuer. For tests only.
 	InsecureSkipIssuerCheck bool
 }
 
@@ -67,8 +57,8 @@ type Provider struct {
 	client   *http.Client
 }
 
-// New discovers the provider. It fails when the provider is unreachable or
-// its discovery document names a different issuer.
+// New discovers the provider; it fails when the discovery document names a
+// different issuer.
 func New(ctx context.Context, cfg Config) (*Provider, error) {
 	switch {
 	case cfg.Issuer == "":
@@ -111,8 +101,7 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 // Issuer returns the configured issuer URL.
 func (p *Provider) Issuer() string { return p.issuer }
 
-// AuthURL returns the provider's authorization URL for one sign-in.
-// codeChallenge is the S256 PKCE challenge.
+// AuthURL takes the S256 PKCE challenge.
 func (p *Provider) AuthURL(state, nonce, codeChallenge string) string {
 	return p.oauth.AuthCodeURL(state,
 		gooidc.Nonce(nonce),
@@ -121,9 +110,8 @@ func (p *Provider) AuthURL(state, nonce, codeChallenge string) string {
 	)
 }
 
-// Exchange redeems the callback code with the PKCE verifier, verifies the
-// ID token (signature against the provider's JWKS, issuer, audience,
-// expiry) and its nonce, and maps its claims to an Identity.
+// Exchange redeems the callback code and verifies the ID token's signature,
+// issuer, audience, expiry and nonce.
 func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error) {
 	if code == "" {
 		return auth.Identity{}, errors.New("oidc: callback has no code")
@@ -153,7 +141,6 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 	return p.identity(idt.Issuer, idt.Subject, c), nil
 }
 
-// claims are the ID token claims Kazari reads.
 type claims struct {
 	Email             string    `json:"email"`
 	EmailVerified     *flexBool `json:"email_verified"`
@@ -162,11 +149,10 @@ type claims struct {
 	HostedDomain      string    `json:"hd"`
 }
 
-// identity maps verified claims to an Identity. For Entra only,
-// preferred_username stands in for a missing email when it looks like one,
-// and a missing email_verified counts as verified. OpenID Connect promises
-// nothing about preferred_username (it may be any string, often one the
-// person chose), so for other providers it never stands in for an email.
+// identity maps verified claims to an Identity. Only for Entra does an
+// email-like preferred_username stand in for a missing email, and a missing
+// email_verified count as verified: elsewhere preferred_username may be any
+// string the person chose.
 func (p *Provider) identity(issuer, subject string, c claims) auth.Identity {
 	id := auth.Identity{Issuer: issuer, Subject: subject, Email: c.Email, Name: c.Name}
 	entra := issuerHost(issuer, entraHost)
@@ -195,8 +181,8 @@ func issuerHost(issuer, host string) bool {
 	return err == nil && strings.EqualFold(u.Hostname(), host)
 }
 
-// flexBool accepts a JSON boolean or the strings "true" and "false", which
-// some providers send for email_verified.
+// flexBool also accepts the strings "true" and "false", which some providers
+// send for email_verified.
 type flexBool bool
 
 func (b *flexBool) UnmarshalJSON(data []byte) error {

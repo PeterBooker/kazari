@@ -50,7 +50,6 @@ func TestError(t *testing.T) {
 	}
 }
 
-// The actor carries the credential so artifact audit events can name it.
 func TestActorCredential(t *testing.T) {
 	tests := []struct {
 		p    auth.Principal

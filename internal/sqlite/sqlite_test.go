@@ -39,7 +39,6 @@ func TestOpenMigratesIdempotently(t *testing.T) {
 	}
 	db.Close()
 
-	// Reopening applies nothing new.
 	db, err = Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)

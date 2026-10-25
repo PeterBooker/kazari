@@ -1,8 +1,5 @@
-// Kazari site: theme toggle, docs menu, copy buttons, tabs, table of contents highlight and search.
-
 const root = document.documentElement;
 
-// Theme: follows the system until the visitor picks one; the choice is remembered.
 document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
   const dark = root.dataset.theme
     ? root.dataset.theme === "dark"
@@ -11,7 +8,6 @@ document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
   try { localStorage.setItem("theme", root.dataset.theme); } catch {}
 });
 
-// Docs menu on small screens.
 const navToggle = document.querySelector(".nav-toggle");
 navToggle?.addEventListener("click", () => {
   const open = document.body.classList.toggle("nav-open");
@@ -21,7 +17,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && document.body.classList.contains("nav-open")) navToggle?.click();
 });
 
-// Copy buttons on code blocks.
 const copyIcon = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
 const checkIcon = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 for (const block of document.querySelectorAll(".code")) {
@@ -43,7 +38,7 @@ for (const block of document.querySelectorAll(".code")) {
   block.append(button);
 }
 
-// Tabs (WAI-ARIA tabs pattern with automatic activation).
+// WAI-ARIA tabs pattern, automatic activation.
 for (const tabs of document.querySelectorAll("[data-tabs]")) {
   const list = [...tabs.querySelectorAll('[role="tab"]')];
   const select = (tab) => {
@@ -66,7 +61,6 @@ for (const tabs of document.querySelectorAll("[data-tabs]")) {
   });
 }
 
-// Highlight the section being read in the "On this page" list.
 const tocLinks = [...document.querySelectorAll(".docs-toc a")];
 if (tocLinks.length && "IntersectionObserver" in window) {
   const byId = new Map(tocLinks.map((a) => [decodeURIComponent(a.hash.slice(1)), a]));
@@ -84,7 +78,6 @@ if (tocLinks.length && "IntersectionObserver" in window) {
   headings.forEach((h) => io.observe(h));
 }
 
-// Search over the index built by layouts/home.json, loaded on first use.
 const dialog = document.querySelector(".search-dialog");
 const input = dialog?.querySelector("input");
 const results = dialog?.querySelector(".search-results");

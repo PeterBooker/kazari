@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// valid returns a configuration that passes Validate.
 func valid() Config {
 	c := Default()
 	c.BaseDomain = "art.example.com"
@@ -100,7 +99,6 @@ func TestExampleFile(t *testing.T) {
 		t.Errorf("OIDC = %+v, want nil", got.Auth.OIDC)
 	}
 
-	// Apart from the keys that have no default, the example is the defaults.
 	want := Default()
 	want.BaseDomain = "art.example.com"
 	want.DataDir = "/var/lib/kazari"
@@ -197,7 +195,6 @@ func TestLoadTypeError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot unmarshal !!seq into string") {
 		t.Fatalf("err = %v, want a type error", err)
 	}
-	// Line numbers would refer to the re-encoded document, so they are dropped.
 	if strings.Contains(err.Error(), "line ") {
 		t.Errorf("err = %v, want no line number", err)
 	}
@@ -408,7 +405,6 @@ func TestEnvBadValues(t *testing.T) {
 	}
 }
 
-// TestEnvNamesUnique guards against two keys mapping to one variable.
 func TestEnvNamesUnique(t *testing.T) {
 	seen := map[string]bool{}
 	var walk func(reflect.Type, string)
@@ -667,7 +663,6 @@ func TestRedacted(t *testing.T) {
 		}
 	}
 
-	// Empty secrets stay empty and a missing OIDC mapping is nil.
 	d := Default()
 	m = d.Redacted()
 	if got := section(m, "auth")["admin_token"]; got != "" {
@@ -735,8 +730,6 @@ func TestLogger(t *testing.T) {
 	}
 }
 
-// The admin host answers anyone who can reach it, so a short admin token
-// is refused, except under a localhost base domain.
 func TestAdminTokenLength(t *testing.T) {
 	tests := []struct {
 		base, token string

@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// Limits that are fixed by the design rather than configured.
 const (
 	SlugMinLen       = 3
 	SlugMaxLen       = 63
@@ -24,11 +23,10 @@ const (
 	// artifact host (sign-in, share links); no file may live under it.
 	ReservedDir = ".kazari"
 
-	// Free-text fields are stored with the artifact and returned by every
-	// listing, so they are short. The limits are bytes of UTF-8.
+	// Bytes of UTF-8, kept short because every listing returns them.
 	NameMaxBytes        = 256
 	DescriptionMaxBytes = 4096
-	LabelMaxBytes       = 256 // a version's label
+	LabelMaxBytes       = 256
 )
 
 var (
@@ -36,9 +34,8 @@ var (
 	metaKeyRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
 )
 
-// ValidateSlug checks the slug rules: lower-case letters, digits and single
-// hyphens, 3 to 63 characters, no "--" (reserved for version hosts), and not
-// in the reserved list.
+// ValidateSlug allows lower-case letters, digits and single hyphens ("--"
+// marks version hosts), 3 to 63 characters, and no reserved slug.
 func ValidateSlug(slug string, reserved []string) error {
 	switch {
 	case len(slug) < SlugMinLen:
@@ -55,11 +52,8 @@ func ValidateSlug(slug string, reserved []string) error {
 	return nil
 }
 
-// ValidatePath normalises a file path and rejects anything that could
-// escape or confuse the serving path: absolute paths, "..", NUL and control
-// characters, backslashes, over-long segments or totals, a trailing slash
-// (a directory, not a file) and paths under ReservedDir. It returns the
-// cleaned path.
+// ValidatePath returns p cleaned, rejecting anything that could escape or
+// confuse the serving path, and paths under ReservedDir.
 func ValidatePath(p string) (string, error) {
 	if p == "" {
 		return "", Errorf(ErrInvalidPath, "empty path")
@@ -96,9 +90,8 @@ func ValidatePath(p string) (string, error) {
 	return clean, nil
 }
 
-// ValidateMetadata checks keys, values and pair count, and restricts
-// server-interpreted "kazari." keys to the known set with valid values.
-// maxPairs <= 0 means DefaultMaxPairs.
+// ValidateMetadata checks every pair and the count; maxPairs <= 0 means
+// DefaultMaxPairs.
 func ValidateMetadata(m map[string]string, maxPairs int) error {
 	if maxPairs <= 0 {
 		maxPairs = DefaultMaxPairs
@@ -114,7 +107,8 @@ func ValidateMetadata(m map[string]string, maxPairs int) error {
 	return nil
 }
 
-// ValidateMetadataPair checks one key and value.
+// ValidateMetadataPair checks one pair; "kazari." keys must be known, with
+// valid values.
 func ValidateMetadataPair(k, v string) error {
 	if !metaKeyRe.MatchString(k) {
 		return Errorf(ErrInvalidMetadata, "metadata key %q must match %s", k, metaKeyRe.String())
@@ -131,8 +125,8 @@ func ValidateMetadataPair(k, v string) error {
 			return Errorf(ErrInvalidMetadata, "metadata %s must be \"true\" or \"false\"", k)
 		}
 	case MetaCSP:
-		// The value is sent verbatim as a response header: printable ASCII
-		// only, so no line breaks, NUL or bytes a proxy might mangle.
+		// Sent verbatim as a response header: no line breaks, NUL or bytes a
+		// proxy might mangle.
 		if !printableASCII(v) {
 			return Errorf(ErrInvalidMetadata, "metadata %s must be printable ASCII on one line", k)
 		}
@@ -161,25 +155,22 @@ func ParseVisibility(s string) (Visibility, error) {
 	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
 }
 
-// ValidateName checks an artifact's name: valid UTF-8 of at most
-// NameMaxBytes on one line, with no control or bidi control characters.
+// ValidateName allows one line of valid UTF-8, at most NameMaxBytes, with no
+// control or bidi control characters.
 func ValidateName(s string) error { return validateText("name", s, NameMaxBytes, false) }
 
-// ValidateDescription checks an artifact's description: the rules of
-// ValidateName with DescriptionMaxBytes, except that newline and tab are
-// allowed.
+// ValidateDescription is ValidateName with DescriptionMaxBytes, allowing
+// newline and tab.
 func ValidateDescription(s string) error {
 	return validateText("description", s, DescriptionMaxBytes, true)
 }
 
-// ValidateLabel checks a version's label: the rules of ValidateName with
-// LabelMaxBytes.
+// ValidateLabel is ValidateName with LabelMaxBytes.
 func ValidateLabel(s string) error { return validateText("label", s, LabelMaxBytes, false) }
 
-// validateText rejects text that is too long, is not UTF-8, or carries
-// characters that change how the output around it reads: C0 and C1
-// controls, DEL, and the bidi embedding, override and isolate controls.
-// multiline allows newline and tab.
+// validateText rejects characters that change how the output around them
+// reads: C0 and C1 controls, DEL, and the bidi embedding, override and
+// isolate controls.
 func validateText(field, s string, maxBytes int, multiline bool) error {
 	if len(s) > maxBytes {
 		return Errorf(ErrInvalidArgument, "%s is longer than %d bytes", field, maxBytes)
@@ -202,10 +193,8 @@ func validateText(field, s string, maxBytes int, multiline bool) error {
 // response header.
 const ContentTypeMaxLen = 255
 
-// ValidateContentType checks a caller-supplied content type before it is
-// stored and later sent as the Content-Type header: printable ASCII, at
-// most ContentTypeMaxLen bytes, and a parseable media type. Empty is fine
-// (the type is then derived).
+// ValidateContentType requires a printable-ASCII media type, since it is
+// sent as the Content-Type header. Empty is fine: the type is derived.
 func ValidateContentType(ct string) error {
 	if ct == "" {
 		return nil

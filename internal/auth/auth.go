@@ -8,7 +8,6 @@ import (
 	"slices"
 )
 
-// Scopes an API key or OAuth grant may carry.
 const (
 	ScopeRead   = "artifacts:read"
 	ScopeWrite  = "artifacts:write"
@@ -19,10 +18,8 @@ const (
 // AllScopes is every scope, in display order.
 var AllScopes = []string{ScopeRead, ScopeWrite, ScopeDelete, ScopeAdmin}
 
-// MemberScopes are the scopes a member may hold.
 var MemberScopes = []string{ScopeRead, ScopeWrite, ScopeDelete}
 
-// Credential sources.
 const (
 	SourceAPIKey     = "api_key"
 	SourceOAuth      = "oauth"
@@ -43,8 +40,7 @@ type Principal struct {
 	QuotaBytes int64  // owner quota, 0 = unlimited
 }
 
-// HasScope reports whether the principal holds the scope. Admins hold every
-// scope.
+// HasScope reports whether p holds scope; admins hold every scope.
 func (p Principal) HasScope(scope string) bool {
 	return p.Admin || slices.Contains(p.Scopes, scope)
 }
@@ -72,8 +68,8 @@ type Identity struct {
 
 type chain []Authenticator
 
-// Chain tries each authenticator in order and returns the first Principal.
-// Any error other than ErrInvalidToken stops the chain.
+// Chain returns the first Principal its authenticators yield, in order. Any
+// error other than ErrInvalidToken stops the chain.
 func Chain(auths ...Authenticator) Authenticator {
 	return chain(auths)
 }

@@ -19,7 +19,6 @@ const page = `<html>
 </html>
 `
 
-// anchor returns the anchor of 1-based line n of text.
 func anchor(text string, n int) string {
 	return artifact.Anchor(n, strings.Split(text, "\n")[n-1])
 }
@@ -88,7 +87,6 @@ func TestApplyEditsText(t *testing.T) {
 			lines: [][2]int{{3, 4}, {1, 2}},
 		},
 		{
-			// The second run starts inside a failed partial match.
 			name:  "repeated lines, overlapping prefixes",
 			in:    "a \na \nb \na \na \na \nb \n",
 			edits: []artifact.Edit{{OldText: "a\na\nb\n", NewText: "X\n", ReplaceAll: true}},
@@ -133,7 +131,6 @@ func TestApplyEditsOutcomeExcerpt(t *testing.T) {
 	if o.Replacements != 1 || o.StartLine != 4 {
 		t.Fatalf("outcome = %+v", o)
 	}
-	// Two lines of context either side, each anchored against the new text.
 	want := strings.Join([]string{
 		anchor(got, 2) + "|  <body>",
 		anchor(got, 3) + "|    <h1>Q3 report</h1>",
@@ -197,7 +194,6 @@ func TestApplyEditsReplacementCap(t *testing.T) {
 }
 
 func TestApplyEditsAnchors(t *testing.T) {
-	// All anchors refer to the content as read, whatever order they come in.
 	got, outs, err := artifact.ApplyEdits("index.html", page, []artifact.Edit{
 		{Start: anchor(page, 5), NewText: "    <p>Costs fell 2%.</p>\n    <p>Margin rose.</p>"},
 		{Start: anchor(page, 3), End: anchor(page, 4), NewText: ""},
@@ -252,9 +248,6 @@ func TestApplyEditsAnchorErrors(t *testing.T) {
 	}
 }
 
-// Regression cases from review: sizes are checked before the text is built,
-// excerpts clip long lines, indentation copied without the first line's
-// survives the fallback, and CRLF files keep their line breaks.
 func TestApplyEditsReview(t *testing.T) {
 	t.Run("size limit before building", func(t *testing.T) {
 		in := strings.Repeat("a", 1000)
@@ -408,7 +401,6 @@ func TestServiceEdit(t *testing.T) {
 		}
 	}
 
-	// The edit applies to the latest version, not the published one.
 	if _, err := e.svc.Publish(e.ctx, alice, "demo", 1); err != nil {
 		t.Fatal(err)
 	}

@@ -9,22 +9,17 @@ import (
 	"strings"
 )
 
-// Key format: kzk_<prefix>_<secret>, both lower-case unpadded base32.
 const (
 	prefixBytes = 5  // 40 bits encode to exactly 8 characters
 	secretBytes = 32 // 256 bits encode to 52 characters
 
-	// PrefixLen is the length of a key's lookup prefix.
 	PrefixLen = 8
-	// SecretLen is the length of a key's secret part.
 	SecretLen = 52
-	// KeyLen is the length of a whole key string.
-	KeyLen = len(KeyPrefix) + PrefixLen + 1 + SecretLen
+	KeyLen    = len(KeyPrefix) + PrefixLen + 1 + SecretLen
 )
 
 var keyEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
-// newKey returns a fresh key string and its prefix.
 func newKey() (key, prefix string, err error) {
 	var b [prefixBytes + secretBytes]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -35,8 +30,8 @@ func newKey() (key, prefix string, err error) {
 	return KeyPrefix + prefix + "_" + secret, prefix, nil
 }
 
-// ParseKey splits a key string into its prefix and secret. ok is false
-// unless token has the exact kzk_<prefix>_<secret> shape.
+// ParseKey splits token into prefix and secret; ok is false unless it has
+// the exact kzk_<prefix>_<secret> shape.
 func ParseKey(token string) (prefix, secret string, ok bool) {
 	rest, found := strings.CutPrefix(token, KeyPrefix)
 	if !found {

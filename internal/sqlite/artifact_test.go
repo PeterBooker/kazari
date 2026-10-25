@@ -11,7 +11,6 @@ import (
 	"kazari/internal/sqlite"
 )
 
-// openArtifactTestDB opens a migrated database in a temp dir.
 func openArtifactTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
 	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))

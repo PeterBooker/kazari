@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// serveTLS accepts connections on a loopback listener and completes a TLS
-// handshake on each using s. It returns the listener address.
 func serveTLS(t *testing.T, s Source) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

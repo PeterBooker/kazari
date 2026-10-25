@@ -11,8 +11,7 @@ import (
 	"kazari/internal/upload"
 )
 
-// UploadStore implements upload.Store against the upload and upload_file
-// tables.
+// UploadStore implements upload.Store.
 type UploadStore struct {
 	db *sql.DB
 }
@@ -24,10 +23,8 @@ func NewUploadStore(db *DB) *UploadStore {
 	return &UploadStore{db: db.DB}
 }
 
-// Create inserts u without files. The owner handle must name an existing
-// user. With maxOpen > 0 the owner's uploads are counted in the same
-// (immediate) transaction as the insert, so concurrent creates cannot both
-// take the last slot; a full owner gets artifact.ErrTooManyUploads.
+// Create needs an existing owner. The count runs in the insert's immediate
+// transaction, so concurrent creates cannot both take the last slot.
 func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var ownerID int64
@@ -61,8 +58,7 @@ func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int)
 	return nil
 }
 
-// Get returns the upload with its files sorted by path, or
-// artifact.ErrUploadNotFound.
+// Get sorts files by path.
 func (s *UploadStore) Get(ctx context.Context, id string) (*upload.Upload, error) {
 	var u *upload.Upload
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -87,8 +83,7 @@ func (s *UploadStore) Get(ctx context.Context, id string) (*upload.Upload, error
 	return u, nil
 }
 
-// UpsertFile inserts or replaces the row for f.Path and sets the upload's
-// total bytes, or returns artifact.ErrUploadNotFound.
+// UpsertFile returns artifact.ErrUploadNotFound for an unknown id.
 func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.StagedFile, totalBytes int64) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE upload SET bytes = ? WHERE id = ?`, totalBytes, id)
@@ -118,8 +113,7 @@ func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.Staged
 	return nil
 }
 
-// Delete removes the upload and its file rows, or returns
-// artifact.ErrUploadNotFound.
+// Delete returns artifact.ErrUploadNotFound for an unknown id.
 func (s *UploadStore) Delete(ctx context.Context, id string) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM upload_file WHERE upload_id = ?`, id); err != nil {
@@ -144,8 +138,7 @@ func (s *UploadStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// ListExpired returns uploads with expires_at <= now, oldest expiry first,
-// each with its files.
+// ListExpired returns the oldest expiry first, each upload with its files.
 func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) ([]upload.Upload, error) {
 	var out []upload.Upload
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -194,7 +187,6 @@ func (s *UploadStore) CountOpen(ctx context.Context, owner string) (int, error) 
 	return n, nil
 }
 
-// scanUpload reads one upload row through scan (a Row or Rows Scan method).
 func scanUpload(scan func(dest ...any) error) (*upload.Upload, error) {
 	var (
 		u                  upload.Upload

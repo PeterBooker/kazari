@@ -34,7 +34,6 @@ func oauthSplitScopes(s string) []string {
 	return strings.Fields(s)
 }
 
-// oauthUserID returns the id of the user with handle, or user.ErrNotFound.
 func oauthUserID(ctx context.Context, q interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, handle string) (int64, error) {
@@ -46,8 +45,6 @@ func oauthUserID(ctx context.Context, q interface {
 	return id, err
 }
 
-// UpsertClient inserts the client or replaces its name, redirect URIs and
-// fetch time.
 func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) error {
 	uris, err := json.Marshal(c.RedirectURIs)
 	if err != nil {
@@ -64,7 +61,6 @@ func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) error {
 	return nil
 }
 
-// GetClient returns a client by id, or oauth.ErrNotFound.
 func (s *OAuthStore) GetClient(ctx context.Context, id string) (*oauth.Client, error) {
 	var (
 		c       = oauth.Client{ID: id}
@@ -88,8 +84,7 @@ func (s *OAuthStore) GetClient(ctx context.Context, id string) (*oauth.Client, e
 	return &c, nil
 }
 
-// CreateRequest stores a pending authorization request. A non-empty
-// UserHandle is bound at once.
+// CreateRequest binds a non-empty UserHandle at once.
 func (s *OAuthStore) CreateRequest(ctx context.Context, r *oauth.Request) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var uid sql.NullInt64
@@ -114,7 +109,6 @@ func (s *OAuthStore) CreateRequest(ctx context.Context, r *oauth.Request) error 
 	return nil
 }
 
-// GetRequest returns a request, expired or not, or oauth.ErrNotFound.
 func (s *OAuthStore) GetRequest(ctx context.Context, id string) (*oauth.Request, error) {
 	var (
 		r       = oauth.Request{ID: id}
@@ -139,9 +133,7 @@ func (s *OAuthStore) GetRequest(ctx context.Context, id string) (*oauth.Request,
 	return &r, nil
 }
 
-// BindRequest binds a user to a request that has none yet. It returns
-// oauth.ErrNotFound when the request is missing or already bound, and
-// user.ErrNotFound for an unknown handle.
+// BindRequest returns user.ErrNotFound for an unknown handle.
 func (s *OAuthStore) BindRequest(ctx context.Context, id, handle string) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := oauthUserID(ctx, tx, handle)
@@ -167,7 +159,6 @@ func (s *OAuthStore) BindRequest(ctx context.Context, id, handle string) error {
 	return nil
 }
 
-// DeleteRequest removes a request; a missing one is not an error.
 func (s *OAuthStore) DeleteRequest(ctx context.Context, id string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_request WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete oauth request: %w", err)
@@ -175,7 +166,6 @@ func (s *OAuthStore) DeleteRequest(ctx context.Context, id string) error {
 	return nil
 }
 
-// CreateCode stores an authorization code.
 func (s *OAuthStore) CreateCode(ctx context.Context, c *oauth.Code) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := oauthUserID(ctx, tx, c.UserHandle)
@@ -195,9 +185,6 @@ func (s *OAuthStore) CreateCode(ctx context.Context, c *oauth.Code) error {
 	return nil
 }
 
-// ConsumeCode marks the code used at at and returns it. A second call for
-// the same code returns oauth.ErrCodeUsed; an unknown code
-// oauth.ErrNotFound.
 func (s *OAuthStore) ConsumeCode(ctx context.Context, hash string, at time.Time) (*oauth.Code, error) {
 	var c *oauth.Code
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -249,7 +236,6 @@ func oauthGetCode(ctx context.Context, tx *sql.Tx, hash string) (*oauth.Code, er
 	return &c, nil
 }
 
-// oauthInsertToken inserts t for the user uid and sets t.ID.
 func oauthInsertToken(ctx context.Context, tx *sql.Tx, uid int64, t *oauth.Token) error {
 	res, err := tx.ExecContext(ctx, `INSERT INTO oauth_token
 		(token_hash, kind, client_id, user_id, scopes, resource, key_prefix, family_id, created_at, expires_at, revoked_at)
@@ -263,8 +249,8 @@ func oauthInsertToken(ctx context.Context, tx *sql.Tx, uid int64, t *oauth.Token
 	return err
 }
 
-// oauthInsertPair inserts refresh, then access, both in family (0 = start a
-// new family at the refresh token's id).
+// Family 0 starts a new family at the refresh token's id, so refresh goes
+// in first.
 func oauthInsertPair(ctx context.Context, tx *sql.Tx, family int64, access, refresh *oauth.Token) error {
 	if refresh.UserHandle != access.UserHandle {
 		return errors.New("access and refresh token belong to different users")
@@ -287,7 +273,6 @@ func oauthInsertPair(ctx context.Context, tx *sql.Tx, family int64, access, refr
 	return oauthInsertToken(ctx, tx, uid, access)
 }
 
-// CreateTokens stores a new access and refresh pair starting a new family.
 func (s *OAuthStore) CreateTokens(ctx context.Context, access, refresh *oauth.Token) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		return oauthInsertPair(ctx, tx, 0, access, refresh)
@@ -321,8 +306,6 @@ func oauthScanToken(s interface{ Scan(dest ...any) error }, t *oauth.Token) erro
 	return nil
 }
 
-// GetToken returns a token by hash, revoked or expired included, or
-// oauth.ErrNotFound.
 func (s *OAuthStore) GetToken(ctx context.Context, hash string) (*oauth.Token, error) {
 	var t oauth.Token
 	row := s.db.QueryRowContext(ctx, `SELECT `+oauthTokenColumns+`
@@ -336,8 +319,6 @@ func (s *OAuthStore) GetToken(ctx context.Context, hash string) (*oauth.Token, e
 	return &t, nil
 }
 
-// Rotate revokes the live refresh token oldID, stores the new pair in its
-// family and points oldID's replaced_by at the new refresh token.
 func (s *OAuthStore) Rotate(ctx context.Context, oldID int64, at time.Time, access, refresh *oauth.Token) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var family int64
@@ -371,7 +352,6 @@ func (s *OAuthStore) Rotate(ctx context.Context, oldID int64, at time.Time, acce
 	return nil
 }
 
-// RevokeFamily revokes every live token of a family.
 func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE oauth_token SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`, toNanos(at), familyID)
@@ -381,7 +361,6 @@ func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.T
 	return nil
 }
 
-// ListGrants returns the user's live refresh tokens at now, newest first.
 func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Time) ([]oauth.Token, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+oauthTokenColumns+`
 		FROM oauth_token t JOIN user u ON u.id = t.user_id
@@ -405,8 +384,6 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 	return out, nil
 }
 
-// RevokeGrant revokes the family of refresh token id, or returns
-// oauth.ErrNotFound when id is not a refresh token.
 func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var family int64
@@ -428,8 +405,6 @@ func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) er
 	return nil
 }
 
-// RevokeAllForUser revokes every live token of the user and deletes their
-// browser sessions.
 func (s *OAuthStore) RevokeAllForUser(ctx context.Context, handle string, at time.Time) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE oauth_token SET revoked_at = ?
@@ -445,8 +420,6 @@ func (s *OAuthStore) RevokeAllForUser(ctx context.Context, handle string, at tim
 	return nil
 }
 
-// DeleteExpired removes requests, codes and tokens whose expiry is at or
-// before now, and returns how many rows went.
 func (s *OAuthStore) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
 	var total int64
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {

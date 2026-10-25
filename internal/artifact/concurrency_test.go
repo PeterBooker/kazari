@@ -15,8 +15,6 @@ import (
 	"kazari/internal/sqlite"
 )
 
-// parkBlobs parks the first Put after the blob is stored (or found already
-// stored) until release is closed.
 type parkBlobs struct {
 	*blob.FS
 	once    sync.Once
@@ -33,9 +31,6 @@ func (p *parkBlobs) Put(ctx context.Context, r io.Reader) (string, int64, error)
 	return hash, size, err
 }
 
-// A publish of content that is already stored writes no blob, so until its
-// version commits the blob looks unreferenced. A garbage collection that
-// starts in that window must wait for the commit rather than delete it.
 func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice, bob := e.user(t, "alice"), e.user(t, "bob")
@@ -44,7 +39,7 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	if err := e.svc.Delete(e.ctx, alice, "old-page", true); err != nil {
 		t.Fatal(err)
 	}
-	e.clock.Advance(2 * time.Hour) // past BlobGrace: the blob is collectable
+	e.clock.Advance(2 * time.Hour)
 
 	pb := &parkBlobs{FS: e.blobs, parked: make(chan struct{}), release: make(chan struct{})}
 	svc := artifact.New(e.store, pb, e.rec, artifact.Options{Now: e.clock.Now})
@@ -53,7 +48,7 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 		_, _, err := svc.Create(e.ctx, bob, artifact.CreateRequest{Slug: "new-page", Files: files("index.html", content)})
 		created <- err
 	}()
-	<-pb.parked // Put found the blob; the version is not committed yet
+	<-pb.parked
 
 	type result struct {
 		n   int
@@ -64,8 +59,8 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 		n, err := svc.CollectGarbage(e.ctx)
 		collected <- result{n, err}
 	}()
-	// Release the publish once the collector waits for it, or once the
-	// collector has finished without waiting.
+	// Release the publish once the collector waits for it or has finished
+	// without waiting.
 	var gc *result
 	for gc == nil && !artifact.GCWaiting(svc) {
 		select {
@@ -91,8 +86,6 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	}
 }
 
-// blockingReader returns its data, then blocks before EOF until release is
-// closed, closing reached once.
 type blockingReader struct {
 	data    *strings.Reader
 	reached chan struct{}
@@ -108,8 +101,6 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Two publishes that each pass the early quota check cannot both commit:
-// the store checks the quota again in the transaction that inserts.
 func TestQuotaHoldsAcrossConcurrentPublishes(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	e.user(t, "alice")
@@ -123,7 +114,7 @@ func TestQuotaHoldsAcrossConcurrentPublishes(t *testing.T) {
 			Files: []artifact.FileInput{{Path: "index.html", Content: br}}})
 		done <- err
 	}()
-	<-br.reached // one-page passed the early check and is streaming
+	<-br.reached
 	e.create(t, alice, "two-page", "index.html", body)
 	close(br.release)
 	wantErr(t, "second publish over quota", <-done, artifact.ErrQuotaExceeded)
@@ -138,8 +129,7 @@ func TestQuotaHoldsAcrossConcurrentPublishes(t *testing.T) {
 	_, err = e.store.Get(e.ctx, "one-page")
 	wantErr(t, "refused publish", err, artifact.ErrNotFound)
 
-	// The same holds for a new version of an existing artifact: a 30-byte
-	// version fits in the 40 bytes left until another publish takes 30.
+	// 30 bytes fit in the 40 left until another publish takes 30.
 	br = &blockingReader{data: strings.NewReader(strings.Repeat("y", 30)), reached: make(chan struct{}), release: make(chan struct{})}
 	go func() {
 		_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "two-page",
@@ -155,9 +145,7 @@ func TestQuotaHoldsAcrossConcurrentPublishes(t *testing.T) {
 	}
 }
 
-// hookStore runs before, once, just before the first Update or AddVersion
-// reaches the store: a request that lands between the service's own checks
-// and its write.
+// hookStore calls before once, between the service's checks and its write.
 type hookStore struct {
 	*sqlite.ArtifactStore
 	before func()
@@ -181,9 +169,6 @@ func (h *hookStore) AddVersion(ctx context.Context, slug string, v *artifact.Ver
 	return h.ArtifactStore.AddVersion(ctx, slug, v, expected, quota, fn)
 }
 
-// A change that lands while another request is in flight is not undone by
-// that request's write: each write applies its own changes to the row as
-// it is when the write happens.
 func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 	root := artifact.Actor{Handle: "root", Admin: true}
 	tests := []struct {
@@ -273,8 +258,6 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 	}
 }
 
-// The sweep re-checks an expired artifact when it writes, so an expiry
-// cancelled after the listing is not acted on.
 func TestSweepSkipsArtifactChangedSinceListing(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice := e.user(t, "alice")

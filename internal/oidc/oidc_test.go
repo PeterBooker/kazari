@@ -29,15 +29,13 @@ const (
 	nonce    = "nonce-123"
 )
 
-// fakeOP is an OpenID provider: discovery, JWKS and a token endpoint that
-// returns an ID token signed with a test RSA key.
 type fakeOP struct {
 	srv *httptest.Server
 	key *rsa.PrivateKey
 
 	mu              sync.Mutex
-	discoveryIssuer string         // "" = the server URL
-	claims          map[string]any // ID token claims
+	discoveryIssuer string // "" = the server URL
+	claims          map[string]any
 	signer          *rsa.PrivateKey
 }
 
@@ -117,7 +115,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
-// signJWT builds an RS256 JWT by hand.
 func signJWT(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "test", "typ": "JWT"})
 	payload, err := json.Marshal(claims)
@@ -133,7 +130,6 @@ func signJWT(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
 	return input + "." + b64(sig)
 }
 
-// baseClaims are valid claims for the fake provider.
 func (op *fakeOP) baseClaims() map[string]any {
 	now := time.Now()
 	return map[string]any{
@@ -192,7 +188,6 @@ func TestExchange(t *testing.T) {
 			want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Email: "alice@example.com", Name: "Alice"}},
 		{name: "email_verified absent", edit: func(c map[string]any) { delete(c, "email_verified") },
 			want: auth.Identity{Issuer: op.srv.URL, Subject: "user-1", Email: "alice@example.com", Name: "Alice"}},
-		// The fallback is Entra's only (see TestIdentityMapping).
 		{name: "preferred_username ignored outside entra", edit: func(c map[string]any) {
 			delete(c, "email")
 			c["preferred_username"] = "alice@corp.example"

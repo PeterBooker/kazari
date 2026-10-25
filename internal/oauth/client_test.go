@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// metadataServer serves a client ID metadata document over TLS and counts
-// fetches.
 type metadataServer struct {
 	srv *httptest.Server
 
@@ -87,14 +85,12 @@ func TestClientMetadataDocument(t *testing.T) {
 		t.Errorf("cached client = %+v", c)
 	}
 
-	// Within the hour the cached copy is used.
 	e.clock.Advance(30 * time.Minute)
 	location(t, authorize())
 	if n := meta.count(); n != 1 {
 		t.Errorf("fetches after 30m = %d, want 1", n)
 	}
 
-	// After it, the document is fetched again and the cache updated.
 	meta.set(func(m *metadataServer) { m.name = "Claude Code 2" })
 	e.clock.Advance(31 * time.Minute)
 	location(t, authorize())
@@ -109,7 +105,6 @@ func TestClientMetadataDocument(t *testing.T) {
 		t.Errorf("refreshed client = %+v", c)
 	}
 
-	// The whole flow works with a CIMD client and a loopback port.
 	page := e.signIn(authorizeParams(clientID, "http://localhost:5555/callback", "", p))
 	if !strings.Contains(page, "Claude Code 2") {
 		t.Errorf("consent page does not name the client:\n%s", page)
@@ -154,7 +149,6 @@ func TestClientMetadataDocumentFailures(t *testing.T) {
 	})
 }
 
-// lockedBuffer is a concurrency-safe log sink.
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

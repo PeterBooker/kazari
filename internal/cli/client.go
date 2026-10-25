@@ -1,6 +1,5 @@
-// Package cli is the kazari command-line client: an HTTP client for the user
-// and admin REST APIs, tar.gz bundling of a directory, and the subcommands
-// that cmd/kazari dispatches to through Run.
+// Package cli is the kazari command-line client: the subcommands behind Run
+// and an HTTP client for the user and admin APIs.
 package cli
 
 import (
@@ -21,11 +20,10 @@ import (
 	"kazari/internal/buildinfo"
 )
 
-// maxErrorBody caps how much of an error response is read.
 const maxErrorBody = 64 << 10
 
-// Client calls one Kazari API host: the user API (api.<base>) or the admin
-// API (admin.<base>). Every method is safe for concurrent use.
+// Client calls one API host (api.<base> or admin.<base>) and is safe for
+// concurrent use.
 type Client struct {
 	base      string
 	token     string
@@ -33,9 +31,8 @@ type Client struct {
 	userAgent string
 }
 
-// NewClient returns a client for the API host root baseURL (for example
-// https://api.art.example.com); requests go to baseURL + "/v1/...". token is
-// sent as a bearer token when non-empty. A nil hc means http.DefaultClient.
+// NewClient returns a client for the host root baseURL, without /v1. An empty
+// token sends no Authorization; a nil hc means http.DefaultClient.
 func NewClient(baseURL, token string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = http.DefaultClient
@@ -48,9 +45,8 @@ func NewClient(baseURL, token string, hc *http.Client) *Client {
 	}
 }
 
-// HTTPError is a non-2xx response. Err is the decoded error body; a body that
-// is not an api.ErrorResponse becomes code "http_<status>" with the body
-// text as the message.
+// HTTPError is a non-2xx response. A body that is not an api.ErrorResponse
+// becomes code "http_<status>" with the body text as the message.
 type HTTPError struct {
 	Status int
 	Err    api.Error
@@ -59,7 +55,7 @@ type HTTPError struct {
 // Error renders "code: message".
 func (e *HTTPError) Error() string { return e.Err.Code + ": " + e.Err.Message }
 
-// Unwrap exposes the api.Error so errors.As(err, new(*api.Error)) works.
+// Unwrap exposes the *api.Error to errors.As.
 func (e *HTTPError) Unwrap() error { return &e.Err }
 
 // IsCode reports whether err is an HTTPError carrying code.
@@ -68,7 +64,7 @@ func IsCode(err error, code string) bool {
 	return errors.As(err, &he) && he.Err.Code == code
 }
 
-// request describes one API call. path is already escaped and relative to /v1.
+// path is already escaped and relative to /v1.
 type request struct {
 	method      string
 	path        string
@@ -78,8 +74,7 @@ type request struct {
 	header      http.Header
 }
 
-// send performs r and returns the response for a 2xx status; any other
-// status is turned into an *HTTPError and the body is closed.
+// send returns the response only for a 2xx status, else an *HTTPError.
 func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 	u := c.base + "/v1" + r.path
 	if len(r.query) > 0 {
@@ -111,7 +106,7 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 	return resp, nil
 }
 
-// do performs r and decodes a JSON response into out (nil discards it).
+// do decodes the JSON response into out; a nil out discards it.
 func (c *Client) do(ctx context.Context, r request, out any) error {
 	resp, err := c.send(ctx, r)
 	if err != nil {
@@ -128,7 +123,6 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 	return nil
 }
 
-// doJSON sends in (unless nil) as a JSON body and decodes the reply into out.
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, header http.Header, in, out any) error {
 	r := request{method: method, path: path, query: query, header: header}
 	if in != nil {
@@ -142,7 +136,6 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	return c.do(ctx, r, out)
 }
 
-// decodeError turns a non-2xx response into an *HTTPError.
 func decodeError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 	var er api.ErrorResponse
@@ -159,10 +152,8 @@ func decodeError(resp *http.Response) error {
 	}}
 }
 
-// decodeSlice decodes a list response into a slice. It accepts a bare JSON
-// array or an object whose only array-valued field holds the items (for
-// example {"items": [...]}), so the client does not depend on which envelope
-// the server picks for simple lists.
+// decodeSlice accepts a bare array or an object with exactly one array field,
+// so the client does not depend on the server's envelope for simple lists.
 func decodeSlice[T any](c *Client, ctx context.Context, path string, query url.Values) ([]T, error) {
 	var raw json.RawMessage
 	if err := c.doJSON(ctx, http.MethodGet, path, query, nil, nil, &raw); err != nil {
@@ -192,10 +183,8 @@ func decodeSlice[T any](c *Client, ctx context.Context, path string, query url.V
 	return out, nil
 }
 
-// seg escapes one path segment.
 func seg(s string) string { return url.PathEscape(s) }
 
-// filePath escapes each segment of a slash-separated file path.
 func filePath(p string) string {
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	for i, s := range parts {
@@ -204,7 +193,6 @@ func filePath(p string) string {
 	return strings.Join(parts, "/")
 }
 
-// ifMatch returns the If-Match header for an expected version, or nil.
 func ifMatch(version int) http.Header {
 	if version <= 0 {
 		return nil
@@ -212,9 +200,8 @@ func ifMatch(version int) http.Header {
 	return http.Header{"If-Match": {strconv.Quote(strconv.Itoa(version))}}
 }
 
-// multipartBody streams a manifest part (JSON) and a bundle part
-// (application/gzip) through a pipe, so the bundle is never buffered. The
-// HTTP transport closes the returned reader, which stops the writer.
+// multipartBody streams through a pipe so the bundle is never buffered. The
+// transport closes the returned reader, which stops the writer.
 func multipartBody(manifest any, bundle io.Reader) (io.ReadCloser, string) {
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
@@ -250,9 +237,9 @@ func writeMultipart(mw *multipart.Writer, manifest any, bundle io.Reader) error 
 
 // ListParams filters GET /artifacts. Zero fields are omitted.
 type ListParams struct {
-	Mine     string            // created | updated | any
-	Metadata map[string]string // metadata.<k>=<v>
-	Stale    string            // include | exclude | only
+	Mine     string // created | updated | any
+	Metadata map[string]string
+	Stale    string // include | exclude | only
 	Deleted  string
 	Cursor   string
 	Limit    int
@@ -278,7 +265,7 @@ func (p ListParams) values() url.Values {
 	return q
 }
 
-// Create publishes a new artifact from a JSON body (POST /artifacts).
+// Create publishes a new artifact from a JSON body.
 func (c *Client) Create(ctx context.Context, req api.CreateArtifactRequest) (*api.PublishResult, error) {
 	var out api.PublishResult
 	if err := c.doJSON(ctx, http.MethodPost, "/artifacts", nil, nil, req, &out); err != nil {
@@ -287,8 +274,7 @@ func (c *Client) Create(ctx context.Context, req api.CreateArtifactRequest) (*ap
 	return &out, nil
 }
 
-// CreateBundle publishes a new artifact from a tar.gz bundle (multipart POST
-// /artifacts). bundle is streamed, not buffered.
+// CreateBundle publishes a new artifact from a streamed tar.gz bundle.
 func (c *Client) CreateBundle(ctx context.Context, manifest api.CreateManifest, bundle io.Reader) (*api.PublishResult, error) {
 	body, ct := multipartBody(manifest, bundle)
 	var out api.PublishResult
@@ -299,8 +285,7 @@ func (c *Client) CreateBundle(ctx context.Context, manifest api.CreateManifest, 
 	return &out, nil
 }
 
-// Update adds a version and/or changes fields from a JSON body (PUT
-// /artifacts/{slug}).
+// Update adds a version and/or changes fields from a JSON body.
 func (c *Client) Update(ctx context.Context, slug string, req api.UpdateArtifactRequest) (*api.PublishResult, error) {
 	var out api.PublishResult
 	err := c.doJSON(ctx, http.MethodPut, "/artifacts/"+seg(slug), nil, ifMatch(req.ExpectedVersion), req, &out)
@@ -310,9 +295,8 @@ func (c *Client) Update(ctx context.Context, slug string, req api.UpdateArtifact
 	return &out, nil
 }
 
-// UpdateBundle adds a version from a tar.gz bundle (multipart PUT
-// /artifacts/{slug}). A positive manifest.ExpectedVersion is also sent as
-// If-Match.
+// UpdateBundle adds a version from a streamed tar.gz bundle. A positive
+// manifest.ExpectedVersion is also sent as If-Match.
 func (c *Client) UpdateBundle(ctx context.Context, slug string, manifest api.UpdateArtifactRequest, bundle io.Reader) (*api.PublishResult, error) {
 	body, ct := multipartBody(manifest, bundle)
 	var out api.PublishResult
@@ -329,8 +313,7 @@ func (c *Client) UpdateBundle(ctx context.Context, slug string, manifest api.Upd
 	return &out, nil
 }
 
-// Patch changes fields only: name, description, metadata, visibility (PATCH
-// /artifacts/{slug}).
+// Patch changes fields only: name, description, metadata, visibility.
 func (c *Client) Patch(ctx context.Context, slug string, req api.UpdateArtifactRequest) (*api.PublishResult, error) {
 	var out api.PublishResult
 	if err := c.doJSON(ctx, http.MethodPatch, "/artifacts/"+seg(slug), nil, nil, req, &out); err != nil {
@@ -353,7 +336,7 @@ func (c *Client) Get(ctx context.Context, slug string, files bool) (*api.Artifac
 	return &out, nil
 }
 
-// List returns one page of the caller's view of GET /artifacts.
+// List returns one page of the artifacts the caller can see.
 func (c *Client) List(ctx context.Context, p ListParams) (*api.ArtifactList, error) {
 	var out api.ArtifactList
 	if err := c.doJSON(ctx, http.MethodGet, "/artifacts", p.values(), nil, nil, &out); err != nil {
@@ -372,8 +355,8 @@ func (c *Client) Publish(ctx context.Context, slug string, version int) (*api.Pu
 	return &out, nil
 }
 
-// MarkStale marks the artifact stale; grace is a Go duration ("" for the
-// server default).
+// MarkStale marks the artifact stale; grace is a Go duration, "" for the
+// server default.
 func (c *Client) MarkStale(ctx context.Context, slug, grace string) (*api.StaleResult, error) {
 	var out api.StaleResult
 	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/stale", nil, nil, api.StaleRequest{Grace: grace}, &out)
@@ -383,7 +366,7 @@ func (c *Client) MarkStale(ctx context.Context, slug, grace string) (*api.StaleR
 	return &out, nil
 }
 
-// UnmarkStale clears the stale mark and returns the publish result.
+// UnmarkStale clears the stale mark.
 func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResult, error) {
 	var out api.PublishResult
 	if err := c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/stale", nil, nil, nil, &out); err != nil {
@@ -392,8 +375,8 @@ func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResu
 	return &out, nil
 }
 
-// CreateShareLink creates a share link; expiresIn is a duration such as
-// 72h or 7d ("" for a week). The result's URL holds the token.
+// CreateShareLink creates a share link expiring after expiresIn, such as 72h
+// or 7d ("" for a week). The result's URL carries the token.
 func (c *Client) CreateShareLink(ctx context.Context, slug, label, expiresIn string) (*api.CreatedShareLink, error) {
 	var out api.CreatedShareLink
 	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/share-links", nil, nil,
@@ -418,8 +401,7 @@ func (c *Client) RevokeShareLink(ctx context.Context, slug, prefix string) error
 	return c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/share-links/"+seg(prefix), nil, nil, nil, nil)
 }
 
-// SetVisibility sets public, unlisted, members or unpublished (PATCH with
-// visibility).
+// SetVisibility sets public, unlisted, members or unpublished.
 func (c *Client) SetVisibility(ctx context.Context, slug, visibility string) (*api.PublishResult, error) {
 	return c.Patch(ctx, slug, api.UpdateArtifactRequest{Visibility: &visibility})
 }
@@ -434,9 +416,8 @@ func (c *Client) Delete(ctx context.Context, slug string, hard bool) error {
 }
 
 // ReadFile opens one file of the published version, or of version when
-// positive. With anchors, a text file comes back with every line prefixed
-// by its anchor, for Edit's Start and End. The caller closes the returned
-// body. The string is the response Content-Type.
+// positive, and returns its Content-Type; the caller closes the body. With
+// anchors, each text line is prefixed by its anchor for Edit's Start and End.
 func (c *Client) ReadFile(ctx context.Context, slug, path string, version int, anchors bool) (io.ReadCloser, string, error) {
 	q := url.Values{}
 	if version > 0 {
@@ -457,8 +438,7 @@ func (c *Client) ReadFile(ctx context.Context, slug, path string, version int, a
 }
 
 // Edit applies edits to one text file of the latest version and publishes
-// the result (POST /artifacts/{slug}/edit). A positive ExpectedVersion
-// fails with version_conflict if someone published since.
+// it; a positive ExpectedVersion fails with version_conflict if stale.
 func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*api.EditResult, error) {
 	var out api.EditResult
 	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, nil, req, &out); err != nil {
@@ -467,7 +447,7 @@ func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*a
 	return &out, nil
 }
 
-// Skill returns the instance's Agent Skill, a SKILL.md (GET /skill).
+// Skill returns the instance's Agent Skill as SKILL.md text.
 func (c *Client) Skill(ctx context.Context) (string, error) {
 	resp, err := c.send(ctx, request{method: http.MethodGet, path: "/skill"})
 	if err != nil {
@@ -504,8 +484,8 @@ func (c *Client) BeginUpload(ctx context.Context) (*api.Upload, error) {
 	return &out, nil
 }
 
-// UploadChunk appends r to path in upload id at offset. contentType sets the
-// file's type on the first chunk ("" sends application/octet-stream).
+// UploadChunk appends r to path at offset. contentType sets the file's type
+// on the first chunk; "" sends application/octet-stream.
 func (c *Client) UploadChunk(ctx context.Context, id, path string, offset int64, r io.Reader, contentType string) (*api.ChunkResult, error) {
 	if contentType == "" {
 		contentType = "application/octet-stream"

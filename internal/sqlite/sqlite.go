@@ -1,11 +1,5 @@
-// Package sqlite opens the database, applies the embedded migrations and
-// implements the Store interfaces of artifact, user, upload, audit and oauth
-// with hand-written SQL. Each store type wraps the same *sql.DB.
-//
-// Conventions shared by every store in this package:
-//   - timestamps are INTEGER unix nanoseconds in UTC (see time.go);
-//   - users are referenced by id internally and by handle externally;
-//   - every public method is one unit of work and owns its transaction.
+// Package sqlite implements the artifact, user, upload, audit and oauth
+// stores on one SQLite database. Every public method owns its transaction.
 package sqlite
 
 import (
@@ -22,8 +16,7 @@ type DB struct {
 	*sql.DB
 }
 
-// Open opens (creating if needed) the database at path with WAL mode, a
-// busy timeout and foreign keys on, and applies pending migrations.
+// Open opens or creates the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*DB, error) {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
@@ -54,8 +47,6 @@ type beginner interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-// inTx runs fn in a transaction, committing on nil and rolling back on
-// error or panic.
 func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) (err error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {

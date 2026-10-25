@@ -7,15 +7,12 @@ import (
 	"net/http"
 )
 
-// RequestIDHeader carries the request id in both directions.
 const RequestIDHeader = "X-Request-ID"
 
 type requestIDKey struct{}
 
-// RequestID gives every request an id: the incoming X-Request-ID when it is
-// 8 to 128 safe characters (letters, digits, '-', '_', '.', ':'), else 16
-// random bytes in hex. The id is stored in the context and echoed in the
-// response header.
+// RequestID reuses an incoming X-Request-ID of 8 to 128 safe characters,
+// else generates one, and echoes it in the response.
 func RequestID() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +27,7 @@ func RequestID() func(http.Handler) http.Handler {
 	}
 }
 
-// RequestIDFrom returns the id stored by RequestID, or "" if there is none.
+// RequestIDFrom returns the id RequestID stored, or "".
 func RequestIDFrom(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey{}).(string)
 	return id

@@ -1,6 +1,5 @@
-// Package storetest is a conformance suite for artifact.Store
-// implementations. A store passes when Run succeeds against a fresh store
-// per subtest.
+// Package storetest is the conformance suite for artifact.Store
+// implementations.
 package storetest
 
 import (
@@ -21,9 +20,8 @@ import (
 	"kazari/internal/artifact"
 )
 
-// Run exercises every artifact.Store method. open returns an empty store
-// and a hook that creates a user row for a handle, since artifacts need an
-// existing owner.
+// Run opens a fresh store per subtest. open also returns a hook that
+// creates a user row for a handle, since artifacts need an existing owner.
 func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle string))) {
 	tests := []struct {
 		name string
@@ -63,7 +61,6 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 	}
 }
 
-// t0 is the base of every timestamp in the suite.
 var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 
 func at(d time.Duration) time.Time { return t0.Add(d) }
@@ -109,8 +106,6 @@ func newVersion(by string, created time.Time, files ...artifact.File) *artifact.
 	return v
 }
 
-// create stores a fresh artifact with one file and returns it and its
-// version.
 func (h *harness) create(t *testing.T, a *artifact.Artifact, files ...artifact.File) *artifact.Version {
 	t.Helper()
 	if len(files) == 0 {
@@ -132,8 +127,6 @@ func (h *harness) get(t *testing.T, slug string) *artifact.Artifact {
 	return a
 }
 
-// set returns an Update or AddVersion func that replaces the row's fields
-// with a's.
 func set(a *artifact.Artifact) func(*artifact.Artifact) error {
 	return func(cur *artifact.Artifact) error {
 		*cur = *a
@@ -141,7 +134,6 @@ func set(a *artifact.Artifact) func(*artifact.Artifact) error {
 	}
 }
 
-// update writes every mutable field of a.
 func (h *harness) update(t *testing.T, a *artifact.Artifact, by string) {
 	t.Helper()
 	if err := h.store.Update(h.ctx, a.Slug, by, set(a)); err != nil {
@@ -149,7 +141,6 @@ func (h *harness) update(t *testing.T, a *artifact.Artifact, by string) {
 	}
 }
 
-// addVersion adds v to a.Slug with a's fields and no quota.
 func (h *harness) addVersion(a *artifact.Artifact, v *artifact.Version, expected int) error {
 	return h.store.AddVersion(h.ctx, a.Slug, v, expected, 0, set(a))
 }
@@ -209,14 +200,12 @@ func testCreateSlugTaken(t *testing.T, h *harness) {
 		t.Fatalf("owner after failed create = %q, want alice", got.OwnerHandle)
 	}
 
-	// A tombstone still reserves the slug.
 	if err := h.store.Purge(h.ctx, "taken", at(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	err = h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")), 0)
 	wantErr(t, "Create over tombstone", err, artifact.ErrSlugTaken)
 
-	// Removing the tombstone frees it.
 	if err := h.store.DeleteTombstone(h.ctx, "taken"); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +307,6 @@ func testAddVersion(t *testing.T, h *harness) {
 		t.Fatalf("after AddVersion (-want +got):\n%s", diff)
 	}
 
-	// The version's author is recorded as an updater.
 	page, err := h.store.List(h.ctx, artifact.ListQuery{Viewer: "bob", Mine: "updated"})
 	if err != nil {
 		t.Fatal(err)
@@ -327,7 +315,6 @@ func testAddVersion(t *testing.T, h *harness) {
 		t.Fatalf("bob mine=updated = %v, want [demo]", got)
 	}
 
-	// AddVersion clears deleted_at when asked to (restore with a new version).
 	cur := h.get(t, "demo")
 	cur.DeletedAt = ptr(at(4 * time.Hour))
 	h.update(t, cur, "")
@@ -366,7 +353,6 @@ func testAddVersionConflict(t *testing.T, h *harness) {
 	if len(list) != 1 {
 		t.Fatalf("versions after conflict = %d, want 1", len(list))
 	}
-	// The conflicting version's blob was not recorded as referenced.
 	blobs, err := h.store.UnreferencedBlobs(h.ctx, at(24*time.Hour), 10)
 	if err != nil {
 		t.Fatal(err)
@@ -375,7 +361,6 @@ func testAddVersionConflict(t *testing.T, h *harness) {
 		t.Fatalf("blob of a rejected version is referenced or recorded: %v", blobs)
 	}
 
-	// The matching expectation succeeds.
 	if err := h.addVersion(&changed, v, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +419,7 @@ func testUpdate(t *testing.T, h *harness) {
 	got.OwnerHandle = "bob"
 	got.Visibility = artifact.Unlisted
 	got.Metadata = map[string]string{"k": "v", "kazari.indexable": "true"}
-	got.PublishedVersion = 1 // roll back
+	got.PublishedVersion = 1
 	got.StaleAt = ptr(at(time.Hour))
 	got.ExpiresAt = ptr(at(2 * time.Hour))
 	got.UnpublishedAt = ptr(at(3 * time.Hour))
@@ -454,7 +439,6 @@ func testUpdate(t *testing.T, h *harness) {
 		t.Fatalf("published after rollback = %d, want 1", p.VersionNumber)
 	}
 
-	// Pointer fields clear back to nil.
 	got.StaleAt, got.ExpiresAt, got.UnpublishedAt, got.DeletedAt = nil, nil, nil, nil
 	got.Metadata = nil
 	got.PublishedVersion = 2
@@ -465,7 +449,6 @@ func testUpdate(t *testing.T, h *harness) {
 		t.Fatalf("after clearing Update (-want +got):\n%s", diff)
 	}
 
-	// The updater is recorded; an empty by records nothing.
 	page, err := h.store.List(h.ctx, artifact.ListQuery{Viewer: "bob", Mine: "updated"})
 	if err != nil {
 		t.Fatal(err)
@@ -497,15 +480,12 @@ func testUpdateErrors(t *testing.T, h *harness) {
 	}
 }
 
-// Update and AddVersion hand fn the row as it is inside their transaction,
-// so a read-modify-write never undoes a concurrent change to another field.
 func testUpdateCurrentRow(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	h.mkUser("bob")
 	h.mkUser("carol")
 	h.create(t, newArtifact("demo", "alice", at(0)))
 
-	// A transfer and a soft delete land; a later rename keeps both.
 	moved := h.get(t, "demo")
 	moved.OwnerHandle = "bob"
 	moved.DeletedAt = ptr(at(time.Hour))
@@ -531,8 +511,6 @@ func testUpdateCurrentRow(t *testing.T, h *harness) {
 			got.OwnerHandle, got.DeletedAt, got.Name, got.Description)
 	}
 
-	// An error from fn is returned and nothing is written, not even the
-	// actor row.
 	boom := errors.New("boom")
 	err = h.store.Update(h.ctx, "demo", "carol", func(a *artifact.Artifact) error {
 		a.Name = "no"
@@ -549,7 +527,6 @@ func testUpdateCurrentRow(t *testing.T, h *harness) {
 		t.Fatalf("failing fn recorded carol as involved: %v, %v", ok, err)
 	}
 
-	// Concurrent increments through fn are all kept.
 	const n = 8
 	errs := make([]error, n)
 	var wg sync.WaitGroup
@@ -578,8 +555,6 @@ func testUpdateCurrentRow(t *testing.T, h *harness) {
 	}
 }
 
-// Create and AddVersion refuse a version that would take the owner past
-// the quota they are given, inside the transaction that would write it.
 func testQuota(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	h.mkUser("bob")
@@ -596,14 +571,12 @@ func testQuota(t *testing.T, h *harness) {
 	if got := h.get(t, "one"); got.LatestVersion != 1 {
 		t.Fatalf("refused AddVersion wrote version %d", got.LatestVersion)
 	}
-	// Exactly at the quota fits, and 0 means unlimited.
 	if err := h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("c", "12345")), 0, 10, set(a)); err != nil {
 		t.Fatalf("AddVersion to the quota: %v", err)
 	}
 	h.create(t, newArtifact("big", "alice", at(0)), file("d", strings.Repeat("d", 100)))
 
-	// Concurrent creates are checked one after the other: two of 4 bytes
-	// fit in 10.
+	// Two 4-byte creates fit in 10.
 	const n = 6
 	errs := make([]error, n)
 	var wg sync.WaitGroup
@@ -642,9 +615,9 @@ func testInvolved(t *testing.T, h *harness) {
 		slug, handle string
 		want         bool
 	}{
-		{"demo", "alice", true}, // created it
-		{"demo", "bob", true},   // updated it
-		{"demo", "carol", true}, // added a version
+		{"demo", "alice", true},
+		{"demo", "bob", true},
+		{"demo", "carol", true},
 		{"demo", "dave", false},
 		{"demo", "nobody", false},
 		{"missing", "alice", false},
@@ -672,8 +645,8 @@ func testListFilters(t *testing.T, h *harness) {
 	for _, u := range []string{"alice", "bob", "carol", "dave"} {
 		h.mkUser(u)
 	}
-	// Each artifact is created an hour after the previous one, so the
-	// listing order (updated_at descending) is the reverse of this list.
+	// Created an hour apart, so listings (updated_at descending) reverse
+	// this order.
 	type setup struct {
 		slug, owner string
 		mutate      func(a *artifact.Artifact)
@@ -700,7 +673,6 @@ func testListFilters(t *testing.T, h *harness) {
 	if err := h.store.Purge(h.ctx, "tomb-carol", at(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	// alice updates bob's unlisted artifact without changing its position.
 	ub := h.get(t, "unl-bob")
 	h.update(t, ub, "alice")
 
@@ -771,7 +743,6 @@ func testListFilters(t *testing.T, h *harness) {
 		})
 	}
 
-	// Listed items carry the full record.
 	page, err := h.store.List(h.ctx, artifact.ListQuery{Viewer: "dave", Metadata: map[string]string{"team": "x"}})
 	if err != nil {
 		t.Fatal(err)
@@ -783,7 +754,7 @@ func testListFilters(t *testing.T, h *harness) {
 
 func testListPagination(t *testing.T, h *harness) {
 	h.mkUser("alice")
-	// Several artifacts share an updated_at so the tie-break is exercised.
+	// i/3 gives groups of three the same updated_at, to exercise the tie-break.
 	for i := range 11 {
 		a := newArtifact("page-"+string(rune('a'+i)), "alice", at(time.Duration(i/3)*time.Hour))
 		h.create(t, a)
@@ -830,7 +801,6 @@ func testListPagination(t *testing.T, h *harness) {
 		}
 	}
 
-	// The default limit is 50.
 	for i := range 45 {
 		h.create(t, newArtifact(fmt.Sprintf("bulk-%02d", i), "alice", at(48*time.Hour)))
 	}
@@ -894,7 +864,6 @@ func testResolve(t *testing.T, h *harness) {
 	_, err = h.store.ResolveVersion(h.ctx, "missing", 1)
 	wantErr(t, "ResolveVersion missing", err, artifact.ErrNotFound)
 
-	// Unpublished and deleted states are reported, not hidden.
 	got := h.get(t, "demo")
 	got.UnpublishedAt = ptr(at(2 * time.Hour))
 	h.update(t, got, "")
@@ -916,7 +885,6 @@ func testResolve(t *testing.T, h *harness) {
 		t.Fatalf("deleted resolve: %+v", p)
 	}
 
-	// A tombstone resolves with no version and purged_at set.
 	if err := h.store.Purge(h.ctx, "demo", at(4*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -986,7 +954,6 @@ func testUsage(t *testing.T, h *harness) {
 		t.Errorf("SizeBytes of one = %d, want 8", got.SizeBytes)
 	}
 
-	// Purged versions no longer count.
 	if err := h.store.Purge(h.ctx, "two", at(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -1095,7 +1062,6 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 		t.Fatalf("files after purge = %v", files)
 	}
 
-	// Purging a tombstone again keeps the first purge time.
 	if err := h.store.Purge(h.ctx, "demo", at(5*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -1120,7 +1086,6 @@ func testBlobs(t *testing.T, h *harness) {
 			t.Fatal(err)
 		}
 	}
-	// Create records the blobs of its files; they are referenced.
 	h.create(t, newArtifact("demo", "alice", at(0)), file("used.txt", "used"))
 
 	unref := func(before time.Time, limit int) []string {
@@ -1144,14 +1109,12 @@ func testBlobs(t *testing.T, h *harness) {
 		t.Fatalf("UnreferencedBlobs limit 1 returned %d", len(got))
 	}
 
-	// Re-recording refreshes created_at, protecting the blob for the grace.
 	if err := h.store.RecordBlob(h.ctx, free1, 5, at(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff([]string{free2}, unref(at(time.Hour), 10)); diff != "" {
 		t.Fatalf("after re-record (-want +got):\n%s", diff)
 	}
-	// An older re-record never moves created_at backwards.
 	if err := h.store.RecordBlob(h.ctx, free1, 5, at(0)); err != nil {
 		t.Fatal(err)
 	}
@@ -1169,7 +1132,6 @@ func testBlobs(t *testing.T, h *harness) {
 		t.Fatalf("DeleteBlob of missing row: %v", err)
 	}
 
-	// Purging the only version that references a blob releases it.
 	if err := h.store.Purge(h.ctx, "demo", at(time.Hour)); err != nil {
 		t.Fatal(err)
 	}

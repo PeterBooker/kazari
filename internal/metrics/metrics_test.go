@@ -40,8 +40,6 @@ func TestHTTPAndJob(t *testing.T) {
 	}
 }
 
-// Unknown methods share one series: a client sending a new method token
-// with every request must not grow the registry.
 func TestHTTPMethodLabelBounded(t *testing.T) {
 	m := New()
 	h := m.HTTP("site")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

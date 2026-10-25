@@ -20,7 +20,6 @@ import (
 	"kazari/internal/api"
 )
 
-// captured is what a fake server saw.
 type captured struct {
 	method string
 	path   string // escaped
@@ -29,7 +28,6 @@ type captured struct {
 	body   []byte
 }
 
-// fakeServer answers every request with status and body and records it.
 func fakeServer(t *testing.T, status int, body string) (*httptest.Server, *captured) {
 	t.Helper()
 	got := &captured{}
@@ -53,7 +51,6 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
-// jsonEqual compares two JSON documents structurally.
 func jsonEqual(t *testing.T, got []byte, want string) {
 	t.Helper()
 	var g, w any
@@ -87,7 +84,7 @@ func TestClientEndpoints(t *testing.T) {
 		method  string
 		path    string
 		query   url.Values
-		reqBody string // JSON
+		reqBody string
 		rawBody string // compared verbatim instead of reqBody
 		header  map[string]string
 		want    any
@@ -243,7 +240,6 @@ func TestClientEndpoints(t *testing.T) {
 			method: "DELETE",
 			path:   "/v1/uploads/u1",
 		},
-		// Admin API.
 		{
 			name:   "list users",
 			call:   func(ctx context.Context, c *Client) (any, error) { return c.ListUsers(ctx) },
@@ -490,7 +486,6 @@ func TestReadFile(t *testing.T) {
 	}
 }
 
-// bundleRequest is a decoded multipart publish.
 type bundleRequest struct {
 	method, path string
 	header       http.Header
@@ -499,8 +494,6 @@ type bundleRequest struct {
 	files        map[string]string
 }
 
-// decodeBundleRequest parses a multipart publish: the manifest JSON and the
-// gzip tar entries of the bundle.
 func decodeBundleRequest(t *testing.T, r *http.Request) bundleRequest {
 	t.Helper()
 	out := bundleRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone(), files: map[string]string{}}
@@ -611,8 +604,6 @@ func TestCreateAndUpdateBundle(t *testing.T) {
 	}
 }
 
-// An error response that arrives before the bundle is fully sent still
-// surfaces as an HTTPError.
 func TestCreateBundleEarlyError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)

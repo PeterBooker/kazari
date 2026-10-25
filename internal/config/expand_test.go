@@ -40,7 +40,6 @@ func TestExpandValue(t *testing.T) {
 	}
 }
 
-// expandYAML parses doc, expands it and decodes the result into a generic map.
 func expandYAML(t *testing.T, doc string, vars map[string]string) (map[string]any, error) {
 	t.Helper()
 	var n yaml.Node

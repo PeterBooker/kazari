@@ -35,7 +35,6 @@ func TestChainOrder(t *testing.T) {
 		t.Errorf("order = %q, want %q", got, want)
 	}
 
-	// No middleware returns the handler unchanged.
 	rec := httptest.NewRecorder()
 	Chain(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusNotFound {
@@ -110,8 +109,6 @@ func TestRealIP(t *testing.T) {
 		{"direct ipv6", false, "[2001:db8::1]:443", "", "", "2001:db8::1"},
 		{"direct without port", false, "192.0.2.1", "", "", "192.0.2.1"},
 		{"proxy last xff", true, "10.0.0.1:1", "198.51.100.1, 10.0.0.2, 203.0.113.9", "203.0.113.8", "203.0.113.9"},
-		// Regression: an appending proxy keeps what the client sent on the
-		// left; trusting the first entry let any client pick its own IP.
 		{"proxy ignores client-supplied left entries", true, "10.0.0.1:1", "1.2.3.4, 203.0.113.9", "", "203.0.113.9"},
 		{"proxy single xff with spaces", true, "10.0.0.1:1", "  203.0.113.9  ", "", "203.0.113.9"},
 		{"proxy xff ipv6", true, "10.0.0.1:1", "2001:db8::2", "", "2001:db8::2"},
@@ -263,7 +260,6 @@ func TestLoggerTruncatesUserAgent(t *testing.T) {
 	}
 }
 
-// flushRecorder records whether Flush reached it.
 type flushRecorder struct {
 	*httptest.ResponseRecorder
 	deadline time.Time

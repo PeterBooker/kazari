@@ -26,8 +26,7 @@ const (
 	testCSP  = "default-src 'self'; frame-ancestors 'none'"
 )
 
-// memBlobs is an in-memory blob.Store that counts open readers so tests
-// can check every blob is closed.
+// memBlobs counts open readers so tests can check every blob is closed.
 type memBlobs struct {
 	mu    sync.Mutex
 	data  map[string][]byte
@@ -97,12 +96,11 @@ func (r *memReader) Close() error {
 	return nil
 }
 
-// fakeResolver serves fixed Published records and file maps.
 type fakeResolver struct {
 	latest   map[string]*artifact.Published
 	versions map[string]map[int]*artifact.Published
 	files    map[int64]map[string]artifact.File
-	err      error // returned by every Resolve call when set
+	err      error
 }
 
 func (f *fakeResolver) ResolvePublished(_ context.Context, slug string) (*artifact.Published, error) {
@@ -200,7 +198,7 @@ func newFixture(t *testing.T) *fixture {
 		"index.html": {Path: "index.html", Hash: strings.Repeat("0", 64), Size: 3, ContentType: "text/html"},
 	}
 	fx.add(t, "nofiles", 9, 1, nil, nil)
-	delete(fx.res.files, 9) // Files fails for this version
+	delete(fx.res.files, 9)
 
 	fx.res.latest["purged"] = &artifact.Published{Slug: "purged", PurgedAt: &now}
 	fx.res.versions["purged"] = map[int]*artifact.Published{1: {Slug: "purged", PurgedAt: &now}}
@@ -212,8 +210,6 @@ func newFixture(t *testing.T) *fixture {
 	return fx
 }
 
-// add stores files as version n (row id) of slug and makes the highest
-// added version the published one.
 func (fx *fixture) add(t *testing.T, slug string, id int64, n int, meta map[string]string, files []testFile) {
 	t.Helper()
 	p := &artifact.Published{Slug: slug, VersionID: id, VersionNumber: n, Visibility: artifact.Public, Metadata: meta}
@@ -708,9 +704,6 @@ func TestBlobsClosed(t *testing.T) {
 	checkClosed(t, fx)
 }
 
-// Pinned versions are cached no longer than ImmutableMaxAge, so a slug
-// freed after its tombstone is not answered from a cache of the old owner's
-// content; values above a year are capped.
 func TestImmutableMaxAge(t *testing.T) {
 	fx := newFixture(t)
 	for _, tt := range []struct {
@@ -728,9 +721,6 @@ func TestImmutableMaxAge(t *testing.T) {
 	}
 }
 
-// A GET that announces a body it never sends is answered at once and the
-// connection closed, instead of net/http waiting without a deadline to
-// discard the body.
 func TestAnnouncedBodyDoesNotHold(t *testing.T) {
 	fx := newFixture(t)
 	srv := httptest.NewServer(fx.handler(Options{}))

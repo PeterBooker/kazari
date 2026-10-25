@@ -9,8 +9,8 @@ import (
 	"kazari/internal/api"
 )
 
-// The methods in this file call the admin API; use a Client whose base URL
-// is the admin host and whose token is the admin token or an admin-role key.
+// These methods need a Client for the admin host with the admin token or an
+// admin-role key.
 
 // ListUsers lists every user.
 func (c *Client) ListUsers(ctx context.Context) ([]api.User, error) {

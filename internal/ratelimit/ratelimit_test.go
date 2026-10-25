@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// The limiter map stays bounded however many distinct keys arrive, and a
-// flood of fresh keys does not reset the bucket of a key that is in use.
 func TestLimiterBounded(t *testing.T) {
 	now := time.Unix(0, 0)
 	l := New(1, func() time.Time { return now })
@@ -22,7 +20,6 @@ func TestLimiterBounded(t *testing.T) {
 	if n := l.Len(); n > MaxEntries {
 		t.Fatalf("entries = %d, want at most %d", n, MaxEntries)
 	}
-	// Idle entries are swept once the sweep interval has passed.
 	now = now.Add(idle + sweepEvery + time.Second)
 	l.Reserve("fresh")
 	if n := l.Len(); n != 1 {

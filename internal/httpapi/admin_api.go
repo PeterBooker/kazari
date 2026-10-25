@@ -19,11 +19,10 @@ import (
 	"kazari/internal/user"
 )
 
-// codeJobRunning answers POST /v1/jobs/{name}/run while the job runs.
 const codeJobRunning = "job_running"
 
-// GrantStore lists and revokes OAuth grants for the admin API. RevokeGrant
-// returns an error matching ErrGrantNotFound for an unknown id.
+// GrantStore lists and revokes OAuth grants. RevokeGrant returns an error
+// matching ErrGrantNotFound for an unknown id.
 type GrantStore interface {
 	ListGrants(ctx context.Context, handle string) ([]api.OAuthGrant, error)
 	RevokeGrant(ctx context.Context, id int64) error
@@ -46,14 +45,14 @@ type AdminDeps struct {
 
 // AdminOptions tunes the admin API.
 type AdminOptions struct {
-	// AdminToken is accepted as a bearer token; empty disables it, leaving
-	// admin-role API keys.
+	// AdminToken is accepted as a bearer token; empty leaves only admin-role
+	// keys.
 	AdminToken string
-	// IPRatePerMinute limits /v1/ requests per client IP before
-	// authentication, so the admin token cannot be guessed at speed.
-	// 0 means DefaultIPRatePerMinute; a negative value disables it.
+	// IPRatePerMinute applies per client IP, before authentication, so the
+	// admin token cannot be guessed at speed. 0 means DefaultIPRatePerMinute;
+	// negative disables it.
 	IPRatePerMinute int
-	// Now is the clock of the rate limiter. Default: time.Now.
+	// Now clocks the rate limiter. Default: time.Now.
 	Now func() time.Time
 }
 
@@ -62,8 +61,8 @@ type adminAPI struct {
 	d AdminDeps
 }
 
-// NewAdminAPI returns the handler for the admin host: /v1/... behind the
-// admin token or an admin-role key, and /health and /metrics open.
+// NewAdminAPI returns the admin host handler: /v1 behind the admin token or an
+// admin-role key, /health and /metrics open.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	h := &adminAPI{base: newBase(d.Logger, d.Links), d: d}
 	if o.IPRatePerMinute == 0 {
@@ -356,8 +355,8 @@ func (h *adminAPI) listJobs(w http.ResponseWriter, _ *http.Request, _ auth.Princ
 	return nil
 }
 
-// runJob runs a job synchronously and answers with its status afterwards.
-// A failing run is a 500; its error is in the job's last_error.
+// runJob runs synchronously. A failing run is a 500; its error is in the job's
+// last_error.
 func (h *adminAPI) runJob(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
 	name := r.PathValue("name")
 	err := h.d.Jobs.Trigger(r.Context(), name)

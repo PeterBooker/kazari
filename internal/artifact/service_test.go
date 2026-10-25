@@ -26,7 +26,6 @@ import (
 
 var start = time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
 
-// clock is a settable time source.
 type clock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -74,7 +73,6 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 	return &env{ctx: ctx, svc: artifact.New(store, blobs, rec, opts), db: db, store: store, blobs: blobs, rec: rec, clock: c}
 }
 
-// user inserts a user row and returns an actor for it.
 func (e *env) user(t *testing.T, handle string) artifact.Actor {
 	t.Helper()
 	_, err := e.db.ExecContext(e.ctx,
@@ -86,7 +84,6 @@ func (e *env) user(t *testing.T, handle string) artifact.Actor {
 	return artifact.Actor{Handle: handle}
 }
 
-// files builds inputs from path, content pairs.
 func files(pairs ...string) []artifact.FileInput {
 	var out []artifact.FileInput
 	for i := 0; i < len(pairs); i += 2 {
@@ -253,7 +250,6 @@ func TestCreateDuplicateSlug(t *testing.T) {
 	wantErr(t, "duplicate Create", err, artifact.ErrSlugTaken)
 }
 
-// countingReader counts how many bytes were pulled from it.
 type countingReader struct {
 	r io.Reader
 	n int64
@@ -270,7 +266,6 @@ func TestSizeLimits(t *testing.T) {
 	alice := e.user(t, "alice")
 	ten := strings.Repeat("x", 10)
 
-	// One file over the per-file limit fails fast without reading it all.
 	big := &countingReader{r: strings.NewReader(strings.Repeat("y", 1<<20))}
 	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "big", Files: []artifact.FileInput{{Path: "big.txt", Content: big}},
@@ -279,11 +274,9 @@ func TestSizeLimits(t *testing.T) {
 	if big.n > 64<<10 {
 		t.Fatalf("read %d bytes of an oversized file; the limit should fail fast", big.n)
 	}
-	// Sniffed content (no extension) goes through the same limit.
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "big", Files: files("noext", ten+"z")})
 	wantErr(t, "sniffed file over limit", err, artifact.ErrTooLarge)
 
-	// Files within the per-file limit but over the version limit.
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "wide", Files: files("a.txt", ten, "b.txt", ten, "c.txt", ten),
 	})
@@ -294,10 +287,8 @@ func TestSizeLimits(t *testing.T) {
 		}
 	}
 
-	// Exactly at the limits is fine.
 	e.create(t, alice, "edge", "a.txt", ten, "b.txt", ten)
 
-	// On update the carried-over files count toward the version limit.
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "edge", Files: files("c.txt", "123456")})
 	wantErr(t, "update over version limit", err, artifact.ErrTooLarge)
 	a, versions, err := e.svc.Get(e.ctx, alice, "edge")
@@ -307,7 +298,6 @@ func TestSizeLimits(t *testing.T) {
 	if a.LatestVersion != 1 || len(versions) != 1 {
 		t.Fatalf("failed update wrote a version: latest %d, %d versions", a.LatestVersion, len(versions))
 	}
-	// Replacing a file frees its share of the budget.
 	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
 		Slug: "edge", Files: files("b.txt", "12345", "c.txt", "12345"),
 	}); err != nil {
@@ -324,15 +314,13 @@ func TestQuota(t *testing.T) {
 	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "two", Files: files("b.txt", strings.Repeat("b", 6))})
 	wantErr(t, "create over quota", err, artifact.ErrQuotaExceeded)
 
-	// Usage is 15; a 3-byte version brings it to 18.
 	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "one", Files: files("a.txt", "abc")}); err != nil {
 		t.Fatalf("update within quota: %v", err)
 	}
-	// A 4-byte version (3 carried + 1 new) would make it 22.
+	// 3 carried + 1 new byte would make usage 22.
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "one", Files: files("b.txt", "b")})
 	wantErr(t, "update over quota", err, artifact.ErrQuotaExceeded)
 
-	// Without a quota there is no limit.
 	unlimited := artifact.Actor{Handle: "alice"}
 	e.create(t, unlimited, "three", "c.txt", strings.Repeat("c", 100))
 }
@@ -369,7 +357,6 @@ func TestContentType(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("content types (-want +got):\n%s", diff)
 	}
-	// Sniffing must not consume the stream.
 	if body := e.read(t, alice, "types", "README", 0); body != html {
 		t.Fatalf("sniffed file stored %d bytes, want %d", len(body), len(html))
 	}
@@ -412,7 +399,6 @@ func TestUpdateAddsVersion(t *testing.T) {
 	if !a.UpdatedAt.Equal(e.clock.Now()) || !a.CreatedAt.Equal(start) {
 		t.Fatalf("timestamps after update: created %v updated %v", a.CreatedAt, a.UpdatedAt)
 	}
-	// The old version is intact and still addressable.
 	if body := e.read(t, alice, "demo", "b.txt", 1); body != "bbb" {
 		t.Fatalf("v1 b.txt = %q", body)
 	}
@@ -422,13 +408,11 @@ func TestUpdateAddsVersion(t *testing.T) {
 	_, _, err = e.svc.OpenFile(e.ctx, alice, "demo", "b.txt", 0)
 	wantErr(t, "deleted file in v2", err, artifact.ErrFileNotFound)
 
-	// Deleting every file is not a version.
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
 		Slug: "demo", Files: []artifact.FileInput{del("a.txt"), del("c.txt"), del("d/e.txt")},
 	})
 	wantErr(t, "empty version", err, artifact.ErrInvalidArgument)
 
-	// Bob is recorded as an updater.
 	page, err := e.svc.List(e.ctx, bob, artifact.ListQuery{Mine: "updated"})
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +447,6 @@ func TestUpdateExpectedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Concurrent updates with the same expectation: exactly one wins.
 	const n = 6
 	errs := make([]error, n)
 	var wg sync.WaitGroup
@@ -509,7 +492,6 @@ func TestFieldsOnlyUpdate(t *testing.T) {
 		a.LatestVersion != 1 || !a.UpdatedAt.Equal(e.clock.Now()) {
 		t.Fatalf("after fields-only update: %+v", a)
 	}
-	// An empty name pointer clears the field; nil leaves it.
 	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("")})
 	if err != nil {
 		t.Fatal(err)
@@ -626,13 +608,11 @@ func TestStale(t *testing.T) {
 	if !a.ExpiresAt.Equal(start.Add(2 * time.Hour)) {
 		t.Fatalf("explicit grace: expires %v", a.ExpiresAt)
 	}
-	// It keeps serving while stale.
 	p, err := e.svc.ResolvePublished(e.ctx, "demo")
 	if err != nil || !p.Servable() {
 		t.Fatalf("stale artifact not servable: %+v, %v", p, err)
 	}
 
-	// A new version with KeepStale keeps the timer, without clears it.
 	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", KeepStale: true, Files: files("k", "k")})
 	if err != nil {
 		t.Fatal(err)
@@ -640,7 +620,6 @@ func TestStale(t *testing.T) {
 	if a.StaleAt == nil || a.ExpiresAt == nil {
 		t.Fatalf("KeepStale cleared the timer")
 	}
-	// A fields-only update never touches the timer.
 	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("n")})
 	if err != nil {
 		t.Fatal(err)
@@ -700,7 +679,6 @@ func TestVisibility(t *testing.T) {
 	if p.Servable() || p.UnpublishedAt == nil {
 		t.Fatalf("unpublished artifact resolves as servable: %+v", p)
 	}
-	// Unpublishing again keeps the original time.
 	e.clock.Advance(time.Minute)
 	a, _ = e.svc.SetVisibility(e.ctx, alice, "demo", artifact.Unpublished)
 	if !a.UnpublishedAt.Equal(start.Add(time.Minute)) {
@@ -737,7 +715,6 @@ func TestDeleteAndRestore(t *testing.T) {
 	if a.DeletedAt == nil || !a.DeletedAt.Equal(start) {
 		t.Fatalf("DeletedAt = %v", a.DeletedAt)
 	}
-	// Soft delete is idempotent and records once.
 	e.clock.Advance(time.Minute)
 	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
 		t.Fatal(err)
@@ -746,8 +723,6 @@ func TestDeleteAndRestore(t *testing.T) {
 		t.Fatalf("second soft delete moved DeletedAt to %v", a.DeletedAt)
 	}
 
-	// A soft-deleted artifact is hidden from mutations and listings but its
-	// content can still be read by someone who may write it.
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("x")})
 	wantErr(t, "update deleted", err, artifact.ErrNotFound)
 	_, err = e.svc.MarkStale(e.ctx, alice, "demo", 0)
@@ -772,7 +747,6 @@ func TestDeleteAndRestore(t *testing.T) {
 		t.Fatalf("deleted artifact resolves as servable: %+v", p)
 	}
 
-	// Restore clears deleted_at and can carry other changes.
 	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true, Name: ptr("back")})
 	if err != nil {
 		t.Fatal(err)
@@ -785,7 +759,6 @@ func TestDeleteAndRestore(t *testing.T) {
 		t.Fatalf("audit actions (-want +got):\n%s", diff)
 	}
 
-	// Hard delete purges at once and leaves a tombstone.
 	if err := e.svc.Delete(e.ctx, alice, "demo", true); err != nil {
 		t.Fatal(err)
 	}
@@ -894,7 +867,6 @@ func TestOpenFile(t *testing.T) {
 		t.Fatalf("pinned v1 = %q", body)
 	}
 
-	// The returned reader seeks, for http.ServeContent.
 	_, rc, err = e.svc.OpenFile(e.ctx, bob, "demo", "index.html", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -913,7 +885,6 @@ func TestOpenFile(t *testing.T) {
 	_, _, err = e.svc.OpenFile(e.ctx, bob, "missing", "index.html", 0)
 	wantErr(t, "missing artifact", err, artifact.ErrNotFound)
 
-	// Under the owner policy, only the owner reads a soft-deleted artifact.
 	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
 		t.Fatal(err)
 	}
@@ -1004,7 +975,6 @@ func TestList(t *testing.T) {
 	if got := list(admin, artifact.ListQuery{All: true}); !slices.Equal(got, []string{"hidden-a", "pub-a"}) {
 		t.Fatalf("admin All = %v", got)
 	}
-	// The viewer is always the actor, whatever the caller put in the query.
 	if got := list(bob, artifact.ListQuery{Viewer: "alice"}); !slices.Equal(got, []string{"pub-a"}) {
 		t.Fatalf("spoofed viewer = %v", got)
 	}
@@ -1057,7 +1027,6 @@ func TestSweepLifecycle(t *testing.T) {
 	e.clock.Advance(30 * time.Minute)
 	sweep(artifact.SweepReport{})
 
-	// Past expiry: soft-deleted.
 	e.clock.Advance(31 * time.Minute)
 	sweep(artifact.SweepReport{SoftDeleted: 1})
 	a, _, err := e.svc.Get(e.ctx, alice, "doomed")
@@ -1071,15 +1040,13 @@ func TestSweepLifecycle(t *testing.T) {
 	if p.Servable() {
 		t.Fatal("expired artifact still servable")
 	}
-	sweep(artifact.SweepReport{}) // nothing more to do yet
+	sweep(artifact.SweepReport{})
 
-	// Past retention: purged.
 	e.clock.Advance(24 * time.Hour)
 	sweep(artifact.SweepReport{Purged: 1})
 	_, _, err = e.svc.Get(e.ctx, alice, "doomed")
 	wantErr(t, "Get after purge", err, artifact.ErrGone)
 
-	// Past the tombstone period: the slug is free again.
 	e.clock.Advance(47 * time.Hour)
 	sweep(artifact.SweepReport{})
 	e.clock.Advance(time.Hour)
@@ -1088,7 +1055,6 @@ func TestSweepLifecycle(t *testing.T) {
 	wantErr(t, "store Get after free", err, artifact.ErrNotFound)
 	e.create(t, alice, "doomed")
 
-	// The untouched artifact survives every sweep.
 	if a, _, err := e.svc.Get(e.ctx, alice, "keeper"); err != nil || a.DeletedAt != nil {
 		t.Fatalf("keeper: %+v, %v", a, err)
 	}
@@ -1118,22 +1084,18 @@ func TestCollectGarbage(t *testing.T) {
 	e := newEnv(t, artifact.Options{BlobGrace: time.Hour, MaxFileBytes: 100})
 	alice := e.user(t, "alice")
 
-	// Content replaced by v2 stays referenced by v1.
 	e.create(t, alice, "kept", "f.txt", "old content")
 	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "kept", Files: files("f.txt", "new content")}); err != nil {
 		t.Fatal(err)
 	}
-	// A purged artifact releases its blobs.
 	e.create(t, alice, "purged", "p.txt", "purged content")
 	if err := e.svc.Delete(e.ctx, alice, "purged", true); err != nil {
 		t.Fatal(err)
 	}
-	// A failed create leaves the blobs it already stored.
 	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "failed", Files: files("ok.txt", "orphan content", "big.txt", strings.Repeat("x", 101)),
 	})
 	wantErr(t, "failed create", err, artifact.ErrTooLarge)
-	// Shared content between a live and a purged artifact survives.
 	e.create(t, alice, "shared-live", "s.txt", "shared content")
 	e.create(t, alice, "shared-dead", "s.txt", "shared content")
 	if err := e.svc.Delete(e.ctx, alice, "shared-dead", true); err != nil {
@@ -1180,7 +1142,6 @@ func TestCollectGarbage(t *testing.T) {
 		t.Fatalf("second GC = %d, %v", n, err)
 	}
 
-	// Re-putting content that was collected brings it back.
 	e.create(t, alice, "again", "p.txt", "purged content")
 	if !stat("purged content") {
 		t.Fatal("re-put blob missing")
@@ -1234,7 +1195,6 @@ func TestAuditTrail(t *testing.T) {
 	}
 }
 
-// failingRecorder always fails; the service must not.
 type failingRecorder struct{}
 
 func (failingRecorder) Record(context.Context, audit.Event) error { return errors.New("audit down") }
@@ -1273,7 +1233,6 @@ func TestTransfer(t *testing.T) {
 	root := artifact.Actor{Handle: "root", Admin: true}
 	e.create(t, alice, "demo")
 
-	// A non-owner may write under the shared policy but not transfer.
 	_, err := e.svc.Transfer(e.ctx, bob, "demo", "bob")
 	wantErr(t, "transfer by non-owner", err, artifact.ErrForbidden)
 
@@ -1300,14 +1259,12 @@ func TestTransfer(t *testing.T) {
 		t.Errorf("audit event = %+v", ev)
 	}
 
-	// The new owner may transfer it back; the old one no longer may.
 	_, err = e.svc.Transfer(e.ctx, alice, "demo", "alice")
 	wantErr(t, "transfer by previous owner", err, artifact.ErrForbidden)
 	if _, err := e.svc.Transfer(e.ctx, bob, "demo", "alice"); err != nil {
 		t.Fatalf("Transfer by owner: %v", err)
 	}
 
-	// The owner filter follows the transfer.
 	page, err := e.svc.List(e.ctx, root, artifact.ListQuery{All: true, Owner: "alice"})
 	if err != nil {
 		t.Fatal(err)
@@ -1317,8 +1274,6 @@ func TestTransfer(t *testing.T) {
 	}
 }
 
-// A caller-supplied content type is replayed as the Content-Type header, so
-// anything that is not a short, printable media type is refused at upload.
 func TestContentTypeValidation(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice := e.user(t, "alice")
@@ -1352,9 +1307,6 @@ func TestContentTypeValidation(t *testing.T) {
 	}
 }
 
-// Every listing returns the name and description of each artifact, so an
-// unbounded value would make every listing huge. They are limited on
-// create and on every change, before any content is stored.
 func TestTextFieldLimits(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice := e.user(t, "alice")
@@ -1401,7 +1353,6 @@ func TestTextFieldLimits(t *testing.T) {
 		t.Fatalf("rejected updates changed demo: %+v", a)
 	}
 
-	// At the limits is fine, and a description may span lines.
 	desc := strings.Repeat("d", artifact.DescriptionMaxBytes-2) + "\n\t"
 	a, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
 		Slug: "demo", Name: ptr(longName[1:]), Description: ptr(desc), Label: longLabel[1:], Files: files("x.txt", "x"),
@@ -1414,9 +1365,6 @@ func TestTextFieldLimits(t *testing.T) {
 	}
 }
 
-// Unpublished and soft-deleted artifacts are hidden, as in the listing,
-// from everyone but admins, the owner and the users who changed them. A
-// live artifact, listed or not, is readable by anyone.
 func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice, bob, carol, dave := e.user(t, "alice"), e.user(t, "bob"), e.user(t, "carol"), e.user(t, "dave")
@@ -1426,8 +1374,6 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// readable reports whether Get and OpenFile (published and pinned)
-	// agree that actor may read demo, failing on any other error.
 	readable := func(actor artifact.Actor) bool {
 		t.Helper()
 		var oks []bool
@@ -1471,7 +1417,6 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 	}
 	want("unpublished", map[string]bool{"alice": true, "bob": true, "root": true})
 
-	// The new owner reads it; the creator still does.
 	if _, err := e.svc.Transfer(e.ctx, root, "demo", "dave"); err != nil {
 		t.Fatal(err)
 	}
@@ -1488,8 +1433,6 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 	want("soft-deleted", map[string]bool{"alice": true, "bob": true, "dave": true, "root": true})
 }
 
-// Every artifact audit event says which credential made the change; the
-// scheduler's events carry none.
 func TestAuditRecordsCredential(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	e.user(t, "alice")
@@ -1524,7 +1467,6 @@ func TestAuditRecordsCredential(t *testing.T) {
 			t.Errorf("%s event details = %v, want the credential", ev.Action, ev.Details)
 		}
 	}
-	// The create event keeps its own details next to the credential.
 	if d := e.rec.Events[0].Details; d["version"] != "1" || d["size"] != "1" {
 		t.Errorf("create details = %v", d)
 	}

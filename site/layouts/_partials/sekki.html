@@ -1,6 +1,5 @@
-{{- /* The solar term in force at a time, as its index in data/sekki.toml (立春 = 0): the term with the
-       latest start on or before the date, else the year's last one (冬至, before 5 January).
-       Usage: partial "sekki.html" now. The inline script in head.html does the same in the browser. */ -}}
+{{- /* Index of the term in force at a time; before the first start of the year it is the last term.
+       Usage: partial "sekki.html" now. Keep in step with the inline script in head.html. */ -}}
 {{- $md := .Format "01-02" -}}
 {{- $n := -1 -}}{{- $best := "" -}}
 {{- $lastN := 0 -}}{{- $last := "" -}}

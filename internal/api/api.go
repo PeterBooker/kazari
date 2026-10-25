@@ -1,11 +1,9 @@
-// Package api holds the wire types shared by the REST API, the MCP server
-// and the CLI: request and response structs and the error codes. It has no
-// logic and imports nothing outside the standard library.
+// Package api holds the wire types and error codes shared by the REST API, the
+// MCP server and the CLI. It has no logic and imports only the standard library.
 package api
 
 import "time"
 
-// Error codes. The HTTP layer maps them to statuses in one place.
 const (
 	CodeNotFound         = "not_found"
 	CodeVersionNotFound  = "version_not_found"
@@ -119,8 +117,7 @@ type FileInput struct {
 	Delete      bool   `json:"delete,omitempty"`
 }
 
-// CreateArtifactRequest is the JSON body of POST /artifacts and the input of
-// the create_artifact tool.
+// CreateArtifactRequest is the body of POST /artifacts and of create_artifact.
 type CreateArtifactRequest struct {
 	Slug        string            `json:"slug"`
 	Name        string            `json:"name,omitempty"`
@@ -157,8 +154,7 @@ type EditRequest struct {
 	KeepStale       bool   `json:"keep_stale,omitempty"`
 }
 
-// Edit is one change: old_text replaced by new_text, or the lines from the
-// start anchor to the end anchor replaced by new_text.
+// Edit replaces old_text, or the lines from anchor start to end, with new_text.
 type Edit struct {
 	OldText    string `json:"old_text,omitempty"`
 	NewText    string `json:"new_text"`
@@ -167,8 +163,7 @@ type Edit struct {
 	End        string `json:"end,omitempty"`
 }
 
-// EditResult is returned by an edit: the publish result and how each edit
-// applied.
+// EditResult is the response of an edit.
 type EditResult struct {
 	URL      string        `json:"url"`
 	Version  int           `json:"version"`
@@ -177,9 +172,8 @@ type EditResult struct {
 	Artifact Artifact      `json:"artifact"`
 }
 
-// EditOutcome reports one edit: how it matched (exact, trailing_whitespace,
-// indentation or anchor), how many places it replaced, and the lines its new
-// text occupies in the new version with an anchored excerpt around them.
+// EditOutcome reports one edit: Match is exact, trailing_whitespace, indentation
+// or anchor; StartLine and EndLine are where the new text sits in the new version.
 type EditOutcome struct {
 	Match        string `json:"match"`
 	Replacements int    `json:"replacements"`

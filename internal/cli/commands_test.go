@@ -20,12 +20,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Human output prints local times; pin the zone so expected output is stable.
+	// Human output prints local times.
 	time.Local = time.FixedZone("CEST", 2*60*60)
 	os.Exit(m.Run())
 }
 
-// envMap is a lookupEnv over a map.
 func envMap(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) {
 		v, ok := m[k]
@@ -38,7 +37,6 @@ type result struct {
 	stdout, stderr string
 }
 
-// runCLI runs args with env (HOME points at an empty temp dir unless set).
 func runCLI(t *testing.T, env map[string]string, args ...string) result {
 	t.Helper()
 	if env == nil {
@@ -52,7 +50,6 @@ func runCLI(t *testing.T, env map[string]string, args ...string) result {
 	return result{code, stdout.String(), stderr.String()}
 }
 
-// fakeAPI routes "METHOD /path" to handlers and fails on anything else.
 type fakeAPI struct {
 	t      *testing.T
 	mu     sync.Mutex
@@ -116,7 +113,7 @@ admin_token: file-admin
 `
 	tests := []struct {
 		name    string
-		config  string // written to $XDG_CONFIG_HOME/kazari/config.yaml
+		config  string
 		env     map[string]string
 		flags   globals
 		want    settings
@@ -220,7 +217,6 @@ func TestConfigFromHome(t *testing.T) {
 	}
 }
 
-// The resolved token is what reaches the server.
 func TestRunTokenPrecedence(t *testing.T) {
 	f, srv := newFakeAPI(t, map[string]http.HandlerFunc{"GET /v1/me": replyWith(200, api.Me{Handle: "peter"})})
 	env := map[string]string{"KAZARI_URL": srv.URL, "KAZARI_TOKEN": "env-token"}
@@ -362,7 +358,6 @@ PATH  SIZE  TYPE  HASH
 		t.Errorf("human output (-want +got):\n%s", diff)
 	}
 
-	// --json works before or after the subcommand and prints the response.
 	for _, args := range [][]string{{"--json", "get", "demo"}, {"get", "demo", "--json"}} {
 		r = runCLI(t, nil, append(base, args...)...)
 		var got api.ArtifactDetail
@@ -414,7 +409,6 @@ other  1        unlisted    live   1.5 KiB  2026-10-01T15:00:00+02:00
 		t.Errorf("stderr = %q", r.stderr)
 	}
 
-	// Without --all the next cursor is reported on stderr.
 	r = runCLI(t, nil, "--url", srv.URL, "--token", "t", "list")
 	if !strings.Contains(r.stderr, "more results: --cursor next") {
 		t.Errorf("stderr = %q", r.stderr)
@@ -559,7 +553,6 @@ func TestRunUpdate(t *testing.T) {
 		t.Errorf("bundle (-want +got):\n%s", diff)
 	}
 
-	// Without a directory the update is a JSON PUT.
 	r = runCLI(t, nil, append(base, "update", "demo", "--delete", "a.html")...)
 	if r.code != 0 {
 		t.Fatalf("%+v", r)
@@ -735,7 +728,6 @@ func TestRunAdmin(t *testing.T) {
 		}
 	}
 
-	// --since as a duration is converted to an absolute UTC time.
 	r := runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "audit", "--since", "24h")
 	if r.code != 0 {
 		t.Fatalf("%+v", r)
@@ -746,16 +738,15 @@ func TestRunAdmin(t *testing.T) {
 		t.Errorf("since query = %q (%v)", query, err)
 	}
 
-	// The issued key is the only secret printed; --json includes it once.
+	// The issued key is printed once and the admin token never.
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "keys", "issue", "bob")
 	if strings.Count(r.stdout, "kzk_pfx_SECRET") != 1 || strings.Contains(r.stdout+r.stderr, "adm\"") {
 		t.Errorf("%+v", r)
 	}
 }
 
-// Names, descriptions, labels and metadata come from other members: escape
-// sequences in them never reach the terminal, and line breaks cannot fake
-// rows.
+// Other members write these fields, so escapes must not reach the terminal
+// nor line breaks fake rows.
 func TestRunGetTerminalSafe(t *testing.T) {
 	art := demo
 	art.Name = "Demo\x1b]52;c;cm0gLXJmIH4=\x07 page"

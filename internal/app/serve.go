@@ -19,10 +19,8 @@ import (
 	"kazari/internal/middleware"
 )
 
-// Server timeouts. readTimeout bounds reading a whole request and
-// writeTimeout a whole response, so a client that stalls cannot hold a
-// connection for ever; both leave room for a full-size upload or download
-// at well under 1 Mbit/s.
+// readTimeout and writeTimeout stop a stalled client holding a connection
+// for ever, yet allow a full-size upload or download at well under 1 Mbit/s.
 const (
 	readHeaderTimeout = 10 * time.Second
 	readTimeout       = 10 * time.Minute
@@ -32,7 +30,6 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
-// server is one bound listener and the http.Server that serves it.
 type server struct {
 	name string
 	srv  *http.Server
@@ -40,11 +37,9 @@ type server struct {
 	tls  bool
 }
 
-// Run binds every configured listener, then serves them alongside the
-// scheduler and the certificate source until ctx is done. It then shuts the
-// servers down gracefully (10 s), stops the background work, closes the
-// database and returns nil. A listener that cannot be bound or a server
-// that fails ends Run with that error. Run must be called at most once.
+// Run serves until ctx is done, then shuts down gracefully, closes the
+// database and returns nil. A bind or server failure ends it with that
+// error. Call it at most once.
 func (a *App) Run(ctx context.Context) (err error) {
 	defer func() {
 		if cerr := a.Close(); err == nil {
@@ -68,8 +63,8 @@ func (a *App) Run(ctx context.Context) (err error) {
 		"oidc", a.oidcOn,
 	)
 
-	// The scheduler and certificate source outlive the servers' shutdown,
-	// so in-flight requests finish against a working system.
+	// Background work outlives the servers' shutdown so in-flight requests
+	// finish against a working system.
 	bg, stopBG := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopBG()
 
@@ -112,8 +107,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	return err
 }
 
-// listen binds every configured listener and records the addresses. On
-// failure it closes whatever it already bound.
+// listen closes whatever it bound if it fails.
 func (a *App) listen() (servers []server, err error) {
 	defer func() {
 		if err != nil {
@@ -162,8 +156,6 @@ func (a *App) listen() (servers []server, err error) {
 	return servers, nil
 }
 
-// newServer returns an http.Server with Kazari's limits and its error log
-// bridged to slog.
 func (a *App) newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
@@ -176,8 +168,6 @@ func (a *App) newServer(h http.Handler) *http.Server {
 	}
 }
 
-// shutdown stops every server gracefully within shutdownTimeout and closes
-// the ones that do not finish in time.
 func shutdown(ctx context.Context, servers []server) error {
 	ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
 	defer cancel()
@@ -199,8 +189,8 @@ func shutdown(ctx context.Context, servers []server) error {
 	return errors.Join(all...)
 }
 
-// errorLogWriter turns net/http's error log lines into slog records. TLS
-// handshake failures, routine on a public listener, are logged at debug.
+// errorLogWriter logs TLS handshake failures, routine on a public listener,
+// at debug.
 type errorLogWriter struct{ log *slog.Logger }
 
 func (w errorLogWriter) Write(p []byte) (int, error) {

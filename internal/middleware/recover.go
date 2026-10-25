@@ -9,9 +9,8 @@ import (
 
 const internalErrorBody = `{"error":{"code":"internal","message":"internal error"}}` + "\n"
 
-// Recover turns a panic in the handler into a logged error and, if nothing
-// was written yet, a 500 JSON error. http.ErrAbortHandler is re-panicked so
-// net/http can abort the response as intended.
+// Recover logs a panic and, if nothing was written yet, answers a 500 JSON
+// error. http.ErrAbortHandler is re-panicked so net/http aborts the response.
 func Recover(l *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

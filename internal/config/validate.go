@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// Validate checks the configuration and returns every problem found, joined
-// with errors.Join, each prefixed by the YAML key it concerns, e.g.
+// Validate returns every problem joined, each prefixed by its YAML key, e.g.
 // "tls.mode: must be one of acme, files, self-signed".
 func (c *Config) Validate() error {
 	var v validator
@@ -86,15 +85,14 @@ func (c *Config) Validate() error {
 	return errors.Join(v.errs...)
 }
 
-// MinAdminTokenLen is the shortest auth.admin_token accepted, except under
-// a localhost base domain, which only serves the machine it runs on.
+// MinAdminTokenLen is the shortest auth.admin_token accepted, except under a
+// localhost base domain, which only the local machine can reach.
 const MinAdminTokenLen = 32
 
 func isLocalhost(base string) bool {
 	return base == "localhost" || strings.HasSuffix(base, ".localhost")
 }
 
-// validator collects problems keyed by YAML path.
 type validator struct {
 	errs []error
 }
@@ -109,7 +107,6 @@ func (v *validator) required(key, value string) {
 	}
 }
 
-// oneOf reports whether value is allowed, recording a problem if not.
 func (v *validator) oneOf(key, value string, allowed ...string) bool {
 	if slices.Contains(allowed, value) {
 		return true
@@ -118,7 +115,7 @@ func (v *validator) oneOf(key, value string, allowed ...string) bool {
 	return false
 }
 
-// positive requires every numeric field of the struct section to be > 0.
+// positive requires every integer field of s to be > 0.
 func (v *validator) positive(section string, s any) {
 	rv := reflect.ValueOf(s)
 	t := rv.Type()

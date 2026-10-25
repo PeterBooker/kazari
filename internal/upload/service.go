@@ -18,7 +18,6 @@ import (
 	"kazari/internal/artifact"
 )
 
-// Defaults applied by New to zero Options fields.
 const (
 	DefaultMaxChunkBytes   = 4 << 20
 	DefaultMaxTotalBytes   = 50 << 20
@@ -27,19 +26,18 @@ const (
 	DefaultMaxOpenPerOwner = 5
 )
 
-// idBytes is the number of random bytes in an upload id; base64url without
-// padding makes that idLen characters.
+// base64url without padding encodes idBytes random bytes as idLen characters.
 const (
 	idBytes = 16
 	idLen   = 22
 )
 
-// Options configures a Service. Zero fields take the defaults above.
+// Options configures a Service. Zero fields take the Default constants.
 type Options struct {
-	Dir             string // staging root, data_dir/uploads; default os.TempDir()/kazari-uploads
-	MaxChunkBytes   int64  // largest single chunk, after any transport decoding
-	MaxTotalBytes   int64  // all files of one upload together
-	MaxFiles        int    // files per upload
+	Dir             string // staging root; default os.TempDir()/kazari-uploads
+	MaxChunkBytes   int64  // after any transport decoding
+	MaxTotalBytes   int64  // all files of one upload
+	MaxFiles        int
 	TTL             time.Duration
 	MaxOpenPerOwner int
 	Now             func() time.Time
@@ -78,14 +76,12 @@ func New(store Store, opts Options) *Service {
 	return &Service{store: store, opts: opts}
 }
 
-// MaxChunkBytes is the largest chunk AppendChunk accepts, for clients that
-// need to know how to split their files.
+// MaxChunkBytes is the largest chunk AppendChunk accepts.
 func (s *Service) MaxChunkBytes() int64 { return s.opts.MaxChunkBytes }
 
-// OffsetMismatchError reports a chunk whose offset does not match the staged
-// size of its file. Current is where the client should resume. It matches
-// artifact.ErrOffsetMismatch with errors.Is, and artifact.CodeOf reports
-// that sentinel's code.
+// OffsetMismatchError unwraps to artifact.ErrOffsetMismatch, so
+// artifact.CodeOf reports its code. Current is the staged size, where the
+// client should resume.
 type OffsetMismatchError struct {
 	Path    string
 	Current int64
@@ -95,15 +91,12 @@ func (e *OffsetMismatchError) Error() string {
 	return fmt.Sprintf("%s: %q has %d bytes staged", artifact.ErrOffsetMismatch.Code, e.Path, e.Current)
 }
 
-// Is reports whether target is artifact.ErrOffsetMismatch.
 func (e *OffsetMismatchError) Is(target error) bool { return target == artifact.ErrOffsetMismatch }
 
-// Unwrap returns artifact.ErrOffsetMismatch so errors.As finds the coded
-// error.
 func (e *OffsetMismatchError) Unwrap() error { return artifact.ErrOffsetMismatch }
 
-// Begin starts an upload for owner. The store enforces MaxOpenPerOwner in
-// the same transaction as the insert, so concurrent Begins cannot pass it.
+// Begin starts an upload for owner. MaxOpenPerOwner holds under concurrent
+// Begins: the store checks it in the insert's transaction.
 func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
 	b := make([]byte, idBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -116,8 +109,8 @@ func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.opts.TTL),
 	}
-	// The row comes first, so the orphan sweep in ExpireStale never sees a
-	// directory whose row is still being written.
+	// Row first, so the orphan sweep never sees a directory whose row is
+	// still being written.
 	if err := s.store.Create(ctx, u, s.opts.MaxOpenPerOwner); err != nil {
 		if errors.Is(err, artifact.ErrTooManyUploads) {
 			return nil, err
@@ -130,19 +123,17 @@ func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
 	return u, nil
 }
 
-// Get returns an open upload of owner. Unknown, expired and foreign uploads
-// all return artifact.ErrUploadNotFound.
+// Get returns an open upload of owner, or artifact.ErrUploadNotFound if it
+// is unknown, expired or foreign.
 func (s *Service) Get(ctx context.Context, owner, id string) (*Upload, error) {
 	return s.load(ctx, owner, id, false)
 }
 
-// AppendChunk appends one chunk of r to the staged file path at offset.
-//
-// An offset equal to the staged size appends. A chunk that ends exactly at
-// the staged size is a retry of one already written and is acknowledged
-// without writing. Any other offset returns an *OffsetMismatchError. The
-// content type is taken from the first chunk of a path; on every chunk it
-// must pass the check the publish applies, so nothing invalid is staged.
+// AppendChunk writes r to the staged file path at offset. An offset equal to
+// the staged size appends; a chunk ending exactly there is a retry,
+// acknowledged without writing; any other offset is an *OffsetMismatchError.
+// The first chunk of a path sets its content type, but every chunk's must
+// pass the publish's check, so nothing invalid is staged.
 func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offset int64, r io.Reader, contentType string) (StagedFile, error) {
 	if offset < 0 {
 		return StagedFile{}, artifact.Errorf(artifact.ErrInvalidArgument, "negative offset %d", offset)
@@ -210,9 +201,8 @@ func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offse
 	return f, nil
 }
 
-// write appends chunk to the staging file of f. The file is first cut back
-// to the recorded size, so bytes left by a write whose row update failed
-// never end up in the published file.
+// write truncates to the recorded size first, so bytes left by a write whose
+// row update failed are never published.
 func (s *Service) write(id string, f StagedFile, chunk []byte) error {
 	if err := os.MkdirAll(s.dir(id), 0o700); err != nil {
 		return err
@@ -232,11 +222,9 @@ func (s *Service) write(id string, f StagedFile, chunk []byte) error {
 	return fh.Close()
 }
 
-// Files opens every staged file of the upload as a FileInput, sorted by
-// path, with *os.File as Content. The returned cleanup closes the files and
-// removes the staging directory and the store rows; call it once, after the
-// publish succeeds or fails. An upload with no files is
-// artifact.ErrInvalidArgument.
+// Files opens the staged files as FileInputs sorted by path, with *os.File as
+// Content; an empty upload is artifact.ErrInvalidArgument. Call cleanup after
+// the publish succeeds or fails: it closes the files and removes the upload.
 func (s *Service) Files(ctx context.Context, owner, id string) ([]artifact.FileInput, func() error, error) {
 	unlock := s.locks.lock(id)
 	defer unlock()
@@ -283,7 +271,7 @@ func (s *Service) Files(ctx context.Context, owner, id string) ([]artifact.FileI
 	return inputs, cleanup, nil
 }
 
-// openStaged opens the staging file of f, trimmed to its recorded size.
+// openStaged trims the file to its recorded size.
 func (s *Service) openStaged(id string, f StagedFile) (*os.File, error) {
 	p := s.stagingPath(id, f.StagingIndex)
 	fh, err := os.OpenFile(p, os.O_RDWR, 0)
@@ -314,9 +302,8 @@ func (s *Service) Abort(ctx context.Context, owner, id string) error {
 	return s.remove(ctx, id)
 }
 
-// ExpireStale removes uploads past their TTL and staging directories that
-// have no store row (left by a crash). It returns how many it removed. It
-// keeps going after an error and reports all of them.
+// ExpireStale removes expired uploads and staging directories with no row
+// (left by a crash), returns how many and continues past errors.
 func (s *Service) ExpireStale(ctx context.Context) (int, error) {
 	expired, err := s.store.ListExpired(ctx, s.opts.Now())
 	if err != nil {
@@ -355,8 +342,6 @@ func (s *Service) ExpireStale(ctx context.Context) (int, error) {
 	return removed, errors.Join(errs...)
 }
 
-// removeOrphan removes the staging directory of id if the store has no row
-// for it, and reports whether it did.
 func (s *Service) removeOrphan(ctx context.Context, id string) (int, error) {
 	unlock := s.locks.lock(id)
 	defer unlock()
@@ -373,8 +358,8 @@ func (s *Service) removeOrphan(ctx context.Context, id string) (int, error) {
 	return 1, nil
 }
 
-// load fetches the upload and hides every reason it is unavailable to
-// owner behind artifact.ErrUploadNotFound.
+// load hides every reason the upload is unavailable to owner behind
+// artifact.ErrUploadNotFound.
 func (s *Service) load(ctx context.Context, owner, id string, allowExpired bool) (*Upload, error) {
 	if !validID(id) {
 		return nil, artifact.ErrUploadNotFound
@@ -392,8 +377,6 @@ func (s *Service) load(ctx context.Context, owner, id string, allowExpired bool)
 	return u, nil
 }
 
-// remove deletes the staging directory and the store rows of id. A missing
-// row is not an error.
 func (s *Service) remove(ctx context.Context, id string) error {
 	var errs []error
 	if err := os.RemoveAll(s.dir(id)); err != nil {
@@ -411,9 +394,8 @@ func (s *Service) stagingPath(id string, index int) string {
 	return filepath.Join(s.opts.Dir, id, strconv.Itoa(index))
 }
 
-// validID reports whether id has the shape Begin generates. It keeps ids
-// from naming paths outside Dir and keeps the orphan sweep away from
-// anything else stored there.
+// validID accepts only the shape Begin generates, so ids cannot name paths
+// outside Dir and the orphan sweep leaves anything else there alone.
 func validID(id string) bool {
 	if len(id) != idLen {
 		return false
@@ -428,7 +410,6 @@ func validID(id string) bool {
 	return true
 }
 
-// keyedMutex serialises work on one upload id without blocking others.
 type keyedMutex struct {
 	mu sync.Mutex
 	m  map[string]*keyedEntry
@@ -439,7 +420,6 @@ type keyedEntry struct {
 	refs int
 }
 
-// lock locks key and returns the unlock function.
 func (k *keyedMutex) lock(key string) func() {
 	k.mu.Lock()
 	if k.m == nil {

@@ -23,7 +23,6 @@ import (
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
-// clock is a settable time source.
 type clock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -63,8 +62,6 @@ func newFixture(t *testing.T, opts user.Options) *fixture {
 	return f
 }
 
-// restart returns a fresh Service over the same store, as after a process
-// restart.
 func (f *fixture) restart() *user.Service {
 	return user.New(f.store, f.audit, f.opts)
 }
@@ -155,8 +152,6 @@ func TestCreateUser(t *testing.T) {
 		t.Errorf("audit event = %+v", ev)
 	}
 
-	// Explicit role and quota (zero is a real value, not "default"), and
-	// the actor comes from the principal in the context.
 	pctx := auth.ContextWithPrincipal(ctx, auth.Principal{Handle: "root", Admin: true})
 	b, err := f.svc.CreateUser(pctx, user.CreateUserRequest{Handle: "bob", Role: user.RoleAdmin, QuotaBytes: ptr(int64(0))})
 	if err != nil {
@@ -284,7 +279,6 @@ func TestDisableRevokesKeys(t *testing.T) {
 		t.Errorf("IssueKey for disabled user = %v, want ErrDisabled", err)
 	}
 
-	// Enabling clears DisabledAt; revoked keys stay revoked, new keys work.
 	u, err = f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(false)})
 	if err != nil {
 		t.Fatal(err)
@@ -301,9 +295,6 @@ func TestDisableRevokesKeys(t *testing.T) {
 	}
 }
 
-// Regression: disabling a user revoked their keys but nothing else, so
-// enabling them again revived their OAuth grants. OnDisable lets the
-// holder of other credentials revoke them.
 func TestDisableRunsOnDisable(t *testing.T) {
 	ctx := context.Background()
 	var calls []string
@@ -327,7 +318,6 @@ func TestDisableRunsOnDisable(t *testing.T) {
 		t.Errorf("OnDisable calls (-want +got):\n%s", diff)
 	}
 
-	// A failed hook fails the update; the user is disabled all the same.
 	fail = errors.New("grants unavailable")
 	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)}); !errors.Is(err, fail) {
 		t.Errorf("UpdateUser with failing OnDisable = %v, want its error", err)
@@ -348,7 +338,7 @@ func TestKeyStatus(t *testing.T) {
 	if err := f.svc.RevokeKey(ctx, "alice", revoked.Prefix); err != nil {
 		t.Fatal(err)
 	}
-	// Disabled in the store directly, so bob's key itself stays unrevoked.
+	// Disabled in the store so bob's key stays unrevoked.
 	bobs, _ := f.mustIssue(t, "bob", nil, 0)
 	if err := f.store.UpdateUser(ctx, &user.User{Handle: "bob", Role: user.RoleMember, DisabledAt: ptr(t0)}); err != nil {
 		t.Fatal(err)
@@ -432,7 +422,6 @@ func TestIssueKey(t *testing.T) {
 		t.Error("audit details contain the secret")
 	}
 
-	// No expiry, and two keys never share a prefix or secret.
 	k2, secret2 := f.mustIssue(t, "alice", nil, 0)
 	if k2.ExpiresAt != nil {
 		t.Errorf("ExpiresAt = %v, want nil for expiresIn 0", k2.ExpiresAt)
@@ -518,12 +507,10 @@ func TestAuthenticate(t *testing.T) {
 		t.Errorf("Principal (-want +got):\n%s", diff)
 	}
 
-	// Through a chain, as the app wires it.
 	if _, err := auth.Chain(f.svc).Authenticate(ctx, secret); err != nil {
 		t.Errorf("Chain: %v", err)
 	}
 
-	// A member key carries Admin false.
 	f.mustCreate(t, "member", "", "")
 	_, ms := f.mustIssue(t, "member", []string{auth.ScopeRead}, 0)
 	mp, err := f.svc.Authenticate(ctx, ms)
@@ -608,7 +595,6 @@ func TestAuthenticateFailures(t *testing.T) {
 	}
 }
 
-// failingStore makes GetKey fail with a storage error.
 type failingStore struct {
 	*sqlite.UserStore
 	err error
@@ -630,7 +616,6 @@ func TestAuthenticateStoreError(t *testing.T) {
 	if !errors.Is(err, boom) || errors.Is(err, auth.ErrInvalidToken) {
 		t.Fatalf("Authenticate = %v, want the store error", err)
 	}
-	// A storage error stops a chain instead of falling through.
 	called := false
 	next := auth.AuthenticatorFunc(func(context.Context, string) (auth.Principal, error) {
 		called = true
@@ -863,7 +848,6 @@ func TestResolveIdentity(t *testing.T) {
 			if u.Handle != tt.wantUser || u.Role != tt.wantRole {
 				t.Errorf("user = %s (%s), want %s (%s)", u.Handle, u.Role, tt.wantUser, tt.wantRole)
 			}
-			// The link exists and was refreshed now.
 			ids, err := f.store.ListIdentities(ctx, u.Handle)
 			if err != nil {
 				t.Fatal(err)
@@ -902,7 +886,6 @@ func TestResolveIdentityProvisioned(t *testing.T) {
 		t.Errorf("audit event = %+v", ev)
 	}
 
-	// The second sign-in matches the link and creates nothing.
 	f.clock.Advance(time.Hour)
 	again, err := f.svc.ResolveIdentity(ctx, id)
 	if err != nil {
@@ -979,7 +962,6 @@ func TestIdentityLinks(t *testing.T) {
 		t.Errorf("identities (-want +got):\n%s", diff)
 	}
 
-	// The linked identity now resolves to alice without any email match.
 	u, err := f.svc.ResolveIdentity(ctx, auth.Identity{Issuer: "https://idp.example.com", Subject: "sub-1"})
 	if err != nil || u.Handle != "alice" {
 		t.Fatalf("ResolveIdentity = %v, %v; want alice", u, err)
@@ -1003,7 +985,6 @@ func TestIdentityLinks(t *testing.T) {
 		t.Errorf("ListIdentities(nobody): err = %v, want ErrNotFound", err)
 	}
 
-	// Unlinking from the wrong user finds nothing; from the right one works.
 	if err := f.svc.UnlinkIdentity(ctx, "bob", "https://idp.example.com", "sub-1"); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("UnlinkIdentity(bob): err = %v, want ErrNotFound", err)
 	}
@@ -1022,9 +1003,6 @@ func TestIdentityLinks(t *testing.T) {
 	}
 }
 
-// An admin's key issued with member scopes must act as a member: before the
-// fix Admin followed the role alone, so HasScope granted every scope and the
-// key passed the admin host.
 func TestAuthenticateAdminKeyWithoutAdminScope(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})

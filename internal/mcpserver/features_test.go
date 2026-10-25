@@ -18,7 +18,6 @@ import (
 	"kazari/internal/mcpserver"
 )
 
-// connectWith is connect with client options, e.g. an elicitation handler.
 func (e *env) connectWith(t *testing.T, p auth.Principal, opts *mcp.ClientOptions) *mcp.ClientSession {
 	t.Helper()
 	st, ct := mcp.NewInMemoryTransports()
@@ -62,7 +61,6 @@ func TestEditFile(t *testing.T) {
 		t.Fatalf("edit_file = %+v %q", out, firstLine(res))
 	}
 
-	// A fuzzy match is named in the summary; the indentation is the file's.
 	out, res = ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
 		"edits": []map[string]any{{"old_text": "<h1>Q4</h1>\n<p>Up.</p>", "new_text": "<h1>Q4</h1>\n<p>Up 4%.</p>\n<p>Costs flat.</p>"}}})
 	if !strings.Contains(firstLine(res), "lines 3-5 (indentation)") {
@@ -72,8 +70,6 @@ func TestEditFile(t *testing.T) {
 		t.Errorf("excerpt = %q", out.Edits[0].Excerpt)
 	}
 
-	// The excerpt's anchors drive the next edit without a new read. An
-	// empty old_text is allowed beside an anchor.
 	var start string
 	for _, l := range strings.Split(out.Edits[0].Excerpt, "\n") {
 		if strings.HasPrefix(l, "5:") {
@@ -100,7 +96,6 @@ func TestEditFile(t *testing.T) {
 	if !strings.HasPrefix(msg, "anchor_mismatch: edit 1: anchor") || !strings.Contains(msg, "Next step: The file changed") {
 		t.Errorf("stale anchor = %q", msg)
 	}
-	// Both kinds in one edit fail the schema before the handler runs.
 	if msg := fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
 		"edits": []map[string]any{{"old_text": "Q4", "start": start, "new_text": "x"}}}); !strings.Contains(msg, "oneOf") {
 		t.Errorf("edit with both kinds = %q", msg)
@@ -253,7 +248,6 @@ func TestPreview(t *testing.T) {
 		t.Errorf("preview config placeholder not replaced")
 	}
 
-	// A CSP that lets other sites frame pages turns the live preview on.
 	e.opts.CSP = "default-src 'self'; frame-ancestors https://*.example-host.test"
 	c, ui = read(e.connect(t, member))
 	frames, _ := json.Marshal(ui["csp"])
@@ -293,7 +287,6 @@ func TestHardDeleteConfirmation(t *testing.T) {
 	}
 	ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo"})
 
-	// A soft delete is reversible and asks nothing.
 	before := asked
 	answer = map[string]any{"action": "accept", "confirm": true}
 	if out, _ := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !out.OK || asked != before {
@@ -304,8 +297,6 @@ func TestHardDeleteConfirmation(t *testing.T) {
 		t.Errorf("confirmed purge = %+v %q, asked %d", out, firstLine(res), asked-before)
 	}
 
-	// A client without elicitation is not asked: the destructive hint is
-	// its host's cue.
 	plain := e.connect(t, member)
 	ok[api.PublishResult](t, plain, "create_artifact", map[string]any{"slug": "other", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
@@ -314,9 +305,6 @@ func TestHardDeleteConfirmation(t *testing.T) {
 	}
 }
 
-// The generated texts use the public links, so a development instance on
-// plain HTTP with a port gets working URLs in its instructions, skill and
-// preview.
 func TestTextsUsePublicLinks(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Links.URL = func(sub string) string { return "http://" + sub + ".localhost:8080/" }

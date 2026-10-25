@@ -1,7 +1,5 @@
-// Package httpapi serves the REST control plane: the user API on the api
-// host and the admin API on the admin host. Handlers decode the wire types
-// in package api, call the domain services and encode the result; domain
-// errors become statuses in one place, present.Error.
+// Package httpapi serves the user API on the api host and the admin API on the
+// admin host. Domain errors become statuses in one place, present.Error.
 package httpapi
 
 import (
@@ -22,16 +20,15 @@ import (
 	"kazari/internal/user"
 )
 
-// jsonLimit caps plain JSON bodies. Bodies that may carry inline files are
-// capped at UserOptions.MaxBodyBytes instead.
+// jsonLimit caps JSON bodies that cannot carry inline files; those use
+// UserOptions.MaxBodyBytes.
 const jsonLimit = 1 << 20
 
 // ErrGrantNotFound is what a GrantStore returns (or wraps) for an unknown
 // grant id, so DELETE /v1/grants/{id} answers 404.
 var ErrGrantNotFound = errors.New("httpapi: grant not found")
 
-// statusError is an error that carries its own HTTP status, for the few
-// failures that are HTTP concerns rather than domain errors.
+// statusError is for failures that are HTTP concerns, not domain errors.
 type statusError struct {
 	status     int
 	code       string
@@ -41,16 +38,14 @@ type statusError struct {
 
 func (e *statusError) Error() string { return e.code + ": " + e.msg }
 
-// invalid is a 422 invalid_argument with a message for the client.
+// invalid is a 422 whose message reaches the client.
 func invalid(format string, args ...any) error {
 	return artifact.Errorf(artifact.ErrInvalidArgument, format, args...)
 }
 
-// apiFunc is a handler that reports failure by returning an error; the
-// wrapper writes it. p is the authenticated caller.
+// apiFunc returns its failure for the wrapper to write.
 type apiFunc func(w http.ResponseWriter, r *http.Request, p auth.Principal) error
 
-// base holds what every handler needs to answer.
 type base struct {
 	log   *slog.Logger
 	links present.Links
@@ -63,7 +58,6 @@ func newBase(log *slog.Logger, links present.Links) base {
 	return base{log: log, links: links}
 }
 
-// serve adapts an apiFunc to http.Handler.
 func (b *base) serve(fn apiFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())
@@ -73,16 +67,14 @@ func (b *base) serve(fn apiFunc) http.Handler {
 	})
 }
 
-// writeJSON writes v as the JSON response body with status.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// writeError is the single place an error becomes a response. 5xx errors
-// are logged with their cause; the body only ever carries a generic message
-// for them.
+// writeError is the single place an error becomes a response. A 5xx is logged
+// with its cause; its body only ever carries a generic message.
 func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, body, retry := errorResponse(err)
 	if status >= http.StatusInternalServerError {
@@ -111,15 +103,13 @@ func errorResponse(err error) (int, api.Error, time.Duration) {
 	return status, body, 0
 }
 
-// decodeJSON decodes the request body into v, rejecting unknown fields,
-// trailing data and bodies over limit (413). An empty body is a 422 unless
-// optional, in which case v is left as it is.
+// decodeJSON rejects unknown fields, trailing data and bodies over limit
+// (413). An empty body is a 422 unless optional, which leaves v as it is.
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, v any, optional bool) error {
 	body := http.MaxBytesReader(w, r.Body, limit)
 	return decodeStrict(body, v, optional)
 }
 
-// decodeStrict is decodeJSON over any reader.
 func decodeStrict(rd io.Reader, v any, optional bool) error {
 	dec := json.NewDecoder(rd)
 	dec.DisallowUnknownFields()
@@ -144,8 +134,6 @@ func decodeStrict(rd io.Reader, v any, optional bool) error {
 	return nil
 }
 
-// bodyErr keeps a body-size error (413) and turns anything else that went
-// wrong while reading a request body into a 422 naming what was wrong.
 func bodyErr(what string, err error) error {
 	if mbe := maxBytesErr(err); mbe != nil {
 		return mbe
@@ -161,7 +149,6 @@ func maxBytesErr(err error) error {
 	return nil
 }
 
-// queryBool parses an optional boolean query parameter.
 func queryBool(r *http.Request, name string) (bool, error) {
 	s := r.URL.Query().Get(name)
 	if s == "" {
@@ -174,7 +161,6 @@ func queryBool(r *http.Request, name string) (bool, error) {
 	return b, nil
 }
 
-// queryInt parses an optional non-negative integer query parameter.
 func queryInt(r *http.Request, name string) (int, error) {
 	s := r.URL.Query().Get(name)
 	if s == "" {
@@ -187,7 +173,6 @@ func queryInt(r *http.Request, name string) (int, error) {
 	return n, nil
 }
 
-// listQuery reads the artifact list filters shared by both APIs.
 func listQuery(r *http.Request) (artifact.ListQuery, error) {
 	q := r.URL.Query()
 	limit, err := queryInt(r, "limit")
@@ -214,9 +199,8 @@ func listQuery(r *http.Request) (artifact.ListQuery, error) {
 	return lq, nil
 }
 
-// jsonFallback serves mux, answering unmatched routes with JSON 404 and
-// wrong methods with JSON 405 (keeping the mux's Allow header) instead of
-// the mux's plain-text pages.
+// jsonFallback replaces the mux's plain-text 404 and 405 pages with JSON,
+// keeping its Allow header.
 func jsonFallback(mux *http.ServeMux, b *base) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, pattern := mux.Handler(r)
@@ -236,8 +220,6 @@ func jsonFallback(mux *http.ServeMux, b *base) http.Handler {
 	})
 }
 
-// probeWriter records the status and headers of the mux's fallback handler
-// and discards its body.
 type probeWriter struct {
 	header http.Header
 	status int

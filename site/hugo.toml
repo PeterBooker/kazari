@@ -1,8 +1,3 @@
-# The Kazari website and documentation at https://kazari.io/, published to GitHub Pages by
-# .github/workflows/pages.yml. Build: hugo --source site. Preview: hugo server --source site.
-# The reference pages are the Markdown files in ../docs, mounted under /docs/, except the security
-# design and the architecture decision records, which stay on GitHub only.
-
 baseURL = "https://kazari.io/"
 title = "Kazari"
 locale = "en-GB"
@@ -34,7 +29,7 @@ enableGitInfo = true
   page = ["html"]
 
 [markup]
-  # The docs pages are ours, so raw HTML in them (the cards on the overview page) is allowed.
+  # The docs are ours, so their raw HTML (the overview cards) is trusted.
   [markup.goldmark.renderer]
     unsafe = true
   [markup.goldmark.parser]

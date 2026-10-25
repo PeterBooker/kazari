@@ -1,6 +1,5 @@
-// Package user holds users and their API keys: creating users, issuing and
-// verifying keys, and resolving an upstream identity to a user under the
-// instance's provisioning policy. Service implements auth.Authenticator.
+// Package user manages users, API keys and identity provisioning. Service
+// implements auth.Authenticator.
 package user
 
 import (
@@ -20,7 +19,6 @@ const (
 // KeyPrefix starts every API key: kzk_<8-char prefix>_<secret>.
 const KeyPrefix = "kzk_"
 
-// Errors. Compare with errors.Is.
 var (
 	ErrNotFound       = errors.New("user: not found")
 	ErrKeyNotFound    = errors.New("user: key not found")
@@ -63,7 +61,7 @@ type APIKey struct {
 // KeyStatus is the state of an API key at one moment, for credentials
 // derived from the key (an OAuth grant approved with it).
 type KeyStatus struct {
-	Handle    string     // the key's owner
+	Handle    string
 	Active    bool       // neither revoked nor expired, and the owner is not disabled
 	ExpiresAt *time.Time // nil when the key never expires
 }
@@ -93,19 +91,18 @@ type Store interface {
 	// GetKey returns the key and its user by prefix, including revoked and
 	// expired keys; the caller decides. ErrKeyNotFound.
 	GetKey(ctx context.Context, prefix string) (*APIKey, *User, error)
-	// ListKeys returns a user's keys, newest first.
+	// ListKeys returns a user's keys, newest first. ErrNotFound.
 	ListKeys(ctx context.Context, handle string) ([]APIKey, error)
-	// RevokeKey sets revoked_at on one key. ErrKeyNotFound.
+	// RevokeKey sets revoked_at on one key unless already set. ErrKeyNotFound.
 	RevokeKey(ctx context.Context, handle, prefix string, at time.Time) error
-	// RevokeAllKeys revokes every live key of a user (on disable).
+	// RevokeAllKeys revokes every live key of a user. ErrNotFound.
 	RevokeAllKeys(ctx context.Context, handle string, at time.Time) error
-	// TouchKey sets last_used_at.
 	TouchKey(ctx context.Context, prefix string, at time.Time) error
 
 	// GetIdentity returns the user linked to (issuer, subject). ErrNotFound.
 	GetIdentity(ctx context.Context, issuer, subject string) (*User, error)
-	// LinkIdentity upserts the link, refreshing email_at_login and
-	// last_login_at.
+	// LinkIdentity upserts the link, moving it from any other user and
+	// refreshing email_at_login and last_login_at. ErrNotFound.
 	LinkIdentity(ctx context.Context, handle string, id Identity) error
 	UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error
 	ListIdentities(ctx context.Context, handle string) ([]Identity, error)

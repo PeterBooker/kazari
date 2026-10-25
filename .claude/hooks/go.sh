@@ -1,8 +1,6 @@
 #!/bin/sh
-# Claude Code hooks for Go, wired in .claude/settings.json.
-#   format: after Claude edits a .go file, gofmt it; note that Go (or go.mod/go.sum) changed.
-#   vet:    when Claude stops and Go changed since the last vet, run go vet ./...
-#           Exit 2 hands gofmt and vet errors back to Claude.
+# Hooks wired in .claude/settings.json. format: gofmt an edited .go file and note that Go changed.
+# vet: on stop, go vet ./... if Go changed. Exit 2 hands errors back to Claude.
 input=$(cat)
 marker="${TMPDIR:-/tmp}/kazari-go-changed-$(printf '%s' "$input" | jq -r .session_id)"
 

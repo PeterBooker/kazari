@@ -1,8 +1,5 @@
-// Package artifact holds the artifact domain: the types, their validation
-// rules, the Store contract a persistence layer must satisfy, and the
-// Service that implements create, update, lifecycle and garbage collection.
-//
-// Nothing in this package knows about HTTP, MCP or SQLite.
+// Package artifact is the artifact domain: types, validation, the Store
+// contract and the Service. It knows nothing of HTTP, MCP or SQLite.
 package artifact
 
 import (
@@ -11,9 +8,9 @@ import (
 )
 
 // Visibility controls who may open an artifact and who sees it listed.
-// Public and Unlisted are served to anyone; Unlisted is left out of other
-// people's listings. Members is served only to people signed in to the
-// instance and to holders of a share link, and is listed like Public.
+// Unlisted is left out of other people's listings; Members is served only to
+// people signed in to the instance and share-link holders, and listed like
+// Public.
 type Visibility string
 
 const (
@@ -25,12 +22,11 @@ const (
 // Gated reports whether serving needs a signed-in viewer or a share link.
 func (v Visibility) Gated() bool { return v == Members }
 
-// Unpublished is accepted by Service.SetVisibility in addition to the two
-// Visibility values. It is a lifecycle state (unpublished_at set), not a
-// stored visibility.
+// Unpublished is a Service.SetVisibility value that sets unpublished_at; it
+// is never a stored Visibility.
 const Unpublished = "unpublished"
 
-// Metadata keys interpreted by the server. Every other key is opaque.
+// Metadata keys the server interprets; all others are opaque.
 const (
 	MetaSPA       = "kazari.spa"       // "true" serves index.html for any extension-less miss
 	MetaIndexable = "kazari.indexable" // "true" drops the X-Robots-Tag: noindex header
@@ -46,12 +42,10 @@ type Artifact struct {
 	Visibility  Visibility
 	Metadata    map[string]string
 
-	// PublishedVersion is the number of the version being served, 0 when
-	// nothing is published (a purged artifact).
+	// PublishedVersion is 0 when nothing is published (a purged artifact).
 	PublishedVersion int
-	// LatestVersion is the highest version number that exists.
-	LatestVersion int
-	// SizeBytes is the sum of every version's size.
+	LatestVersion    int
+	// SizeBytes is the sum over every version.
 	SizeBytes int64
 
 	StaleAt       *time.Time
@@ -65,8 +59,8 @@ type Artifact struct {
 
 // Version is one immutable snapshot of an artifact's files.
 type Version struct {
-	// ID is the store's row id. It is used on the serving path to load the
-	// file list and is never exposed through an API.
+	// ID is the store's row id, used by the serving path and never exposed
+	// through an API.
 	ID        int64
 	Number    int
 	Label     string
@@ -79,7 +73,7 @@ type Version struct {
 // File is one entry of a version.
 type File struct {
 	Path        string // normalised, no leading slash
-	Hash        string // hex sha256 of the content
+	Hash        string // hex sha256
 	Size        int64
 	ContentType string
 }
@@ -97,9 +91,8 @@ type Actor struct {
 	Handle     string
 	Admin      bool
 	QuotaBytes int64 // 0 means unlimited
-	// Credential names what the actor authenticated with, for the audit
-	// trail: "api_key:<prefix>", "oauth:<id>" or "admin_token". Empty for
-	// System.
+	// Credential is "api_key:<prefix>", "oauth:<id>" or "admin_token", for
+	// the audit trail; empty for System.
 	Credential string
 }
 
@@ -117,8 +110,8 @@ type CreateRequest struct {
 	Files       []FileInput
 }
 
-// UpdateRequest changes fields and/or adds a version. Nil pointers leave a
-// field alone. Files empty means a fields-only update with no new version.
+// UpdateRequest changes fields and, unless Files is empty, adds a version.
+// Nil pointers leave a field alone.
 type UpdateRequest struct {
 	Slug            string
 	Name            *string
@@ -128,17 +121,17 @@ type UpdateRequest struct {
 	Label           string
 	ExpectedVersion int  // compared with LatestVersion; 0 = no check
 	KeepStale       bool // a new version normally clears stale_at/expires_at
-	Restore         bool // clear deleted_at on a soft-deleted artifact
+	Restore         bool
 	Files           []FileInput
 }
 
-// ListQuery filters a listing. The store applies visibility: Viewer sees
-// public artifacts plus any it created or updated; All bypasses that.
+// ListQuery filters a listing. Viewer sees public artifacts plus any it
+// created or updated; All sees every artifact.
 type ListQuery struct {
-	Viewer   string            // handle of the caller
-	All      bool              // admin: every artifact regardless of visibility
+	Viewer   string            // handle
+	All      bool              // admin only
 	Mine     string            // "", "created", "updated", "any" (relative to Viewer)
-	Owner    string            // filter by owner handle
+	Owner    string            // handle
 	Metadata map[string]string // every pair must match
 	Stale    string            // "", "include" (default), "exclude", "only"
 	Deleted  string            // "", "exclude" (default), "include", "only"
@@ -152,8 +145,7 @@ type ListPage struct {
 	NextCursor string // empty on the last page
 }
 
-// Published is what the serving path needs to answer a request: which
-// version to serve and whether the artifact is in a state to be served.
+// Published is what the serving path needs to answer a request.
 type Published struct {
 	Slug          string
 	VersionID     int64 // 0 when nothing is published

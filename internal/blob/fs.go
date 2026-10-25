@@ -14,20 +14,17 @@ import (
 )
 
 // ErrInvalidHash is returned for a hash that is not 64 lower-case hex
-// characters. Checking it keeps a caller-supplied string from ever being
-// used as a path.
+// characters, so no caller-supplied string is ever used as a path.
 var ErrInvalidHash = errors.New("blob: invalid hash")
 
-// FS is a Store on the local filesystem. Blobs live at dir/<hash[0:2]>/<hash>.
-// Put writes to a temp file in dir and renames it into place, so a reader
-// never sees a partial blob.
+// FS is a Store on the local filesystem, at dir/<hash[0:2]>/<hash>.
 type FS struct {
 	dir string
 }
 
 var _ Store = (*FS)(nil)
 
-// NewFS returns a Store rooted at dir, creating the directory if needed.
+// NewFS returns an FS rooted at dir, creating it if needed.
 func NewFS(dir string) (*FS, error) {
 	if dir == "" {
 		return nil, errors.New("blob: empty directory")
@@ -38,9 +35,7 @@ func NewFS(dir string) (*FS, error) {
 	return &FS{dir: dir}, nil
 }
 
-// Put streams r into a temp file while hashing it, then renames the file to
-// its content address. If the blob already exists the temp file is removed
-// and the existing blob is kept.
+// Put renames a temp file into place, so readers never see a partial blob.
 func (f *FS) Put(ctx context.Context, r io.Reader) (string, int64, error) {
 	tmp, err := os.CreateTemp(f.dir, tempPrefix+"*")
 	if err != nil {
@@ -70,14 +65,14 @@ func (f *FS) Put(ctx context.Context, r io.Reader) (string, int64, error) {
 	hash := hex.EncodeToString(h.Sum(nil))
 	dst := f.path(hash)
 	if _, err := os.Stat(dst); err == nil {
-		// Already stored; the deferred cleanup removes the temp file.
+		// Already stored; the deferred cleanup removes tmp.
 		return hash, size, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", 0, fmt.Errorf("blob: put: %w", err)
 	}
-	// A concurrent Put of the same content may win the race; rename then
-	// replaces an identical file, which is harmless.
+	// A concurrent Put of the same content may win; replacing an identical
+	// file is harmless.
 	if err := os.Rename(tmpName, dst); err != nil {
 		return "", 0, fmt.Errorf("blob: put: %w", err)
 	}
@@ -115,7 +110,7 @@ func (f *FS) Stat(_ context.Context, hash string) (int64, error) {
 	return fi.Size(), nil
 }
 
-// Delete removes the blob. A missing blob is not an error.
+// Delete ignores a missing blob.
 func (f *FS) Delete(_ context.Context, hash string) error {
 	if !ValidHash(hash) {
 		return fmt.Errorf("%w: %q", ErrInvalidHash, hash)
@@ -127,13 +122,10 @@ func (f *FS) Delete(_ context.Context, hash string) error {
 	return nil
 }
 
-// tempPrefix names the files Put writes before renaming them into place.
 const tempPrefix = ".put-"
 
-// RemoveStaleTemp removes Put's temporary files last written before the
-// given time. Put removes its own on every path but a crash, so these are
-// what a crash left behind. It returns how many it removed and carries on
-// past errors.
+// RemoveStaleTemp removes Put's temp files older than before, which only a
+// crash leaves behind, and returns how many. It continues past errors.
 func (f *FS) RemoveStaleTemp(before time.Time) (int, error) {
 	entries, err := os.ReadDir(f.dir)
 	if err != nil {
@@ -170,7 +162,7 @@ func (f *FS) path(hash string) string {
 	return filepath.Join(f.dir, hash[:2], hash)
 }
 
-// ValidHash reports whether s is a hex SHA-256: 64 lower-case hex characters.
+// ValidHash reports whether s is 64 lower-case hex characters.
 func ValidHash(s string) bool {
 	if len(s) != sha256.Size*2 {
 		return false
@@ -184,7 +176,6 @@ func ValidHash(s string) bool {
 	return true
 }
 
-// ctxReader stops a long copy when the context is cancelled.
 type ctxReader struct {
 	ctx context.Context
 	r   io.Reader

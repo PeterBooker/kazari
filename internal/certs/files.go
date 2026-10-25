@@ -12,21 +12,15 @@ import (
 	"time"
 )
 
-// defaultPollEvery is how often Files checks its files when
-// FilesOptions.PollEvery is not positive.
 const defaultPollEvery = time.Minute
 
 // FilesOptions configures a Files source. The zero value is valid.
 type FilesOptions struct {
-	// PollEvery is how often Run checks the files for changes. Values <= 0
-	// mean one minute.
-	PollEvery time.Duration
-	// Logger receives reload results. Nil means slog.Default().
-	Logger *slog.Logger
+	PollEvery time.Duration // <= 0 means one minute
+	Logger    *slog.Logger  // nil means slog.Default()
 }
 
-// Files serves a certificate and key loaded from PEM files and reloads them
-// when either file changes (for example after an external renewal).
+// Files serves a PEM key pair, reloaded when either file changes.
 type Files struct {
 	certFile, keyFile string
 	pollEvery         time.Duration
@@ -40,14 +34,12 @@ type Files struct {
 
 var _ Source = (*Files)(nil)
 
-// fileStamp identifies a version of the certificate and key files.
 type fileStamp struct {
 	certMod, keyMod   time.Time
 	certSize, keySize int64
 }
 
-// NewFiles loads the key pair from certFile and keyFile and fails if the
-// files are missing, malformed or do not match.
+// NewFiles fails unless certFile and keyFile hold a matching key pair.
 func NewFiles(certFile, keyFile string, opts FilesOptions) (*Files, error) {
 	f := &Files{
 		certFile:  certFile,
@@ -72,8 +64,7 @@ func (f *Files) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return f.cert.Load(), nil
 }
 
-// Reload reads both files now and swaps in the new certificate. On error
-// the previous certificate stays in use.
+// Reload rereads both files; on error the previous certificate stays.
 func (f *Files) Reload() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -84,9 +75,8 @@ func (f *Files) Reload() error {
 	return f.reloadLocked(stamp)
 }
 
-// Run checks the files every PollEvery and reloads them when their size or
-// modification time changes. A failed reload is logged, the old certificate
-// is kept, and the reload is retried on the next poll.
+// Run reloads the files when their size or modification time changes. A
+// failed reload is logged and retried on the next poll.
 func (f *Files) Run(ctx context.Context) error {
 	ticker := time.NewTicker(f.pollEvery)
 	defer ticker.Stop()
@@ -122,7 +112,6 @@ func (f *Files) reloadIfChanged() error {
 	return nil
 }
 
-// reloadLocked loads the pair and records stamp. f.mu must be held.
 func (f *Files) reloadLocked(stamp fileStamp) error {
 	cert, err := tls.LoadX509KeyPair(f.certFile, f.keyFile)
 	if err != nil {

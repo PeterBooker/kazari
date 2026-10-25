@@ -15,8 +15,8 @@ import (
 	"kazari/internal/blob"
 )
 
-// Run exercises a blob.Store. newStore must return an empty store; it is
-// called once per subtest.
+// Run tests a blob.Store. newStore must return an empty store and is called
+// once per subtest.
 func Run(t *testing.T, newStore func(t *testing.T) blob.Store) {
 	t.Run("PutOpenRoundTrip", func(t *testing.T) { testRoundTrip(t, newStore(t)) })
 	t.Run("PutEmpty", func(t *testing.T) { testPutEmpty(t, newStore(t)) })
@@ -147,7 +147,6 @@ func testDelete(t *testing.T, s blob.Store) {
 	if got := readAll(t, s, keep); string(got) != "kept" {
 		t.Fatalf("other blob = %q after Delete", got)
 	}
-	// Putting deleted content again brings it back.
 	put(t, s, []byte("doomed"))
 	if got := readAll(t, s, hash); string(got) != "doomed" {
 		t.Fatalf("re-put blob = %q", got)
@@ -161,7 +160,6 @@ func testOpenMissing(t *testing.T, s blob.Store) {
 	}
 }
 
-// failingReader yields its data, then an error instead of EOF.
 type failingReader struct {
 	data []byte
 	err  error

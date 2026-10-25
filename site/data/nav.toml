@@ -1,8 +1,6 @@
-# The documentation sidebar, in reading order. Previous and next links follow it too.
-# ja is the group's Japanese label, shown beside the group name above each of its pages (site-design skill).
-# description is the page's search snippet and link preview text, for the pages mounted from docs/,
-# which have no front matter; the pages in content/docs/ set theirs in front matter. Keep it under
-# about 155 characters, which is where search results cut it off.
+# Reading order, which previous and next links follow too. ja: the group's Japanese label.
+# description: the search snippet and link preview of a page mounted from docs/ (they have no front
+# matter); keep it under about 155 characters, where search results cut it off.
 
 [[sections]]
   title = "Get started"

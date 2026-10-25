@@ -5,8 +5,7 @@ import (
 	"fmt"
 )
 
-// Error is a domain error with a stable code. The HTTP layer maps Code to a
-// status in one place; the MCP layer maps it to a tool error in one place.
+// Error is a domain error with a stable code.
 type Error struct {
 	Code    string
 	Message string
@@ -19,14 +18,13 @@ func (e *Error) Error() string {
 	return e.Code + ": " + e.Message
 }
 
-// Is makes errors.Is(err, ErrNotFound) true for any *Error with that code,
-// so callers can attach a message with Errorf and still match a sentinel.
+// Is matches any *Error with the same code, so an Errorf copy still matches
+// its sentinel.
 func (e *Error) Is(target error) bool {
 	t, ok := target.(*Error)
 	return ok && t.Code == e.Code
 }
 
-// Sentinel errors. Compare with errors.Is.
 var (
 	ErrNotFound        = &Error{Code: "not_found", Message: "artifact not found"}
 	ErrVersionNotFound = &Error{Code: "version_not_found", Message: "version not found"}
@@ -51,13 +49,12 @@ var (
 	ErrAnchorMismatch  = &Error{Code: "anchor_mismatch", Message: "anchor does not match the file"}
 )
 
-// Errorf returns a copy of the sentinel carrying a formatted message. The
-// result still satisfies errors.Is(err, sentinel).
+// Errorf returns a copy of the sentinel with a formatted message.
 func Errorf(sentinel *Error, format string, args ...any) error {
 	return &Error{Code: sentinel.Code, Message: fmt.Sprintf(format, args...)}
 }
 
-// CodeOf returns the code of err if it is an *Error, else "".
+// CodeOf returns err's code, or "" if it is not an *Error.
 func CodeOf(err error) string {
 	var e *Error
 	if errors.As(err, &e) {

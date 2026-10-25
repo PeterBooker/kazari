@@ -80,7 +80,7 @@ func TestCreateMultipart(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"Cache-Control":          "private, no-cache",
 		"Content-Disposition":    "inline; filename=index.html",
-		// Regression: artifact HTML must not run on the api origin.
+		// Artifact HTML must not run on the api origin.
 		"Content-Security-Policy": "default-src 'none'; sandbox",
 	}
 	for k, v := range wantHeaders {
@@ -89,14 +89,12 @@ func TestCreateMultipart(t *testing.T) {
 		}
 	}
 
-	// The ETag works for conditional requests.
 	resp = e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/bundle/files/index.html"), token: e.alice,
 		header: map[string]string{"If-None-Match": `"` + sha(html) + `"`}})
 	if resp.StatusCode != http.StatusNotModified {
 		t.Errorf("conditional GET: status %d, want 304", resp.StatusCode)
 	}
 
-	// Only regular files were kept: no directories and no symlink.
 	var d api.ArtifactDetail
 	e.call(http.MethodGet, e.u("/v1/artifacts/bundle?files=true"), e.alice, nil, http.StatusOK, &d)
 	if len(d.Versions) != 1 {
@@ -113,7 +111,6 @@ func TestCreateMultipart(t *testing.T) {
 		t.Errorf("version = %+v", d.Versions[0])
 	}
 
-	// Without files=true, versions carry no file lists.
 	e.call(http.MethodGet, e.u("/v1/artifacts/bundle"), e.alice, nil, http.StatusOK, &d)
 	if len(d.Versions[0].Files) != 0 {
 		t.Errorf("files listed without files=true: %+v", d.Versions[0].Files)
@@ -185,7 +182,6 @@ func TestBodyCaps(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: e.alice,
 		body: bytes.NewReader(body), contentType: "application/json"}), 413, api.CodeTooLarge)
 
-	// A bundle that inflates past the cap stops at the cap.
 	mp, ct := multipartBody(t, part{"manifest", []byte(`{"slug":"bomb"}`)},
 		part{"bundle", tarGz(t, tarEntry{name: "a.txt", body: strings.Repeat("0", 4096)})})
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: e.alice, body: mp, contentType: ct}),
@@ -226,7 +222,6 @@ func TestList(t *testing.T) {
 		}
 	}
 
-	// Paging.
 	var page api.ArtifactList
 	e.call(http.MethodGet, e.u("/v1/artifacts?limit=2"), e.alice, nil, http.StatusOK, &page)
 	if len(page.Items) != 2 || page.NextCursor == "" {
@@ -254,7 +249,6 @@ func TestUpdate(t *testing.T) {
 		Files: []api.FileInput{{Path: "new.txt", Content: "new"}, {Path: "old.txt", Delete: true}},
 	}
 
-	// A stale If-Match is refused before anything is written.
 	e.apiErr(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: bytes.NewReader(mustJSON(t, change)),
 		contentType: "application/json", header: map[string]string{"If-Match": `"5"`}}), 412, api.CodeVersionConflict)
 	e.apiErr(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: bytes.NewReader(mustJSON(t, change)),
@@ -275,13 +269,10 @@ func TestUpdate(t *testing.T) {
 		t.Errorf("version 2 = %d %v", d.Versions[0].Number, paths)
 	}
 
-	// expected_version in the body works the same way.
 	stale := api.UpdateArtifactRequest{ExpectedVersion: 1, Files: []api.FileInput{{Path: "x.txt", Content: "x"}}}
 	e.apiErr(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: bytes.NewReader(mustJSON(t, stale)),
 		contentType: "application/json"}), 412, api.CodeVersionConflict)
 
-	// Multipart update: manifest with a deletion, bundle with a new file,
-	// bare If-Match.
 	manifest := api.UpdateArtifactRequest{Name: ptr("Renamed"), Files: []api.FileInput{{Path: "new.txt", Delete: true}}}
 	body, ct := multipartBody(t, part{"manifest", mustJSON(t, manifest)},
 		part{"bundle", tarGz(t, tarEntry{name: "./about.html", body: "about"})})
@@ -295,7 +286,6 @@ func TestUpdate(t *testing.T) {
 	}
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/demo/files/new.txt"), token: e.alice}), 404, api.CodeFileNotFound)
 
-	// A multipart update without a bundle changes fields only.
 	body, ct = multipartBody(t, part{"manifest", []byte(`{"description":"d"}`)})
 	e.expect(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: body, contentType: ct}), http.StatusOK, &res)
 	if res.Artifact.Description != "d" || res.Artifact.LatestVersion != 3 {
@@ -339,7 +329,6 @@ func TestPatch(t *testing.T) {
 		t.Errorf("after unlisted: %+v", res.Artifact)
 	}
 
-	// Restore a soft-deleted artifact through PATCH.
 	e.call(http.MethodDelete, url, e.alice, nil, http.StatusNoContent, nil)
 	e.apiErr(e.send(req{method: http.MethodPatch, url: url, token: e.alice,
 		body: strings.NewReader(`{"name":"x"}`), contentType: "application/json"}), 404, api.CodeNotFound)
@@ -373,7 +362,6 @@ func TestPublishAndStale(t *testing.T) {
 	if !st.StaleAt.Equal(t0) || !st.ExpiresAt.Equal(t0.Add(48*time.Hour)) {
 		t.Errorf("stale = %+v", st)
 	}
-	// No body: the default grace.
 	e.call(http.MethodPost, e.u("/v1/artifacts/demo/stale"), e.alice, nil, http.StatusOK, &st)
 	if !st.ExpiresAt.Equal(t0.Add(24 * time.Hour)) {
 		t.Errorf("default grace expires_at = %v", st.ExpiresAt)
@@ -412,12 +400,10 @@ func TestChunkedUpload(t *testing.T) {
 	if cr.BytesReceived != 11 {
 		t.Errorf("chunk 2 = %+v", cr)
 	}
-	// A retry of the chunk already written is acknowledged.
 	e.expect(chunk("big/data.txt", "6", "world", ""), http.StatusOK, &cr)
 	if cr.BytesReceived != 11 {
 		t.Errorf("retried chunk = %+v", cr)
 	}
-	// A wrong offset reports where to resume.
 	ae := e.apiErr(chunk("big/data.txt", "3", "xx", ""), http.StatusConflict, api.CodeOffsetMismatch)
 	if ae.Current == nil || *ae.Current != 11 {
 		t.Errorf("mismatch current = %v", ae.Current)
@@ -427,12 +413,10 @@ func TestChunkedUpload(t *testing.T) {
 	e.apiErr(chunk("big/other.txt", "0", strings.Repeat("x", 17), ""), 413, api.CodeTooLarge)
 	e.expect(chunk("page.html", "0", "<p>staged</p>", "text/html"), http.StatusOK, &cr)
 
-	// Another user cannot see the upload.
 	bob := e.member("bob", nil)
 	e.apiErr(e.send(req{method: http.MethodPatch, url: e.u("/v1/uploads/" + up.UploadID + "/files/x?offset=0"), token: bob,
 		body: strings.NewReader("x")}), 404, api.CodeUploadNotFound)
 
-	// Inline files win over staged ones with the same path.
 	var res api.PublishResult
 	e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{
 		Slug:     "chunked",
@@ -446,10 +430,8 @@ func TestChunkedUpload(t *testing.T) {
 		t.Errorf("page.html = %q", got)
 	}
 
-	// The upload is consumed.
 	e.apiErr(chunk("late.txt", "0", "x", ""), 404, api.CodeUploadNotFound)
 
-	// An upload is consumed by a failed publish too.
 	var up2 api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice, nil, http.StatusCreated, &up2)
 	e.call(http.MethodPatch, e.u("/v1/uploads/"+up2.UploadID+"/files/a.txt?offset=0"), e.alice, nil, http.StatusOK, nil)
@@ -462,7 +444,6 @@ func TestChunkedUpload(t *testing.T) {
 		t.Error("upload survived a failed publish")
 	}
 
-	// Abort.
 	var up3 api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice, nil, http.StatusCreated, &up3)
 	e.call(http.MethodDelete, e.u("/v1/uploads/"+up3.UploadID), e.alice, nil, http.StatusNoContent, nil)
@@ -508,7 +489,6 @@ func TestDelete(t *testing.T) {
 	if d.Artifact.DeletedAt == nil {
 		t.Errorf("soft-deleted artifact has no deleted_at: %+v", d.Artifact)
 	}
-	// The owner can still read the content before the purge.
 	if got := e.read(e.alice, "demo", "index.html", 0); got != "<h1>demo</h1>" {
 		t.Errorf("soft-deleted content = %q", got)
 	}
@@ -540,7 +520,6 @@ func TestAuthAndRouting(t *testing.T) {
 		}
 	}
 
-	// A read-only key reads but cannot write.
 	e.call(http.MethodGet, e.u("/v1/artifacts/demo"), ro, nil, http.StatusOK, nil)
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: ro, contentType: "application/json",
 		body: bytes.NewReader(mustJSON(t, api.CreateArtifactRequest{Slug: "x"}))}), 403, api.CodeForbidden)
@@ -566,7 +545,6 @@ func TestRateLimits(t *testing.T) {
 		if ra := resp.Header.Get("Retry-After"); ra != "60" {
 			t.Errorf("Retry-After = %q, want 60", ra)
 		}
-		// Reads are not limited, and another key has its own bucket.
 		for range 3 {
 			e.call(http.MethodGet, e.u("/v1/me"), e.alice, nil, http.StatusOK, nil)
 		}
@@ -575,7 +553,7 @@ func TestRateLimits(t *testing.T) {
 	t.Run("per IP", func(t *testing.T) {
 		e := newEnv(t, config{user: httpapi.UserOptions{IPRatePerMinute: 2}})
 		e.call(http.MethodGet, e.u("/v1/me"), e.alice, nil, http.StatusOK, nil)
-		// Unauthenticated requests count too: the IP limit runs first.
+		// Counts too: the IP limit runs before authentication.
 		e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/me")}), http.StatusUnauthorized, api.CodeUnauthorized)
 		resp := e.send(req{method: http.MethodGet, url: e.u("/v1/me"), token: e.alice})
 		e.apiErr(resp, http.StatusTooManyRequests, api.CodeRateLimited)

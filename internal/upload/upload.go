@@ -1,7 +1,6 @@
-// Package upload stages large bundles that arrive in chunks, so that an MCP
-// client with no shell can publish a multi-megabyte artifact over several
-// tool calls. The staged files are handed to artifact.Service as ordinary
-// FileInputs; the artifact code never knows the bytes arrived in pieces.
+// Package upload stages bundles that arrive in chunks, so an MCP client with
+// no shell can publish a large artifact over several tool calls. Staged files
+// reach artifact.Service as ordinary FileInputs.
 package upload
 
 import (
@@ -11,7 +10,7 @@ import (
 
 // Upload is a chunked upload in progress.
 type Upload struct {
-	ID        string // random, URL-safe
+	ID        string
 	Owner     string // handle
 	Bytes     int64  // staged so far, all files
 	CreatedAt time.Time
@@ -22,25 +21,22 @@ type Upload struct {
 // StagedFile is one file of an upload.
 type StagedFile struct {
 	Path         string
-	StagingIndex int // name of the staging file under uploads/<id>/
+	StagingIndex int // staging file name under <Dir>/<id>/
 	Bytes        int64
 	ContentType  string
 }
 
-// Store is the persistence contract for upload records. Owners are handles;
-// the store resolves them to user ids.
+// Store persists upload records. Owners are handles; the store resolves them
+// to user ids.
 type Store interface {
-	// Create inserts u (without files). When maxOpen > 0 and the owner
-	// already has that many uploads, expired or not, nothing is inserted
-	// and artifact.ErrTooManyUploads is returned; the count and the insert
-	// are atomic.
+	// Create inserts u without files. With maxOpen > 0 it returns
+	// artifact.ErrTooManyUploads when the owner already has maxOpen uploads,
+	// expired or not; the count and the insert are atomic.
 	Create(ctx context.Context, u *Upload, maxOpen int) error
 	// Get returns the upload with its files, or artifact.ErrUploadNotFound.
 	Get(ctx context.Context, id string) (*Upload, error)
-	// UpsertFile inserts or updates one file row and sets the upload's
-	// total bytes.
+	// UpsertFile also sets the upload's total bytes.
 	UpsertFile(ctx context.Context, id string, f StagedFile, totalBytes int64) error
-	// Delete removes the upload and its file rows.
 	Delete(ctx context.Context, id string) error
 	// ListExpired returns uploads with expires_at <= now.
 	ListExpired(ctx context.Context, now time.Time) ([]Upload, error)

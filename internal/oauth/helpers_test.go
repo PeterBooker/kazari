@@ -27,7 +27,6 @@ import (
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
-// clock is an advanceable test clock.
 type clock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -45,7 +44,6 @@ func (c *clock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// recorder is a concurrency-safe audit.Recorder.
 type recorder struct {
 	mu     sync.Mutex
 	events []audit.Event
@@ -70,9 +68,8 @@ func (r *recorder) actions(action string) []audit.Event {
 	return out
 }
 
-// fakeIDP is an IdentityProvider returning a canned identity. Exchange
-// checks the PKCE pair and nonce it was handed in AuthURL, for any number
-// of sign-ins in flight.
+// fakeIDP's Exchange checks the PKCE pair and nonce it was handed in AuthURL,
+// for any number of sign-ins in flight.
 type fakeIDP struct {
 	mu       sync.Mutex
 	identity auth.Identity
@@ -114,7 +111,6 @@ func (f *fakeIDP) setIdentity(id auth.Identity) {
 	f.identity = id
 }
 
-// env is a running authorization server over a real database.
 type env struct {
 	t      *testing.T
 	srv    *httptest.Server
@@ -125,7 +121,7 @@ type env struct {
 	idp    *fakeIDP // nil without an identity provider
 	rec    *recorder
 	jar    http.CookieJar
-	client *http.Client // keeps cookies, never follows redirects
+	client *http.Client
 }
 
 type envOptions struct {
@@ -194,7 +190,6 @@ func viewCallback(host string) (string, bool) {
 
 func (e *env) url(path string) string { return e.srv.URL + path }
 
-// do sends a request and returns the response with its body read.
 func (e *env) do(req *http.Request) (*http.Response, string) {
 	e.t.Helper()
 	resp, err := e.client.Do(req)
@@ -228,7 +223,6 @@ func (e *env) postForm(path string, v url.Values) (*http.Response, string) {
 	return e.do(req)
 }
 
-// register registers a DCR client and returns its id.
 func (e *env) register(redirectURIs ...string) string {
 	e.t.Helper()
 	body, _ := json.Marshal(map[string]any{"client_name": "Test Client", "redirect_uris": redirectURIs})
@@ -247,7 +241,6 @@ func (e *env) register(redirectURIs ...string) string {
 	return out.ClientID
 }
 
-// pkce is a verifier and its S256 challenge.
 type pkce struct{ verifier, challenge string }
 
 func newPKCE(seed string) pkce {
@@ -256,7 +249,6 @@ func newPKCE(seed string) pkce {
 	return pkce{v, base64.RawURLEncoding.EncodeToString(h[:])}
 }
 
-// authorizeParams are the query of a valid authorization request.
 func authorizeParams(clientID, redirectURI, scope string, p pkce) url.Values {
 	v := url.Values{
 		"response_type":         {"code"},
@@ -272,7 +264,6 @@ func authorizeParams(clientID, redirectURI, scope string, p pkce) url.Values {
 	return v
 }
 
-// location parses the Location header of a redirect.
 func location(t *testing.T, resp *http.Response) *url.URL {
 	t.Helper()
 	if resp.StatusCode != http.StatusFound {
@@ -285,7 +276,6 @@ func location(t *testing.T, resp *http.Response) *url.URL {
 	return u
 }
 
-// requestCookie returns the pending-request cookie value from the jar.
 func (e *env) requestCookie() string {
 	u, _ := url.Parse(e.url("/oauth/consent"))
 	for _, c := range e.jar.Cookies(u) {
@@ -296,8 +286,6 @@ func (e *env) requestCookie() string {
 	return ""
 }
 
-// signIn runs authorize and, with an identity provider, the callback, and
-// returns the consent page body.
 func (e *env) signIn(params url.Values) string {
 	e.t.Helper()
 	resp, body := e.get("/oauth/authorize?" + params.Encode())
@@ -318,14 +306,11 @@ func (e *env) signIn(params url.Values) string {
 	return body
 }
 
-// approve posts Approve on the consent page and returns the code.
 func (e *env) approve(extra url.Values) string {
 	e.t.Helper()
 	return e.approveWith(nil, extra)
 }
 
-// approveWith is approve with extra request headers, such as the Origin a
-// browser sends.
 func (e *env) approveWith(header http.Header, extra url.Values) string {
 	e.t.Helper()
 	v := url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}}
@@ -351,7 +336,6 @@ func (e *env) approveWith(header http.Header, extra url.Values) string {
 	return loc.Query().Get("code")
 }
 
-// tokenResult is a token endpoint response, success or error.
 type tokenResult struct {
 	status int
 	header http.Header
@@ -393,8 +377,6 @@ func (e *env) refresh(clientID, refreshToken, scope string) tokenResult {
 	return e.token(v)
 }
 
-// flow runs a whole authorization against a fresh DCR client and returns
-// the client id and the token response.
 func (e *env) flow(scope string) (string, tokenResult) {
 	e.t.Helper()
 	const redirect = "https://app.example/cb"

@@ -15,14 +15,14 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// noForeignKeys is the first line of a migration that must run with
-// foreign keys off, such as one that rebuilds a referenced table. SQLite
-// ignores PRAGMA foreign_keys inside a transaction, and dropping a table
-// while they are on deletes every row that references it.
+// noForeignKeys, as a migration's first line, runs it with foreign keys off,
+// as rebuilding a referenced table needs: SQLite ignores PRAGMA foreign_keys
+// inside a transaction, and dropping a table while they are on deletes every
+// row that references it.
 const noForeignKeys = "-- kazari:foreign-keys-off"
 
-// Migrate applies every migrations/NNNN_*.sql not yet recorded in
-// schema_migration, in numeric order, each in its own transaction.
+// Migrate applies every migrations/NNNN_*.sql not yet in schema_migration,
+// in numeric order, each in its own transaction.
 func Migrate(ctx context.Context, db *sql.DB) error {
 	sub, err := fs.Sub(migrationFS, "migrations")
 	if err != nil {

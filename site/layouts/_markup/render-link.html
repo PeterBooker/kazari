@@ -1,5 +1,4 @@
-{{- /* Links between the Markdown files in docs/ point at other .md files. Resolve them to pages,
-       send the README to GitHub, and fail the build on a link to a page that does not exist. */ -}}
+{{- /* docs/ links .md files so it reads on GitHub; resolve those to pages. */ -}}
 {{- $u := urls.Parse .Destination -}}
 {{- $href := .Destination -}}
 {{- if and (not $u.IsAbs) (strings.HasSuffix $u.Path ".md") -}}

@@ -10,13 +10,11 @@ import (
 
 type clientIPKey struct{}
 
-// RealIP stores the client IP in the request context for ClientIP. In
-// proxy mode it trusts the last X-Forwarded-For entry, which is the one the
-// proxy in front of Kazari added (proxies that append keep whatever the
-// client sent to the left of it), then X-Real-IP. Only enable it behind
-// exactly one proxy that sets, overwrites or appends to those headers.
-// Otherwise, and when the headers hold no valid address, it uses the host
-// part of RemoteAddr.
+// RealIP stores the client IP for ClientIP. In proxy mode it trusts the last
+// X-Forwarded-For entry, the one the proxy in front added (appending proxies
+// keep what the client sent to its left), then X-Real-IP; enable it only
+// behind exactly one proxy that sets or appends those headers. Otherwise, or
+// with no valid address there, it uses RemoteAddr's host.
 func RealIP(proxyMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +31,7 @@ func RealIP(proxyMode bool) func(http.Handler) http.Handler {
 	}
 }
 
-// ClientIP returns the IP stored by RealIP, or the host part of RemoteAddr
-// when RealIP did not run.
+// ClientIP returns the IP RealIP stored, else RemoteAddr's host.
 func ClientIP(r *http.Request) string {
 	if ip, ok := r.Context().Value(clientIPKey{}).(string); ok {
 		return ip

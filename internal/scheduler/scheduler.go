@@ -14,39 +14,30 @@ import (
 	"time"
 )
 
-// ErrUnknownJob is returned by Trigger for a name that was not registered.
 var ErrUnknownJob = errors.New("scheduler: unknown job")
 
-// ErrRunning is returned by Trigger when the job is already running.
 var ErrRunning = errors.New("scheduler: job already running")
 
-// defaultJitter is the jitter fraction used when Options.Jitter is zero.
 const defaultJitter = 0.1
 
-// maxJitter caps the jitter fraction so an interval never collapses to zero.
+// maxJitter keeps an interval from collapsing to zero.
 const maxJitter = 0.5
 
 // Job is a named unit of background work.
 type Job struct {
-	// Name identifies the job for Trigger and Status. Names must be unique.
-	Name string
-	// Every is the interval between scheduled runs. A job with Every <= 0 is
-	// never scheduled and runs only through Trigger.
-	Every time.Duration
-	// Run does the work. It should return promptly when ctx is cancelled.
+	Name  string
+	Every time.Duration // <= 0 runs only through Trigger
+	// Run should return promptly when ctx is cancelled.
 	Run func(ctx context.Context) error
 }
 
 // Options configures a Scheduler. The zero value is valid.
 type Options struct {
-	// Logger receives job failures and panics. Nil means slog.Default().
-	Logger *slog.Logger
-	// Now is the clock used to stamp LastRun and NextRun. Nil means time.Now.
-	Now func() time.Time
-	// Jitter is the fraction of Every by which each interval is randomly
-	// shortened or lengthened, and the upper bound of the random delay
-	// before the first run. Zero means 0.1, a negative value disables
-	// jitter, and values above 0.5 are capped at 0.5.
+	Logger *slog.Logger     // nil means slog.Default()
+	Now    func() time.Time // stamps LastRun and NextRun only; nil means time.Now
+	// Jitter is the fraction of Every by which intervals vary, and the cap
+	// of the random delay before the first run. Zero means 0.1, negative
+	// disables it, and it is capped at 0.5.
 	Jitter float64
 }
 
@@ -55,8 +46,8 @@ type JobStatus struct {
 	Name      string
 	Every     time.Duration
 	LastRun   *time.Time // start of the most recent completed run; nil if never run
-	LastError string     // error of the most recent completed run; "" on success
-	NextRun   *time.Time // when the next scheduled run is due; nil if Run is not active
+	LastError string     // "" on success
+	NextRun   *time.Time // nil when not scheduled
 	Running   bool
 }
 
@@ -78,8 +69,8 @@ type jobState struct {
 	nextRun *time.Time
 }
 
-// New returns a Scheduler for jobs. A later job with the same name as an
-// earlier one replaces it.
+// New returns a Scheduler for jobs; a later job replaces an earlier one of
+// the same name.
 func New(opts Options, jobs ...Job) *Scheduler {
 	s := &Scheduler{
 		logger: opts.Logger,
@@ -107,12 +98,10 @@ func New(opts Options, jobs ...Job) *Scheduler {
 	return s
 }
 
-// Run schedules every job with a positive Every until ctx is done. The
-// first run of each job happens after a random delay in [0, Jitter*Every],
-// later runs every Every ± Jitter*Every. A scheduled run that finds the job
-// already running (because of a Trigger) is skipped. Run returns nil once
-// ctx is done and every job goroutine, including any run in progress, has
-// stopped.
+// Run schedules jobs with a positive Every until ctx is done: first after a
+// random delay in [0, Jitter*Every], then every Every ± Jitter*Every. A run
+// due while a Trigger holds the job is skipped. Run returns nil once every
+// job goroutine, including any run in progress, has stopped.
 func (s *Scheduler) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for _, st := range s.jobs {
@@ -147,9 +136,8 @@ func (s *Scheduler) loop(ctx context.Context, st *jobState) {
 	}
 }
 
-// Trigger runs the named job now, synchronously, and returns its error. It
-// returns ErrUnknownJob for an unregistered name and ErrRunning when the job
-// is already running. It works whether or not Run is active.
+// Trigger runs the named job synchronously and returns its error,
+// ErrUnknownJob or ErrRunning. It works whether or not Run is active.
 func (s *Scheduler) Trigger(ctx context.Context, name string) error {
 	st, ok := s.jobs[name]
 	if !ok {
@@ -177,7 +165,6 @@ func (s *Scheduler) Status() []JobStatus {
 	return out
 }
 
-// run executes one run of st's job unless one is already in progress.
 func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.mu.Lock()
 	if st.running {
@@ -208,7 +195,6 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	return err
 }
 
-// safeRun calls j.Run, turning a panic into an error.
 func safeRun(ctx context.Context, j Job) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -227,7 +213,6 @@ func (st *jobState) setNext(t *time.Time) {
 	st.mu.Unlock()
 }
 
-// firstDelay is a random delay in [0, jitter*every].
 func (s *Scheduler) firstDelay(every time.Duration) time.Duration {
 	span := time.Duration(s.jitter * float64(every))
 	if span <= 0 {
@@ -236,7 +221,6 @@ func (s *Scheduler) firstDelay(every time.Duration) time.Duration {
 	return rand.N(span + 1)
 }
 
-// interval is every ± jitter*every, chosen uniformly.
 func (s *Scheduler) interval(every time.Duration) time.Duration {
 	span := time.Duration(s.jitter * float64(every))
 	if span <= 0 {

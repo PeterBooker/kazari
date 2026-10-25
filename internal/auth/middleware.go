@@ -12,15 +12,13 @@ import (
 
 // BearerOptions tunes RequireBearer.
 type BearerOptions struct {
-	// ResourceMetadataURL, when set, is advertised on 401 responses as
-	// WWW-Authenticate: Bearer resource_metadata="..." (RFC 9728), which
-	// MCP clients use to discover the authorization server.
+	// ResourceMetadataURL, if set, is advertised as resource_metadata on 401s
+	// (RFC 9728) so MCP clients can discover the authorization server.
 	ResourceMetadataURL string
 }
 
-// RequireBearer authenticates the Authorization: Bearer header with a and
-// places the Principal in the request context. Missing or invalid
-// credentials get a 401 with a JSON error body.
+// RequireBearer authenticates the bearer token with a and puts the Principal
+// in the request context. Missing or invalid credentials get a JSON 401.
 func RequireBearer(a Authenticator, opts BearerOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +47,8 @@ func BearerToken(r *http.Request) (string, bool) {
 	return t, t != ""
 }
 
-// RequireScope rejects principals without the scope (admins always pass).
-// It must run after RequireBearer or RequireAdmin.
+// RequireScope rejects principals without scope (admins pass). It must run
+// after RequireBearer or RequireAdmin.
 func RequireScope(scope string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,9 +66,9 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireAdmin guards the admin host. It accepts the configured admin token
-// (compared in constant time), or any credential that fallback resolves to
-// an admin principal. An empty token disables the token path.
+// RequireAdmin accepts the admin token (compared in constant time) or any
+// credential fallback resolves to an admin principal. An empty token disables
+// the token path.
 func RequireAdmin(token string, fallback Authenticator) func(http.Handler) http.Handler {
 	var want [sha256.Size]byte
 	if token != "" {
