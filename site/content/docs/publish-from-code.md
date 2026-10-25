@@ -101,7 +101,7 @@ jobs:
     steps:
       - name: Install the Kazari CLI
         run: |
-          curl -fsSL "https://github.com/PeterBooker/kazari/releases/download/v${KAZARI_VERSION}/kazari_${KAZARI_VERSION}_linux_amd64.tar.gz" \
+          curl -fsSL "https://github.com/PeterBooker/kazari/releases/download/${KAZARI_VERSION}/kazari_${KAZARI_VERSION}_linux_amd64.tar.gz" \
             | tar -xz kazari
           sudo install -m 0755 kazari /usr/local/bin/kazari
 

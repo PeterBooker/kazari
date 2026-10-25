@@ -127,7 +127,7 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X kazari/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o kazari ./cmd/kazari
 ```
 
-Releases are cut by pushing a `v*` tag; GitHub Actions runs goreleaser. The full walkthrough, including a first publish against the development server, is in [docs/install.md](docs/install.md#local-development).
+Releases are cut by pushing a version tag without a `v` (such as `0.2.0`); GitHub Actions runs goreleaser. The full walkthrough, including a first publish against the development server, is in [docs/install.md](docs/install.md#local-development).
 
 ### Website
 
