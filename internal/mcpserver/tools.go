@@ -193,6 +193,8 @@ type ReadFileResult struct {
 	Hash        string `json:"hash"`
 	// Encoding is utf8 (inline text), base64 (embedded blob) or url (download from URL).
 	Encoding string `json:"encoding"`
+	// Content repeats the text content for clients that show only the structured result.
+	Content  string `json:"content,omitempty"`
 	URL      string `json:"url,omitempty"`
 	Anchored bool   `json:"anchored,omitempty"`
 	// Version is the version read; LatestVersion the one edit_file edits.

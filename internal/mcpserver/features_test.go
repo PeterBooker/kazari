@@ -50,7 +50,8 @@ func TestEditFile(t *testing.T) {
 		"files": []map[string]any{{"path": "index.html", "content": editPage}, {"path": "app.js", "content": "run()"}}})
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "anchors": true})
-	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || firstLine(res) != artifact.AnchorLines(editPage) {
+	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || firstLine(res) != artifact.AnchorLines(editPage) ||
+		rf.Content != firstLine(res) {
 		t.Fatalf("read_file anchors = %+v %q", rf, firstLine(res))
 	}
 

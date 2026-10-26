@@ -128,6 +128,7 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 			if in.Anchors {
 				body, out.Anchored = artifact.AnchorLines(body), true
 			}
+			out.Content = body
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: body}}}, out, nil
 		default:
 			out.Encoding = "base64"

@@ -266,11 +266,11 @@ func TestToolsRoundTrip(t *testing.T) {
 	}
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
-	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || text(res) != html {
+	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || text(res) != html || rf.Content != html {
 		t.Errorf("read_file index.html = %+v, %q", rf, text(res))
 	}
 	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "assets/logo.png", "version": 1})
-	if rf.Encoding != "base64" || rf.ContentType != "image/png" {
+	if rf.Encoding != "base64" || rf.ContentType != "image/png" || rf.Content != "" {
 		t.Errorf("read_file logo = %+v", rf)
 	}
 	er, isRes := res.Content[0].(*mcp.EmbeddedResource)
