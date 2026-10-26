@@ -192,8 +192,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"returns a download URL on the REST API (%s, bearer authentication). anchors: true prefixes every line of a "+
 			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits. The "+
 			"structured result always carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
-			"version (the version read) and latest_version. edit_file edits the latest version: when the two differ, "+
-			"read version = latest_version before editing.",
+			"version (the version read) and latest_version, and for text the file's content (anchored when asked). "+
+			"edit_file edits the latest version: when the two differ, read version = latest_version before editing.",
 			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl),
 
 		"list_artifacts": "List artifacts visible to you: every public and members artifact plus unlisted ones you " +

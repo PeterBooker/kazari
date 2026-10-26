@@ -96,7 +96,7 @@ The fields are the name, description, metadata and visibility. In metadata, `nul
 
 Returns one file of the published version, or of the version given in `version`. Text comes inline, and `anchors: true` prefixes every line with its [anchor](#anchor-edits). Binaries up to 256 KiB come as a base64 blob, and larger files as a REST download URL.
 
-The result names the `version` read and the `latest_version`.
+The result names the `version` read and the `latest_version`. For text, its `content` field repeats the text, anchored when asked, for clients that show only the structured content.
 
 ### `set_visibility`
 
