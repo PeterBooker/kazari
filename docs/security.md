@@ -274,10 +274,10 @@ Excerpts in results clip long lines, and an anchored read (`?anchors=true`) is s
 
 A member can make Kazari fetch a public URL: as the content of a file in a create or update, or as a page to copy with `import_page`, `kazari import` or `source_url`. One client serves both and the CIMD fetch (`internal/fetch`):
 
-- It dials public unicast addresses only. The check runs on the resolved address of every connection, so a name that points at a private, loopback, link-local, carrier-grade NAT or IPv6 transition address is refused, on redirects too. At most five redirects are followed, and no proxy from the environment is used.
-- It sends no credentials and no cookies, and identifies itself as `Kazari/<version>`.
-- One request stops at `fetch.timeout` (15 s) and an import at `fetch.budget` (60 s). A body is capped at `limits.max_file_bytes` and spilled to `data_dir/tmp`, so a slow host never holds a publish open; the `gc` job removes spill files a crash left behind.
-- An imported page is HTML parsed by `golang.org/x/net/html`; its scripts and event handlers are removed unless the caller keeps them, and it is served under the member's artifact origin like any upload. What the import fetches is bounded by the version limits and counted against the owner's quota.
+- It dials public unicast addresses only. The check runs on the resolved address of every connection, so a name that points at a private, loopback, link-local, carrier-grade NAT or IPv6 transition address is refused, on redirects too. At most five redirects are followed, and no proxy from the environment is used. The error says only that the address is not public, or that the host did not resolve, never which address a name resolved to.
+- It sends no cookies and no credentials: a URL that carries them is refused, and the address a page or report records is the one after redirects, without credentials. It identifies itself as `Kazari/<version>`.
+- One request stops at `fetch.timeout` (15 s), and the files one publish names by `url`, or one import, stop at `fetch.budget` (60 s) together. A body is capped at `limits.max_file_bytes`, all of a publish's `url` files together at `limits.max_version_bytes`, and every body is spilled to `data_dir/tmp`, so a slow host never holds a publish open; the `gc` job removes spill files a crash left behind.
+- An imported page, and each of its stylesheets, is held in memory to be parsed and rewritten and is therefore capped at 4 MiB; at most four imports run at once per instance, and a fifth is refused with `rate_limited`. The parser refuses documents nested deeper than 512 elements. Scripts, event handlers and `javascript:` URLs are removed unless the caller keeps them, and the copy is served under the member's artifact origin like any upload. What the import fetches is bounded by the version limits and counted against the owner's quota; a resource that fails is tried once, and the report lists at most a hundred of them.
 - Every import is audited with its source, and imports and URL files count against the write rate like any publish.
 
 `fetch.enabled: false` removes the tool and refuses `url` and `source_url`. A member can still make the server request any public URL within these limits, which an operator of an instance with a sensitive network position should weigh.
@@ -338,8 +338,8 @@ Each limit, its default, and where it is enforced:
 | Share link lifetime | 7 days by default, at most 90 days (`serve.share_link_max_ttl`) | |
 | Browser sign-in session | 12 h; a view code 1 min, single use | every view session ends with its sign-in session |
 | Client ID metadata document | 64 KiB, 10 s, cached 1 h, no redirects, public addresses only | |
-| File named by `url` | 25 MiB (`limits.max_file_bytes`), 15 s (`fetch.timeout`), 5 redirects, public addresses only | spilled to `data_dir/tmp` before the publish |
-| Page import | the version limits, 60 s in all (`fetch.budget`) | resources that do not fit stay remote and are reported |
+| File named by `url` | 25 MiB (`limits.max_file_bytes`), all of a publish's together 50 MiB, 15 s per request (`fetch.timeout`), 60 s together (`fetch.budget`), 5 redirects, public addresses only, no credentials | spilled to `data_dir/tmp` before the publish |
+| Page import | the version limits, 4 MiB for the page and each stylesheet, 60 s in all (`fetch.budget`), 4 imports at once per instance | resources that do not fit stay remote and are reported, at most 100 of them |
 
 ## Authentication and authorisation
 

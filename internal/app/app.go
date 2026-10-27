@@ -272,6 +272,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}, httpapi.UserOptions{
 		MaxBodyBytes:  int64(cfg.Limits.MaxVersionBytes) + 1<<20,
 		MaxChunkBytes: int64(cfg.Limits.MaxChunkBytes),
+		MaxFileBytes:  int64(cfg.Limits.MaxFileBytes),
 		MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
 		Now:           now,
 		TempDir:       tempDir(cfg),

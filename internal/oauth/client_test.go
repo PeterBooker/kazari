@@ -189,7 +189,7 @@ func TestDefaultHTTPClientRefusesLocalAddresses(t *testing.T) {
 	if meta.count() != 0 {
 		t.Errorf("metadata server was reached %d times", meta.count())
 	}
-	if !strings.Contains(logs.String(), "non-public address") {
+	if !strings.Contains(logs.String(), "not a public address") {
 		t.Errorf("log does not explain the refusal:\n%s", logs.String())
 	}
 }

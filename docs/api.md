@@ -216,7 +216,7 @@ The whole JSON body is capped at `limits.max_version_bytes` plus 1 MiB. Base64 c
 
 #### Files named by URL
 
-A file can give `url` instead of `content`: an `http` or `https` address on a public host that Kazari downloads as the file's content, capped at `limits.max_file_bytes`. `content_type` comes from the response when the file does not give one. To publish a page with an image that is already online:
+A file can give `url` instead of `content`: an `http` or `https` address on a public host, without credentials, that Kazari downloads as the file's content. One download is capped at `limits.max_file_bytes`, all of a request's together at `limits.max_version_bytes`, and they share the request's `fetch.budget`. `content_type` comes from the response when the file does not give one. To publish a page with an image that is already online:
 
 ```json
 {

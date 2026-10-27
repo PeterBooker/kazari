@@ -100,7 +100,7 @@ To make the new version hold exactly a set of files, list the latest version's p
 
 ### Files named by URL
 
-A file in `files[]` of `create_artifact` or `update_artifact` can give `url` instead of `content`: an `http` or `https` address the server downloads as the file's content, for an agent that cannot move bytes itself. The address must be on a public host, and the download is capped at `limits.max_file_bytes`. `content_type` is taken from the response when the file does not give one.
+A file in `files[]` of `create_artifact` or `update_artifact` can give `url` instead of `content`: an `http` or `https` address the server downloads as the file's content, for an agent that cannot move bytes itself. The address must be on a public host and carry no credentials. One download is capped at `limits.max_file_bytes`, all of a call's together at `limits.max_version_bytes`, and the call's downloads share the `fetch.budget`. `content_type` is taken from the response when the file does not give one.
 
 To add a photo to a page from where it is already published:
 
@@ -135,7 +135,7 @@ The result is a publish result with an `import` field:
 
 The outline is for the edits that follow. Imported markup is formatted only where that cannot change how the page renders: whitespace that already stood between elements becomes a line break, and new whitespace is added only inside `<head>` and between the direct children of `<html>` and `<body>`. A minified page therefore stays on few lines, and a text edit with an outline `tag` as its `old_text` is the way to reach a section: `new_text` of the new content followed by the same tag inserts before it.
 
-Fetches dial public addresses only, follow at most five redirects, send no credentials and stop at `fetch.timeout` per request and `fetch.budget` for the import as a whole ([`fetch`](configuration.md#fetch)). A page behind a login, a CAPTCHA or bot protection fails with `fetch_failed`; the next step then is to save the page from a browser and publish the files. Every import is recorded in the audit log with its source.
+Fetches dial public addresses only, follow at most five redirects, send no credentials and stop at `fetch.timeout` per request and `fetch.budget` for the import as a whole ([`fetch`](configuration.md#fetch)). The page and each stylesheet are capped at 4 MiB, a failing resource is tried once, `skipped` lists at most a hundred resources and a note counts the rest, and at most four imports run at once on an instance; a fifth fails with `rate_limited`. A page behind a login, a CAPTCHA or bot protection fails with `fetch_failed`; the next step then is to save the page from a browser and publish the files. Every import is recorded in the audit log with its source.
 
 ### `read_file`
 

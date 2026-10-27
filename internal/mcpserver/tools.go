@@ -735,30 +735,12 @@ func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, 
 	if err != nil {
 		return nil, cleanup, err
 	}
-	cleanup = func(done func()) func() {
-		return func() {
-			closeDownloads()
-			done()
-		}
-	}(cleanup)
-	taken := make(map[string]bool, len(inline))
-	for _, in := range inline {
-		taken[cleanPath(in.Path)] = true
+	done := cleanup
+	cleanup = func() {
+		closeDownloads()
+		done()
 	}
-	for _, f := range staged {
-		if !taken[cleanPath(f.Path)] {
-			inline = append(inline, f)
-		}
-	}
-	return inline, cleanup, nil
-}
-
-// cleanPath keeps an invalid path as is; the service rejects it later.
-func cleanPath(p string) string {
-	if c, err := artifact.ValidatePath(p); err == nil {
-		return c
-	}
-	return p
+	return artifact.MergeFiles(inline, staged), cleanup, nil
 }
 
 func createFiles(in []FileInput) []UpdateFileInput {
@@ -769,49 +751,36 @@ func createFiles(in []FileInput) []UpdateFileInput {
 	return out
 }
 
-// inlineFiles downloads the entries that name a url before the publish, so
-// the service never waits on a remote host while it holds a version open.
+// inlineFiles returns the files of a call, with those named by url
+// downloaded; the func it returns removes the downloads.
 func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]artifact.FileInput, func(), error) {
-	var downloads []io.Closer
-	closeAll := func() {
-		for _, d := range downloads {
-			d.Close()
-		}
-	}
+	dl := b.d.Fetch.Downloads(ctx, b.o.MaxFileBytes, b.o.MaxVersionBytes)
 	out := make([]artifact.FileInput, 0, len(in))
 	for _, f := range in {
+		var (
+			fi  artifact.FileInput
+			err error
+		)
 		switch {
 		case f.Delete:
-			out = append(out, artifact.FileInput{Path: f.Path, Delete: true})
-			continue
+			fi = artifact.FileInput{Path: f.Path, Delete: true}
 		case f.URL != "" && f.Content != "":
-			closeAll()
-			return nil, nil, artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
-		case f.URL != "" && b.d.Fetch == nil:
-			closeAll()
-			return nil, nil, artifact.Errorf(artifact.ErrForbidden, "fetching URLs is disabled on this instance")
+			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
 		case f.URL != "":
-			d, err := b.d.Fetch.Download(ctx, f.URL, b.o.MaxFileBytes)
-			if err != nil {
-				closeAll()
-				return nil, nil, err
+			fi, err = dl.Add(f.Path, f.URL, f.ContentType)
+		default:
+			var data string
+			if data, err = decode(f.Path, f.Content, f.Encoding); err == nil {
+				fi = artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType}
 			}
-			downloads = append(downloads, d)
-			ct := f.ContentType
-			if ct == "" && artifact.ValidateContentType(d.ContentType) == nil {
-				ct = d.ContentType
-			}
-			out = append(out, artifact.FileInput{Path: f.Path, Content: d, ContentType: ct})
-			continue
 		}
-		data, err := decode(f.Path, f.Content, f.Encoding)
 		if err != nil {
-			closeAll()
+			dl.Close()
 			return nil, nil, err
 		}
-		out = append(out, artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType})
+		out = append(out, fi)
 	}
-	return out, closeAll, nil
+	return out, dl.Close, nil
 }
 
 // decode returns raw bytes in a string; base64 may be unpadded and contain line breaks.

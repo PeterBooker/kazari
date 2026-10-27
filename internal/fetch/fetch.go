@@ -32,7 +32,8 @@ const (
 
 // Options configures a Client.
 type Options struct {
-	// Timeout bounds one request; Budget bounds every request of one import.
+	// Timeout bounds one request; Budget bounds every request of one
+	// publish or import.
 	Timeout, Budget time.Duration
 	// Dir holds downloaded files until the publish that uses them ends.
 	Dir       string
@@ -69,7 +70,7 @@ func New(opts Options) *Client {
 		Timeout:   opts.Timeout,
 		Transport: tr,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			if len(via) > maxRedirects {
 				return fmt.Errorf("more than %d redirects", maxRedirects)
 			}
 			return nil
@@ -77,7 +78,7 @@ func New(opts Options) *Client {
 	}}
 }
 
-// Budget is how long one import may take in all.
+// Budget is how long one publish or import may spend fetching in all.
 func (c *Client) Budget() time.Duration { return c.opts.Budget }
 
 // Result describes a fetched resource.
@@ -119,6 +120,21 @@ func (f *File) Close() error {
 	return err
 }
 
+// Replace swaps the content for data, positioned at its start again.
+func (f *File) Replace(data []byte) error {
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.WriteAt(data, 0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	f.Size = int64(len(data))
+	return nil
+}
+
 // Download writes the body of u, at most limit bytes, to a file under Dir.
 func (c *Client) Download(ctx context.Context, u string, limit int64) (*File, error) {
 	resp, res, err := c.get(ctx, u)
@@ -148,10 +164,72 @@ func (c *Client) Download(ctx context.Context, u string, limit int64) (*File, er
 	return out, nil
 }
 
+// Downloads are the files one publish names by url. They are fetched before
+// the publish, so the service never waits on a remote host while it holds a
+// version open, within the budget and the version size; Close removes them.
+// A nil Downloads, from a nil Client, refuses every file.
+type Downloads struct {
+	c       *Client
+	ctx     context.Context
+	cancel  context.CancelFunc
+	maxFile int64
+	left    int64
+	files   []*File
+}
+
+// Downloads starts collecting files for one publish.
+func (c *Client) Downloads(ctx context.Context, maxFile, maxTotal int64) *Downloads {
+	if c == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.opts.Budget)
+	return &Downloads{c: c, ctx: ctx, cancel: cancel, maxFile: maxFile, left: maxTotal}
+}
+
+// Add downloads u as the file at path; contentType defaults to the response's.
+func (d *Downloads) Add(path, u, contentType string) (artifact.FileInput, error) {
+	if d == nil {
+		return artifact.FileInput{}, artifact.Errorf(artifact.ErrForbidden, "fetching URLs is disabled on this instance")
+	}
+	limit := min(d.maxFile, d.left)
+	if limit <= 0 {
+		return artifact.FileInput{}, artifact.Errorf(artifact.ErrTooLarge, "the files named by url exceed the version size limit")
+	}
+	f, err := d.c.Download(d.ctx, u, limit)
+	if err != nil {
+		return artifact.FileInput{}, err
+	}
+	d.files = append(d.files, f)
+	d.left -= f.Size
+	if contentType == "" && artifact.ValidateContentType(f.ContentType) == nil {
+		contentType = f.ContentType
+	}
+	return artifact.FileInput{Path: path, Content: f, ContentType: contentType}, nil
+}
+
+// Close removes the files.
+func (d *Downloads) Close() {
+	if d == nil {
+		return
+	}
+	d.cancel()
+	for _, f := range d.files {
+		f.Close()
+	}
+	d.files = nil
+}
+
 func (c *Client) get(ctx context.Context, u string) (*http.Response, Result, error) {
 	parsed, err := url.Parse(strings.TrimSpace(u))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q must be an http or https URL", u)
+	if err != nil {
+		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url is not valid: %v", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
+		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q must be an http or https URL", parsed.Redacted())
+	}
+	// Go would send them as Basic auth, and they would end up in the audit log.
+	if parsed.User != nil {
+		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q must not carry credentials", parsed.Redacted())
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -165,15 +243,34 @@ func (c *Client) get(ctx context.Context, u string) (*http.Response, Result, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, Result{}, artifact.Errorf(artifact.ErrFetchFailed, "%s answered %s", u, resp.Status)
+		return nil, Result{}, artifact.Errorf(artifact.ErrFetchFailed, "%s answered %d %s", u, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
-	return resp, Result{URL: resp.Request.URL, ContentType: resp.Header.Get("Content-Type")}, nil
+	final := *resp.Request.URL
+	final.User = nil
+	return resp, Result{URL: &final, ContentType: resp.Header.Get("Content-Type")}, nil
 }
 
+var errNonPublic = errors.New("not a public address")
+
+// failed keeps what the resolver and the dial learned out of the message,
+// so a member cannot map the server's network through error texts.
 func failed(u string, err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		err = ue.Err
+	}
+	var dns *net.DNSError
+	var op *net.OpError
+	ne, isNet := err.(net.Error)
+	switch {
+	case errors.Is(err, errNonPublic):
+		err = errNonPublic
+	case errors.As(err, &dns):
+		err = errors.New("could not resolve the host")
+	case errors.Is(err, context.DeadlineExceeded), isNet && ne.Timeout():
+		err = errors.New("timed out")
+	case errors.As(err, &op):
+		err = errors.New("could not connect")
 	}
 	return artifact.Errorf(artifact.ErrFetchFailed, "%s: %v", u, err)
 }
@@ -194,7 +291,7 @@ func Transport() *http.Transport {
 				return err
 			}
 			if !PublicAddr(host) {
-				return fmt.Errorf("non-public address %s", host)
+				return errNonPublic
 			}
 			return nil
 		},

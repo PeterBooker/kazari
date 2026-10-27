@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html/atom"
 	"golang.org/x/net/html/charset"
 
+	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/fetch"
@@ -26,6 +27,15 @@ import (
 const (
 	assetDir = "assets/"
 	cssDepth = 3
+	// maxTextBytes caps what is held in memory to parse or rewrite: the
+	// page and each stylesheet. Other assets stream to disk.
+	maxTextBytes = 4 << 20
+	// maxConcurrent bounds the imports in flight, and with them the
+	// documents in memory at once.
+	maxConcurrent = 4
+	// maxSkipped bounds the report, since a page can reference any number
+	// of resources that fail.
+	maxSkipped = 100
 )
 
 // Options bounds a snapshot. The limits are the artifact service's, so a
@@ -44,6 +54,7 @@ type Taker struct {
 	client *fetch.Client
 	opts   Options
 	policy map[string][]string
+	slots  chan struct{}
 }
 
 // New returns a Taker; zero limits take the artifact service's defaults.
@@ -57,7 +68,7 @@ func New(client *fetch.Client, opts Options) *Taker {
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = artifact.DefaultMaxFiles
 	}
-	return &Taker{client: client, opts: opts, policy: csp.Parse(opts.CSP)}
+	return &Taker{client: client, opts: opts, policy: csp.Parse(opts.CSP), slots: make(chan struct{}, maxConcurrent)}
 }
 
 var _ artifact.PageSource = (*Taker)(nil)
@@ -65,15 +76,24 @@ var _ artifact.PageSource = (*Taker)(nil)
 // Take fetches the page at rawURL and its subresources within the client's
 // budget; what does not fit is left remote and reported.
 func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*artifact.Snapshot, error) {
+	select {
+	case t.slots <- struct{}{}:
+		defer func() { <-t.slots }()
+	default:
+		return nil, &artifact.Error{Code: api.CodeRateLimited, Message: fmt.Sprintf("%d imports are already running; retry in a few seconds", maxConcurrent)}
+	}
 	ctx, cancel := context.WithTimeout(ctx, t.client.Budget())
 	defer cancel()
-	data, res, err := t.client.Get(ctx, rawURL, t.opts.MaxFileBytes)
+	data, res, err := t.client.Get(ctx, rawURL, min(t.opts.MaxFileBytes, maxTextBytes))
 	if err != nil {
 		return nil, err
 	}
 	mt, _, _ := mime.ParseMediaType(res.ContentType)
 	if mt != "text/html" && mt != "application/xhtml+xml" {
-		return nil, artifact.Errorf(artifact.ErrFetchFailed, "%s is %s, not an HTML page", rawURL, firstNonEmpty(mt, "of unknown type"))
+		if mt == "" {
+			mt = "of unknown type"
+		}
+		return nil, artifact.Errorf(artifact.ErrFetchFailed, "%s is %s, not an HTML page", rawURL, mt)
 	}
 	r, err := charset.NewReader(bytes.NewReader(data), res.ContentType)
 	if err != nil {
@@ -84,7 +104,10 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 		return nil, artifact.Errorf(artifact.ErrFetchFailed, "%s: %v", rawURL, err)
 	}
 
-	w := &walker{ctx: ctx, t: t, base: res.URL, keepScripts: keepScripts, local: map[string]string{}}
+	// The rendered page grows a little with indentation and absolute links,
+	// so the budget for assets leaves it room.
+	w := &walker{ctx: ctx, t: t, base: res.URL, keepScripts: keepScripts,
+		local: map[string]string{}, failed: map[string]string{}, total: int64(len(data)) * 5 / 4}
 	w.report.Source = res.URL.String()
 	if b := find(doc, atom.Base); b != nil {
 		if href := attr(b, "href"); href != "" {
@@ -107,6 +130,9 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 		w.report.Notes = append(w.report.Notes, "the page holds little text and relied on scripts that were removed; "+
 			"the site probably renders with JavaScript, so this copy may be a shell")
 	}
+	if w.more > 0 {
+		w.report.Notes = append(w.report.Notes, fmt.Sprintf("%d more resources were left remote", w.more))
+	}
 	files := append([]artifact.FileInput{{Path: "index.html", Content: bytes.NewReader(page), ContentType: "text/html; charset=utf-8"}}, w.files...)
 	return &artifact.Snapshot{
 		Title:       text(find(doc, atom.Title)),
@@ -126,6 +152,8 @@ type walker struct {
 	description string
 
 	local   map[string]string // absolute URL -> file name under assets/
+	failed  map[string]string // absolute URL -> why it stayed remote
+	more    int               // skips beyond maxSkipped
 	files   []artifact.FileInput
 	closers []io.Closer
 	total   int64
@@ -141,9 +169,18 @@ func (w *walker) close() error {
 	return errors.Join(errs...)
 }
 
-// directives map a resource kind to the CSP directive that governs it.
 var directives = map[string]string{
 	"style": "style-src", "font": "font-src", "script": "script-src", "image": "img-src", "media": "media-src",
+}
+
+// ref resolves one reference for an attribute or a stylesheet; prefix is
+// where the reference lives relative to assets/.
+func (w *walker) ref(base *url.URL, ref, kind string, depth int, prefix string) string {
+	name, local := w.localize(base, ref, kind, depth)
+	if local {
+		return prefix + name
+	}
+	return name
 }
 
 // localize fetches ref, resolved against base, into assets/ and returns
@@ -159,59 +196,71 @@ func (w *walker) localize(base *url.URL, ref, kind string, depth int) (string, b
 	if name, ok := w.local[abs]; ok {
 		return name, true
 	}
+	if _, ok := w.failed[abs]; ok {
+		return abs, false
+	}
 	kind = kindOf(u, kind)
 	if src, ok := csp.Sources(w.t.policy, directives[kind]); ok && csp.HostAllowed(src, u.Scheme+"://"+u.Host) {
 		return abs, false
 	}
-	skip := func(reason string) (string, bool) {
-		w.report.Skipped = append(w.report.Skipped, artifact.SkippedFetch{URL: abs, Reason: reason})
-		return abs, false
-	}
 	switch {
 	case w.ctx.Err() != nil:
-		return skip("import budget exhausted")
+		return w.skip(abs, "import budget exhausted")
 	case w.report.Fetched+1 >= w.t.opts.MaxFiles:
-		return skip("file limit reached")
+		return w.skip(abs, "file limit reached")
 	}
 	limit := min(w.t.opts.MaxFileBytes, w.t.opts.MaxTotalBytes-w.total)
-	if limit <= 0 {
-		return skip("version size limit reached")
-	}
-	var (
-		in   artifact.FileInput
-		size int64
-		res  fetch.Result
-	)
 	if kind == "style" {
-		data, r, err := w.t.client.Get(w.ctx, abs, limit)
-		if err != nil {
-			return skip(reason(err, abs))
-		}
-		if depth < cssDepth {
-			data = w.rewriteCSS(data, u, depth+1, "")
-		}
-		in, size, res = artifact.FileInput{Content: bytes.NewReader(data)}, int64(len(data)), r
-	} else {
-		f, err := w.t.client.Download(w.ctx, abs, limit)
-		if err != nil {
-			return skip(reason(err, abs))
-		}
-		w.closers = append(w.closers, f)
-		in, size, res = artifact.FileInput{Content: f}, f.Size, f.Result
+		limit = min(limit, maxTextBytes)
 	}
-	name := localName(u, res.ContentType)
-	in.Path = assetDir + name
-	if artifact.ValidateContentType(res.ContentType) == nil {
-		in.ContentType = res.ContentType
+	if limit <= 0 {
+		return w.skip(abs, "version size limit reached")
 	}
+	f, err := w.t.client.Download(w.ctx, abs, limit)
+	if err != nil {
+		return w.skip(abs, reason(err, abs))
+	}
+	w.closers = append(w.closers, f)
+	w.total += f.Size
+	name := localName(u, f.ContentType)
+	// Named before its stylesheet is rewritten, so an @import cycle
+	// resolves to this file instead of fetching it again.
 	w.local[abs] = name
+	if kind == "style" && depth < cssDepth {
+		before := f.Size
+		if err := w.rewriteStylesheet(f, depth+1); err != nil {
+			delete(w.local, abs)
+			return w.skip(abs, "could not rewrite the stylesheet")
+		}
+		w.total += f.Size - before
+	}
+	in := artifact.FileInput{Path: assetDir + name, Content: f}
+	if artifact.ValidateContentType(f.ContentType) == nil {
+		in.ContentType = f.ContentType
+	}
 	w.files = append(w.files, in)
-	w.total += size
 	w.report.Fetched++
 	return name, true
 }
 
-// reason strips the URL the fetch error starts with.
+func (w *walker) skip(abs, reason string) (string, bool) {
+	w.failed[abs] = reason
+	if len(w.report.Skipped) < maxSkipped {
+		w.report.Skipped = append(w.report.Skipped, artifact.SkippedFetch{URL: abs, Reason: reason})
+	} else {
+		w.more++
+	}
+	return abs, false
+}
+
+func (w *walker) rewriteStylesheet(f *fetch.File, depth int) error {
+	css, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	return f.Replace(w.rewriteCSS(css, f.URL, depth, ""))
+}
+
 func reason(err error, u string) string {
 	msg := err.Error()
 	var ae *artifact.Error
@@ -233,17 +282,10 @@ func resolve(base *url.URL, ref string) *url.URL {
 		}
 	}
 	u, err := base.Parse(ref)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil
 	}
 	return u
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // ---- DOM helpers ----

@@ -394,9 +394,10 @@ func describeCSP(csp string) string {
 func parseCSP(policy string) map[string][]string { return csp.Parse(policy) }
 
 // urlFile describes files[].url where fetching is on.
-const urlFile = "A file can give url instead of content: an http or https address on a public host that the server " +
-	"downloads as the file's content, up to the file limit (content_type is taken from the response when omitted). A " +
-	"download that fails fails the whole call with fetch_failed, and nothing is published."
+const urlFile = "A file can give url instead of content: an http or https address on a public host, without " +
+	"credentials, that the server downloads as the file's content, up to the file limit and, all of a call's url " +
+	"files together, within the version limit and the fetch budget (content_type is taken from the response when " +
+	"omitted). A download that fails fails the whole call with fetch_failed, and nothing is published."
 
 func describeSources(src []string) string {
 	if len(src) == 0 {

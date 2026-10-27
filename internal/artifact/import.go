@@ -102,7 +102,7 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (*
 		Visibility:  req.Visibility,
 		Metadata:    req.Metadata,
 		Label:       req.Label,
-		Files:       mergeFiles(req.Files, snap.Files),
+		Files:       MergeFiles(req.Files, snap.Files),
 	})
 	if err != nil {
 		return nil, nil, nil, err
@@ -114,9 +114,9 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (*
 	return a, v, &rep, nil
 }
 
-// mergeFiles returns primary plus the entries of secondary whose path
+// MergeFiles returns primary plus the entries of secondary whose path
 // primary does not name.
-func mergeFiles(primary, secondary []FileInput) []FileInput {
+func MergeFiles(primary, secondary []FileInput) []FileInput {
 	taken := make(map[string]bool, len(primary))
 	for _, f := range primary {
 		taken[cleanPath(f.Path)] = true

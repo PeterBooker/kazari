@@ -3,6 +3,7 @@ package snapshot_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -194,5 +195,125 @@ func TestFormatNeverCreatesWhitespaceBetweenInlineBoxes(t *testing.T) {
 	}
 	if strings.Count(page, "\n") < 6 {
 		t.Errorf("page not formatted:\n%s", page)
+	}
+}
+
+func TestTakeStylesheetCycleAndRedirectBase(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<html><head><link rel="stylesheet" href="/a.css"><link rel="stylesheet" href="/theme.css"></head><body><p>`+strings.Repeat("w ", 50)+`</p></body></html>`)
+	})
+	mux.HandleFunc("/a.css", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		io.WriteString(w, `@import "a.css"; @import url(b.css); p{}`)
+	})
+	mux.HandleFunc("/b.css", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		io.WriteString(w, `@import "a.css"; b{}`)
+	})
+	mux.HandleFunc("/theme.css", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/v2/theme.css", http.StatusFound)
+	})
+	mux.HandleFunc("/v2/theme.css", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		io.WriteString(w, `h1{background:url(fonts/bg.png)}`)
+	})
+	hits := map[string]int{}
+	mux.HandleFunc("/v2/fonts/bg.png", func(w http.ResponseWriter, _ *http.Request) {
+		hits["bg"]++
+		w.Header().Set("Content-Type", "image/png")
+		io.WriteString(w, "PNG")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	snap, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL+"/", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	got := files(t, snap)
+	paths := map[string]int{}
+	for p := range got {
+		paths[p]++
+	}
+	if len(got) != 5 || snap.Report.Fetched != 4 || len(snap.Report.Skipped) != 0 {
+		t.Errorf("files %v report %+v", paths, snap.Report)
+	}
+	var a, b string
+	for p, c := range got {
+		switch {
+		case strings.HasSuffix(p, "-a.css"):
+			a = c
+		case strings.HasSuffix(p, "-b.css"):
+			b = c
+		}
+	}
+	if !strings.Contains(a, `@import "`) || strings.Contains(a, "http") || !strings.Contains(b, "-a.css\"") {
+		t.Errorf("cycle: a=%q b=%q", a, b)
+	}
+	if hits["bg"] != 1 {
+		t.Errorf("redirected stylesheet resolved its background %d times", hits["bg"])
+	}
+}
+
+func TestTakeRemovesScriptURLs(t *testing.T) {
+	src := `<html><body><a href="javascript:alert(1)">x</a><a href="/ok">y</a><iframe srcdoc="<script>1</script>"></iframe><form action=" JavaScript:go()"></form></body></html>`
+	srv := serve(t, site{"/": {"text/html", src}})
+	snap, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	page := files(t, snap)["index.html"]
+	if strings.Contains(strings.ToLower(page), "javascript:") || strings.Contains(page, "srcdoc") || !strings.Contains(page, `href="`+srv.URL+`/ok"`) {
+		t.Errorf("page = %s", page)
+	}
+	snap, err = taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	if page := files(t, snap)["index.html"]; !strings.Contains(page, "javascript:alert(1)") || !strings.Contains(page, "srcdoc") {
+		t.Errorf("kept scripts: %s", page)
+	}
+}
+
+func TestTakeBoundsTheReportAndRetriesNothing(t *testing.T) {
+	var imgs strings.Builder
+	for i := range 150 {
+		fmt.Fprintf(&imgs, `<img src="/missing-%d.png">`, i)
+	}
+	imgs.WriteString(strings.Repeat(`<img src="/dead.png">`, 5))
+	misses := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html")
+			io.WriteString(w, `<html><body>`+imgs.String()+`</body></html>`)
+			return
+		}
+		if r.URL.Path == "/dead.png" {
+			misses++
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	snap, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	r := snap.Report
+	if len(r.Skipped) != 100 || misses != 1 || len(r.Notes) != 1 || r.Notes[0] != "51 more resources were left remote" {
+		t.Errorf("skipped %d, dead fetched %d times, notes %v", len(r.Skipped), misses, r.Notes)
+	}
+}
+
+func TestTakeRefusesOversizedPages(t *testing.T) {
+	srv := serve(t, site{"/": {"text/html", "<html><body><p>" + strings.Repeat("x", 4<<20) + "</p></body></html>"}})
+	_, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, false)
+	if !errors.Is(err, artifact.ErrFetchFailed) || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("oversized page: %v", err)
 	}
 }

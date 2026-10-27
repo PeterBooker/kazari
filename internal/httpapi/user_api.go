@@ -49,6 +49,8 @@ type UserOptions struct {
 	MaxBodyBytes int64
 	// MaxChunkBytes caps one upload chunk. Default: the upload service's.
 	MaxChunkBytes int64
+	// MaxFileBytes caps a file named by url. Default: artifact.DefaultMaxFileBytes.
+	MaxFileBytes int64
 	// MaxTotalBytes is only echoed in POST /v1/uploads. Default:
 	// upload.DefaultMaxTotalBytes.
 	MaxTotalBytes int64
@@ -75,6 +77,9 @@ func (o UserOptions) withDefaults(d UserDeps) UserOptions {
 	}
 	if o.MaxTotalBytes <= 0 {
 		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
+	}
+	if o.MaxFileBytes <= 0 {
+		o.MaxFileBytes = artifact.DefaultMaxFileBytes
 	}
 	if o.IPRatePerMinute == 0 {
 		o.IPRatePerMinute = DefaultIPRatePerMinute
@@ -341,7 +346,7 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	}
 	defer closeDownloads()
 	if bundle != nil {
-		files = mergeFiles(files, bundle.files)
+		files = artifact.MergeFiles(files, bundle.files)
 	}
 	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
 	if err != nil {
