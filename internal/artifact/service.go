@@ -51,8 +51,10 @@ type Options struct {
 	// MaxShareLinkTTL caps a share link's lifetime; links created without one
 	// live DefaultShareLinkTTL, or this when shorter.
 	MaxShareLinkTTL time.Duration
-	Now             func() time.Time
-	Logger          *slog.Logger // audit failures; default slog.Default()
+	// Pages takes the snapshots Import publishes; nil disables Import.
+	Pages  PageSource
+	Now    func() time.Time
+	Logger *slog.Logger // audit failures; default slog.Default()
 }
 
 func (o Options) withDefaults() Options {

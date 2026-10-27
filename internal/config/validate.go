@@ -69,6 +69,11 @@ func (c *Config) Validate() error {
 		v.add("serve.share_link_max_ttl", "must be greater than 0")
 	}
 
+	v.positive("fetch", c.Fetch)
+	if c.Fetch.Budget < c.Fetch.Timeout {
+		v.add("fetch.budget", "must not be shorter than fetch.timeout")
+	}
+
 	v.oneOf("auth.write_policy", c.Auth.WritePolicy, "shared", "owner")
 	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !isLocalhost(c.BaseDomain) {
 		v.add("auth.admin_token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))

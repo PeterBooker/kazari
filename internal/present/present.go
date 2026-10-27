@@ -118,6 +118,32 @@ func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 	return api.PublishResult{URL: l.ArtifactURL(a.Slug), Version: version, Artifact: l.Artifact(a)}
 }
 
+// Imported is Result with the import report attached.
+func (l Links) Imported(a *artifact.Artifact, version int, r *artifact.ImportReport) api.PublishResult {
+	res := l.Result(a, version)
+	res.Import = Import(r)
+	return res
+}
+
+// Import converts an import report, with empty lists rather than null.
+func Import(r *artifact.ImportReport) *api.ImportReport {
+	out := &api.ImportReport{
+		Source:         r.Source,
+		Fetched:        r.Fetched,
+		Skipped:        make([]api.SkippedFetch, 0, len(r.Skipped)),
+		ScriptsRemoved: r.ScriptsRemoved,
+		Notes:          append([]string{}, r.Notes...),
+		Outline:        make([]api.Landmark, 0, len(r.Outline)),
+	}
+	for _, s := range r.Skipped {
+		out.Skipped = append(out.Skipped, api.SkippedFetch(s))
+	}
+	for _, l := range r.Outline {
+		out.Outline = append(out.Outline, api.Landmark(l))
+	}
+	return out
+}
+
 // ShareURL is the URL that opens a share link: the gate's share path on
 // the artifact's latest host, with the token.
 func (l Links) ShareURL(slug, token string) string {
@@ -340,6 +366,8 @@ func statusFor(code string) int {
 		return http.StatusGone
 	case api.CodeRateLimited:
 		return http.StatusTooManyRequests
+	case api.CodeFetchFailed:
+		return http.StatusBadGateway
 	}
 	return http.StatusInternalServerError
 }

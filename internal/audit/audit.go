@@ -8,6 +8,7 @@ import (
 
 const (
 	ArtifactCreate     = "artifact.create"
+	ArtifactImport     = "artifact.import"
 	ArtifactUpdate     = "artifact.update"
 	ArtifactPublish    = "artifact.publish"
 	ArtifactStale      = "artifact.stale"

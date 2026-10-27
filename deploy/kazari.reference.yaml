@@ -77,6 +77,13 @@ serve:
   default_visibility: public
   share_link_max_ttl: 90d            # longest a share link may stay valid
 
+# URLs the server fetches for members: a file named by url in a create or
+# update, and the page an import_page call copies. Public addresses only.
+fetch:
+  enabled: true                      # false removes import_page and refuses files[].url
+  timeout: 15s                       # one request
+  budget: 1m                         # every request of one import together
+
 auth:
   write_policy: shared               # shared | owner
   admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}

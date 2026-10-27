@@ -162,6 +162,25 @@ To publish the directory again as the next version:
 kazari publish ./site --slug q3-report --update --label "numbers fixed"
 ```
 
+### import
+
+```text
+kazari import <url> --slug <slug> [--name N] [--description D] [--label L]
+               [--visibility public|unlisted|members] [--meta key=value ...] [--keep-scripts]
+```
+
+Copies a web page into a new artifact and prints its URL. The server fetches the page with its stylesheets, fonts and images, stores them under `assets/`, points links at the source site and removes the page's scripts; `--keep-scripts` keeps them. Without `--name` and `--description`, the page's title and meta description are used.
+
+To copy a page as the starting point for a campaign site:
+
+```sh
+kazari import https://www.example.com/ --slug fundraiser
+```
+
+The command prints the artifact's address, then what the copy holds: how many files came from the source, which resources stayed remote and why, and any notes, such as a page that renders with JavaScript. With `--json` it prints the publish result, whose `import` field [the API reference](api.md#importing-a-web-page) describes.
+
+A page behind a login or bot protection fails with `fetch_failed`. Save it from a browser instead and publish the files with `kazari publish`.
+
 ### update
 
 ```text

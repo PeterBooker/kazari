@@ -26,7 +26,7 @@ Six kinds of actor reach an instance:
 
 - **Anonymous visitor.** Reads artifact pages that are not `members` only. Can send any host header, path, query, method and header, and holds no credential.
 - **Viewer.** Reads `members` pages, either signed in to the instance in a browser or holding a share link. Holds only host-only cookies, on the hosts they opened.
-- **Authenticated member.** Holds an API key or OAuth token with some of `artifacts:read`, `artifacts:write` and `artifacts:delete`. Might try to escape their scopes, act on other users' artifacts beyond the write policy, exceed limits or quota, or attack the server with what they upload.
+- **Authenticated member.** Holds an API key or OAuth token with some of `artifacts:read`, `artifacts:write` and `artifacts:delete`. Might try to escape their scopes, act on other users' artifacts beyond the write policy, exceed limits or quota, attack the server with what they upload, or make the server fetch URLs it should not reach.
 - **Malicious bundle.** Content a member uploads: HTML and JavaScript that runs in readers' browsers, archives built to escape paths or exhaust resources, and metadata built to inject headers.
 - **Malicious OAuth client.** Anyone can register a client through Dynamic Client Registration (DCR) or name a client ID metadata document (CIMD) URL. Such a client can send users through the authorization flow and make the server fetch URLs.
 - **Administrator.** Trusted. Holds the admin token or an admin-scoped key.
@@ -38,7 +38,7 @@ Untrusted input crosses into Kazari at five boundaries:
 1. **Browser to artifact host.** Untrusted requests meet untrusted content, so everything served here is treated as hostile to everything else. For a `members` artifact, the gate first decides whether the request may see the page ([gated artifacts](#gated-artifacts)).
 2. **Browser or client to control plane.** Every request must carry a bearer credential, or the consent cookie on the OAuth pages. Every action is authorised against scopes and the write policy.
 3. **Upload boundary.** Bytes from members arrive as inline JSON, a multipart tar.gz or chunked staging. They are size-capped, path-validated and content-addressed before anything references them.
-4. **Kazari to the identity provider and to CIMD URLs.** These are outbound requests. OIDC tokens are verified cryptographically, and metadata fetches go to public addresses only.
+4. **Kazari to the identity provider, to CIMD URLs and to URLs members name.** These are outbound requests. OIDC tokens are verified cryptographically. Metadata fetches, files named by `url` and page imports go to public addresses only ([files from URLs and imported pages](#files-from-urls-and-imported-pages)).
 5. **Reverse proxy to Kazari**, in proxy mode only. Kazari trusts the proxy's `X-Forwarded-For` and `X-Real-IP` headers.
 
 ## Origin isolation
@@ -270,6 +270,18 @@ Matching streams over the file's lines. The whitespace-tolerant fallback is a li
 
 Excerpts in results clip long lines, and an anchored read (`?anchors=true`) is streamed, so neither holds a copy of a large file's lines in memory.
 
+### Files from URLs and imported pages
+
+A member can make Kazari fetch a public URL: as the content of a file in a create or update, or as a page to copy with `import_page`, `kazari import` or `source_url`. One client serves both and the CIMD fetch (`internal/fetch`):
+
+- It dials public unicast addresses only. The check runs on the resolved address of every connection, so a name that points at a private, loopback, link-local, carrier-grade NAT or IPv6 transition address is refused, on redirects too. At most five redirects are followed, and no proxy from the environment is used. The error says only that the address is not public, or that the host did not resolve, never which address a name resolved to.
+- It sends no cookies and no credentials: a URL that carries them is refused, and the address a page or report records is the one after redirects, without credentials. It identifies itself as `Kazari/<version>`.
+- One request stops at `fetch.timeout` (15 s), and the files one publish names by `url`, or one import, stop at `fetch.budget` (60 s) together. A body is capped at `limits.max_file_bytes`, all of a publish's `url` files together at `limits.max_version_bytes`, and every body is spilled to `data_dir/tmp`, so a slow host never holds a publish open; the `gc` job removes spill files a crash left behind.
+- An imported page, and each of its stylesheets, is held in memory to be parsed and rewritten and is therefore capped at 4 MiB; at most four imports run at once per instance, and a fifth is refused with `rate_limited`. The parser refuses documents nested deeper than 512 elements. Scripts, event handlers and `javascript:` URLs are removed unless the caller keeps them, and the copy is served under the member's artifact origin like any upload. What the import fetches is bounded by the version limits and counted against the owner's quota; a resource that fails is tried once, and the report lists at most a hundred of them.
+- Every import is audited with its source, and imports and URL files count against the write rate like any publish.
+
+`fetch.enabled: false` removes the tool and refuses `url` and `source_url`. A member can still make the server request any public URL within these limits, which an operator of an instance with a sensitive network position should weigh.
+
 ### Path rules
 
 Every file path must pass `artifact.ValidatePath`:
@@ -326,6 +338,8 @@ Each limit, its default, and where it is enforced:
 | Share link lifetime | 7 days by default, at most 90 days (`serve.share_link_max_ttl`) | |
 | Browser sign-in session | 12 h; a view code 1 min, single use | every view session ends with its sign-in session |
 | Client ID metadata document | 64 KiB, 10 s, cached 1 h, no redirects, public addresses only | |
+| File named by `url` | 25 MiB (`limits.max_file_bytes`), all of a publish's together 50 MiB, 15 s per request (`fetch.timeout`), 60 s together (`fetch.budget`), 5 redirects, public addresses only, no credentials | spilled to `data_dir/tmp` before the publish |
+| Page import | the version limits, 4 MiB for the page and each stylesheet, 60 s in all (`fetch.budget`), 4 imports at once per instance | resources that do not fit stay remote and are reported, at most 100 of them |
 
 ## Authentication and authorisation
 
@@ -449,6 +463,7 @@ Work through this list when you set up an instance:
 11. **Set the default visibility to `members`** (`serve.default_visibility: members`) on an instance whose pages are not for the open web, so a page published without a visibility is not public. Share links then cover the people outside.
 12. **Keep query strings out of the proxy's access log**, or accept that share-link tokens and sign-in codes land there.
 13. **Purge a page's hosts from any CDN in front** when a page that was `public` becomes `members`.
+14. **Decide whether members may make the server fetch URLs.** Files named by `url` and page imports reach public addresses only, within [their limits](#files-from-urls-and-imported-pages); set `fetch.enabled: false` where the instance must make no outbound requests on members' behalf.
 
 ## Reporting a vulnerability
 

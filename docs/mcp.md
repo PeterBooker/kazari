@@ -62,11 +62,12 @@ The sign-in that follows, and how an administrator sets it up, are in [Identity 
 
 ## Tools
 
-The server offers eighteen tools. The four with more to know have their own sections below the table:
+The server offers nineteen tools. The six with more to know have their own sections below the table:
 
 | Tool | What it does |
 | ---- | ------------ |
-| `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1. |
+| `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1 ([Files named by URL](#files-named-by-url)). |
+| `import_page` | Copy a web page into a new artifact: its stylesheets, fonts and images fetched, its scripts removed ([Importing a page](#import_page)). |
 | `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. |
 | `edit_file` | Change one text file of the latest version with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. |
@@ -96,6 +97,45 @@ The fields are the name, description, metadata and visibility. In metadata, `nul
 To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari publish --update` does for a directory.
 
 `restore: true` brings back a soft-deleted artifact, which is otherwise `not_found`, and then applies the other changes. It works until the retention period ends and the artifact is purged. `list_artifacts` with `deleted: "include"` or `"only"` shows the soft-deleted artifacts you may still see: your own, and the ones you created or updated.
+
+### Files named by URL
+
+A file in `files[]` of `create_artifact` or `update_artifact` can give `url` instead of `content`: an `http` or `https` address the server downloads as the file's content, for an agent that cannot move bytes itself. The address must be on a public host and carry no credentials. One download is capped at `limits.max_file_bytes`, all of a call's together at `limits.max_version_bytes`, and the call's downloads share the `fetch.budget`. `content_type` is taken from the response when the file does not give one.
+
+To add a photo to a page from where it is already published:
+
+```json
+{
+  "slug": "fundraiser",
+  "expected_version": 1,
+  "files": [{ "path": "assets/team.jpg", "url": "https://www.example.com/images/team.jpg" }]
+}
+```
+
+The server downloads every URL before it publishes anything. A download that fails ends the call with `fetch_failed`, and the version is not created. An instance with `fetch.enabled: false` refuses a `url` with `forbidden`.
+
+### `import_page`
+
+Copies one web page into a new artifact and publishes it as version 1, for an agent whose own fetch returns a page as text. The copy keeps the markup and styling: the server fetches the page and its stylesheets, with the `url()` and `@import` references inside them, its fonts, images, `srcset` candidates, icons and media, stores them under `assets/` and rewrites the references to relative paths. Navigation links, form actions and frames point at the source site. A resource stays remote only when the instance's Content-Security-Policy names its host, so an allow-listed CDN keeps serving it.
+
+The page's scripts and event-handler attributes are removed, because the copy is static and the source's analytics must not run on the instance's domain; `keep_scripts: true` keeps them. The page's own `<base>`, `meta refresh`, Content-Security-Policy, manifest, canonical and alternate links are dropped, and `integrity` attributes go with the resources they described. The page is stored as UTF-8 with a matching `<meta charset>`.
+
+`name` and `description` default to the page's title and meta description. The other arguments are `create_artifact`'s: `slug`, `visibility`, `metadata` and `label`.
+
+The result is a publish result with an `import` field:
+
+| Field | Meaning |
+| ----- | ------- |
+| `source` | The page's address after redirects. |
+| `fetched` | How many resources were stored under `assets/`. |
+| `skipped` | Resources left remote, each with its `url` and the `reason`: a failed download, the file limit, the version size limit or the import budget. |
+| `scripts_removed` | How many `<script>` elements were dropped. |
+| `notes` | Observations, such as a page that holds little text and relied on its scripts: a site rendered with JavaScript imports as a shell. |
+| `outline` | The page's landmarks (`header`, `nav`, `main`, `section`, `article`, `aside`, `footer`, `form`, `h1`, `h2`) in document order: the `line` the opening tag is on, the `tag` as text, and the first `heading` inside it. |
+
+The outline is for the edits that follow. Imported markup is formatted only where that cannot change how the page renders: whitespace that already stood between elements becomes a line break, and new whitespace is added only inside `<head>` and between the direct children of `<html>` and `<body>`. A minified page therefore stays on few lines, and a text edit with an outline `tag` as its `old_text` is the way to reach a section: `new_text` of the new content followed by the same tag inserts before it.
+
+Fetches dial public addresses only, follow at most five redirects, send no credentials and stop at `fetch.timeout` per request and `fetch.budget` for the import as a whole ([`fetch`](configuration.md#fetch)). The page and each stylesheet are capped at 4 MiB, a failing resource is tried once, `skipped` lists at most a hundred resources and a note counts the rest, and at most four imports run at once on an instance; a fifth fails with `rate_limited`. A page behind a login, a CAPTCHA or bot protection fails with `fetch_failed`; the next step then is to save the page from a browser and publish the files. Every import is recorded in the audit log with its source.
 
 ### `read_file`
 
@@ -303,6 +343,7 @@ The codes are:
 | `upload_not_found` | Unknown, expired, foreign or already consumed upload. |
 | `share_link_not_found` | The artifact has no share link with that prefix. |
 | `too_many_uploads` | Too many open uploads for this user; `discard_upload` frees one. |
+| `fetch_failed` | The server could not fetch a URL: the message names the address and what happened (a status, a non-public address, a timeout, a size over the limit). |
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |
 | `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or the write policy denies the change. |

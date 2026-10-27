@@ -73,6 +73,8 @@ Some requests, and what the agent does with each:
 | "Turn this CSV into a dashboard with a chart per region and publish it." | Builds the page with the data in it, picks a slug, publishes. |
 | "Make the buttons larger on `signup-flow`. Keep everything else." | Reads the page and calls `edit_file` with only the changed lines: a new version. |
 | "Add a pricing page to `signup-flow`." | Calls `update_artifact` with the new file; every other file carries over. |
+| "Copy www.example.com, put a full-width photo and a donation form at the top, and publish it as `fundraiser`." | Calls `import_page`, which fetches the page with its styles, fonts and images, then `edit_file` to add the hero, and tells you what it could not copy. |
+| "Put the photo at https://www.example.com/team.jpg on `fundraiser`." | Names the photo's address in `update_artifact`; the server downloads it. |
 | "What versions of `signup-flow` are there?" | Calls `get_artifact` and lists them with their addresses. |
 | "Roll `signup-flow` back to version 2." | Calls `publish_version`. Version 3 is kept. |
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
@@ -90,6 +92,8 @@ Kazari serves static files: HTML, CSS, JavaScript, images, fonts and data files.
 - **Libraries from the common CDNs work.** By default, scripts can load from cdnjs, jsDelivr and unpkg, styles from Google Fonts, and images from any `https` address. The browser blocks other sources.
 - **Data travels with the page.** A page can `fetch` its own files, such as `data.json`, but not other websites or APIs. Put the data in the page or next to it.
 - **No server-side code.** There is nowhere to run PHP, an API route or a database, and forms cannot save anything on the server. For a prototype, fake the behaviour in JavaScript.
+- **Payments go through a provider.** A donation or payment form links or posts to a checkout the provider hosts, such as a Stripe Payment Link or a PayPal Donate button, which needs no script. A provider's own script or embedded checkout needs its addresses allowed in the page's policy; ask your agent, or your administrator if the instance keeps one policy for every page.
+- **A page can start from an existing site.** Ask for a copy of a page and the agent imports it: the markup, styles, fonts and images come along, scripts and trackers do not, so the copy is a static page on your domain. Links in the copy still point at the original site. A site that draws its pages with JavaScript imports as an empty shell, and a page behind a login cannot be fetched; save such a page from your browser and ask the agent to publish the files. Copy only pages you have the right to reuse.
 - **Each page is its own site.** `localStorage` and cookies are private to the page, so a prototype can remember state without seeing anyone else's.
 - **Single-page apps need one setting.** An app that routes in the browser needs every path to serve `index.html`: ask your agent to set the metadata `kazari.spa` to `true`.
 - **Large pages work.** By default, a version can hold up to 50 MiB and 2,000 files, and one file up to 25 MiB. Above about 2 MiB, the agent is told to send files in chunks.
@@ -152,6 +156,7 @@ Your agent reports a problem as a short code or message. Find it here:
 | `rate_limited` | Too many changes in a minute: 60 by default, counted across MCP and the API. Wait for the time the message names. |
 | The page says "not found" | It is unpublished or deleted, or the address has a typo. |
 | A library or font does not load | Its source is not on the allowed list. Ask your agent to inline it or use one of the CDNs above. |
+| `fetch_failed` | The page or file could not be fetched: it is behind a login or bot protection, too large, or not on a public address. Save it from your browser and ask the agent to publish the files. |
 | "No access" when signing in | Your account is not allowed on this instance yet. Ask your administrator. |
 
 ## Next steps

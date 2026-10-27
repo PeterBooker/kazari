@@ -17,6 +17,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -36,6 +37,8 @@ type UserDeps struct {
 	// Writes is shared with the MCP server so a key has one write budget on
 	// both; nil disables it.
 	Writes *ratelimit.Limiter
+	// Fetch downloads files named by url; nil refuses them.
+	Fetch *fetch.Client
 }
 
 // UserOptions tunes the user API. Zero fields take the defaults noted.
@@ -46,6 +49,8 @@ type UserOptions struct {
 	MaxBodyBytes int64
 	// MaxChunkBytes caps one upload chunk. Default: the upload service's.
 	MaxChunkBytes int64
+	// MaxFileBytes caps a file named by url. Default: artifact.DefaultMaxFileBytes.
+	MaxFileBytes int64
 	// MaxTotalBytes is only echoed in POST /v1/uploads. Default:
 	// upload.DefaultMaxTotalBytes.
 	MaxTotalBytes int64
@@ -72,6 +77,9 @@ func (o UserOptions) withDefaults(d UserDeps) UserOptions {
 	}
 	if o.MaxTotalBytes <= 0 {
 		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
+	}
+	if o.MaxFileBytes <= 0 {
+		o.MaxFileBytes = artifact.DefaultMaxFileBytes
 	}
 	if o.IPRatePerMinute == 0 {
 		o.IPRatePerMinute = DefaultIPRatePerMinute
@@ -183,9 +191,31 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
 		return err
 	}
-	files, err := inlineFiles(req.Files, false)
+	files, closeDownloads, err := h.inlineFiles(r.Context(), req.Files, false)
 	if err != nil {
 		return err
+	}
+	defer closeDownloads()
+	if req.SourceURL != "" {
+		if req.UploadID != "" {
+			return invalid("source_url cannot be combined with upload_id")
+		}
+		a, v, rep, err := h.d.Artifacts.Import(r.Context(), present.Actor(p), artifact.ImportRequest{
+			URL:         req.SourceURL,
+			Slug:        req.Slug,
+			Name:        req.Name,
+			Description: req.Description,
+			Visibility:  artifact.Visibility(req.Visibility),
+			Metadata:    req.Metadata,
+			Label:       req.Label,
+			KeepScripts: req.KeepScripts,
+			Files:       files,
+		})
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusCreated, h.links.Imported(a, v.Number, rep))
+		return nil
 	}
 	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
 	if err != nil {
@@ -310,12 +340,13 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	default:
 		return unsupported()
 	}
-	files, err := inlineFiles(req.Files, true)
+	files, closeDownloads, err := h.inlineFiles(r.Context(), req.Files, true)
 	if err != nil {
 		return err
 	}
+	defer closeDownloads()
 	if bundle != nil {
-		files = mergeFiles(files, bundle.files)
+		files = artifact.MergeFiles(files, bundle.files)
 	}
 	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
 	if err != nil {

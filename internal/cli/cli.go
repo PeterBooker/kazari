@@ -44,6 +44,7 @@ type CLI struct {
 	Serve      ServeCmd      `cmd:"" help:"Run the server."`
 	Check      CheckCmd      `cmd:"" help:"Check the configuration, the DNS records, the DNS token and the ports."`
 	Publish    PublishCmd    `cmd:"" help:"Publish a directory as a new artifact, or mirror it as a new version with --update."`
+	Import     ImportCmd     `cmd:"" help:"Copy a web page into a new artifact."`
 	Update     UpdateCmd     `cmd:"" help:"Add a version from a directory and/or change fields."`
 	Get        GetCmd        `cmd:"" help:"Show an artifact and its versions."`
 	List       ListCmd       `cmd:"" help:"List artifacts."`

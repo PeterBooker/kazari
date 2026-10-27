@@ -32,6 +32,7 @@ const (
 	CodeEditAmbiguous    = "edit_ambiguous"
 	CodeAnchorMismatch   = "anchor_mismatch"
 	CodeLinkNotFound     = "share_link_not_found"
+	CodeFetchFailed      = "fetch_failed"
 )
 
 // Error is the body of every error response.
@@ -97,9 +98,34 @@ type ArtifactDetail struct {
 
 // PublishResult is returned by create, update and publish.
 type PublishResult struct {
-	URL      string   `json:"url"`
-	Version  int      `json:"version"`
-	Artifact Artifact `json:"artifact"`
+	URL      string        `json:"url"`
+	Version  int           `json:"version"`
+	Artifact Artifact      `json:"artifact"`
+	Import   *ImportReport `json:"import,omitempty"`
+}
+
+// ImportReport says what an import fetched, left out and found.
+type ImportReport struct {
+	Source         string         `json:"source"`
+	Fetched        int            `json:"fetched"`
+	Skipped        []SkippedFetch `json:"skipped"`
+	ScriptsRemoved int            `json:"scripts_removed"`
+	Notes          []string       `json:"notes"`
+	Outline        []Landmark     `json:"outline"`
+}
+
+// SkippedFetch is a resource an import left remote, with the reason.
+type SkippedFetch struct {
+	URL    string `json:"url"`
+	Reason string `json:"reason"`
+}
+
+// Landmark is a section of an imported page: the line its opening tag is
+// on, that tag as text, and the first heading inside it.
+type Landmark struct {
+	Line    int    `json:"line"`
+	Tag     string `json:"tag"`
+	Heading string `json:"heading,omitempty"`
 }
 
 // ArtifactList is one page of GET /artifacts.
@@ -114,7 +140,9 @@ type FileInput struct {
 	Content     string `json:"content,omitempty"`
 	Encoding    string `json:"encoding,omitempty"` // "utf8" (default) | "base64"
 	ContentType string `json:"content_type,omitempty"`
-	Delete      bool   `json:"delete,omitempty"`
+	// URL names content the server downloads instead of Content.
+	URL    string `json:"url,omitempty"`
+	Delete bool   `json:"delete,omitempty"`
 }
 
 // CreateArtifactRequest is the body of POST /artifacts and of create_artifact.
@@ -127,6 +155,9 @@ type CreateArtifactRequest struct {
 	Label       string            `json:"label,omitempty"`
 	Files       []FileInput       `json:"files,omitempty"`
 	UploadID    string            `json:"upload_id,omitempty"`
+	// SourceURL imports a web page as the artifact; Files are added to it.
+	SourceURL   string `json:"source_url,omitempty"`
+	KeepScripts bool   `json:"keep_scripts,omitempty"`
 }
 
 // UpdateArtifactRequest is the JSON body of PUT /artifacts/{slug}, the

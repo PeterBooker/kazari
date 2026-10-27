@@ -18,17 +18,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -335,7 +333,7 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 		opts.Logger = slog.Default()
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = defaultHTTPClient()
+		opts.HTTPClient = &http.Client{Timeout: cimdTimeout, Transport: fetch.Transport()}
 	}
 	var origin string
 	if u, err := url.Parse(opts.Issuer); err == nil && u.Host != "" {
@@ -345,67 +343,6 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 		store: store, users: users, keys: keys, idp: idp, audit: rec, opts: opts, origin: origin,
 		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(),
 	}
-}
-
-// defaultHTTPClient dials public addresses only, so a client_id URL cannot
-// make the server probe its own network (SSRF).
-func defaultHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout: cimdTimeout,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			if !publicAddr(host) {
-				return fmt.Errorf("oauth: refusing to fetch from non-public address %s", host)
-			}
-			return nil
-		},
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.DialContext = dialer.DialContext
-	tr.Proxy = nil
-	return &http.Client{Timeout: cimdTimeout, Transport: tr}
-}
-
-// nonPublic are special-purpose ranges the netip predicates miss, among them
-// carrier-grade NAT (Tailscale) and IPv6 transition prefixes that can tunnel
-// to an internal IPv4 address.
-var nonPublic = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("2001::/32"),
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("fec0::/10"),
-}
-
-// publicAddr reports whether host, a literal IP, is public unicast.
-func publicAddr(host string) bool {
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	addr = addr.Unmap().WithZone("")
-	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
-		return false
-	}
-	for _, p := range nonPublic {
-		if p.Contains(addr) {
-			return false
-		}
-	}
-	return true
 }
 
 // Authenticate resolves an access token. Unknown, revoked or expired tokens,

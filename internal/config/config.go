@@ -49,6 +49,7 @@ type Config struct {
 	Limits    Limits    `yaml:"limits"`
 	Lifecycle Lifecycle `yaml:"lifecycle"`
 	Serve     Serve     `yaml:"serve"`
+	Fetch     Fetch     `yaml:"fetch"`
 	Auth      Auth      `yaml:"auth"`
 	Admin     Admin     `yaml:"admin"`
 	Log       Log       `yaml:"log"`
@@ -119,6 +120,15 @@ type Serve struct {
 	ReservedSlugs     []string `yaml:"reserved_slugs"`
 	DefaultVisibility string   `yaml:"default_visibility"`
 	ShareLinkMaxTTL   Duration `yaml:"share_link_max_ttl"`
+}
+
+// Fetch bounds the URLs the server fetches for members: files named by url
+// and pages imported with import_page.
+type Fetch struct {
+	Enabled bool `yaml:"enabled"`
+	// Timeout bounds one request, Budget every request of one import.
+	Timeout Duration `yaml:"timeout"`
+	Budget  Duration `yaml:"budget"`
 }
 
 // Auth holds the write policy, the admin token and the optional identity provider.
@@ -201,6 +211,11 @@ func Default() Config {
 			ReservedSlugs:     slices.Clone(defaultReservedSlugs),
 			DefaultVisibility: "public",
 			ShareLinkMaxTTL:   Duration(90 * day),
+		},
+		Fetch: Fetch{
+			Enabled: true,
+			Timeout: Duration(15 * second),
+			Budget:  Duration(1 * minute),
 		},
 		Auth: Auth{
 			WritePolicy: "shared",

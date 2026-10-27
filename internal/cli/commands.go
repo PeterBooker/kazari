@@ -144,6 +144,54 @@ func (r *runner) printResult(res *api.PublishResult) error {
 	return nil
 }
 
+// ImportCmd copies a web page into a new artifact.
+type ImportCmd struct {
+	URL         string            `arg:"" help:"Address of the page to copy."`
+	Slug        string            `help:"Artifact slug (required)." placeholder:"SLUG"`
+	Name        *string           `help:"Display name (default: the page title)." placeholder:"NAME"`
+	Description *string           `help:"Description (default: the page's meta description)." placeholder:"TEXT"`
+	Label       string            `help:"Version label." placeholder:"LABEL"`
+	Visibility  string            `help:"public, unlisted or members (default: the instance's)." placeholder:"VISIBILITY"`
+	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
+	KeepScripts bool              `name:"keep-scripts" help:"Keep the page's scripts and event handlers."`
+}
+
+func (c *ImportCmd) Run(r *runner) error {
+	if c.Slug == "" {
+		return usagef("import: --slug is required")
+	}
+	switch c.Visibility {
+	case "", "public", "unlisted", "members":
+	default:
+		return usagef("import: --visibility must be public, unlisted or members")
+	}
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	res, err := cl.Create(r.ctx, api.CreateArtifactRequest{
+		Slug: c.Slug, Name: deref(c.Name), Description: deref(c.Description), Visibility: c.Visibility,
+		Metadata: nilIfEmpty(c.Meta), Label: c.Label, SourceURL: c.URL, KeepScripts: c.KeepScripts,
+	})
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(res)
+	}
+	fmt.Fprintln(r.stdout, res.URL)
+	if imp := res.Import; imp != nil {
+		fmt.Fprintf(r.stdout, "%d files from %s; %d scripts removed\n", imp.Fetched+1, imp.Source, imp.ScriptsRemoved)
+		for _, s := range imp.Skipped {
+			fmt.Fprintf(r.stdout, "left remote: %s (%s)\n", s.URL, s.Reason)
+		}
+		for _, n := range imp.Notes {
+			fmt.Fprintf(r.stdout, "note: %s\n", n)
+		}
+	}
+	return nil
+}
+
 // UpdateCmd adds a version, changes fields, or both.
 type UpdateCmd struct {
 	Slug        string            `arg:"" help:"Artifact slug."`
