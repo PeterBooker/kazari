@@ -20,8 +20,10 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
@@ -32,6 +34,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/site"
+	"github.com/PeterBooker/kazari/internal/snapshot"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -122,7 +125,8 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}
 	auditStore := sqlite.NewAuditStore(a.db)
 
-	arts := artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artifact.Options{
+	var fetcher *fetch.Client
+	artOpts := artifact.Options{
 		MaxVersionBytes:   int64(cfg.Limits.MaxVersionBytes),
 		MaxFileBytes:      int64(cfg.Limits.MaxFileBytes),
 		MaxFiles:          cfg.Limits.MaxFiles,
@@ -136,7 +140,22 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
 		Now:               now,
 		Logger:            log,
-	})
+	}
+	if cfg.Fetch.Enabled {
+		fetcher = fetch.New(fetch.Options{
+			Timeout:   cfg.Fetch.Timeout.Std(),
+			Budget:    cfg.Fetch.Budget.Std(),
+			Dir:       tempDir(cfg),
+			UserAgent: "Kazari/" + buildinfo.Get().Version + " (+https://kazari.io)",
+		})
+		artOpts.Pages = snapshot.New(fetcher, snapshot.Options{
+			CSP:           cfg.Serve.CSP,
+			MaxFileBytes:  int64(cfg.Limits.MaxFileBytes),
+			MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
+			MaxFiles:      cfg.Limits.MaxFiles,
+		})
+	}
+	arts := artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artOpts)
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
 		Dir:             cfg.UploadDir(),
@@ -207,10 +226,11 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			cutoff := now().Add(-staleTempAge)
 			puts, perr := blobs.RemoveStaleTemp(cutoff)
 			spills, serr := httpapi.RemoveStaleSpills(tempDir(cfg), cutoff)
-			if puts+spills > 0 {
-				log.InfoContext(ctx, "gc", "temp_files_removed", puts+spills)
+			downloads, derr := fetch.RemoveStale(tempDir(cfg), cutoff)
+			if puts+spills+downloads > 0 {
+				log.InfoContext(ctx, "gc", "temp_files_removed", puts+spills+downloads)
 			}
-			return errors.Join(err, perr, serr)
+			return errors.Join(err, perr, serr, derr)
 		}),
 		job(m, "uploads-expire", uploadsExpireEvery, func(ctx context.Context) error {
 			n, err := uploads.ExpireStale(ctx)
@@ -244,10 +264,11 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MCPURL:              mcpURL,
 		DefaultVisibility:   cfg.Serve.DefaultVisibility,
 		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
+		Fetch:               cfg.Fetch.Enabled,
 		Now:                 now,
 	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
-		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes,
+		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
 	}, httpapi.UserOptions{
 		MaxBodyBytes:  int64(cfg.Limits.MaxVersionBytes) + 1<<20,
 		MaxChunkBytes: int64(cfg.Limits.MaxChunkBytes),
@@ -273,7 +294,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		a.adminLocal = a.surface(m, "admin", true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now}))
 	}
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
-		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes,
+		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
 	}, mcpOpts)
 	siteH := site.NewHandler(arts, blobs, site.Options{
 		BaseDomain:       cfg.BaseDomain,

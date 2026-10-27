@@ -29,6 +29,7 @@ type FileInput struct {
 	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
 	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
 	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
+	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
 }
 
 // UpdateFileInput is an inline file or a deletion of update_artifact.
@@ -37,6 +38,7 @@ type UpdateFileInput struct {
 	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
 	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
 	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
+	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
 	Delete      bool   `json:"delete,omitempty" jsonschema:"true removes this path from the new version; content is ignored"`
 }
 
@@ -356,6 +358,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			res := links.Result(a, v.Number)
 			return res, publishedLine(res), nil
 		})
+
+	if b.o.Fetch {
+		b.addImport(s, p, actor)
+	}
 
 	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
@@ -725,10 +731,16 @@ func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, 
 			}
 		}
 	}
-	inline, err := inlineFiles(raw)
+	inline, closeDownloads, err := b.inlineFiles(ctx, raw)
 	if err != nil {
 		return nil, cleanup, err
 	}
+	cleanup = func(done func()) func() {
+		return func() {
+			closeDownloads()
+			done()
+		}
+	}(cleanup)
 	taken := make(map[string]bool, len(inline))
 	for _, in := range inline {
 		taken[cleanPath(in.Path)] = true
@@ -752,25 +764,54 @@ func cleanPath(p string) string {
 func createFiles(in []FileInput) []UpdateFileInput {
 	out := make([]UpdateFileInput, len(in))
 	for i, f := range in {
-		out[i] = UpdateFileInput{Path: f.Path, Content: f.Content, Encoding: f.Encoding, ContentType: f.ContentType}
+		out[i] = UpdateFileInput{Path: f.Path, Content: f.Content, Encoding: f.Encoding, ContentType: f.ContentType, URL: f.URL}
 	}
 	return out
 }
 
-func inlineFiles(in []UpdateFileInput) ([]artifact.FileInput, error) {
+// inlineFiles downloads the entries that name a url before the publish, so
+// the service never waits on a remote host while it holds a version open.
+func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]artifact.FileInput, func(), error) {
+	var downloads []io.Closer
+	closeAll := func() {
+		for _, d := range downloads {
+			d.Close()
+		}
+	}
 	out := make([]artifact.FileInput, 0, len(in))
 	for _, f := range in {
-		if f.Delete {
+		switch {
+		case f.Delete:
 			out = append(out, artifact.FileInput{Path: f.Path, Delete: true})
+			continue
+		case f.URL != "" && f.Content != "":
+			closeAll()
+			return nil, nil, artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
+		case f.URL != "" && b.d.Fetch == nil:
+			closeAll()
+			return nil, nil, artifact.Errorf(artifact.ErrForbidden, "fetching URLs is disabled on this instance")
+		case f.URL != "":
+			d, err := b.d.Fetch.Download(ctx, f.URL, b.o.MaxFileBytes)
+			if err != nil {
+				closeAll()
+				return nil, nil, err
+			}
+			downloads = append(downloads, d)
+			ct := f.ContentType
+			if ct == "" && artifact.ValidateContentType(d.ContentType) == nil {
+				ct = d.ContentType
+			}
+			out = append(out, artifact.FileInput{Path: f.Path, Content: d, ContentType: ct})
 			continue
 		}
 		data, err := decode(f.Path, f.Content, f.Encoding)
 		if err != nil {
-			return nil, err
+			closeAll()
+			return nil, nil, err
 		}
 		out = append(out, artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType})
 	}
-	return out, nil
+	return out, closeAll, nil
 }
 
 // decode returns raw bytes in a string; base64 may be unpadded and contain line breaks.

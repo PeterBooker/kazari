@@ -94,7 +94,7 @@ Create, update, publish, unstale and visibility changes return a publish result:
 { "url": "https://q3-report.art.example.com/", "version": 3, "artifact": { ... } }
 ```
 
-`version` is the version the call created or moved to. For a change to fields only, it is the published version.
+`version` is the version the call created or moved to. For a change to fields only, it is the published version. A create with `source_url` adds an `import` field ([Importing a web page](#importing-a-web-page)).
 
 ### Rules
 
@@ -203,14 +203,45 @@ The body takes these fields:
 | `visibility`  | string | `public`, `unlisted` or `members`; defaults to `serve.default_visibility` (`public`) |
 | `metadata`    | object | String to string                                                            |
 | `label`       | string | Label of version 1; at most 256 bytes, one line                             |
-| `files`       | array  | `{ path, content, encoding?, content_type? }`                               |
+| `files`       | array  | `{ path, content, encoding?, content_type? }`, or `{ path, url, content_type? }` ([Files named by URL](#files-named-by-url)) |
 | `upload_id`   | string | Staged files from a [chunked upload](#chunked-uploads), merged with `files`, which win a path clash |
+| `source_url`  | string | A web page to copy as the artifact ([Importing a web page](#importing-a-web-page)) |
+| `keep_scripts` | bool  | With `source_url`: keep the page's scripts; by default they are removed |
 
 At least one file is required.
 
 Text fields must be valid UTF-8, without control characters (C0, DEL, C1) and without the bidirectional override and isolate characters (U+202A to U+202E, U+2066 to U+2069). `description` can contain newlines and tabs. The same rules apply to updates and over MCP, and a violation is `422 invalid_argument`.
 
 The whole JSON body is capped at `limits.max_version_bytes` plus 1 MiB. Base64 content is a third larger than the bytes it carries, so it reaches the cap sooner: send anything large as a bundle or a chunked upload.
+
+#### Files named by URL
+
+A file can give `url` instead of `content`: an `http` or `https` address on a public host that Kazari downloads as the file's content, capped at `limits.max_file_bytes`. `content_type` comes from the response when the file does not give one. To publish a page with an image that is already online:
+
+```json
+{
+  "slug": "hello",
+  "files": [
+    { "path": "index.html", "content": "<!doctype html><img src=\"team.jpg\">" },
+    { "path": "team.jpg", "url": "https://www.example.com/images/team.jpg" }
+  ]
+}
+```
+
+Every URL is downloaded before anything is published. A download that fails is `502 fetch_failed`, and nothing is created; a file with both `url` and `content` is `422 invalid_argument`. Updates take `url` the same way. An instance with `fetch.enabled: false` answers `403 forbidden`.
+
+#### Importing a web page
+
+With `source_url`, Kazari copies that page into the new artifact: the HTML with its stylesheets, fonts, images, icons and media fetched and stored under `assets/`, links made absolute to the source, scripts removed unless `keep_scripts` is `true`. `files` are added to the copy and win on a path clash. The other fields are the same, and `name` and `description` default to the page's title and meta description. To copy a page:
+
+```sh
+curl -sS https://api.art.example.com/v1/artifacts \
+  -H "Authorization: Bearer $KAZARI_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{ "slug": "fundraiser", "source_url": "https://www.example.com/" }'
+```
+
+The publish result carries an `import` field with the source, how many resources were fetched, which stayed remote and why (`skipped`), how many scripts were removed, `notes` and an `outline` of the page's sections. [The MCP server page](mcp.md#import_page) describes each field and what the copy contains. `source_url` cannot be combined with `upload_id`.
 
 #### Multipart body with a tar.gz bundle
 
@@ -779,6 +810,7 @@ These are the codes, with their HTTP status and meaning:
 | `email_taken`            | 409    | Admin API: another user has the email                                              |
 | `job_running`            | 409    | Admin API: the job is already running                                              |
 | `gone`                   | 410    | The artifact has been purged                                                       |
+| `fetch_failed`           | 502    | A URL named by `url` or `source_url` could not be fetched; the message says why    |
 | `version_conflict`       | 412    | `expected_version` / `If-Match` is not the latest version                          |
 | `too_large`              | 413    | A file, version, chunk, upload, manifest or request body is over its limit         |
 | `rate_limited`           | 429    | Too many requests; see `Retry-After` and [Rate limits](#rate-limits)               |

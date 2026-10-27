@@ -24,10 +24,12 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/snapshot"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -77,6 +79,9 @@ func newEnv(t *testing.T, c config) *env {
 	rec := sqlite.NewAuditStore(db)
 
 	c.artifact.Now = now
+	// Loopback is allowed so tests can fetch from httptest servers.
+	fc := fetch.New(fetch.Options{Transport: http.DefaultTransport, Dir: dir})
+	c.artifact.Pages = snapshot.New(fc, snapshot.Options{})
 	art := artifact.New(sqlite.NewArtifactStore(db), blobs, rec, c.artifact)
 	c.upload.Dir = filepath.Join(dir, "uploads")
 	c.upload.Now = now
@@ -103,7 +108,7 @@ func newEnv(t *testing.T, c config) *env {
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: art, Uploads: uploads, Users: users, Auth: users, Links: links,
-		Writes: ratelimit.New(c.writeRate, now),
+		Writes: ratelimit.New(c.writeRate, now), Fetch: fc,
 	}, c.user))
 	t.Cleanup(userSrv.Close)
 	admSrv := httptest.NewServer(httpapi.NewAdminAPI(httpapi.AdminDeps{

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +19,22 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/present"
 )
+
+// copyStep is the workflow step for import_page.
+const copyStep = "**Copy an existing page:** `import_page` with the page's `url` and a `slug` fetches it with its " +
+	"stylesheets, fonts and images, removes its scripts and publishes the copy; use it, never your own fetch of the " +
+	"page, whenever the user wants a page copied or used as a starting point. The result's `import` field lists what " +
+	"stayed remote (`skipped`), notes such as a page that renders with JavaScript, and an `outline` of the page's " +
+	"sections with the line and opening tag of each. Change the copy with `edit_file`: a text edit whose `old_text` " +
+	"is an outline tag, and whose `new_text` is the new content followed by that tag, inserts before the section; " +
+	"on a page kept on few lines, read a window around the line first."
+
+// payments is the authoring convention for forms and payments on static pages.
+const payments = "- Forms and payments: nothing runs on the server, so a form cannot be handled here. For donations or " +
+	"payments, link to or post to a provider-hosted checkout that needs no script, such as a Stripe Payment Link " +
+	"(`<a href=\"https://buy.stripe.com/...\">`) or a PayPal Donate form (`<form action=\"https://www.paypal.com/donate\" " +
+	"method=\"post\">`): a navigation is allowed by the policy above. A provider's own script or embedded iframe needs " +
+	"its origins in the policy, through `kazari.csp` metadata where the instance allows overrides.\n"
 
 // The Agent Skill served by the Skills extension (SEP-2640).
 const (
@@ -64,33 +81,42 @@ func (t texts) skillText(o Options) string {
 	}
 
 	b.WriteString("## Workflow\n\n")
-	fmt.Fprintf(&b, "1. **Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the "+
-		"`url` from the result to the user.\n"+
-		"2. **Change a page:** `read_file` with `anchors: true`, then `edit_file` with `expected_version` set to the "+
-		"`latest_version` the read returned. `update_artifact` adds or replaces whole files and removes them with "+
-		"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version "+
-		"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send "+
-		"a delete entry for each path not in the set. A change that spans several files is atomic only as one "+
-		"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.\n"+
-		"3. **On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. "+
-		"Never resend a failed edit unchanged.\n"+
-		"4. **Large content** (any file, or all files together, above %s): `begin_upload`, then `upload_chunk` for each "+
-		"file with `offset: 0` first and the `bytes_received` of the previous chunk after that, then `create_artifact` "+
-		"or `update_artifact` with `upload_id`. Inline `files` in that call are merged with the staged ones and win on a "+
-		"path clash, and the call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you "+
-		"no longer need.\n"+
-		"5. **Inspect:** `get_artifact` (`include_files` lists every version's paths and hashes), `read_file` (text "+
-		"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small "+
-		"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, "+
-		"`deleted`, `cursor`).\n"+
-		"6. **Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.\n"+
-		"7. **Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. "+
-		"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that "+
-		"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.\n"+
-		"8. **Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace "+
-		"period) to `delete_artifact`. Ask the user before `delete_artifact` with `hard: true`; clients that support it "+
-		"also show the user a confirmation. Without `hard`, `delete_artifact` soft-deletes, and `update_artifact` with "+
-		"`restore: true` brings the artifact back until it is purged.\n\n", size(o.InlineGuidanceBytes))
+	steps := []string{
+		"**Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the " +
+			"`url` from the result to the user.",
+		"**Change a page:** `read_file` with `anchors: true`, then `edit_file` with `expected_version` set to the " +
+			"`latest_version` the read returned. `update_artifact` adds or replaces whole files and removes them with " +
+			"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version " +
+			"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send " +
+			"a delete entry for each path not in the set. A change that spans several files is atomic only as one " +
+			"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.",
+		"**On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. " +
+			"Never resend a failed edit unchanged.",
+		fmt.Sprintf("**Large content** (any file, or all files together, above %s): `begin_upload`, then `upload_chunk` for each "+
+			"file with `offset: 0` first and the `bytes_received` of the previous chunk after that, then `create_artifact` "+
+			"or `update_artifact` with `upload_id`. Inline `files` in that call are merged with the staged ones and win on a "+
+			"path clash, and the call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you "+
+			"no longer need.", size(o.InlineGuidanceBytes)),
+		"**Inspect:** `get_artifact` (`include_files` lists every version's paths and hashes), `read_file` (text " +
+			"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small " +
+			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
+			"`deleted`, `cursor`).",
+		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.",
+		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
+			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
+			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",
+		"**Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace " +
+			"period) to `delete_artifact`. Ask the user before `delete_artifact` with `hard: true`; clients that support it " +
+			"also show the user a confirmation. Without `hard`, `delete_artifact` soft-deletes, and `update_artifact` with " +
+			"`restore: true` brings the artifact back until it is purged.",
+	}
+	if o.Fetch {
+		steps = slices.Insert(steps, 1, copyStep)
+	}
+	for i, step := range steps {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, step)
+	}
+	b.WriteString("\n")
 
 	b.WriteString("## Editing a file\n\n")
 	b.WriteString("`edit_file` changes one text file of the latest version and publishes the result as a new version; " +
@@ -124,14 +150,21 @@ func (t texts) skillText(o Options) string {
 		"works on pinned version URLs.\n")
 	fmt.Fprintf(&b, "- %s\n", t.csp)
 	b.WriteString("- No server-side code: no PHP, API routes, databases or server build step. Ship the built output.\n")
+	b.WriteString(payments)
 	fmt.Fprintf(&b, "- %s On `slug_taken`, pick another.\n", t.slugRules)
 	fmt.Fprintf(&b, "- %s\n- %s\n", t.limits, t.text)
+	if o.Fetch {
+		fmt.Fprintf(&b, "- %s\n", urlFile)
+	}
 	fmt.Fprintf(&b, "- %s\n\n", t.metadata)
 
 	b.WriteString("## Errors\n\n")
 	b.WriteString("A failed call returns `<code>: <message>`, and usually a `Next step:` line. Follow it.\n\n")
 	b.WriteString("| Code | Next step |\n| ---- | --------- |\n")
 	for _, code := range nextStepOrder {
+		if code == api.CodeFetchFailed && !o.Fetch {
+			continue
+		}
 		fmt.Fprintf(&b, "| `%s` | %s |\n", code, t.next[code])
 	}
 	return b.String()
@@ -258,8 +291,8 @@ var nextStepOrder = []string{
 	api.CodeVersionConflict, api.CodeAnchorMismatch, api.CodeEditNotFound, api.CodeEditAmbiguous,
 	api.CodeSlugTaken, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument, api.CodeNotFound, api.CodeFileNotFound, api.CodeVersionNotFound,
 	api.CodeGone, api.CodeTooLarge, api.CodeTooManyFiles, api.CodeQuotaExceeded, api.CodeUploadNotFound,
-	api.CodeOffsetMismatch, api.CodeTooManyUploads, api.CodeLinkNotFound, api.CodeForbidden, api.CodeRateLimited,
-	api.CodeInternal,
+	api.CodeOffsetMismatch, api.CodeTooManyUploads, api.CodeLinkNotFound, api.CodeFetchFailed, api.CodeForbidden,
+	api.CodeRateLimited, api.CodeInternal,
 }
 
 // nextSteps is the model's next step per error code, shown after tool errors and in the skill.
@@ -294,6 +327,9 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeTooManyUploads: "Discard the open uploads you no longer need with discard_upload (their ids came from " +
 			"begin_upload), then begin a new one; unused uploads also expire on their own.",
 		api.CodeLinkNotFound: "Call list_share_links: it lists the prefixes of the artifact's share links.",
+		api.CodeFetchFailed: "The server could not fetch that URL; the message says what happened. Check the address is " +
+			"public and serves the file. A page behind a login, a CAPTCHA or bot protection cannot be fetched: ask the " +
+			"user to save it from their browser and publish the files with create_artifact or kazari publish.",
 		api.CodeForbidden: "Retrying will not help. Tell the user: the connection's credential lacks the scope, or the " +
 			"instance's write policy reserves the artifact for its owner.",
 		api.CodeRateLimited: "Wait as long as the message says, then repeat the call.",

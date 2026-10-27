@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,9 +22,11 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/snapshot"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/upload"
 )
@@ -69,7 +72,10 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	reserved := []string{"api", "mcp", "admin"}
-	arts := artifact.New(sqlite.NewArtifactStore(db), blobs, nil, artifact.Options{ReservedSlugs: reserved})
+	// Loopback is allowed so tests can fetch from httptest servers.
+	fc := fetch.New(fetch.Options{Transport: http.DefaultTransport, Dir: dir})
+	arts := artifact.New(sqlite.NewArtifactStore(db), blobs, nil, artifact.Options{ReservedSlugs: reserved,
+		Pages: snapshot.New(fc, snapshot.Options{CSP: testCSP})})
 	ups := upload.New(sqlite.NewUploadStore(db), upload.Options{Dir: filepath.Join(dir, "uploads"), MaxChunkBytes: 1 << 20})
 	return &env{
 		ctx: ctx,
@@ -78,12 +84,14 @@ func newEnv(t *testing.T) *env {
 			Uploads:   ups,
 			Logger:    slog.New(slog.DiscardHandler),
 			Links:     present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
+			Fetch:     fc,
 		},
 		opts: mcpserver.Options{
 			BaseDomain:    "art.test",
 			CSP:           testCSP,
 			ReservedSlugs: reserved,
 			APIBaseURL:    "https://api.art.test/v1",
+			Fetch:         true,
 		},
 	}
 }
@@ -175,7 +183,7 @@ func TestListTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"begin_upload", "create_artifact", "create_share_link", "delete_artifact", "discard_upload", "edit_file", "get_artifact",
-		"get_guide", "list_artifacts", "list_share_links", "mark_stale", "publish_version", "read_file", "revoke_share_link",
+		"get_guide", "import_page", "list_artifacts", "list_share_links", "mark_stale", "publish_version", "read_file", "revoke_share_link",
 		"set_visibility", "unmark_stale", "update_artifact", "upload_chunk"}
 	var got []string
 	byName := map[string]*mcp.Tool{}

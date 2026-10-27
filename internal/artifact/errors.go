@@ -47,6 +47,7 @@ var (
 	ErrEditNotFound    = &Error{Code: "edit_not_found", Message: "text to replace not found"}
 	ErrEditAmbiguous   = &Error{Code: "edit_ambiguous", Message: "text to replace matches more than once"}
 	ErrAnchorMismatch  = &Error{Code: "anchor_mismatch", Message: "anchor does not match the file"}
+	ErrFetchFailed     = &Error{Code: "fetch_failed", Message: "could not fetch the URL"}
 )
 
 // Errorf returns a copy of the sentinel with a formatted message.

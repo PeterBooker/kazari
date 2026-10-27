@@ -33,6 +33,7 @@ func exampleOptions() mcpserver.Options {
 		MCPURL:              "https://mcp.<base>/",
 		DefaultVisibility:   cfg.Serve.DefaultVisibility,
 		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
+		Fetch:               cfg.Fetch.Enabled,
 	}
 }
 

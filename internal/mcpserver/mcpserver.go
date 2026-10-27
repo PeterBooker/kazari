@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -43,6 +44,8 @@ type Deps struct {
 	// Writes limits write and delete calls per credential; it is the user API's
 	// limiter, so a key has one budget on both. Nil disables it.
 	Writes *ratelimit.Limiter
+	// Fetch downloads files named by url; nil refuses them.
+	Fetch *fetch.Client
 }
 
 // Options configures the server. Its limits only describe the services' limits to
@@ -76,6 +79,9 @@ type Options struct {
 	// live (default artifact.DefaultMaxShareLinkTTL).
 	DefaultVisibility string
 	MaxShareLinkTTL   time.Duration
+	// Fetch says the instance fetches URLs: files[].url is described and
+	// import_page is offered.
+	Fetch bool
 	// Now is the clock that decides whether a share link is active
 	// (default time.Now).
 	Now func() time.Time

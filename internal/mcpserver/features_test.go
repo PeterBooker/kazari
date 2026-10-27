@@ -222,12 +222,12 @@ func TestPreview(t *testing.T) {
 			linked[tool.Name] = true
 		}
 	}
-	for _, name := range []string{"create_artifact", "update_artifact", "edit_file", "publish_version"} {
+	for _, name := range []string{"create_artifact", "import_page", "update_artifact", "edit_file", "publish_version"} {
 		if !linked[name] {
 			t.Errorf("%s is not linked to the preview", name)
 		}
 	}
-	if len(linked) != 4 {
+	if len(linked) != 5 {
 		t.Errorf("tools linked to the preview = %v", linked)
 	}
 

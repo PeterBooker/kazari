@@ -81,6 +81,7 @@ func (b *Bytes) UnmarshalText(text []byte) error {
 }
 
 const (
+	second = time.Second
 	minute = time.Minute
 	hour   = time.Hour
 	day    = 24 * time.Hour

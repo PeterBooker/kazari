@@ -326,6 +326,18 @@ On an instance that is not meant for the open web, set `default_visibility: memb
 
 Share links last 7 days unless asked otherwise, or `share_link_max_ttl` if that is shorter.
 
+### `fetch`
+
+The URLs Kazari fetches for members: a file named by `url` in a create or update, and the page an [import](api.md#importing-a-web-page) copies. Fetches go to public addresses only.
+
+| Key       | Type     | Default | Meaning                                                                       |
+| --------- | -------- | ------- | ----------------------------------------------------------------------------- |
+| `enabled` | bool     | `true`  | `false` removes the `import_page` tool and refuses files named by `url`.      |
+| `timeout` | duration | `15s`   | The longest one request may take.                                             |
+| `budget`  | duration | `1m`    | The longest one import may take in all; what does not fit stays remote.       |
+
+Set `enabled: false` on an instance that must make no outbound requests on members' behalf. The fetch for OAuth client metadata is separate and stays on.
+
 ### `auth`
 
 Who can change artifacts, and the admin token:
@@ -385,7 +397,7 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `tls.mode` is one of the three modes. Outside proxy mode:
   - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`; `namecheap` also needs `tls.dns.user`.
   - `files` needs `tls.cert_file` and `tls.key_file`.
-- Every number and duration in `limits` and `lifecycle` is greater than 0.
+- Every number and duration in `limits`, `lifecycle` and `fetch` is greater than 0, and `fetch.budget` is at least `fetch.timeout`.
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` do not exceed `limits.max_version_bytes`.
 - `serve.default_visibility` is `public`, `unlisted` or `members`, and `serve.share_link_max_ttl` is greater than 0.
 - `auth.write_policy` is `shared` or `owner`.

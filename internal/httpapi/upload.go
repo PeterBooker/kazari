@@ -25,14 +25,45 @@ const manifestLimit = 64 << 10
 
 const spillPrefix = "kazari-bundle-"
 
-func inlineFiles(in []api.FileInput, allowDelete bool) ([]artifact.FileInput, error) {
+// inlineFiles downloads the entries that name a url before the publish, so
+// the service never waits on a remote host while it holds a version open.
+func (h *userAPI) inlineFiles(ctx context.Context, in []api.FileInput, allowDelete bool) ([]artifact.FileInput, func(), error) {
+	var downloads []io.Closer
+	closeAll := func() {
+		for _, d := range downloads {
+			d.Close()
+		}
+	}
 	out := make([]artifact.FileInput, 0, len(in))
 	for _, f := range in {
 		if f.Delete {
 			if !allowDelete {
-				return nil, invalid("cannot delete %q when creating an artifact", f.Path)
+				closeAll()
+				return nil, nil, invalid("cannot delete %q when creating an artifact", f.Path)
 			}
 			out = append(out, artifact.FileInput{Path: f.Path, Delete: true})
+			continue
+		}
+		if f.URL != "" {
+			switch {
+			case f.Content != "":
+				closeAll()
+				return nil, nil, invalid("file %q has both url and content", f.Path)
+			case h.d.Fetch == nil:
+				closeAll()
+				return nil, nil, artifact.Errorf(artifact.ErrForbidden, "fetching URLs is disabled on this instance")
+			}
+			d, err := h.d.Fetch.Download(ctx, f.URL, h.o.MaxTotalBytes)
+			if err != nil {
+				closeAll()
+				return nil, nil, err
+			}
+			downloads = append(downloads, d)
+			ct := f.ContentType
+			if ct == "" && artifact.ValidateContentType(d.ContentType) == nil {
+				ct = d.ContentType
+			}
+			out = append(out, artifact.FileInput{Path: f.Path, Content: d, ContentType: ct})
 			continue
 		}
 		var content io.Reader
@@ -42,15 +73,17 @@ func inlineFiles(in []api.FileInput, allowDelete bool) ([]artifact.FileInput, er
 		case "base64":
 			b, err := base64.StdEncoding.DecodeString(f.Content)
 			if err != nil {
-				return nil, invalid("file %q: invalid base64: %v", f.Path, err)
+				closeAll()
+				return nil, nil, invalid("file %q: invalid base64: %v", f.Path, err)
 			}
 			content = bytes.NewReader(b)
 		default:
-			return nil, invalid("file %q: encoding must be utf8 or base64, not %q", f.Path, f.Encoding)
+			closeAll()
+			return nil, nil, invalid("file %q: encoding must be utf8 or base64, not %q", f.Path, f.Encoding)
 		}
 		out = append(out, artifact.FileInput{Path: f.Path, Content: content, ContentType: f.ContentType})
 	}
-	return out, nil
+	return out, closeAll, nil
 }
 
 // mergeFiles keeps primary on a path clash.

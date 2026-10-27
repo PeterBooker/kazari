@@ -1,6 +1,10 @@
-package oauth
+package fetch_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/PeterBooker/kazari/internal/fetch"
+)
 
 func TestPublicAddr(t *testing.T) {
 	tests := []struct {
@@ -34,8 +38,8 @@ func TestPublicAddr(t *testing.T) {
 		{"not-an-ip", false},
 	}
 	for _, tt := range tests {
-		if got := publicAddr(tt.host); got != tt.want {
-			t.Errorf("publicAddr(%q) = %v, want %v", tt.host, got, tt.want)
+		if got := fetch.PublicAddr(tt.host); got != tt.want {
+			t.Errorf("PublicAddr(%q) = %v, want %v", tt.host, got, tt.want)
 		}
 	}
 }

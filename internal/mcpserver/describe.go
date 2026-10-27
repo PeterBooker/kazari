@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/present"
 )
 
@@ -78,6 +79,9 @@ func newTexts(links present.Links, o Options) texts {
 		"files[] given in the same call are merged with the staged files and win on a path clash. The upload is consumed "+
 		"by this call whether it succeeds or fails.",
 		size(o.InlineGuidanceBytes))
+	if o.Fetch {
+		t.inline += " " + urlFile
+	}
 
 	t.chunks = fmt.Sprintf("Offset rule: the first chunk of each path has offset 0; every next chunk's offset is the "+
 		"bytes_received returned by the previous chunk of that path. Each chunk is at most %s after base64 decoding "+
@@ -87,10 +91,16 @@ func newTexts(links present.Links, o Options) texts {
 		"the error says current=<n>: resume that path from offset n.",
 		size(o.MaxChunkBytes), size(o.MaxTotalBytes))
 
+	copyLine := ""
+	if o.Fetch {
+		copyLine = "- Copy of an existing page (\"like example.com, but...\"): import_page with its url and a slug, never " +
+			"your own fetch of the page; then change the copy with edit_file, guided by the outline in the result.\n"
+	}
 	// How the tools fit together; each tool's own description says what it does.
 	t.instructions = fmt.Sprintf("Kazari hosts static web pages at %s (the published version) and %s (version N). "+
 		"Work in this order:\n"+
 		"- New page: create_artifact, then report the url from the result to the user.\n"+
+		"%s"+
 		"- Change a page: read_file with anchors: true, then edit_file with expected_version set to the latest_version "+
 		"the read returned. On version_conflict or anchor_mismatch, read again and redo the edit; never resend it "+
 		"unchanged. update_artifact adds, replaces or deletes whole files.\n"+
@@ -101,7 +111,7 @@ func newTexts(links present.Links, o Options) texts {
 		"the user the url from the result.\n"+
 		"Errors end with the next step to take; follow it. The full guide (workflow, authoring conventions with this "+
 		"instance's limits and CSP, edit modes, errors) is the skill %s, also returned by get_guide.",
-		t.pageURL, t.versionURL, size(o.InlineGuidanceBytes), skillURI)
+		t.pageURL, t.versionURL, copyLine, size(o.InlineGuidanceBytes), skillURI)
 
 	t.tools = t.toolDescriptions(o)
 	t.next = t.nextSteps(o)
@@ -121,6 +131,31 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"Returns url, version and the artifact record; report the url to the user.", t.pageURL),
 			t.slugRules, t.limits, t.serving, t.csp, t.metadata, t.inline,
 			t.visibility,
+			"label is an optional note on the version.",
+			t.text,
+		}, "\n\n"),
+
+		"import_page": strings.Join([]string{
+			fmt.Sprintf("Copy an existing web page into a new artifact and publish it as version 1 at %s. The server "+
+				"fetches the page and its stylesheets (with their url() and @import references), fonts, images, srcset "+
+				"candidates, icons and media, stores them under assets/ with relative references, makes navigation links "+
+				"and form actions absolute to the source site, and removes the page's scripts and event handlers (the "+
+				"copy is static, and the source's analytics must not run here); keep_scripts: true keeps them. A "+
+				"resource stays remote only when the Content-Security-Policy names its host.", t.pageURL),
+			"Use it whenever the user wants a page copied, cloned or used as the starting point for changes (\"like " +
+				"example.com, but with a new hero\"), instead of fetching the page yourself: the copy keeps the markup " +
+				"and styling that a text fetch loses. name and description default to the page's title and meta " +
+				"description. Only import pages the user has the right to copy.",
+			"The result's import field reports the source, how many files were fetched, which resources stayed remote " +
+				"and why (skipped), how many scripts were removed, notes (a page that renders with JavaScript imports as " +
+				"a shell), and an outline: each landmark (header, nav, main, section, article, aside, footer, form, h1, " +
+				"h2) with the line its opening tag is on, that tag as text, and its first heading. To change the copy " +
+				"use edit_file: a text edit whose old_text is an outline tag replaces that element's start, so new_text " +
+				"of new content followed by the same tag inserts before it; on a page kept on few lines, read a window " +
+				"around the landmark's line with read_file start_line and end_line first.",
+			"A page behind a login, a CAPTCHA or bot protection fails with fetch_failed: ask the user to save it from " +
+				"their browser and publish the files instead.",
+			t.slugRules, t.visibility, t.limits,
 			"label is an optional note on the version.",
 			t.text,
 		}, "\n\n"),
@@ -356,21 +391,12 @@ func describeCSP(csp string) string {
 	return b.String()
 }
 
-// parseCSP keeps the first of a repeated directive, as browsers do.
-func parseCSP(csp string) map[string][]string {
-	out := map[string][]string{}
-	for _, d := range strings.Split(csp, ";") {
-		f := strings.Fields(d)
-		if len(f) == 0 {
-			continue
-		}
-		name := strings.ToLower(f[0])
-		if _, dup := out[name]; !dup {
-			out[name] = f[1:]
-		}
-	}
-	return out
-}
+func parseCSP(policy string) map[string][]string { return csp.Parse(policy) }
+
+// urlFile describes files[].url where fetching is on.
+const urlFile = "A file can give url instead of content: an http or https address on a public host that the server " +
+	"downloads as the file's content, up to the file limit (content_type is taken from the response when omitted). A " +
+	"download that fails fails the whole call with fetch_failed, and nothing is published."
 
 func describeSources(src []string) string {
 	if len(src) == 0 {

@@ -47,7 +47,7 @@ The reference pages hold every detail:
 
 | Page                                | What is in it                                                     |
 | ----------------------------------- | ----------------------------------------------------------------- |
-| [MCP server](mcp.md)                | The eighteen tools, editing files, the skill, the preview app, chunked uploads, errors |
+| [MCP server](mcp.md)                | The nineteen tools, editing files, the skill, the preview app, chunked uploads, errors |
 | [CLI](cli.md)                       | Every `kazari` command and flag, output and exit codes            |
 | [REST API](api.md)                  | The user and admin APIs, wire types, limits and error codes       |
 | [Configuration](configuration.md)   | Every YAML key, `${}` environment references, `.env`, overrides   |
