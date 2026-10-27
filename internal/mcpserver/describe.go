@@ -96,7 +96,7 @@ func newTexts(links present.Links, o Options) texts {
 		"unchanged. update_artifact adds, replaces or deletes whole files.\n"+
 		"- Content above %s: begin_upload, upload_chunk for each file, then create_artifact or update_artifact with upload_id.\n"+
 		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
-		"before delete_artifact with hard: true.\n"+
+		"before delete_artifact with hard: true. update_artifact with restore: true undoes a soft delete.\n"+
 		"- Sharing a \"members\" page with someone who cannot sign in to this instance: create_share_link, then give "+
 		"the user the url from the result.\n"+
 		"Errors end with the next step to take; follow it. The full guide (workflow, authoring conventions with this "+
@@ -135,6 +135,12 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"expected_version: pass the latest_version you last saw (from get_artifact or a previous result). If " +
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
+			"restore: true brings back a soft-deleted artifact (get_artifact shows deleted_at) and then applies the " +
+				"other changes; without it a soft-deleted artifact is not_found.",
+			"To make the new version hold exactly a set of files, list the latest version's paths with get_artifact " +
+				"and include_files, and add {path, delete: true} for each path not in the set. A change that spans " +
+				"several files is atomic only in one update_artifact call with the whole files; edit_file publishes " +
+				"each file as its own version.",
 			"A new version clears a pending stale mark unless keep_stale is true.",
 			t.text, t.limits, t.csp, t.metadata, t.inline,
 		}, "\n\n"),
@@ -171,9 +177,15 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"Recipe: 1) begin_upload. 2) For each file call upload_chunk with offset 0, then with offset = the " +
 				"bytes_received of the previous chunk, until the whole file is sent. 3) Call create_artifact or " +
 				"update_artifact with upload_id (plus any small inline files or delete entries). That call consumes the " +
-				"upload whether it succeeds or fails; begin a new upload to retry. Unused uploads expire at expires_at.",
+				"upload whether it succeeds or fails; begin a new upload to retry. discard_upload drops an upload you no " +
+				"longer need; unused ones expire at expires_at.",
 			t.chunks,
 		}, "\n\n"),
+
+		"discard_upload": "Discard an upload started with begin_upload that you no longer need, removing its staged " +
+			"files. Use it after changing your mind, or when begin_upload fails with too_many_uploads. An upload is " +
+			"also removed by the create_artifact or update_artifact call that consumes it, and expires at its " +
+			"expires_at on its own.",
 
 		"upload_chunk": strings.Join([]string{
 			"Append one chunk of one file to an upload started with begin_upload. path is the file's path in the " +
@@ -190,16 +202,21 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. Text files up "+
 			"to %s come back inline as text; other files up to %s come back as a base64 blob resource; anything larger "+
 			"returns a download URL on the REST API (%s, bearer authentication). anchors: true prefixes every line of a "+
-			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits. The "+
+			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits. start_line "+
+			"and end_line (1-based, inclusive; end_line defaults to the end) read a window of a text file of any size up "+
+			"to %s instead, with the same anchors when asked; the result states start_line, end_line and total_lines, "+
+			"holds as many whole lines as fit %s, and says where to continue when it was cut short. The "+
 			"structured result always carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
 			"version (the version read) and latest_version, and for text the file's content (anchored when asked). "+
 			"edit_file edits the latest version: when the two differ, read version = latest_version before editing.",
-			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl),
+			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl, size(o.MaxFileBytes), size(o.MaxInlineReadBytes)),
 
 		"list_artifacts": "List artifacts visible to you: every public and members artifact plus unlisted ones you " +
 			"created or updated. Filters: mine = \"created\", \"updated\" or \"any\" (relative to you); metadata = key/value pairs " +
-			"that must all match; stale = \"include\" (default), \"exclude\" or \"only\". limit defaults to 50, at most " +
-			"200; when next_cursor is set, pass it as cursor for the next page.",
+			"that must all match; stale = \"include\" (default), \"exclude\" or \"only\"; deleted = \"exclude\" (default), " +
+			"\"include\" or \"only\" for soft-deleted artifacts you may still see (your own, or ones you worked on), which " +
+			"update_artifact with restore: true brings back. limit defaults to 50, at most 200; when next_cursor is set, " +
+			"pass it as cursor for the next page.",
 
 		"publish_version": fmt.Sprintf("Point %s at an existing version, to roll back or forward. Versions are numbered "+
 			"from 1 to latest_version (get_artifact lists them); nothing is copied or deleted, and the version keeps its "+
@@ -241,7 +258,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"artifact is purged after the retention period. hard = true purges it now, permanently: every version is " +
 			"gone and the slug stays blocked for a while. Ask the user before a hard delete; clients that support it are " +
 			"asked to confirm, and if the user declines nothing is deleted. Prefer set_visibility \"unpublished\" to " +
-			"take a page offline reversibly.",
+			"take a page offline reversibly. A soft delete is undone with update_artifact and restore: true until the purge.",
 	}
 }
 

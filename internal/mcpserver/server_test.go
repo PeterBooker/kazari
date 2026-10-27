@@ -174,7 +174,7 @@ func TestListTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"begin_upload", "create_artifact", "create_share_link", "delete_artifact", "edit_file", "get_artifact",
+	want := []string{"begin_upload", "create_artifact", "create_share_link", "delete_artifact", "discard_upload", "edit_file", "get_artifact",
 		"get_guide", "list_artifacts", "list_share_links", "mark_stale", "publish_version", "read_file", "revoke_share_link",
 		"set_visibility", "unmark_stale", "update_artifact", "upload_chunk"}
 	var got []string
@@ -347,12 +347,29 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Errorf("republish = %+v", on.Artifact)
 	}
 
-	if done, _ := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !done.OK {
-		t.Errorf("soft delete = %+v", done)
+	if done, res := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !done.OK ||
+		!strings.Contains(firstLine(res), "update_artifact with restore: true brings it back") {
+		t.Errorf("soft delete = %+v, %q", done, firstLine(res))
 	}
 	detail, _ = ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo"})
 	if detail.Artifact.DeletedAt == nil {
 		t.Errorf("soft-deleted artifact has no deleted_at")
+	}
+	msg = fails(t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo again"})
+	if !strings.HasPrefix(msg, "not_found: ") || !strings.Contains(msg, "restore: true") {
+		t.Errorf("update of a soft-deleted artifact = %q", msg)
+	}
+	list, _ = ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{"mine": "any"})
+	if len(list.Items) != 0 {
+		t.Errorf("default list shows deleted artifacts: %+v", list.Items)
+	}
+	list, _ = ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{"mine": "any", "deleted": "only"})
+	if len(list.Items) != 1 || list.Items[0].DeletedAt == nil {
+		t.Errorf("list deleted only = %+v", list.Items)
+	}
+	restored, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo again", "restore": true})
+	if restored.Artifact.DeletedAt != nil || restored.Artifact.Name != "Demo again" || restored.Artifact.LatestVersion != 2 {
+		t.Errorf("restore = %+v", restored.Artifact)
 	}
 	if done, _ := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo", "hard": true}); !done.OK {
 		t.Errorf("hard delete = %+v", done)
@@ -594,4 +611,63 @@ func TestToolPanicRecovered(t *testing.T) {
 		t.Errorf("panicking tool = %q", msg)
 	}
 	ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{})
+}
+
+func TestUpdateFromUpload(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+		"files": []map[string]any{{"path": "index.html", "content": "<p>v1</p>"}, {"path": "old.txt", "content": "x"}}})
+	up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
+	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "data.json", "offset": 0, "content": `{"n":1}`})
+	pub, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "expected_version": 1,
+		"upload_id": up.UploadID, "files": []map[string]any{{"path": "old.txt", "delete": true}}})
+	if pub.Version != 2 {
+		t.Fatalf("update from upload = %+v", pub)
+	}
+	detail, _ := ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo", "include_files": true})
+	var paths []string
+	for _, f := range detail.Versions[0].Files {
+		paths = append(paths, f.Path)
+	}
+	if !slices.Equal(paths, []string{"data.json", "index.html"}) {
+		t.Errorf("v2 files = %v", paths)
+	}
+	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "data.json", "offset": 7, "content": "x"}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("chunk after publish = %q", msg)
+	}
+}
+
+func TestDiscardUpload(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	var ids []string
+	for i := 0; i < upload.DefaultMaxOpenPerOwner; i++ {
+		up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
+		ids = append(ids, up.UploadID)
+	}
+	msg := fails(t, cs, "begin_upload", map[string]any{})
+	if !strings.HasPrefix(msg, "too_many_uploads: ") || !strings.Contains(msg, "discard_upload") {
+		t.Fatalf("begin_upload over the limit = %q", msg)
+	}
+	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": ids[0], "path": "a.txt", "offset": 0, "content": "x"})
+	done, res := ok[api.OK](t, cs, "discard_upload", map[string]any{"upload_id": ids[0]})
+	if !done.OK || !strings.Contains(firstLine(res), ids[0]) {
+		t.Errorf("discard = %+v, %q", done, firstLine(res))
+	}
+	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": ids[0], "path": "a.txt", "offset": 1, "content": "y"}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("chunk after discard = %q", msg)
+	}
+	if msg := fails(t, cs, "discard_upload", map[string]any{"upload_id": ids[0]}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("second discard = %q", msg)
+	}
+	if up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{}); up.UploadID == "" {
+		t.Errorf("begin_upload after a discard failed")
+	}
+	if msg := fails(t, cs, "discard_upload", map[string]any{"upload_id": "missing"}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("discard of an unknown upload = %q", msg)
+	}
+	if msg := fails(t, e.connect(t, readOnly), "discard_upload", map[string]any{"upload_id": ids[1]}); !strings.Contains(msg, `scope "artifacts:write" required`) {
+		t.Errorf("discard as reader = %q", msg)
+	}
 }

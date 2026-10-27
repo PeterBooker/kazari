@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -327,5 +328,63 @@ func TestTextsUsePublicLinks(t *testing.T) {
 	if !strings.Contains(c.Text, `"versionURL":"http://{slug}--v{version}.localhost:8080/"`) ||
 		string(frames) != `{"frameDomains":["http://*.localhost:8080"]}` {
 		t.Errorf("preview versionURL or frames wrong: %s", frames)
+	}
+}
+
+func TestReadFileWindow(t *testing.T) {
+	e := newEnv(t)
+	e.opts.MaxInlineReadBytes = 4 << 10
+	cs := e.connect(t, member)
+	var sb strings.Builder
+	for i := 1; i <= 3000; i++ {
+		fmt.Fprintf(&sb, "<p>line %d %s</p>\n", i, strings.Repeat("x", 90))
+	}
+	big := sb.String()
+	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+		"files": []map[string]any{{"path": "index.html", "content": big}, {"path": "logo.png", "content": b64(pngBytes), "encoding": "base64"}}})
+
+	rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
+	if rf.Encoding != "url" {
+		t.Fatalf("whole read of a large text file = %+v", rf)
+	}
+
+	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html",
+		"start_line": 2000, "end_line": 2002, "anchors": true})
+	lines := strings.Split(big, "\n")
+	want := artifact.Anchor(2000, lines[1999]) + "|" + lines[1999] + "\n" + artifact.Anchor(2001, lines[2000]) + "|" + lines[2000] + "\n" +
+		artifact.Anchor(2002, lines[2001]) + "|" + lines[2001]
+	if rf.Encoding != "utf8" || !rf.Anchored || rf.StartLine != 2000 || rf.EndLine != 2002 || rf.TotalLines != 3000 ||
+		rf.Content != want || firstLine(res) != want || !strings.Contains(text(res), "Lines 2000-2002 of 3000") {
+		t.Fatalf("window = %+v\n%q", rf, text(res))
+	}
+
+	start, _, _ := strings.Cut(strings.SplitN(rf.Content, "\n", 2)[0], "|")
+	out, _ := ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
+		"edits": []map[string]any{{"start": start, "new_text": "<p>edited</p>"}}})
+	if out.Version != 2 || out.Edits[0].StartLine != 2000 {
+		t.Errorf("anchor edit from a window = %+v", out)
+	}
+	rf, _ = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "start_line": 2000, "end_line": 2000})
+	if rf.Content != "<p>edited</p>" || rf.Anchored || rf.Version != 2 || rf.LatestVersion != 2 {
+		t.Errorf("window after the edit = %+v", rf)
+	}
+
+	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "start_line": 1})
+	if rf.StartLine != 1 || rf.EndLine >= 3000 || rf.EndLine < 30 || int64(len(rf.Content)) > 4<<10 ||
+		!strings.Contains(text(res), fmt.Sprintf("continue from start_line %d", rf.EndLine+1)) {
+		t.Errorf("cut window = lines %d-%d, %d bytes, %q", rf.StartLine, rf.EndLine, len(rf.Content), text(res))
+	}
+
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"slug": "demo", "path": "index.html", "start_line": 3001}, "invalid_argument: start_line 3001 is past the end"},
+		{map[string]any{"slug": "demo", "path": "index.html", "start_line": 5, "end_line": 4}, "invalid_argument: end_line 4 is before start_line 5"},
+		{map[string]any{"slug": "demo", "path": "logo.png", "start_line": 1}, "invalid_argument: logo.png is image/png, not a text file"},
+	} {
+		if msg := fails(t, cs, "read_file", c.args); !strings.HasPrefix(msg, c.want) {
+			t.Errorf("read_file %v = %q, want prefix %q", c.args, msg, c.want)
+		}
 	}
 }

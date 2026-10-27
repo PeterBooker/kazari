@@ -129,7 +129,7 @@ Anyone who has the link can open the page until it expires or is revoked, so sen
 
 Pages you no longer need can retire themselves. Ask your agent to mark a page stale with a grace period, for example "retire it in two weeks". The page keeps working until the grace period ends, then:
 
-1. It is **soft-deleted**: it goes offline, but it can still be restored, for 30 days by default. Ask your administrator if you need it back.
+1. It is **soft-deleted**: it goes offline, but it can still be restored, for 30 days by default. Ask your agent to restore it if you need it back.
 2. It is **purged**: the files are gone, and old links say "gone" for 90 days.
 3. The **slug is freed** and can be used again.
 

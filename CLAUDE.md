@@ -25,7 +25,9 @@ go run github.com/goreleaser/goreleaser/v2@latest check
 # local server: http://*.localhost:8080 in proxy mode, data in ./.data, no token. The admin
 # commands find its socket in ./.data: go run ./cmd/kazari admin users create peter --role admin,
 # then admin keys issue peter. The kazari-dev server in .mcp.json needs such a key exported as
-# KAZARI_DEV_TOKEN before Claude Code starts.
+# KAZARI_DEV_TOKEN before Claude Code starts. If port 8080 is taken, move the local server and
+# point .mcp.json at it, also before Claude Code starts:
+#   export KAZARI_LISTEN_HTTP=127.0.0.1:18080 KAZARI_EXTERNAL_PORT=18080 KAZARI_DEV_URL=http://mcp.localhost:18080/
 go run ./cmd/kazari serve --local
 docker compose up --build -d    # the same from the Docker image (serve --local), data in the volume kazari_data
 go run ./cmd/kazari check       # preflight: config, DNS, DNS token, ports (--local for the preset)
@@ -51,4 +53,4 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 - Standard library first: no web framework, ORM, DI container or assertion library. kong parses the command line, `go-cmp` is fine in tests.
 - SQLite timestamps are INTEGER unix nanoseconds. Migrations are `internal/sqlite/migrations/NNNN_*.sql`, applied at start. Users are referenced by id internally and by handle externally.
 - A bug fix adds a test at the lowest layer that reproduces it.
-- A change in behaviour (commands, flags, limits, tools, defaults) updates every file that states it: `docs/`, `site/content/docs/`, `site/layouts/home.html`, `README.md`, `deploy/kazari.yaml`, `deploy/kazari.reference.yaml`, `deploy/compose.yml`, `examples/kazari/SKILL.md`. After any change under `docs/`, `site/` or `deploy/`, `hugo --source site --gc --minify` must print no WARN or ERROR.
+- A change in behaviour (commands, flags, limits, tools, defaults) updates every file that states it: `docs/`, `site/content/docs/`, `site/layouts/home.html`, `README.md`, `deploy/kazari.yaml`, `deploy/kazari.reference.yaml`, `deploy/compose.yml`. `examples/kazari/SKILL.md` is generated, never edited: after a change to the skill text, the tool descriptions or the defaults, run `go test ./internal/mcpserver -run TestExampleSkill -update`. After any change under `docs/`, `site/` or `deploy/`, `hugo --source site --gc --minify` must print no WARN or ERROR.

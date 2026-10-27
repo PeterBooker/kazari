@@ -106,6 +106,13 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 		if version == 0 {
 			version = a.PublishedVersion
 		}
+		if in.StartLine > 0 || in.EndLine > 0 {
+			w, note, err := b.readWindow(ctx, actor, in, version, a.LatestVersion)
+			if err != nil {
+				return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: w.Content}, &mcp.TextContent{Text: note}}}, w, nil
+		}
 		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
 		f := fc.file
 		out = ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash,
@@ -270,4 +277,92 @@ func (b *builder) addPrompt(s *mcp.Server) {
 			}},
 		}, nil
 	})
+}
+
+// readWindow returns lines start_line to end_line of a text file of any size up
+// to the file limit: as many whole lines as fit the inline limit, with anchors
+// that carry their absolute line numbers so edit_file can use them. The note
+// says what the window covers and where to continue when it was cut short.
+func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadFileInput, version, latest int) (ReadFileResult, string, error) {
+	start, end := in.StartLine, in.EndLine
+	if start <= 0 {
+		start = 1
+	}
+	if end != 0 && end < start {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "end_line %d is before start_line %d", end, start)
+	}
+	f, rc, err := b.d.Artifacts.OpenFile(ctx, actor, in.Slug, in.Path, version)
+	if err != nil {
+		return ReadFileResult{}, "", err
+	}
+	defer rc.Close()
+	if !isText(f.ContentType) {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,
+			"%s is %s, not a text file; start_line and end_line read text files only", f.Path, f.ContentType)
+	}
+	if f.Size > b.o.MaxFileBytes {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
+			"%s is %d bytes, more than the %s file limit", f.Path, f.Size, size(b.o.MaxFileBytes))
+	}
+	data, more, err := readAtMost(rc, b.o.MaxFileBytes)
+	if err != nil {
+		return ReadFileResult{}, "", fmt.Errorf("mcpserver: read %s/%s: %w", in.Slug, f.Path, err)
+	}
+	if more {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
+			"%s is larger than the %s file limit", f.Path, size(b.o.MaxFileBytes))
+	}
+	if !utf8.Valid(data) {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "%s is not UTF-8 text", f.Path)
+	}
+	lines := splitLines(string(data))
+	total := len(lines)
+	if start > total {
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,
+			"start_line %d is past the end of %s, which has %d lines", start, f.Path, total)
+	}
+	if end == 0 || end > total {
+		end = total
+	}
+	var sb strings.Builder
+	last := start - 1
+	for n := start; n <= end; n++ {
+		piece := lines[n-1]
+		if in.Anchors {
+			piece = artifact.Anchor(n, piece) + "|" + piece
+		}
+		add := len(piece)
+		if n > start {
+			add++ // the line break before it
+		}
+		if int64(sb.Len()+add) > b.o.MaxInlineReadBytes {
+			if n == start {
+				return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
+					"line %d of %s is %d bytes, more than the %s inline limit", n, f.Path, len(lines[n-1]), size(b.o.MaxInlineReadBytes))
+			}
+			break
+		}
+		if n > start {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(piece)
+		last = n
+	}
+	out := ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash, Encoding: "utf8",
+		Content: sb.String(), Anchored: in.Anchors, Version: version, LatestVersion: latest,
+		StartLine: start, EndLine: last, TotalLines: total}
+	note := fmt.Sprintf("Lines %d-%d of %d in %s.", start, last, total, f.Path)
+	if last < end {
+		note += fmt.Sprintf(" The window was cut at the %s inline limit: continue from start_line %d.",
+			size(b.o.MaxInlineReadBytes), last+1)
+	}
+	return out, note, nil
+}
+
+// splitLines counts "a\nb\n" as two lines and "" as none, as artifact.AnchorLines does.
+func splitLines(text string) []string {
+	if text == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 }
