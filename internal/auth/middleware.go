@@ -105,6 +105,18 @@ func RequireAdmin(token string, fallback Authenticator) func(http.Handler) http.
 	}
 }
 
+// AsLocalAdmin treats every request as the admin principal, with
+// SourceLocal. Only a listener whose transport is the credential, such as a
+// Unix socket owned by the service user, may use it.
+func AsLocalAdmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := Principal{Handle: "admin", Admin: true, Scopes: AllScopes, Source: SourceLocal}
+			next.ServeHTTP(w, r.WithContext(ContextWithPrincipal(r.Context(), p)))
+		})
+	}
+}
+
 func unauthorized(w http.ResponseWriter, opts BearerOptions, msg string) {
 	challenge := `Bearer error="invalid_token"`
 	if opts.ResourceMetadataURL != "" {

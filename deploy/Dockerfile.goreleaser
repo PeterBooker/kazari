@@ -11,4 +11,5 @@ VOLUME /var/lib/kazari
 EXPOSE 80 443
 ENV KAZARI_DATA_DIR=/var/lib/kazari
 ENTRYPOINT ["/usr/local/bin/kazari"]
-CMD ["serve", "--config", "/etc/kazari/kazari.yaml"]
+# serve reads /etc/kazari/kazari.yaml when it is mounted, else the KAZARI_* environment.
+CMD ["serve"]

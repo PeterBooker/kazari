@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
 )
 
 func TestMembersVisibility(t *testing.T) {

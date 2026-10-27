@@ -12,9 +12,9 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"kazari/internal/api"
-	"kazari/internal/auth"
-	"kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 const DefaultIPPerMinute = 120

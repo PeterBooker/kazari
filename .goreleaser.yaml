@@ -12,9 +12,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X kazari/internal/buildinfo.version={{.Version}}
-      - -X kazari/internal/buildinfo.commit={{.Commit}}
-      - -X kazari/internal/buildinfo.date={{.Date}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.version={{.Version}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.commit={{.Commit}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.date={{.Date}}
     goos:
       - linux
       - darwin
@@ -33,9 +33,49 @@ archives:
       - LICENSE
       - README.md
       - deploy/kazari.yaml
+      - deploy/kazari.reference.yaml
       - deploy/kazari.env.example
       - deploy/kazari.service
+      - deploy/compose.yml
       - deploy/Caddyfile
+
+# deb and rpm packages: the binary, the unit, the two configuration files
+# (kept on upgrade) and the reference files under /usr/share/doc/kazari.
+nfpms:
+  - id: packages
+    package_name: kazari
+    vendor: Peter Booker
+    homepage: https://kazari.io/
+    maintainer: Peter Booker <mail@peterbooker.com>
+    description: |-
+      Self-hosted artifact host. One binary serves every page at
+      <slug>.<your-domain> under a wildcard certificate, with a REST API, an
+      MCP server for AI agents and a CLI.
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: deploy/kazari.service
+        dst: /usr/lib/systemd/system/kazari.service
+      - src: deploy/kazari.yaml
+        dst: /etc/kazari/kazari.yaml
+        type: config|noreplace
+      - src: deploy/kazari.env.example
+        dst: /etc/kazari/kazari.env
+        type: config|noreplace
+        file_info:
+          mode: 0600
+      - src: deploy/kazari.reference.yaml
+        dst: /usr/share/doc/kazari/kazari.reference.yaml
+      - src: deploy/compose.yml
+        dst: /usr/share/doc/kazari/compose.yml
+      - src: deploy/Caddyfile
+        dst: /usr/share/doc/kazari/Caddyfile
+      - src: LICENSE
+        dst: /usr/share/doc/kazari/LICENSE
+    scripts:
+      postinstall: deploy/packaging/postinstall.sh
+      preremove: deploy/packaging/preremove.sh
 
 checksum:
   name_template: checksums.txt

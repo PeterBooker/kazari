@@ -2,7 +2,7 @@
 
 Kazari reads one YAML file plus environment variables and checks the result at startup. If anything is wrong, it refuses to start and lists every problem, each named by its key. No settings are stored in the database: to change a limit, edit the file and restart, which takes under a second.
 
-This page covers how the configuration is loaded, the file's format, environment variables and `.env` files, secrets, and every key with its default. The repository has three starting points: `deploy/kazari.yaml`, a complete example with every default; `deploy/dev.yaml`, the local development setup; and `deploy/kazari.env.example`, the template for secrets.
+This page covers how the configuration is loaded, the file's format, environment variables and dotenv files, secrets, the preflight check, and every key with its default. Three files in `deploy/`, served at <https://kazari.io/deploy/>, are the starting points: `kazari.yaml`, the short file with the keys every instance sets; `kazari.reference.yaml`, every key with its default; and `kazari.env.example`, the template for the secrets.
 
 ## How configuration is loaded
 
@@ -10,7 +10,7 @@ The configuration has three sources: built-in defaults, the YAML file and enviro
 
 ### Where the file comes from
 
-`kazari serve` uses the first of:
+`kazari serve` and `kazari check` use the first of:
 
 1. `--config PATH`. The file must exist.
 2. `$KAZARI_CONFIG`.
@@ -18,6 +18,10 @@ The configuration has three sources: built-in defaults, the YAML file and enviro
 4. No file: defaults plus environment variables.
 
 A key the server does not know is an error, so a typo fails loudly rather than being ignored.
+
+### The local preset
+
+`kazari serve --local` reads no file. It starts from a preset for a server on your own machine: plain HTTP on `127.0.0.1:8080` in proxy mode, the base domain `localhost`, `external_scheme: http` with `external_port: 8080`, the data in `./.data`, and `log.level: debug`. `KAZARI_*` variables apply on top of it, so `KAZARI_DATA_DIR` moves the data and `KAZARI_LISTEN_HTTP=:8080` makes it reachable from outside a container. `--local` and `--config` exclude each other.
 
 ### Precedence
 
@@ -65,11 +69,11 @@ Any value can refer to an environment variable:
 | `${NAME:-default}`  | The value of `NAME`, falling back to `default`              |
 | `$$`                | A literal `$`                                               |
 
-A reference to a variable that is not set and has no default stops startup with an error naming the variable. `deploy/dev.yaml` uses a default, so development needs no secrets:
+A reference to a variable that is not set and has no default stops startup with an error naming the variable. A default makes the reference optional:
 
 ```yaml
-auth:
-  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN:-dev-admin-token}
+tls:
+  ca: ${KAZARI_TLS_CA:-letsencrypt}
 ```
 
 ### The `.env` file
@@ -91,7 +95,7 @@ KAZARI_LISTEN_PROXY_MODE=true
 
 A variable already set in the process environment wins over the file. Variables from the file feed both `${NAME}` references and the [`KAZARI_*` overrides](#overriding-keys-from-the-environment).
 
-The file holds secrets, so keep it mode `0600` and out of version control. Under systemd, the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=` instead, so those variables arrive as process environment.
+The file holds secrets, so keep it mode `0600` and out of version control. Under systemd, the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=` instead, so those variables arrive as process environment. Under Docker Compose, `compose.yml` passes `.env` into the container the same way.
 
 The CLI reads `./.env` too, for its own variables: see [CLI configuration](cli.md#configuring-the-client).
 
@@ -102,13 +106,23 @@ Three keys are secrets: `tls.dns.api_token`, `auth.admin_token` and `auth.oidc.c
 Never write them into the YAML file, which must be world-readable under systemd. Refer to them as `${NAME}`, or leave them out and set the `KAZARI_*` override. Then supply the variables from one of these places:
 
 - `/etc/kazari/kazari.env` for the systemd unit, with mode `0600`. systemd reads it as root.
-- `.env` in development.
-- `--env-file` for Docker.
-- Your secret manager's equivalent.
+- `.env` beside `compose.yml`, or in the working directory in development.
+- `--env-file` for any other setup.
+- A file per secret, as the next section describes.
 
-### Generating the admin token
+### Reading a secret from a file
 
-Generate the admin token with `openssl`:
+Docker, Swarm and Kubernetes mount secrets as files. For each secret key, the variable with `_FILE` added to its name takes the path of a file holding the value, without its trailing newline:
+
+```sh
+KAZARI_TLS_DNS_API_TOKEN_FILE=/run/secrets/dns-token
+```
+
+The plain variable wins when both are set. A file that cannot be read stops startup with an error naming the variable.
+
+### The admin token
+
+On the server's host, `kazari admin` commands reach the admin API over the Unix socket in the data directory and need no token ([`admin`](#admin)). The admin token is for administering from elsewhere, or from scripts that run before any user exists. Generate it with `openssl`:
 
 ```sh
 openssl rand -hex 32
@@ -116,11 +130,9 @@ openssl rand -hex 32
 
 It prints 64 hexadecimal characters. A token shorter than 32 characters stops startup, unless `base_domain` is `localhost` or ends in `.localhost`.
 
-### Retiring the admin token
+To retire the token once an admin user has an API key with the `admin` scope ([administering from another machine](install.md#administering-from-another-machine)):
 
-Once an admin user has an API key with the `admin` scope, you can retire the token ([creating the first admin user and key](install.md#creating-the-first-admin-user-and-key) shows how to issue one). To retire it:
-
-1. Delete the `admin_token` line from the file. Otherwise its `${}` reference to a variable that is no longer set stops startup.
+1. Delete the `admin_token` line from the file, if there is one. Otherwise its `${}` reference to a variable that is no longer set stops startup.
 2. Unset `KAZARI_AUTH_ADMIN_TOKEN`.
 3. Restart the server.
 
@@ -139,7 +151,7 @@ Every key has an environment variable: `KAZARI_` followed by the key's full path
 
 An override wins over the file, whether or not the file mentions the key. A deployment configured entirely from the environment therefore needs no file at all.
 
-The secrets in `deploy/kazari.yaml` use the same names in their `${}` references, so one variable serves either way.
+The secrets in `deploy/kazari.yaml` use the same names in their `${}` references, so one variable serves either way. A secret also reads the variable with `_FILE` added ([reading a secret from a file](#reading-a-secret-from-a-file)).
 
 Setting any `KAZARI_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults, even when the file has none.
 
@@ -155,9 +167,17 @@ An override's value is a string. Keys that are not strings take these formats:
 - **Sizes**: an integer with an optional unit, case-insensitive, with an optional space. `B`, `KiB`, `MiB`, `GiB` and `TiB` are powers of 1024; `KB`, `MB`, `GB` and `TB` are powers of 1000. For example `"50MiB"`, `"2 GiB"` or `52428800`.
 - **Durations**: Go durations such as `"15m"`, `"336h"` or `"1h30m"`, with an optional leading whole number of days: `"14d"`, `"1d12h"`.
 
-## Checking the effective configuration
+## Checking the configuration
 
-To see the configuration the server is running with, ask the admin API:
+`kazari check` loads the configuration exactly as `serve` does, lists every problem if it is invalid, and otherwise checks what the first start depends on: the data directory, the DNS records, the DNS provider token and the ports. Run it before the first start and whenever something changes:
+
+```sh
+sudo kazari check
+```
+
+It prints one line per check and exits with status 1 if any failed, or 2 if the configuration is invalid; [checking the setup](install.md#checking-the-setup) shows the output.
+
+To see the configuration a running server uses, ask the admin API:
 
 ```sh
 kazari admin settings
@@ -182,9 +202,9 @@ The domain, the data directory and the shape of public URLs:
 
 `base_domain` is a lower-case host name, with no scheme, port or trailing dot.
 
-`data_dir` holds `kazari.db`, `blobs/`, `uploads/` and `certmagic/`. The systemd unit and the Docker image set it to `/var/lib/kazari`.
+`data_dir` holds `kazari.db`, `blobs/`, `uploads/`, `certmagic/` and the admin socket. The systemd unit and the Docker image set it to `/var/lib/kazari`; `serve --local` uses `./.data`.
 
-`external_port` is appended only when it is not the scheme's default: `8080` gives `http://demo.localhost:8080/`. `external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
+`external_port` is appended only when it is not the scheme's default: `8080` gives `http://demo.localhost:8080/`, as under `--local`. `external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
 
 ### `listen`
 
@@ -198,30 +218,33 @@ Where Kazari accepts connections:
 
 Outside proxy mode, the `http` listener answers `/health` and redirects every request for the base domain or its subdomains to HTTPS with a `301`. In proxy mode it is the only listener, and it is required.
 
-In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the last `X-Forwarded-For` entry, then from `X-Real-IP`. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up.
+In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the last `X-Forwarded-For` entry, then from `X-Real-IP`. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
 
 ### `tls`
 
-Where the certificate comes from. [TLS modes](install.md#tls-modes) explains the three modes:
+Where the certificate comes from. [How the certificate is obtained](certificates.md#how-the-certificate-is-obtained) explains the three modes:
 
 | Key            | Type   | Default       | Meaning                                                                         |
 | -------------- | ------ | ------------- | ------------------------------------------------------------------------------- |
 | `mode`         | string | `acme`        | `acme`, `files` or `self-signed`.                                               |
 | `email`        | string | none          | ACME account contact. Required for `acme` outside proxy mode.                   |
 | `ca`           | string | `letsencrypt` | `letsencrypt`, `letsencrypt-staging` or an `https` ACME directory URL.          |
-| `dns_provider` | string | `cloudflare`  | DNS-01 provider: `cloudflare`, `route53` or `hetzner`.                          |
+| `dns_provider` | string | `cloudflare`  | DNS-01 provider: `cloudflare`, `route53`, `hetzner`, `digitalocean`, `gandi`, `ovh`, `namecheap` or `duckdns`. |
 | `cert_file`    | string | `""`          | PEM certificate chain for `files`. Must cover the base domain and its wildcard. |
 | `key_file`     | string | `""`          | PEM private key for `files`.                                                    |
 
 ### `tls.dns`
 
-The DNS provider's credential for `acme`:
+The DNS provider's credentials for `acme`. [Providers](certificates.md#providers) says what each provider needs:
 
-| Key         | Type   | Default | Meaning                                                              |
-| ----------- | ------ | ------- | -------------------------------------------------------------------- |
-| `api_token` | secret | `""`    | DNS provider credential. Required for `cloudflare` and `hetzner`.    |
+| Key         | Type   | Default | Meaning                                                                            |
+| ----------- | ------ | ------- | ---------------------------------------------------------------------------------- |
+| `api_token` | secret | `""`    | The provider's credential. Required for every provider but `route53`.               |
+| `endpoint`  | string | `""`    | `ovh` only: `ovh-eu` (the default when empty), `ovh-ca` or `ovh-us`.               |
+| `user`      | string | `""`    | `namecheap` only: the API user. Required.                                          |
+| `client_ip` | string | `""`    | `namecheap` only: the allow-listed IP; the server's public address when empty.     |
 
-For `route53`, leave `api_token` empty to use the AWS default credential chain, or set it to `ACCESS_KEY_ID:SECRET_ACCESS_KEY`.
+For `route53`, leave `api_token` empty to use the AWS default credential chain, or set it to `ACCESS_KEY_ID:SECRET_ACCESS_KEY`. For `ovh`, `api_token` is `APPLICATION_KEY:APPLICATION_SECRET:CONSUMER_KEY`.
 
 ### `limits`
 
@@ -312,7 +335,7 @@ Who can change artifacts, and the admin token:
 | `write_policy` | string | `shared` | `shared`: anyone with `artifacts:write` can change any artifact. `owner`: only the owner and admins can. |
 | `admin_token`  | secret | `""`     | Bearer token accepted on the admin host.                                                      |
 
-An empty `admin_token` disables it, leaving admin users' credentials that carry the `admin` scope. [Keeping secrets out of the file](#keeping-secrets-out-of-the-file) covers generating and retiring it.
+An empty `admin_token` disables it, leaving the admin socket and admin users' credentials that carry the `admin` scope. [The admin token](#the-admin-token) covers generating and retiring it.
 
 ### `auth.oidc`
 
@@ -331,13 +354,16 @@ The section's keys:
 
 ### `admin`
 
-A separate listener for the admin API:
+The admin socket for this host, and an optional separate listener for the admin API:
 
-| Key      | Type   | Default | Meaning                                                                                       |
-| -------- | ------ | ------- | --------------------------------------------------------------------------------------------- |
-| `listen` | string | `""`    | Optional plain-HTTP listener for the admin API, `/health` and `/metrics`, such as `127.0.0.1:9443`. |
+| Key      | Type   | Default      | Meaning                                                                                       |
+| -------- | ------ | ------------ | --------------------------------------------------------------------------------------------- |
+| `socket` | string | `admin.sock` | Unix socket serving the admin API without a credential; relative to `data_dir` unless absolute. `""` disables it. |
+| `listen` | string | `""`         | Optional plain-HTTP listener for the admin API, `/health` and `/metrics`, such as `127.0.0.1:9443`. |
 
-The listener serves those paths whatever the `Host` header. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point the admin CLI at this address.
+The socket is created with mode `0600`, so only the service user and root can use it. The `kazari` command on the same host finds it through the server's configuration (`$KAZARI_CONFIG`, `/etc/kazari/kazari.yaml` or `$KAZARI_DATA_DIR`) and uses it for every `admin` command with no token ([admin commands](cli.md#admin-commands)). Requests over it act as the `admin` principal, with no rate limit.
+
+The listener serves `/v1`, `/health` and `/metrics` whatever the `Host` header. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point a remote admin CLI at this address.
 
 ### `log`
 
@@ -357,7 +383,7 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `external_scheme` is `http` or `https`, and `external_port` is 0 to 65535.
 - Outside proxy mode `listen.https` is required; in proxy mode `listen.http` is required.
 - `tls.mode` is one of the three modes. Outside proxy mode:
-  - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`.
+  - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`; `namecheap` also needs `tls.dns.user`.
   - `files` needs `tls.cert_file` and `tls.key_file`.
 - Every number and duration in `limits` and `lifecycle` is greater than 0.
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` do not exceed `limits.max_version_bytes`.

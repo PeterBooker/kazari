@@ -1,5 +1,5 @@
 // Package buildinfo reports the version, commit and date set with -ldflags
-// "-X kazari/internal/buildinfo.version=...", else the module's build info.
+// "-X github.com/PeterBooker/kazari/internal/buildinfo.version=...", else the module's build info.
 package buildinfo
 
 import (

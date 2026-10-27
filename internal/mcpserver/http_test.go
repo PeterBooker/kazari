@@ -10,9 +10,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kazari/internal/api"
-	"kazari/internal/auth"
-	"kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
 )
 
 const metadataURL = "https://mcp.art.test/.well-known/oauth-protected-resource"

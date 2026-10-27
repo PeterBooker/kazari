@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/auth"
 )
 
 type stub struct {

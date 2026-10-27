@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/present"
 )
 
 // texts are generated from Options so they state the configured limits.

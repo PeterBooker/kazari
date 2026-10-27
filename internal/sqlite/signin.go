@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
 // The browser sign-in half of oauth.Store: pending sign-ins, sessions,

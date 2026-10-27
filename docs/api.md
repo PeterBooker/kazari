@@ -626,7 +626,7 @@ To install it, save it with [`kazari skill`](cli.md#skill) as `~/.claude/skills/
 
 ## Admin API
 
-The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials). `/health`, `/v1/health` and `/metrics` need no credential.
+The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials). `/health`, `/v1/health` and `/metrics` need no credential. On the server's host the same API is served on the admin socket in the data directory, where no credential is needed; the CLI uses it ([the admin socket](cli.md#the-admin-socket)).
 
 These are its routes, with the body or query parameters each takes and its response on success:
 

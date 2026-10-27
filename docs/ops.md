@@ -12,6 +12,7 @@ Everything Kazari keeps lives under `data_dir`, which the systemd unit and the D
 | `blobs/<aa>/<sha256>`                         | File contents, named by their SHA-256; `aa` is its first two hex digits                  |
 | `uploads/<id>/<n>`                            | Chunked uploads in progress. Disposable                                                  |
 | `certmagic/`                                  | ACME account, certificates and locks (`tls.mode: acme` only)                             |
+| `admin.sock`                                  | The admin socket, mode `0600`; recreated at every start                                  |
 | `tmp/`                                        | Multipart bundles spilled to disk while they are published, removed afterwards. Disposable |
 
 Kazari writes each blob to a temporary `.put-*` file and renames it, so a partial blob is never visible.
@@ -54,21 +55,29 @@ Restoring the blobs before the database means no restored row ever points at a m
 
 Kazari applies schema migrations at start. They are embedded in the binary, each runs in its own transaction, and they only go forward: to downgrade, restore the backup taken before the upgrade.
 
-To upgrade an instance that runs under systemd:
-
-1. Back up, as in [Backing up and restoring](#backing-up-and-restoring).
-2. Install the new binary as in the [installation guide](install.md#installing-the-release-binary), verifying the checksums and signature.
-3. Restart the service with `sudo systemctl restart kazari`.
-
-### Upgrading a Docker container
-
-Pull the image of the new version:
+To upgrade an instance that runs under systemd, back up as in [backing up and restoring](#backing-up-and-restoring), then install the new release the way you installed the old one:
 
 ```sh
-docker pull ghcr.io/peterbooker/kazari:0.2.0
+# from the package: the service restarts itself
+sudo apt install ./kazari_<version>_amd64.deb
+
+# from the install script, then restart
+curl -fsSL https://kazari.io/install.sh | sh
+sudo systemctl restart kazari
 ```
 
-Then recreate the container from the new image on the same volume, for example with the `docker run` command from the [installation guide](install.md#running-with-docker), using the new tag in place of `latest`.
+The package keeps `/etc/kazari/kazari.yaml` and `/etc/kazari/kazari.env` as they are. Installing by hand follows [installing the binary](install.md#installing-the-binary), with the checksums and signature verified, then a restart.
+
+### Upgrading under Docker Compose
+
+With `KAZARI_VERSION` pinned in `.env`, set it to the new version; with the default `latest`, nothing changes. Then pull and recreate:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+The container keeps its data in the volume `kazari_data`.
 
 ## Logs
 
@@ -88,11 +97,11 @@ The request id comes from an incoming `X-Request-ID` header of 8 to 128 safe cha
 
 ### Finding errors
 
-To find server errors, or CertMagic's certificate messages, filter the journal:
+To find server errors, or the certificate messages, filter the journal:
 
 ```sh
 journalctl -u kazari -o cat | grep 'status=5'
-journalctl -u kazari -o cat | grep -i certmagic
+journalctl -u kazari -o cat | grep -i certificate
 ```
 
 ## Metrics
@@ -322,37 +331,7 @@ curl -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "https://admin.art.example.c
 
 ## Troubleshooting
 
-Each entry is named for the symptom.
-
-### The certificate is not issued
-
-With `tls.mode: acme`, Kazari obtains the certificate in the background after start, and TLS handshakes fail until it has one. Look for CertMagic's lines in the log:
-
-```sh
-journalctl -u kazari | grep -i certmagic
-```
-
-The usual causes:
-
-- **DNS provider errors** (`401`, `403`, "zone not found"): the token lacks permission on the zone. A Cloudflare token needs `Zone.DNS:Edit` for the zone that contains `base_domain`.
-- **Challenge not seen**: DNS-01 writes a `_acme-challenge.art.example.com` TXT record and waits for it to propagate. Check it with `dig TXT _acme-challenge.art.example.com @1.1.1.1` while it runs.
-- **CAA records**: they must allow `letsencrypt.org`.
-- **Rate limits**: repeated failures against production Let's Encrypt hit its limits. Debug with `tls.ca: letsencrypt-staging`, then switch back and delete `certmagic/` to drop the staging certificate.
-- **`files` mode**: the files are checked once a minute, and a reload failure keeps the old certificate and logs `certs: reload failed, keeping previous certificate`.
-
-### A host does not resolve
-
-Every host must resolve to the server. Check the apex, a fixed host and any other name:
-
-```sh
-dig +short art.example.com
-dig +short api.art.example.com
-dig +short anything.art.example.com
-```
-
-A wildcard record does not cover the apex, and an explicit record for a subdomain, such as `www`, overrides the wildcard for that name.
-
-An artifact host that resolves but shows the instance 404 page means DNS and TLS work, and the slug is unknown, unpublished or deleted.
+Each entry is named for the symptom. Certificate and DNS problems are in [DNS and certificates](certificates.md#troubleshooting), and `kazari check` reproduces most of them in one run.
 
 ### `401 Unauthorized`
 

@@ -355,6 +355,8 @@ Admin power comes from the `admin` scope, not from the role alone: a principal i
 
 `/v1/` on `admin.` accepts the configured admin token, or a credential that resolves to an admin principal (the admin role and the `admin` scope). The admin token is compared by SHA-256, then in constant time, and must be at least 32 characters.
 
+The same API is served without a credential on the admin socket, `admin.sock` in the data directory (`admin.socket`), which the server creates with mode `0600` and the CLI uses on the server's host. The socket's permissions are the trust boundary: whoever can open it already owns the database beside it. Requests over it act as the `admin` principal with the source `local` and are not rate-limited.
+
 Everything else gets `401` or `403`. Every attempt counts against the per-IP limit, so tokens cannot be guessed at speed.
 
 `/health` and `/metrics` on the admin host are unauthenticated. The admin host's `/health` reports the version; the public `/health` on the apex does not.
@@ -435,7 +437,7 @@ Version 1 does not cover:
 Work through this list when you set up an instance:
 
 1. **Keep the admin host on its own listener**, such as `admin.listen: 127.0.0.1:9443`, or reach it only through a VPN. With `admin.listen` set, the public listener stops serving `admin.<base>`, including the unauthenticated `/metrics` and `/health`.
-2. **Rotate the admin token out.** Use it to create the first admin user, issue that user a key with the `admin` scope, and check that the key works on the admin host. Then remove `auth.admin_token` (`KAZARI_AUTH_ADMIN_TOKEN`) and restart. While the token exists it must be at least 32 characters, such as the output of `openssl rand -hex 32`.
+2. **Do without the admin token.** Create the first admin user over the admin socket on the server, and issue that user a key with the `admin` scope for administering from elsewhere. Set `auth.admin_token` (`KAZARI_AUTH_ADMIN_TOKEN`) only for scripts that run before any user exists, and remove it again afterwards. While the token exists it must be at least 32 characters, such as the output of `openssl rand -hex 32`.
 3. **Pass secrets through the environment.** Refer to them as `${NAME}` in the YAML file, and put the values in `kazari.env` or `.env`.
 4. **Use proxy mode only behind exactly one reverse proxy** (`listen.proxy_mode`), and make sure nothing but that proxy can reach Kazari's plain-HTTP port. Kazari takes the rightmost `X-Forwarded-For` entry, the one your proxy added, then `X-Real-IP`. A proxy that appends (nginx's `$proxy_add_x_forwarded_for`) and one that overwrites (Caddy) both work. With two proxies in a chain, such as a CDN then a proxy, the per-IP limit applies to the CDN's address.
 5. **Restrict the identity provider.** Set `allowed_domains`, and use `auto_provision` only with it. For Entra ID, use a single-tenant app. Keep `admin_emails` short: the people in it become admins on their first sign-in.

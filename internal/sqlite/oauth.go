@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/oauth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // OAuthStore implements oauth.Store.

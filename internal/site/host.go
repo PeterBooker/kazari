@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 // maxVersionDigits keeps the version within an int.

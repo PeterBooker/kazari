@@ -50,7 +50,7 @@ Kazari accepts the consent form only from the consent page itself. A post whose 
 
 The scopes granted are those the client asked for, capped at what the user's role allows: `artifacts:read`, `artifacts:write` and `artifacts:delete`. A client that asks for none gets all of them.
 
-An OAuth token always acts as a member, so it never opens the admin host. Kazari never offers the `admin` scope (`scopes_supported` does not list it) and never grants it, even to admins; asking for it gets `invalid_scope`. Administer the instance with the admin token or an admin-scoped API key.
+An OAuth token always acts as a member, so it never opens the admin host. Kazari never offers the `admin` scope (`scopes_supported` does not list it) and never grants it, even to admins; asking for it gets `invalid_scope`. Administer the instance over the admin socket on the server, with an admin-scoped API key, or with the admin token.
 
 ## Connecting an identity provider
 

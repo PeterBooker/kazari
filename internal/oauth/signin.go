@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"kazari/internal/auth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // Browser sign-in for gated artifacts. An artifact host sends a person to

@@ -49,6 +49,9 @@ func TestDefaultValid(t *testing.T) {
 		"proxy mode":  func(c *Config) { c.Listen.ProxyMode = true; c.TLS.Email = ""; c.TLS.DNS.APIToken = "" },
 		"self-signed": func(c *Config) { c.TLS.Mode = "self-signed"; c.TLS.Email = "" },
 		"route53":     func(c *Config) { c.TLS.DNSProvider = "route53"; c.TLS.DNS.APIToken = "" },
+		"ovh":         func(c *Config) { c.TLS.DNSProvider = "ovh"; c.TLS.DNS.APIToken = "a:b:c" },
+		"namecheap":   func(c *Config) { c.TLS.DNSProvider = "namecheap"; c.TLS.DNS.User = "ann" },
+		"duckdns":     func(c *Config) { c.TLS.DNSProvider = "duckdns" },
 		"no admin token or http listener": func(c *Config) {
 			c.Auth.AdminToken = ""
 			c.Listen.HTTP = ""
@@ -74,7 +77,7 @@ func TestDefaultNotShared(t *testing.T) {
 }
 
 func TestExampleFile(t *testing.T) {
-	const path = "../../deploy/kazari.yaml"
+	const path = "../../deploy/kazari.reference.yaml"
 	got, err := LoadWith(path, env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok", "KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
@@ -111,29 +114,55 @@ func TestExampleFile(t *testing.T) {
 }
 
 func TestExampleFileUnsetSecret(t *testing.T) {
-	_, err := LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
-	want := "config: ../../deploy/kazari.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"
+	_, err := LoadWith("../../deploy/kazari.reference.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
+	want := "config: ../../deploy/kazari.reference.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
 }
 
-func TestDevFile(t *testing.T) {
-	got, err := LoadWith("../../deploy/dev.yaml", env(nil))
+func TestShortFile(t *testing.T) {
+	got, err := LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
+	}
+	want := Default()
+	want.BaseDomain = "art.example.com"
+	want.DataDir = "/var/lib/kazari"
+	want.TLS.Email = "ops@example.com"
+	want.TLS.DNS.APIToken = "tok"
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("short file differs from Default plus the required keys:\n got %+v\nwant %+v", got, want)
+	}
+	// The token the file refers to must be set, so an empty dotenv line fails clearly.
+	_, err = LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": ""}))
+	if err == nil || !strings.Contains(err.Error(), "tls.dns.api_token: required") {
+		t.Errorf("empty token: err = %v", err)
+	}
+}
+
+func TestLocal(t *testing.T) {
+	got, err := LoadLocal(filepath.Join(t.TempDir(), "none"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("LoadLocal with a named, missing dotenv file: err = %v", err)
+	}
+	got, err = LoadWithBase(Local(), "", env(nil))
+	if err != nil {
+		t.Fatalf("Local does not validate: %v", err)
 	}
 	checks := []struct {
 		name      string
 		got, want any
 	}{
 		{"base_domain", got.BaseDomain, "localhost"},
+		{"data_dir", got.DataDir, "./.data"},
 		{"external_scheme", got.ExternalScheme, "http"},
 		{"external_port", got.ExternalPort, 8080},
 		{"listen.http", got.Listen.HTTP, "127.0.0.1:8080"},
 		{"listen.proxy_mode", got.Listen.ProxyMode, true},
 		{"tls.mode", got.TLS.Mode, "self-signed"},
-		{"auth.admin_token", got.Auth.AdminToken, "dev-admin-token"},
+		{"auth.admin_token", got.Auth.AdminToken, ""},
+		{"admin.socket", got.AdminSocketPath(), ".data/admin.sock"},
 		{"log.level", got.Log.Level, "debug"},
 	}
 	for _, ch := range checks {
@@ -142,9 +171,74 @@ func TestDevFile(t *testing.T) {
 		}
 	}
 
-	got, err = LoadWith("../../deploy/dev.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": "mine"}))
-	if err != nil || got.Auth.AdminToken != "mine" {
-		t.Errorf("admin token from env = %q, %v; want mine", got.Auth.AdminToken, err)
+	got, err = LoadWithBase(Local(), "", env(map[string]string{"KAZARI_DATA_DIR": "/srv/k", "KAZARI_LISTEN_HTTP": ":8080"}))
+	if err != nil || got.DataDir != "/srv/k" || got.Listen.HTTP != ":8080" || got.AdminSocketPath() != "/srv/k/admin.sock" {
+		t.Errorf("overrides on the preset = %+v, %v", got, err)
+	}
+}
+
+func TestAdminSocketPath(t *testing.T) {
+	c := valid()
+	tests := []struct{ socket, want string }{
+		{"admin.sock", "/var/lib/kazari/admin.sock"},
+		{"/run/kazari/admin.sock", "/run/kazari/admin.sock"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		c.Admin.Socket = tt.socket
+		if got := c.AdminSocketPath(); got != tt.want {
+			t.Errorf("socket %q: AdminSocketPath = %q, want %q", tt.socket, got, tt.want)
+		}
+	}
+}
+
+func TestSecretFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "dns-token")
+	if err := os.WriteFile(tokenFile, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadWith("", env(map[string]string{
+		"KAZARI_BASE_DOMAIN": "demo.test", "KAZARI_DATA_DIR": dir, "KAZARI_TLS_EMAIL": "ops@demo.test",
+		"KAZARI_TLS_DNS_API_TOKEN_FILE": tokenFile,
+	}))
+	if err != nil {
+		t.Fatalf("LoadWith: %v", err)
+	}
+	if c.TLS.DNS.APIToken != "from-file" {
+		t.Errorf("api token from file = %q, want from-file without the newline", c.TLS.DNS.APIToken)
+	}
+
+	// The variable itself wins over its _FILE twin; a non-secret has no twin.
+	c, err = LoadWith("", env(map[string]string{
+		"KAZARI_BASE_DOMAIN": "demo.test", "KAZARI_DATA_DIR": dir, "KAZARI_TLS_EMAIL": "ops@demo.test",
+		"KAZARI_TLS_DNS_API_TOKEN": "direct", "KAZARI_TLS_DNS_API_TOKEN_FILE": tokenFile, "KAZARI_BASE_DOMAIN_FILE": tokenFile,
+	}))
+	if err != nil || c.TLS.DNS.APIToken != "direct" || c.BaseDomain != "demo.test" {
+		t.Errorf("precedence: token %q, base %q, %v", c.TLS.DNS.APIToken, c.BaseDomain, err)
+	}
+
+	_, err = LoadWith("", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN_FILE": filepath.Join(dir, "missing")}))
+	if err == nil || !strings.Contains(err.Error(), "KAZARI_TLS_DNS_API_TOKEN_FILE") {
+		t.Errorf("missing file: err = %v", err)
+	}
+}
+
+func TestPeek(t *testing.T) {
+	path := writeYAML(t, "base_domain: art.example.com\ndata_dir: /srv/kazari\ntls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n")
+	c, err := Peek(path, env(nil))
+	if err != nil {
+		t.Fatalf("Peek with an unset secret: %v", err)
+	}
+	if c.DataDir != "/srv/kazari" || c.TLS.DNS.APIToken != "" || c.AdminSocketPath() != "/srv/kazari/admin.sock" {
+		t.Errorf("Peek = data %q, token %q, socket %q", c.DataDir, c.TLS.DNS.APIToken, c.AdminSocketPath())
+	}
+	c, err = Peek(path, env(map[string]string{"KAZARI_ADMIN_SOCKET": "/run/kazari.sock"}))
+	if err != nil || c.AdminSocketPath() != "/run/kazari.sock" {
+		t.Errorf("Peek with an override = %q, %v", c.AdminSocketPath(), err)
+	}
+	if _, err := Peek(filepath.Join(t.TempDir(), "nope.yaml"), env(nil)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Peek of a missing file: err = %v", err)
 	}
 }
 

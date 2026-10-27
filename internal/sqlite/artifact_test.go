@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/artifact/storetest"
-	"kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact/storetest"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 )
 
 func openArtifactTestDB(t *testing.T) *sqlite.DB {

@@ -3,6 +3,7 @@ package certs
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -123,5 +124,37 @@ func TestCAURL(t *testing.T) {
 		if (err != nil) != tt.wantErr || got != tt.want {
 			t.Errorf("caURL(%q) = %q, %v; want %q, err=%v", tt.in, got, err, tt.want, tt.wantErr)
 		}
+	}
+}
+
+func TestCertEvents(t *testing.T) {
+	h := &recordHandler{}
+	on := certEvents(slog.New(h))
+	ctx := context.Background()
+	on(ctx, "cert_obtaining", map[string]any{"identifier": "*.art.example.com"})
+	on(ctx, "cert_obtained", map[string]any{"identifier": "*.art.example.com", "issuer": "acme-v02.api.letsencrypt.org-directory"})
+	on(ctx, "cert_failed", map[string]any{"identifier": "*.art.example.com", "error": errors.New("401 unauthorized"), "renewal": true})
+	on(ctx, "cached_managed_cert", map[string]any{"sans": []string{"art.example.com"}})
+	var got []string
+	for _, r := range h.all() {
+		got = append(got, r.Level.String()+" "+r.Message)
+	}
+	want := []string{"INFO obtaining certificate", "INFO certificate obtained", "ERROR certificate not obtained"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("logged %v, want %v", got, want)
+	}
+	failed := h.all()[2]
+	var hint, name string
+	failed.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "hint":
+			hint = a.Value.String()
+		case "name":
+			name = a.Value.String()
+		}
+		return true
+	})
+	if name != "*.art.example.com" || !strings.Contains(hint, "kazari check") {
+		t.Errorf("failed event name %q hint %q", name, hint)
 	}
 }

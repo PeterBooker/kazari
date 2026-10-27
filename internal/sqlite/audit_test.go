@@ -10,7 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/audit"
 )
 
 func auditTestStore(t *testing.T) *AuditStore {

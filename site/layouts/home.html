@@ -270,24 +270,22 @@ curl https://api.art.example.com/v1/artifacts \
           <h3>Try it on your machine</h3>
           <p>No domain or certificate needed: browsers resolve <code>*.localhost</code> to your own computer.</p>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
-git clone https://github.com/PeterBooker/kazari.git
-cd kazari
-docker compose up --build -d
+docker run -d --name kazari -p 127.0.0.1:8080:8080 -e KAZARI_LISTEN_HTTP=:8080 \
+  ghcr.io/peterbooker/kazari:latest serve --local
+docker exec kazari kazari admin users create ana --role admin
+docker exec kazari kazari admin keys issue ana --label laptop
 # pages appear at http://<slug>.localhost:8080/` ) }}
           <a class="card-link" href="{{ $quick.RelPermalink }}">Quick start {{ partial "icon.html" "arrow" }}</a>
         </article>
         <article>
           <h3>Run it for your team</h3>
-          <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one.</p>
+          <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one. Two short files configure it, under Compose, a package or the binary alike.</p>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
-docker run -d --name kazari -p 80:80 -p 443:443 \
-  -v /srv/kazari/data:/var/lib/kazari \
-  -e KAZARI_BASE_DOMAIN=art.example.com \
-  -e KAZARI_TLS_EMAIL=ops@example.com \
-  -e KAZARI_TLS_DNS_PROVIDER=cloudflare \
-  -e KAZARI_TLS_DNS_API_TOKEN=cf-token \
-  -e KAZARI_AUTH_ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  ghcr.io/peterbooker/kazari:latest serve` ) }}
+curl -fsSLO https://kazari.io/deploy/compose.yml
+curl -fsSLO https://kazari.io/deploy/kazari.yaml           # your domain, email, DNS provider
+curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env   # the DNS token
+docker compose up -d
+docker compose exec kazari kazari admin users create ana --role admin` ) }}
           <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Installation guide {{ partial "icon.html" "arrow" }}</a>
         </article>
       </div>

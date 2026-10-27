@@ -10,7 +10,7 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // UserStore implements user.Store.

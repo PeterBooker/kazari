@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/blob"
 )
 
 const (

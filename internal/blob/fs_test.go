@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/blob"
-	"kazari/internal/blob/blobtest"
+	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/blob/blobtest"
 )
 
 func TestFSConformance(t *testing.T) {

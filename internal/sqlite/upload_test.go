@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/artifact"
-	"kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/upload"
 )
 
 func uploadTestStore(t *testing.T, handles ...string) *UploadStore {

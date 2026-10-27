@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 // CreateShareLink implements artifact.Store.

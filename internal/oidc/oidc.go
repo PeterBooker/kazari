@@ -16,7 +16,7 @@ import (
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/auth"
 )
 
 var DefaultScopes = []string{gooidc.ScopeOpenID, "email", "profile"}

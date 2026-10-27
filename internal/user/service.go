@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"kazari/internal/audit"
-	"kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
 )
 
 const (

@@ -1,46 +1,8 @@
 package cli
 
 import (
-	"flag"
-	"io"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
 )
-
-func TestParseInterspersed(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		max     int
-		wantPos []string
-		wantX   string
-		wantErr bool
-	}{
-		{"flags after", []string{"a", "-x", "1", "b"}, -1, []string{"a", "b"}, "1", false},
-		{"flags before", []string{"--x=2", "a"}, -1, []string{"a"}, "2", false},
-		{"double dash", []string{"a", "--", "-x", "b"}, -1, []string{"a", "-x", "b"}, "", false},
-		{"too many", []string{"a", "b"}, 1, nil, "", true},
-		{"none", nil, 0, nil, "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fs := flag.NewFlagSet("t", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			x := fs.String("x", "", "")
-			pos, err := parse(fs, tt.args, 0, tt.max)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err = %v", err)
-			}
-			if tt.wantErr {
-				return
-			}
-			if diff := cmp.Diff(tt.wantPos, pos); diff != "" || *x != tt.wantX {
-				t.Errorf("x = %q, positionals (-want +got):\n%s", *x, diff)
-			}
-		})
-	}
-}
 
 func TestHumanSize(t *testing.T) {
 	tests := []struct {

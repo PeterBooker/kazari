@@ -15,9 +15,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/auth"
-	"kazari/internal/oauth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 func TestMetadata(t *testing.T) {

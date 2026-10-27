@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"kazari/internal/config"
-	"kazari/internal/httpapi"
-	"kazari/internal/metrics"
-	"kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/metrics"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 //go:embed apex.html

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/blob"
-	"kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 )
 
 type parkBlobs struct {

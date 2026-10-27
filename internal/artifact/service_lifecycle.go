@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/audit"
 )
 
 const (

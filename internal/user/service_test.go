@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/audit"
-	"kazari/internal/auth"
-	"kazari/internal/sqlite"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)

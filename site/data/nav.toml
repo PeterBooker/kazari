@@ -26,6 +26,10 @@
     path = "/docs/install"
     description = "Install Kazari on your own server: DNS and a wildcard certificate, the release binary under systemd or Docker, proxy mode, and the first admin user and key."
   [[sections.pages]]
+    title = "DNS and certificates"
+    path = "/docs/certificates"
+    description = "The wildcard DNS records Kazari needs, how it obtains the certificate by DNS-01, the supported DNS providers, using another provider, and proxy configurations."
+  [[sections.pages]]
     title = "Configuration"
     path = "/docs/configuration"
     description = "Every Kazari configuration key: the YAML file, ${} environment references, .env files and KAZARI_ overrides, with defaults, validation rules and secrets."
@@ -53,3 +57,7 @@
     title = "REST API"
     path = "/docs/api"
     description = "Reference for Kazari's REST APIs: authentication and scopes, the artifact record, every user and admin API route, rate limits and error codes."
+  [[sections.pages]]
+    title = "Development"
+    path = "/docs/development"
+    description = "Working on Kazari itself: running the server from source or the Docker image, the checks CI runs, releasing, and building the website."

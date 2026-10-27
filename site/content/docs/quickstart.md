@@ -1,50 +1,43 @@
 ---
 title: Quick start
-description: Run Kazari on your own machine with Docker, create a user and a key, and publish a first page from an AI agent, curl or the CLI.
+description: Run Kazari on your own machine from the Docker image, create a user and a key, and publish a first page from an AI agent, curl or the CLI.
 ---
 
 # Quick start
 
 Run Kazari on your own machine and publish a first page in about five minutes. You need no domain, DNS record or certificate: browsers resolve every `*.localhost` name to your own computer, so pages appear at addresses like `http://hello.localhost:8080/`.
 
-You need [Docker](https://docs.docker.com/get-docker/) with Compose, and `git`. An AI agent that can use MCP servers is optional. So is [Go](https://go.dev/dl/) 1.27 or later, which runs the CLI from source.
+You need [Docker](https://docs.docker.com/get-docker/). An AI agent that can use MCP servers is optional, and so is the `kazari` command on your machine ([installing the client](cli.md#installing-the-client)).
 
 ## 1. Start the server
 
-Clone the repository and start the development server with Docker Compose:
+Start the published image with `serve --local`, which serves plain HTTP on port 8080 under the base domain `localhost`:
 
 ```sh
-git clone https://github.com/PeterBooker/kazari.git
-cd kazari
-docker compose up --build -d
+docker run -d --name kazari -p 127.0.0.1:8080:8080 -e KAZARI_LISTEN_HTTP=:8080 \
+  ghcr.io/peterbooker/kazari:latest serve --local
 ```
 
-This builds the image and starts the server on port 8080 with the configuration in `deploy/dev.yaml`: plain HTTP, the base domain `localhost` and the admin token `dev-admin-token`. Once it is ready, `docker compose ps` shows it as healthy.
+The log, from `docker logs kazari`, ends with a `serving` line that names the addresses and a `no users yet` line that says what to do next. `KAZARI_LISTEN_HTTP` makes the server listen on every interface inside the container; the `-p` keeps the published port on your own machine.
 
 > [!NOTE]
-> No Docker? With Go installed, `go run ./cmd/kazari serve --config deploy/dev.yaml` runs the same server and keeps its data in `./.data`.
+> No Docker? `curl -fsSL https://kazari.io/install.sh | sh` installs the binary, and `kazari serve --local` runs the same server with its data in `./.data`. Run the admin commands below as `kazari admin ...` from the same directory, without `docker exec`.
 
 ## 2. Create a user and an API key
 
-The image contains the `kazari` CLI, so you can run the admin commands inside the container. First create a user, here called `ana`:
+The image contains the `kazari` command, and inside the container it reaches the admin API over a socket, so it needs no token. Create a user, here called `ana`:
 
 ```sh
-docker compose exec kazari /usr/local/bin/kazari \
-  --admin-url http://admin.localhost:8080 --admin-token dev-admin-token \
-  admin users create ana
+docker exec kazari kazari admin users create ana --role admin
 ```
 
 Then issue that user an API key:
 
 ```sh
-docker compose exec kazari /usr/local/bin/kazari \
-  --admin-url http://admin.localhost:8080 --admin-token dev-admin-token \
-  admin keys issue ana --label laptop
+docker exec kazari kazari admin keys issue ana --label laptop
 ```
 
 The command prints a key that starts with `kzk_`. It is shown once, so copy it now.
-
-If you have Go installed, you can run the same commands on your machine as `go run ./cmd/kazari ...`.
 
 ## 3. Publish a page
 
@@ -95,12 +88,12 @@ The response carries the page's `url` and its `version`.
 
 ### With the CLI
 
-Write a one-line page into `site/`, point the CLI at the server with your key, and publish the directory:
+With `kazari` installed on your machine, write a one-line page into `site/`, point the CLI at the server with your key, and publish the directory:
 
 ```sh
 mkdir -p site && echo '<!doctype html><title>Hello</title><h1>Hello</h1>' > site/index.html
 export KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_...
-go run ./cmd/kazari publish ./site --slug hello
+kazari publish ./site --slug hello
 ```
 
 The CLI prints the page's address, `http://hello.localhost:8080/`.
@@ -110,21 +103,21 @@ The CLI prints the page's address, `http://hello.localhost:8080/`.
 With the page published, try its versions:
 
 - Open `http://hello.localhost:8080/` for the published version, and `http://hello--v1.localhost:8080/` for version 1, which never changes.
-- Publish again, by asking your agent to change the heading or by running `go run ./cmd/kazari update hello ./site`. A `--v2` address appears, and `--v1` stays as it was.
-- Roll back by asking your agent to "roll hello back to version 1". With the CLI, and `KAZARI_URL` and `KAZARI_TOKEN` exported as above, `go run ./cmd/kazari get hello` lists the versions and `go run ./cmd/kazari rollback hello 1` serves version 1 again.
+- Publish again, by asking your agent to change the heading or by running `kazari update hello ./site`. A `--v2` address appears, and `--v1` stays as it was.
+- Roll back by asking your agent to "roll hello back to version 1". With the CLI, and `KAZARI_URL` and `KAZARI_TOKEN` exported as above, `kazari get hello` lists the versions and `kazari rollback hello 1` serves version 1 again.
 
 > [!NOTE]
 > Browsers and systemd-resolved resolve `*.localhost`, but some other resolvers cannot. If a tool cannot, add the names to `/etc/hosts`: `127.0.0.1 api.localhost admin.localhost mcp.localhost hello.localhost`.
 
 ## 5. Stop the server
 
-When you are finished, stop the server:
+When you are finished, stop and remove the container:
 
 ```sh
-docker compose down
+docker rm -f kazari
 ```
 
-To delete its data as well, run `docker compose down -v` instead.
+The pages live in the container's own volume; `docker rm -fv kazari` removes that too.
 
 ## Next steps
 

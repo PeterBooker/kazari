@@ -9,7 +9,7 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags "-s -w -X kazari/internal/buildinfo.version=${VERSION} -X kazari/internal/buildinfo.commit=${COMMIT} -X kazari/internal/buildinfo.date=${DATE}" \
+    -ldflags "-s -w -X github.com/PeterBooker/kazari/internal/buildinfo.version=${VERSION} -X github.com/PeterBooker/kazari/internal/buildinfo.commit=${COMMIT} -X github.com/PeterBooker/kazari/internal/buildinfo.date=${DATE}" \
     -o /out/kazari ./cmd/kazari
 RUN mkdir /out/data
 
@@ -21,4 +21,5 @@ VOLUME /var/lib/kazari
 EXPOSE 80 443
 ENV KAZARI_DATA_DIR=/var/lib/kazari
 ENTRYPOINT ["/usr/local/bin/kazari"]
-CMD ["serve", "--config", "/etc/kazari/kazari.yaml"]
+# serve reads /etc/kazari/kazari.yaml when it is mounted, else the KAZARI_* environment.
+CMD ["serve"]

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 // fakeGate records its calls; allow decides Allow.

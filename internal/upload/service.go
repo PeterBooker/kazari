@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 const (

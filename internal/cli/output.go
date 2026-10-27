@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/api"
 )
 
 func (r *runner) printJSON(v any) error {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/oauth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
