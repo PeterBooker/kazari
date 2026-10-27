@@ -12,7 +12,7 @@ The documentation and guides are at <https://kazari.io/docs/>.
 
 - **One origin per artifact.** `demo.art.example.com` serves the published version, and `demo--v3.art.example.com` pins version 3 forever. Each artifact is its own browser origin, so one page cannot read another's storage.
 - **Immutable, content-addressed versions.** Every publish is a new version, and files are stored once by SHA-256. Roll back or forward with one call; `expected_version` and `If-Match` stop lost updates.
-- **Three ways in, one service layer.** REST (`api.<base>/v1`), MCP over Streamable HTTP (`mcp.<base>/`, seventeen tools) and the `kazari` CLI all call the same code and return the same JSON.
+- **Three ways in, one service layer.** REST (`api.<base>/v1`), MCP over Streamable HTTP (`mcp.<base>/`, eighteen tools) and the `kazari` CLI all call the same code and return the same JSON.
 - **Edits in place.** Agents change a page with exact or line-anchored edits instead of resending whole files. Whitespace-tolerant matches are reported, and stale anchors are refused before anything is written.
 - **A skill per instance.** The server generates an Agent Skill with its own limits and CSP. It serves the skill over MCP (`skill://kazari/SKILL.md`, the Skills extension), through a tool, and as `kazari skill`. Hosts that support MCP Apps show published pages as a preview card.
 - **Members-only pages and share links.** A `members` page opens only for people who sign in to the instance in their browser, on every version's host too. A share link with an expiry opens it for someone outside, and one call revokes it. Each host gets its own `HttpOnly` cookie through a single-use handshake with the sign-in host, so no cookie spans artifacts.
@@ -106,7 +106,7 @@ claude mcp add --transport http kazari https://mcp.art.example.com/
 
 To use a key instead of OAuth, add `--header "Authorization: Bearer kzk_..."` to that command.
 
-The [MCP server reference](docs/mcp.md) covers the tools, resources and authoring conventions, and [sign-in and identity](docs/identity.md) covers sign-in. For agents that read skills, `examples/kazari/SKILL.md` is an example skill.
+The [MCP server reference](docs/mcp.md) covers the tools, resources and authoring conventions, and [sign-in and identity](docs/identity.md) covers sign-in. For agents that read skills, `examples/kazari/SKILL.md` is the skill an instance with the default settings serves.
 
 ## CLI
 

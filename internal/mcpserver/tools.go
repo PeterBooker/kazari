@@ -64,6 +64,7 @@ type UpdateInput struct {
 	Label           string             `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	ExpectedVersion int                `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
+	Restore         bool               `json:"restore,omitempty" jsonschema:"bring back a soft-deleted artifact (get_artifact shows deleted_at) before applying the other changes"`
 }
 
 // EditInput is one edit of edit_file: a text edit or an anchor edit.
@@ -115,6 +116,11 @@ type ChunkInput struct {
 	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type of the file, read from the first chunk"`
 }
 
+// DiscardUploadInput is the input of discard_upload.
+type DiscardUploadInput struct {
+	UploadID string `json:"upload_id" jsonschema:"id returned by begin_upload"`
+}
+
 // GetInput is the input of get_artifact.
 type GetInput struct {
 	Slug         string `json:"slug" jsonschema:"artifact to fetch"`
@@ -127,6 +133,9 @@ type ReadFileInput struct {
 	Path    string `json:"path" jsonschema:"file path, e.g. index.html"`
 	Version int    `json:"version,omitempty" jsonschema:"version number; default the published version"`
 	Anchors bool   `json:"anchors,omitempty" jsonschema:"prefix each line of a text file with its anchor (12:3fa0|) for edit_file"`
+	// StartLine and EndLine select a window of a text file of any size.
+	StartLine int `json:"start_line,omitempty" jsonschema:"first line of a window of a text file (1-based); the file may be larger than the inline limit"`
+	EndLine   int `json:"end_line,omitempty" jsonschema:"last line of the window, inclusive; default the end of the file"`
 }
 
 // ListInput is the input of list_artifacts.
@@ -134,6 +143,7 @@ type ListInput struct {
 	Mine     string            `json:"mine,omitempty" jsonschema:"created, updated or any: only artifacts you created/updated"`
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"metadata pairs that must all match"`
 	Stale    string            `json:"stale,omitempty" jsonschema:"include (default), exclude or only"`
+	Deleted  string            `json:"deleted,omitempty" jsonschema:"exclude (default), include or only: soft-deleted artifacts you may still see"`
 	Cursor   string            `json:"cursor,omitempty" jsonschema:"next_cursor of the previous page"`
 	Limit    int               `json:"limit,omitempty" jsonschema:"page size, default 50, at most 200"`
 }
@@ -200,6 +210,11 @@ type ReadFileResult struct {
 	// Version is the version read; LatestVersion the one edit_file edits.
 	Version       int `json:"version"`
 	LatestVersion int `json:"latest_version"`
+	// StartLine, EndLine and TotalLines describe a window read with start_line
+	// and end_line; EndLine is the last line returned.
+	StartLine  int `json:"start_line,omitempty"`
+	EndLine    int `json:"end_line,omitempty"`
+	TotalLines int `json:"total_lines,omitempty"`
 }
 
 // handler returns a tool's structured result and a one-line summary for the text content.
@@ -358,6 +373,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
 				KeepStale:       in.KeepStale,
+				Restore:         in.Restore,
 				Files:           files,
 			}
 			// Models fill optional fields with "": that leaves the
@@ -429,6 +445,14 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return out, fmt.Sprintf("Staged %s: %d bytes received; next offset %d.", out.Path, out.BytesReceived, out.BytesReceived), nil
 		})
 
+	register(b, s, p, &mcp.Tool{Name: "discard_upload", Annotations: annotations("Discard upload", false, false, true)},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in DiscardUploadInput) (api.OK, string, error) {
+			if err := b.d.Uploads.Abort(ctx, p.Handle, in.UploadID); err != nil {
+				return api.OK{}, "", err
+			}
+			return api.OK{OK: true}, fmt.Sprintf("Discarded upload %s; its staged files are removed.", in.UploadID), nil
+		})
+
 	register(b, s, p, &mcp.Tool{Name: "get_artifact", Annotations: annotations("Get artifact", true, false, true)},
 		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in GetInput) (api.ArtifactDetail, string, error) {
 			d, err := b.detail(ctx, actor, in.Slug, in.IncludeFiles)
@@ -446,6 +470,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Mine:     in.Mine,
 				Metadata: in.Metadata,
 				Stale:    in.Stale,
+				Deleted:  in.Deleted,
 				Cursor:   in.Cursor,
 				Limit:    in.Limit,
 			})
@@ -573,7 +598,8 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if in.Hard {
 				return api.OK{OK: true}, fmt.Sprintf("Purged %s permanently.", in.Slug), nil
 			}
-			return api.OK{OK: true}, fmt.Sprintf("Deleted %s; it is offline and will be purged after the retention period.", in.Slug), nil
+			return api.OK{OK: true}, fmt.Sprintf("Deleted %s; it is offline and will be purged after the retention period. "+
+				"update_artifact with restore: true brings it back until then.", in.Slug), nil
 		})
 }
 

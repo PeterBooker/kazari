@@ -67,18 +67,30 @@ func (t texts) skillText(o Options) string {
 	fmt.Fprintf(&b, "1. **Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the "+
 		"`url` from the result to the user.\n"+
 		"2. **Change a page:** `read_file` with `anchors: true`, then `edit_file` with `expected_version` set to the "+
-		"`latest_version` the read returned. `update_artifact` adds, replaces or deletes whole files.\n"+
+		"`latest_version` the read returned. `update_artifact` adds or replaces whole files and removes them with "+
+		"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version "+
+		"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send "+
+		"a delete entry for each path not in the set. A change that spans several files is atomic only as one "+
+		"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.\n"+
 		"3. **On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. "+
 		"Never resend a failed edit unchanged.\n"+
-		"4. **Large content** (any file, or all files together, above %s): `begin_upload`, `upload_chunk` for each file, "+
-		"then `create_artifact` or `update_artifact` with `upload_id`.\n"+
-		"5. **Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.\n"+
-		"6. **Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. "+
+		"4. **Large content** (any file, or all files together, above %s): `begin_upload`, then `upload_chunk` for each "+
+		"file with `offset: 0` first and the `bytes_received` of the previous chunk after that, then `create_artifact` "+
+		"or `update_artifact` with `upload_id`. Inline `files` in that call are merged with the staged ones and win on a "+
+		"path clash, and the call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you "+
+		"no longer need.\n"+
+		"5. **Inspect:** `get_artifact` (`include_files` lists every version's paths and hashes), `read_file` (text "+
+		"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small "+
+		"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, "+
+		"`deleted`, `cursor`).\n"+
+		"6. **Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.\n"+
+		"7. **Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. "+
 		"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that "+
 		"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.\n"+
-		"7. **Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace "+
+		"8. **Retire:** prefer `set_visibility` `\"unpublished\"` (reversible) or `mark_stale` (expires after a grace "+
 		"period) to `delete_artifact`. Ask the user before `delete_artifact` with `hard: true`; clients that support it "+
-		"also show the user a confirmation.\n\n", size(o.InlineGuidanceBytes))
+		"also show the user a confirmation. Without `hard`, `delete_artifact` soft-deletes, and `update_artifact` with "+
+		"`restore: true` brings the artifact back until it is purged.\n\n", size(o.InlineGuidanceBytes))
 
 	b.WriteString("## Editing a file\n\n")
 	b.WriteString("`edit_file` changes one text file of the latest version and publishes the result as a new version; " +
@@ -100,7 +112,10 @@ func (t texts) skillText(o Options) string {
 		"excerpts (\"…[+N bytes]\"): read the file before rewriting such a line whole.\n"+
 		"- `edit_file` edits the latest version. `read_file` reads the published version unless given `version`; when "+
 		"its `latest_version` differs from its `version` (after a rollback), read `version: latest_version` before "+
-		"editing.\n\n", artifact.MaxEdits)
+		"editing.\n"+
+		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
+		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
+		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, size(o.MaxInlineReadBytes))
 
 	b.WriteString("## Authoring conventions\n\n")
 	fmt.Fprintf(&b, "- Build a self-contained `index.html`; it is served at %s. Extra files (CSS, JavaScript, images) are "+
@@ -263,7 +278,9 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeInvalidPath:     "Use a relative path without \"..\", a leading \"/\" or a trailing \"/\", such as assets/app.js.",
 		api.CodeInvalidMetadata: "Fix the key or value the message names; the metadata rules are in the create_artifact description.",
 		api.CodeInvalidArgument: "Fix the argument the message names, then call again.",
-		api.CodeNotFound:        "Check the slug: list_artifacts with mine \"any\" lists the artifacts you created or updated.",
+		api.CodeNotFound: "Check the slug: list_artifacts with mine \"any\" lists the artifacts you created or updated, and " +
+			"deleted \"include\" adds soft-deleted ones. If get_artifact shows deleted_at, the artifact is soft-deleted: " +
+			"update_artifact with restore: true brings it back.",
 		api.CodeFileNotFound:    "Call get_artifact with include_files: it lists the paths in each version.",
 		api.CodeVersionNotFound: "Call get_artifact: it lists the versions that exist.",
 		api.CodeGone: "The artifact was purged and cannot be restored. Publish the content again under a new slug; the old " +
@@ -274,8 +291,9 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeQuotaExceeded:  "The owner's storage quota is full. Tell the user: deleting old artifacts or a larger quota from an admin frees space.",
 		api.CodeUploadNotFound: "The upload expired or was used by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
-		api.CodeTooManyUploads: "Finish or abandon the open uploads (unused ones expire), then begin a new one.",
-		api.CodeLinkNotFound:   "Call list_share_links: it lists the prefixes of the artifact's share links.",
+		api.CodeTooManyUploads: "Discard the open uploads you no longer need with discard_upload (their ids came from " +
+			"begin_upload), then begin a new one; unused uploads also expire on their own.",
+		api.CodeLinkNotFound: "Call list_share_links: it lists the prefixes of the artifact's share links.",
 		api.CodeForbidden: "Retrying will not help. Tell the user: the connection's credential lacks the scope, or the " +
 			"instance's write policy reserves the artifact for its owner.",
 		api.CodeRateLimited: "Wait as long as the message says, then repeat the call.",

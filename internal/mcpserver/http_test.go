@@ -134,8 +134,8 @@ func TestHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 17 {
-		t.Errorf("%d tools, want 17", len(tools.Tools))
+	if len(tools.Tools) != 18 {
+		t.Errorf("%d tools, want 18", len(tools.Tools))
 	}
 	pub, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
 		"slug": "over-http", "name": "x", "description": "x",

@@ -62,18 +62,19 @@ The sign-in that follows, and how an administrator sets it up, are in [Identity 
 
 ## Tools
 
-The server offers seventeen tools. The four with more to know have their own sections below the table:
+The server offers eighteen tools. The four with more to know have their own sections below the table:
 
 | Tool | What it does |
 | ---- | ------------ |
 | `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1. |
-| `update_artifact` | Add a version, or change the name, description, metadata or visibility. |
+| `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. |
 | `edit_file` | Change one text file of the latest version with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
+| `discard_upload` | Remove an upload you no longer need. |
 | `get_artifact` | The artifact record and its versions; `include_files` adds file lists. |
-| `read_file` | One file of a version, as text, a base64 blob or a download URL. |
-| `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata` and `stale`. |
+| `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read a window of a large text file. |
+| `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata`, `stale` and `deleted`. |
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
 | `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. |
 | `unmark_stale` | Cancel a pending expiry. |
@@ -81,7 +82,7 @@ The server offers seventeen tools. The four with more to know have their own sec
 | `create_share_link` | Create a URL that opens a `members` artifact without signing in. |
 | `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
 | `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. |
-| `delete_artifact` | Soft-delete, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
+| `delete_artifact` | Soft-delete, which `update_artifact` with `restore: true` undoes, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
 | `get_guide` | The instance's skill as Markdown, for clients that do not load skills over MCP. |
 
 ### `update_artifact`
@@ -92,11 +93,17 @@ The fields are the name, description, metadata and visibility. In metadata, `nul
 
 `expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`.
 
+To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari publish --update` does for a directory.
+
+`restore: true` brings back a soft-deleted artifact, which is otherwise `not_found`, and then applies the other changes. It works until the retention period ends and the artifact is purged. `list_artifacts` with `deleted: "include"` or `"only"` shows the soft-deleted artifacts you may still see: your own, and the ones you created or updated.
+
 ### `read_file`
 
 Returns one file of the published version, or of the version given in `version`. Text comes inline, and `anchors: true` prefixes every line with its [anchor](#anchor-edits). Binaries up to 256 KiB come as a base64 blob, and larger files as a REST download URL.
 
 The result names the `version` read and the `latest_version`. For text, its `content` field repeats the text, anchored when asked, for clients that show only the structured content.
+
+A text file larger than the inline limit, 1 MiB, comes back as a download URL. To read it over MCP anyway, pass `start_line` and `end_line`, 1-based and inclusive. The result holds those lines, anchored when asked, and states `start_line`, `end_line` and `total_lines`. A window holds as many whole lines as fit the inline limit; when it was cut short, the note after the text says where to continue. Windows work on text files of any size up to `limits.max_file_bytes`, small ones included.
 
 ### `set_visibility`
 
@@ -193,7 +200,7 @@ Inline content is fine up to the inline guidance, which is 2 MiB by default for 
 2. Call `upload_chunk` for each chunk of each file, with `upload_id`, `path`, `offset`, `content` and `encoding` (`base64` for binary, `utf8` for text). The first chunk of a path has `offset: 0`, and each next one uses the `bytes_received` of the previous result.
 3. Call `create_artifact` or `update_artifact` with `upload_id`. Inline `files[]` in the same call are merged with the staged files and win on a path clash.
 
-The staging area is removed after the publishing call, whether it succeeded or failed. Unused uploads expire after their TTL.
+The staging area is removed after the publishing call, whether it succeeded or failed. `discard_upload` removes an upload you no longer need, and unused uploads expire after their TTL. Each user may hold `limits.max_open_uploads` uploads open, 5 by default; beyond that `begin_upload` fails with `too_many_uploads`.
 
 ### Retrying a chunk
 
@@ -205,7 +212,7 @@ upload_offset_mismatch: ... (current=<n>: resend this path from offset <n>)
 
 ## Confirmation before a purge
 
-`delete_artifact` with `hard: true` cannot be undone, so the server asks the user first where the client allows it. Soft deletes are reversible and ask nothing.
+`delete_artifact` with `hard: true` cannot be undone, so the server asks the user first where the client allows it. Soft deletes ask nothing and are reversible with `update_artifact` and `restore: true` until the retention period ends.
 
 When the client speaks protocol 2026-07-28 or later and declared form elicitation, the call first returns an `input_required` result (SEP-2322) asking the user to confirm. The client shows the question and calls again with the answer. If the user declines, the result is `{"ok": false}` and nothing changes.
 
@@ -255,7 +262,7 @@ Agents that read skills from disk, such as Claude Code, take the output of [`kaz
 mkdir -p ~/.claude/skills/kazari && kazari skill > ~/.claude/skills/kazari/SKILL.md
 ```
 
-The repository's `examples/kazari/SKILL.md` is a static copy with the default settings.
+The repository's `examples/kazari/SKILL.md` is the skill generated from the default settings, with `<base>` in place of a domain. The test `TestExampleSkill` keeps it current.
 
 ## Preview app
 
@@ -295,7 +302,7 @@ The codes are:
 | `upload_offset_mismatch` | Wrong chunk offset; the text carries `current=<n>`. |
 | `upload_not_found` | Unknown, expired, foreign or already consumed upload. |
 | `share_link_not_found` | The artifact has no share link with that prefix. |
-| `too_many_uploads` | Too many open uploads for this user. |
+| `too_many_uploads` | Too many open uploads for this user; `discard_upload` frees one. |
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |
 | `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or the write policy denies the change. |
