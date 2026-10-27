@@ -110,7 +110,7 @@ The [MCP server reference](docs/mcp.md) covers the tools, resources and authorin
 
 ## CLI
 
-The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL https://kazari.io/install.sh | sh`, or `brew install PeterBooker/tap/kazari`. The commands you need most often:
+The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL https://kazari.io/install.sh | sh`. The commands you need most often:
 
 ```sh
 kazari publish ./site --slug q3-report --name "Q3 report"   # create version 1

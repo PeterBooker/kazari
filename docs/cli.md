@@ -22,7 +22,7 @@ On a laptop, the install script puts the latest release into `/usr/local/bin`, a
 curl -fsSL https://kazari.io/install.sh | sh
 ```
 
-`KAZARI_BINDIR=~/.local/bin` before `sh` installs it there instead, without `sudo`. On macOS with Homebrew, `brew install PeterBooker/tap/kazari` installs the same binary, and on Arch Linux the AUR package is `kazari-bin`. With Go, `go install github.com/PeterBooker/kazari/cmd/kazari@latest` builds it from source. On a server the binary is already there: the package, the archive and the Docker image each carry it ([installing Kazari](install.md)).
+`KAZARI_BINDIR=~/.local/bin` before `sh` installs it there instead, without `sudo`. With Go, `go install github.com/PeterBooker/kazari/cmd/kazari@latest` builds it from source. On a server the binary is already there: the package, the archive and the Docker image each carry it ([installing Kazari](install.md)).
 
 ## Configuring the client
 

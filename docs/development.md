@@ -69,7 +69,7 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release
 
 On pull requests and pushes to `main`, GitHub Actions runs these checks, `go mod tidy -diff`, the cross-builds, and `install.sh` against the latest release.
 
-To release, push a tag named for the version without a `v`, such as `0.3.0`. The workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`. With the repository secrets `HOMEBREW_TAP_TOKEN` and `AUR_KEY` set, it also updates the Homebrew cask in `PeterBooker/homebrew-tap` and the AUR package `kazari-bin`; without them those two steps are skipped.
+To release, push a tag named for the version without a `v`, such as `0.3.0`. The workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`.
 
 ## Building the website
 
