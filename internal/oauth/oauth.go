@@ -27,9 +27,9 @@ import (
 	"syscall"
 	"time"
 
-	"kazari/internal/audit"
-	"kazari/internal/auth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 func TestValidateSlug(t *testing.T) {

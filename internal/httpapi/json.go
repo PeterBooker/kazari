@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
-	"kazari/internal/present"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // jsonLimit caps JSON bodies that cannot carry inline files; those use

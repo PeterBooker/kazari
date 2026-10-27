@@ -1,91 +1,24 @@
-# Kazari configuration.
+# Kazari configuration: the settings every instance needs. Every other key
+# has a default; kazari.reference.yaml lists them all with their defaults,
+# and https://kazari.io/docs/configuration/ explains them.
 #
-# Every key is shown with its default except base_domain, data_dir and
-# tls.email, which have none. Secrets are never written here: a value of the
-# form ${NAME} (or ${NAME:-default}) is replaced by the environment variable
-# NAME, read from the process environment or from a .env file in the
-# working directory (or the file named by --env-file / $KAZARI_ENV_FILE).
-# A reference to an unset variable without a default is an error.
-#
-# Any key can also be overridden directly by an environment variable named
-# KAZARI_ plus the key's path upper-cased with dots as underscores, e.g.
-# listen.proxy_mode -> KAZARI_LISTEN_PROXY_MODE. Lists are comma-separated.
-# Sizes take B, KiB, MiB, GiB, TiB, KB, MB, GB or TB; durations are Go
-# durations ("15m", "336h") and may start with whole days ("14d").
+# Secrets stay out of this file. ${NAME} is replaced by the environment
+# variable NAME, read from the process environment or from the dotenv file
+# (/etc/kazari/kazari.env under systemd, .env beside compose.yml). Any key
+# can also be set as KAZARI_<SECTION>_<KEY>, such as KAZARI_BASE_DOMAIN.
 
-base_domain: art.example.com         # artifacts are served at <slug>.art.example.com
-data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/
-
-# Public URL shape. For development behind plain HTTP on a high port use
-# external_scheme: http and external_port: 8080 (http://demo.localhost:8080/).
-external_scheme: https               # https | http
-external_port: 0                     # 0 omits the port from URLs
-
-listen:
-  https: ":443"
-  http: ":80"                        # redirects to https; "" disables
-  proxy_mode: false                  # true: plain HTTP on listen.http, trust X-Forwarded-*
+base_domain: art.example.com          # pages are served at <slug>.art.example.com
+data_dir: /var/lib/kazari
 
 tls:
-  mode: acme                         # acme | files | self-signed
-  email: ops@example.com             # ACME account contact
-  ca: letsencrypt                    # letsencrypt | letsencrypt-staging | <https directory URL>
-  dns_provider: cloudflare           # cloudflare | route53 | hetzner
-  cert_file: ""                      # mode: files
-  key_file: ""
+  email: ops@example.com              # Let's Encrypt account contact
+  # cloudflare, route53, hetzner, digitalocean, gandi, ovh, namecheap or
+  # duckdns; its credential goes in the dotenv file. Other providers:
+  # https://kazari.io/docs/certificates/
+  dns_provider: cloudflare
   dns:
-    api_token: ${KAZARI_TLS_DNS_API_TOKEN}   # route53 uses the AWS credential chain instead
+    api_token: ${KAZARI_TLS_DNS_API_TOKEN}
 
-limits:
-  max_version_bytes: 50MiB
-  max_file_bytes: 25MiB
-  max_files: 2000
-  metadata_max_pairs: 64
-  write_rate_per_minute: 60
-  default_user_quota: 2GiB
-  inline_guidance_bytes: 2MiB        # quoted in tool descriptions as the point to switch to chunks
-  max_chunk_bytes: 4MiB              # per upload_chunk call, after base64 decoding
-  upload_ttl: 1h
-  max_open_uploads: 5                # per user
-
-lifecycle:
-  default_grace: 336h                # 14 days
-  retention: 720h                    # 30 days
-  tombstone: 2160h                   # 90 days
-  sweep_interval: 15m
-  gc_interval: 1h
-
-serve:
-  csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
-  # frame-ancestors 'none' also keeps the MCP preview app to links; list an MCP host's
-  # app origins there to let it embed pages (docs/mcp.md, Preview app).
-  allow_csp_override: true           # kazari.csp metadata replaces csp for that artifact
-  reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
-  # Visibility of artifacts created without one: public | unlisted | members.
-  # members pages open only for people who sign in to this instance (or hold
-  # a share link); members is the safer default for an internal instance.
-  default_visibility: public
-  share_link_max_ttl: 90d            # longest a share link may stay valid
-
-auth:
-  write_policy: shared               # shared | owner
-  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
-  # Sign-in through the organisation's OpenID Connect provider. Leave oidc
-  # out entirely to fall back to API-key sign-in on the consent page.
-  # Register https://mcp.<base_domain>/oauth/callback as the redirect URI; it
-  # serves MCP clients and people opening members pages alike.
-  #
-  # oidc:
-  #   issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # or https://accounts.google.com
-  #   client_id: ""
-  #   client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
-  #   allowed_domains: [example.com]  # verified email domains that may sign in
-  #   auto_provision: true            # create a member on first sign-in from an allowed domain
-  #   admin_emails: []                # provisioned with the admin role
-
-admin:
-  listen: ""                         # e.g. "127.0.0.1:9443": serve the admin host here only, not publicly
-
-log:
-  level: info                        # debug | info | warn | error
-  format: text                       # text | json
+# On this host, kazari admin commands use the socket in data_dir and need
+# no token. To administer from elsewhere, set KAZARI_AUTH_ADMIN_TOKEN in the
+# dotenv file (at least 32 characters: openssl rand -hex 32).

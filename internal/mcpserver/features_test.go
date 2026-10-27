@@ -12,10 +12,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
-	"kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
 )
 
 func (e *env) connectWith(t *testing.T, p auth.Principal, opts *mcp.ClientOptions) *mcp.ClientSession {

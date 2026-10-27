@@ -1,0 +1,36 @@
+# Kazari from the published image, for a server with ports 80 and 443. In
+# an empty directory, fetch this file with the two configuration files,
+# edit those, then start (https://kazari.io/docs/install/):
+#
+#   curl -fsSLO https://kazari.io/deploy/compose.yml
+#   curl -fsSLO https://kazari.io/deploy/kazari.yaml            # the domain, email and DNS provider
+#   curl -fsSL  https://kazari.io/deploy/kazari.env.example -o .env   # the DNS provider's token
+#   docker compose up -d
+#   docker compose exec kazari kazari admin users create <handle> --role admin
+#
+# The image serves /etc/kazari/kazari.yaml; the data (SQLite, blobs,
+# certificates, the admin socket) lives in the volume kazari_data. The admin
+# commands above run inside the container, over the socket, with no token.
+
+services:
+  kazari:
+    image: ghcr.io/peterbooker/kazari:${KAZARI_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./kazari.yaml:/etc/kazari/kazari.yaml:ro
+      - data:/var/lib/kazari
+    env_file:
+      - .env
+    healthcheck:
+      # Over the admin socket in the data volume, which needs no token.
+      test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  data:

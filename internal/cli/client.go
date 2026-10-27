@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"kazari/internal/api"
-	"kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/buildinfo"
 )
 
 const maxErrorBody = 64 << 10

@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/blob"
 )
 
 // Resolver looks up what to serve for a slug. ResolvePublished and

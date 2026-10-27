@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"kazari/internal/auth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // Names of the pending request's cookie. Browsers accept a __Host- cookie

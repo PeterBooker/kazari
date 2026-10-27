@@ -24,6 +24,9 @@ const (
 	SourceAPIKey     = "api_key"
 	SourceOAuth      = "oauth"
 	SourceAdminToken = "admin_token"
+	// SourceLocal is a request on the admin Unix socket, whose file
+	// permissions stand in for a credential.
+	SourceLocal = "local"
 )
 
 // ErrInvalidToken is returned by an Authenticator that does not recognise

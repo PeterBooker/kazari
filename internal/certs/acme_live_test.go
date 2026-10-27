@@ -23,7 +23,7 @@ func TestACMELiveStaging(t *testing.T) {
 	if domain == "" || provider == "" {
 		t.Skip("set KAZARI_ACME_LIVE_DOMAIN and KAZARI_ACME_LIVE_DNS_PROVIDER to run")
 	}
-	dns, err := NewDNSProvider(provider, os.Getenv("KAZARI_ACME_LIVE_DNS_TOKEN"))
+	dns, err := NewDNSProvider(DNSConfig{Provider: provider, APIToken: os.Getenv("KAZARI_ACME_LIVE_DNS_TOKEN")})
 	if err != nil {
 		t.Fatal(err)
 	}

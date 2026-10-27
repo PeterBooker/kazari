@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"kazari/internal/api"
-	"kazari/internal/cli"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 // browser is a cookie-keeping client that sends a top-level navigation's

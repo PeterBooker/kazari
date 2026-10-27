@@ -48,3 +48,12 @@ enableGitInfo = true
     source = "../docs"
     target = "content/docs"
     files = ["! security.md", "! adr/**"]
+  [[module.mounts]]
+    source = "static"
+    target = "static"
+  # The deployment files, so that https://kazari.io/deploy/compose.yml is the
+  # file in the repository.
+  [[module.mounts]]
+    source = "../deploy"
+    target = "static/deploy"
+    files = ["compose.yml", "kazari.yaml", "kazari.reference.yaml", "kazari.env.example", "kazari.service", "Caddyfile"]

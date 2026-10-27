@@ -6,9 +6,9 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "deploy/**", ".github/workflows/pages.yml"]
   pull_request:
-    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "deploy/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:

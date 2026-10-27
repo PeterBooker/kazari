@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/auth"
-	"kazari/internal/oauth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // nonceHash is what an artifact host sends for its nonce cookie value.

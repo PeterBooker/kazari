@@ -16,25 +16,25 @@ import (
 	"sync"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
-	"kazari/internal/blob"
-	"kazari/internal/certs"
-	"kazari/internal/config"
-	"kazari/internal/gate"
-	"kazari/internal/httpapi"
-	"kazari/internal/mcpserver"
-	"kazari/internal/metrics"
-	"kazari/internal/oauth"
-	"kazari/internal/oidc"
-	"kazari/internal/present"
-	"kazari/internal/ratelimit"
-	"kazari/internal/scheduler"
-	"kazari/internal/site"
-	"kazari/internal/sqlite"
-	"kazari/internal/upload"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/certs"
+	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/gate"
+	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/metrics"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/oidc"
+	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/site"
+	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 const (
@@ -51,9 +51,10 @@ type Options struct {
 
 // Addrs are the bound listener addresses, empty for one not configured.
 type Addrs struct {
-	HTTPS string
-	HTTP  string
-	Admin string
+	HTTPS  string
+	HTTP   string
+	Admin  string
+	Socket string // the admin Unix socket's path
 }
 
 // App is the assembled server.
@@ -62,13 +63,15 @@ type App struct {
 	log  *slog.Logger
 	mode string
 
-	db      *sqlite.DB
-	sched   *scheduler.Scheduler
-	certs   certs.Source // nil in proxy mode
-	router  http.Handler
-	admin   http.Handler // on cfg.Admin.Listen when set, else on the router
-	oidcOn  bool
-	started chan struct{}
+	db         *sqlite.DB
+	sched      *scheduler.Scheduler
+	users      *user.Service
+	certs      certs.Source // nil in proxy mode
+	router     http.Handler
+	admin      http.Handler // on cfg.Admin.Listen when set, else on the router
+	adminLocal http.Handler // on the admin socket, without credentials
+	oidcOn     bool
+	started    chan struct{}
 
 	mu    sync.Mutex
 	addrs Addrs
@@ -157,6 +160,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		return oauthSvc.RevokeAllForUser(ctx, handle)
 	}
 	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
+	a.users = users
 
 	mcpURL := cfg.ExternalURL("mcp")
 	var idp oauth.IdentityProvider
@@ -252,7 +256,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		TempDir:       tempDir(cfg),
 		Skill:         mcpserver.Skill(links, mcpOpts),
 	})
-	adminH := httpapi.NewAdminAPI(httpapi.AdminDeps{
+	adminDeps := httpapi.AdminDeps{
 		Artifacts: arts,
 		Users:     users,
 		Auth:      authn,
@@ -263,7 +267,11 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Metrics:   m.Handler(),
 		Links:     links,
 		Logger:    log,
-	}, httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now})
+	}
+	adminH := httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now})
+	if cfg.AdminSocketPath() != "" {
+		a.adminLocal = a.surface(m, "admin", true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now}))
+	}
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes,
 	}, mcpOpts)
@@ -352,7 +360,7 @@ func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
 		}
 		return s, nil
 	case "acme":
-		dns, err := certs.NewDNSProvider(cfg.TLS.DNSProvider, cfg.TLS.DNS.APIToken)
+		dns, err := certs.NewDNSProvider(DNSConfig(cfg))
 		if err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}
@@ -373,6 +381,17 @@ func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
 }
 
 func tempDir(cfg config.Config) string { return filepath.Join(cfg.DataDir, "tmp") }
+
+// DNSConfig is the DNS-01 provider cfg names, with its credentials.
+func DNSConfig(cfg config.Config) certs.DNSConfig {
+	return certs.DNSConfig{
+		Provider: cfg.TLS.DNSProvider,
+		APIToken: cfg.TLS.DNS.APIToken,
+		Endpoint: cfg.TLS.DNS.Endpoint,
+		User:     cfg.TLS.DNS.User,
+		ClientIP: cfg.TLS.DNS.ClientIP,
+	}
+}
 
 // Handler returns the host router that the public listener serves.
 func (a *App) Handler() http.Handler { return a.router }

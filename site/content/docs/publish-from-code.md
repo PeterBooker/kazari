@@ -124,10 +124,7 @@ jobs:
       SLUG: myapp-pr-${{ github.event.number }}
     steps:
       - name: Install the Kazari CLI
-        run: |
-          curl -fsSL "https://github.com/PeterBooker/kazari/releases/download/${KAZARI_VERSION}/kazari_${KAZARI_VERSION}_linux_amd64.tar.gz" \
-            | tar -xz kazari
-          sudo install -m 0755 kazari /usr/local/bin/kazari
+        run: curl -fsSL https://kazari.io/install.sh | sh
 
       - uses: actions/checkout@v7
         if: github.event.action != 'closed'

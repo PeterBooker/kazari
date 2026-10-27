@@ -1,22 +1,21 @@
 # Kazari for local development and testing: the image built from
-# deploy/Dockerfile, configured by deploy/dev.yaml (proxy mode, plain HTTP on
-# port 8080, base_domain localhost, admin token dev-admin-token), with its
-# data in a named volume.
+# deploy/Dockerfile, run with serve --local (plain HTTP, base domain
+# localhost, data in a named volume). deploy/compose.yml is the one for a
+# real server.
 #
-#   docker compose up --build -d      # start; artifacts at http://<slug>.localhost:8080/
+#   docker compose up --build -d      # start; pages at http://<slug>.localhost:8080/
 #   docker compose logs -f            # follow the server log
 #   docker compose watch              # rebuild and restart when the source changes
 #   docker compose down               # stop; add -v to discard the data too
 #
-# Then, from the host, create a user and a key and publish as usual:
-#   go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
-#   go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
+# The admin commands run inside the container over the admin socket, so they
+# need no token; then publish from the host with the key:
+#   docker compose exec kazari kazari admin users create peter --role admin
+#   docker compose exec kazari kazari admin keys issue peter --label laptop
 #   KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari publish ./site --slug demo
 #
-# The image sets KAZARI_DATA_DIR=/var/lib/kazari, which overrides the ./.data
-# in dev.yaml. A ./.env (start from deploy/kazari.env.example) is passed into
-# the container, so KAZARI_AUTH_ADMIN_TOKEN set there replaces the admin token
-# here as well as under go run.
+# A ./.env (start from deploy/kazari.env.example) is passed into the container
+# for KAZARI_* overrides.
 
 services:
   kazari:
@@ -24,35 +23,23 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
     image: kazari:dev
+    command: ["serve", "--local"]
     ports:
       # Loopback only: *.localhost resolves to both 127.0.0.1 and ::1.
       - "127.0.0.1:8080:8080"
       - "[::1]:8080:8080"
     volumes:
-      - ./deploy/dev.yaml:/etc/kazari/kazari.yaml:ro
       - data:/var/lib/kazari
     env_file:
       - path: .env
         required: false
     environment:
-      # dev.yaml binds loopback; inside the container the published port
+      # --local binds loopback; inside the container the published port
       # must listen on every interface (the ports above stay on loopback).
       KAZARI_LISTEN_HTTP: ":8080"
-    extra_hosts:
-      # Lets the health check reach the admin host from inside the container.
-      - "admin.localhost:127.0.0.1"
     healthcheck:
-      # GET /v1/health on the admin host. It needs no credentials; the CLI
-      # merely insists on an admin token being set.
-      test:
-        - CMD
-        - /usr/local/bin/kazari
-        - --admin-url
-        - http://admin.localhost:8080
-        - --admin-token
-        - healthcheck
-        - admin
-        - health
+      # Over the admin socket in the data volume, which needs no token.
+      test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -66,6 +53,7 @@ services:
             - .data/
             - .git/
             - docs/
+            - site/
             - "*.md"
 
 volumes:

@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/audit"
-	"kazari/internal/auth"
-	"kazari/internal/buildinfo"
-	"kazari/internal/present"
-	"kazari/internal/ratelimit"
-	"kazari/internal/scheduler"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 const codeJobRunning = "job_running"
@@ -54,6 +54,9 @@ type AdminOptions struct {
 	IPRatePerMinute int
 	// Now clocks the rate limiter. Default: time.Now.
 	Now func() time.Time
+	// Local serves every request as the admin principal, with no credential
+	// and no rate limit, for the admin Unix socket. AdminToken is ignored.
+	Local bool
 }
 
 type adminAPI struct {
@@ -62,7 +65,8 @@ type adminAPI struct {
 }
 
 // NewAdminAPI returns the admin host handler: /v1 behind the admin token or an
-// admin-role key, /health and /metrics open.
+// admin-role key (or open, with AdminOptions.Local), /health and /metrics
+// open.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	h := &adminAPI{base: newBase(d.Logger, d.Links), d: d}
 	if o.IPRatePerMinute == 0 {
@@ -103,6 +107,10 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	top.HandleFunc("GET /v1/health", Health) // the CLI addresses everything under /v1
 	if d.Metrics != nil {
 		top.Handle("GET /metrics", d.Metrics)
+	}
+	if o.Local {
+		top.Handle("/v1/", auth.AsLocalAdmin()(jsonFallback(v1, &h.base)))
+		return jsonFallback(top, &h.base)
 	}
 	guarded := auth.RequireAdmin(o.AdminToken, d.Auth)(jsonFallback(v1, &h.base))
 	top.Handle("/v1/", h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(guarded))

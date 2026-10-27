@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/api"
 )
 
 func TestMain(m *testing.M) {
@@ -115,7 +115,7 @@ admin_token: file-admin
 		name    string
 		config  string
 		env     map[string]string
-		flags   globals
+		flags   CLI
 		want    settings
 		wantErr string
 	}{
@@ -134,22 +134,22 @@ admin_token: file-admin
 			name:   "flag beats env",
 			config: file,
 			env:    map[string]string{"KAZARI_URL": "https://api.env.test", "KAZARI_TOKEN": "env-token"},
-			flags:  globals{url: "https://api.flag.test", adminURL: "https://admin.flag.test"},
+			flags:  CLI{URL: "https://api.flag.test", AdminURL: "https://admin.flag.test"},
 			want:   settings{URL: "https://api.flag.test", Token: "env-token", AdminURL: "https://admin.flag.test", AdminToken: "file-admin"},
 		},
 		{
 			name:  "admin defaults from user settings",
-			flags: globals{url: "https://api.art.test:8443", token: "t"},
+			flags: CLI{URL: "https://api.art.test:8443", Token: "t"},
 			want:  settings{URL: "https://api.art.test:8443", Token: "t", AdminURL: "https://admin.art.test:8443", AdminToken: "t"},
 		},
 		{
 			name:  "no admin url for a non-api host",
-			flags: globals{url: "http://localhost:8080", token: "t"},
+			flags: CLI{URL: "http://localhost:8080", Token: "t"},
 			want:  settings{URL: "http://localhost:8080", Token: "t", AdminToken: "t"},
 		},
 		{
 			name:    "explicit config must exist",
-			flags:   globals{config: "/nonexistent/kazari.yaml"},
+			flags:   CLI{ClientConfig: "/nonexistent/kazari.yaml"},
 			wantErr: "config /nonexistent/kazari.yaml",
 		},
 		{
@@ -183,7 +183,7 @@ admin_token: file-admin
 			for k, v := range tt.env {
 				env[k] = v
 			}
-			r := &runner{lookupEnv: envMap(env), g: tt.flags}
+			r := &runner{lookupEnv: envMap(env), g: &tt.flags}
 			got, err := r.settings()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -210,7 +210,7 @@ func TestConfigFromHome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("url: u\ntoken: home-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := &runner{lookupEnv: envMap(map[string]string{"HOME": home})}
+	r := &runner{lookupEnv: envMap(map[string]string{"HOME": home}), g: &CLI{}}
 	s, err := r.settings()
 	if err != nil || s.Token != "home-token" {
 		t.Errorf("settings = %+v, %v", s, err)
@@ -239,31 +239,27 @@ func TestRunUsageErrors(t *testing.T) {
 		wantCode   int
 		wantStderr string
 	}{
-		{"no command", nil, 2, "usage: kazari"},
-		{"unknown command", []string{"frobnicate"}, 2, `kazari: unknown command "frobnicate"`},
-		{"unknown flag", []string{"get", "--bogus", "demo"}, 2, "flag provided but not defined: -bogus"},
-		{"missing positional", []string{"get"}, 2, "usage: kazari get <slug>"},
-		{"too many positionals", []string{"rm", "a", "b"}, 2, "usage: kazari rm <slug>"},
+		{"no command", nil, 2, "Usage: kazari <command>"},
+		{"unknown command", []string{"frobnicate"}, 2, "kazari: unexpected argument frobnicate"},
+		{"unknown flag", []string{"get", "--bogus", "demo"}, 2, "kazari: unknown flag --bogus"},
+		{"missing positional", []string{"get"}, 2, `kazari: expected "<slug>"`},
+		{"too many positionals", []string{"rm", "a", "b"}, 2, "kazari: unexpected argument b"},
 		{"publish without slug", []string{"publish", dir}, 2, "kazari: publish: --slug is required"},
 		{"publish bad visibility", []string{"publish", dir, "--slug", "x", "--visibility", "secret"}, 2, "--visibility must be public, unlisted or members"},
-		{"bad meta", []string{"publish", dir, "--slug", "x", "--meta", "novalue"}, 2, "want key=value"},
+		{"bad meta", []string{"publish", dir, "--slug", "x", "--meta", "novalue"}, 2, `expected "<key>=<value>"`},
 		{"visibility value", []string{"visibility", "demo", "hidden"}, 2, "want public, unlisted, members or unpublished"},
 		{"rollback version", []string{"rollback", "demo", "two"}, 2, "version must be a positive integer"},
 		{"stale grace", []string{"stale", "demo", "--grace", "2w"}, 2, "stale: --grace"},
 		{"update nothing", []string{"update", "demo"}, 2, "update: nothing to update"},
-		{"files without cat", []string{"files", "ls"}, 2, "usage: kazari files cat"},
-		{"admin unknown", []string{"admin", "nuke"}, 2, `admin: unknown command "nuke"`},
-		{"admin users missing action", []string{"admin", "users"}, 2, "want one of create, list, update"},
+		{"files without cat", []string{"files", "ls"}, 2, "Usage: kazari files <command>"},
+		{"admin unknown", []string{"admin", "nuke"}, 2, "kazari: unexpected argument nuke"},
+		{"admin users missing action", []string{"admin", "users"}, 2, `expected one of "list", "create", "update"`},
 		{"admin enable and disable", []string{"admin", "users", "update", "ann", "--enable", "--disable"}, 2, "are exclusive"},
 		{"admin update nothing", []string{"admin", "users", "update", "ann"}, 2, "nothing to change"},
 		{"admin bad quota", []string{"admin", "users", "create", "ann", "--quota", "lots"}, 2, `invalid size "lots"`},
 		{"admin audit since", []string{"admin", "audit", "--since", "yesterday"}, 2, "--since"},
 		{"missing url", []string{"me"}, 2, "kazari: no API URL: set --url, KAZARI_URL or url in"},
 		{"missing token", []string{"--url", "http://x", "me"}, 2, "kazari: no API token"},
-		{"help", []string{"help"}, 0, "Commands:"},
-		{"global -h", []string{"-h"}, 0, "Global flags:"},
-		{"command -h", []string{"publish", "-h"}, 0, "-slug"},
-		{"admin help", []string{"admin", "help"}, 0, "keys issue <handle>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -276,6 +272,29 @@ func TestRunUsageErrors(t *testing.T) {
 			}
 			if r.stdout != "" {
 				t.Errorf("stdout = %q, want empty", r.stdout)
+			}
+		})
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStdout string
+	}{
+		{"help", []string{"help"}, "Commands:"},
+		{"global -h", []string{"-h"}, "--admin-socket=PATH"},
+		{"command --help", []string{"publish", "--help"}, "--slug=SLUG"},
+		{"help admin", []string{"help", "admin"}, "admin keys"},
+		{"help admin keys", []string{"help", "admin", "keys"}, "admin keys issue"},
+		{"subcommand -h", []string{"admin", "keys", "issue", "-h"}, "<handle>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runCLI(t, nil, tt.args...)
+			if r.code != 0 || !strings.Contains(r.stdout, tt.wantStdout) || r.stderr != "" {
+				t.Errorf("%v: exit %d, stdout %q, stderr %q; want 0, stdout containing %q", tt.args, r.code, r.stdout, r.stderr, tt.wantStdout)
 			}
 		})
 	}

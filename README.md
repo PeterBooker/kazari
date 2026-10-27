@@ -19,68 +19,42 @@ The documentation and guides are at <https://kazari.io/docs/>.
 - **Large bundles.** Inline JSON for small pages, `multipart` with a `tar.gz` bundle for sites, and chunked uploads for MCP clients with no shell.
 - **Lifecycle.** Mark an artifact stale with a grace period. When the grace period lapses the artifact is soft-deleted, it is purged after the retention period, and its slug is freed after the tombstone period. Every step is reversible until the purge and lands in the audit log.
 - **Sign-in through your identity provider.** An OAuth 2.1 authorization server for MCP clients (PKCE, Dynamic Client Registration, Client ID Metadata Documents, refresh-token rotation) federates to one OpenID Connect provider: Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik and others. No passwords are stored, and API keys work everywhere too.
-- **Operations built in.** Wildcard certificates by ACME DNS-01 (Cloudflare, Route 53, Hetzner), certificate files with hot reload, or a reverse proxy in front. SQLite and a blob directory are the only state. Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
+- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start. SQLite and a blob directory are the only state. Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
 
 ## Quick start
 
-Either way of running Kazari needs DNS records for `*.art.example.com` and `art.example.com` pointing at the host. The [installation guide](docs/install.md) has the full walkthrough, including proxy mode behind Caddy.
-
-### Running with Docker
-
-To run the image with everything configured through the environment:
+To try Kazari on your own machine, with no domain or certificate, run the image with `serve --local` and create a user over the admin socket inside the container:
 
 ```sh
-mkdir -p /srv/kazari/data && sudo chown 65532:65532 /srv/kazari/data
-docker run -d --name kazari -p 80:80 -p 443:443 \
-  -v /srv/kazari/data:/var/lib/kazari \
-  -e KAZARI_BASE_DOMAIN=art.example.com \
-  -e KAZARI_TLS_EMAIL=ops@example.com \
-  -e KAZARI_TLS_DNS_PROVIDER=cloudflare \
-  -e KAZARI_TLS_DNS_API_TOKEN=cf-token \
-  -e KAZARI_AUTH_ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  ghcr.io/peterbooker/kazari:latest serve
+docker run -d --name kazari -p 127.0.0.1:8080:8080 -e KAZARI_LISTEN_HTTP=:8080 \
+  ghcr.io/peterbooker/kazari:latest serve --local
+docker exec kazari kazari admin users create ana --role admin
+docker exec kazari kazari admin keys issue ana --label laptop      # prints kzk_... once
 ```
 
-The container runs as UID 65532, so the data directory must be writable by that user.
+Pages appear at `http://<slug>.localhost:8080/`, the API at `http://api.localhost:8080/` and the MCP server at `http://mcp.localhost:8080/`. The [quick start](https://kazari.io/docs/quickstart/) goes on to publish a first page from an agent, curl or the CLI.
 
-### Running the release binary
-
-To install the binary from a release archive and run it under systemd:
+To run it for a team on `art.example.com`, you need the DNS records `art.example.com` and `*.art.example.com` pointing at the host and an API token for the DNS provider. Two short files configure it, whether under Docker Compose, from a `.deb`/`.rpm` package or from the binary:
 
 ```sh
-tar -xzf kazari_<version>_linux_amd64.tar.gz
-sudo install -m 0755 kazari /usr/local/bin/kazari
-sudo mkdir -p /etc/kazari
-sudo install -m 0644 deploy/kazari.yaml /etc/kazari/kazari.yaml            # edit it
-sudo install -m 0600 deploy/kazari.env.example /etc/kazari/kazari.env      # secrets
-sudo cp deploy/kazari.service /etc/systemd/system/ && sudo systemctl enable --now kazari
+curl -fsSLO https://kazari.io/deploy/compose.yml
+curl -fsSLO https://kazari.io/deploy/kazari.yaml                     # edit: your domain, email and DNS provider
+curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env       # edit: the DNS provider's token
+docker compose up -d
+docker compose exec kazari kazari admin users create peter --role admin
 ```
 
-The configuration goes in `/etc/kazari/kazari.yaml` and its secrets in `/etc/kazari/kazari.env`.
-
-### Publishing a first page
-
-With the server running, use the admin token to create a user and an API key, then publish a directory with the key:
-
-```sh
-kazari --admin-url https://admin.art.example.com --admin-token "$ADMIN_TOKEN" admin users create peter
-kazari --admin-url https://admin.art.example.com --admin-token "$ADMIN_TOKEN" admin keys issue peter --label laptop
-export KAZARI_URL=https://api.art.example.com KAZARI_TOKEN=kzk_...
-kazari publish ./site --slug demo        # prints https://demo.art.example.com/
-```
-
-The key (`kzk_...`) is shown only once, so copy it when `admin keys issue` prints it.
+The [installation guide](docs/install.md) has every path, the preflight check and the first publish, and [DNS and certificates](docs/certificates.md) the records, the providers and the proxy configurations.
 
 ## Configuration at a glance
 
-A configuration file for ACME certificates through Cloudflare and sign-in through Microsoft Entra ID looks like this:
+`kazari.yaml` names the domain, the contact email and the DNS provider; everything else has a default. A file for ACME certificates through Cloudflare and sign-in through Microsoft Entra ID looks like this:
 
 ```yaml
 base_domain: art.example.com
 data_dir: /var/lib/kazari
 
 tls:
-  mode: acme
   email: ops@example.com
   dns_provider: cloudflare
   dns:
@@ -93,9 +67,9 @@ auth:
     client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
 ```
 
-Secrets stay out of the file. Kazari replaces each `${NAME}` with the environment variable `NAME`, read from the process environment or from a `.env` file (`/etc/kazari/kazari.env` under systemd).
+Secrets stay out of the file. Kazari replaces each `${NAME}` with the environment variable `NAME`, read from the process environment or from a dotenv file (`/etc/kazari/kazari.env` under systemd, `.env` beside `compose.yml`), and a secret can also come from a file through `KAZARI_<KEY>_FILE`.
 
-Every key can also be set directly as `KAZARI_<SECTION>_<KEY>`. The [configuration reference](docs/configuration.md) lists every key.
+Every key can also be set directly as `KAZARI_<SECTION>_<KEY>`. The [configuration reference](docs/configuration.md) lists every key, and `deploy/kazari.reference.yaml` shows every default.
 
 ## Connecting an agent
 
@@ -136,7 +110,7 @@ The [MCP server reference](docs/mcp.md) covers the tools, resources and authorin
 
 ## CLI
 
-The `kazari` binary is also the client. The commands you need most often:
+The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL https://kazari.io/install.sh | sh`, or `brew install PeterBooker/tap/kazari`. The commands you need most often:
 
 ```sh
 kazari publish ./site --slug q3-report --name "Q3 report"   # create version 1
@@ -148,46 +122,22 @@ kazari list --mine any --stale exclude                        # what you created
 kazari --json me                                              # your account, as JSON
 ```
 
-The [CLI reference](docs/cli.md) lists every command and flag.
+On the server, `sudo kazari admin ...` administers the instance over its socket with no token. The [CLI reference](docs/cli.md) lists every command and flag.
 
 ## Developing Kazari
 
-To run the development server, the tests and most of the checks CI runs:
+To run the development server, the tests and the checks CI runs:
 
 ```sh
-go run ./cmd/kazari serve --config deploy/dev.yaml      # http://<slug>.localhost:8080/, admin token dev-admin-token
-docker compose up --build                               # the same server from the Docker image, data in a named volume
+go run ./cmd/kazari serve --local                       # http://<slug>.localhost:8080/, data in ./.data
+go run ./cmd/kazari admin users create peter --role admin   # over the socket in ./.data, no token
+docker compose up --build                               # the same server from the Docker image
 go test -race ./...                                     # tests with the race detector
 test -z "$(gofmt -l .)" && go vet ./...                 # formatting and vet
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...  # lint
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...   # known vulnerabilities
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X kazari/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o kazari ./cmd/kazari
 ```
 
-The last command builds the binary, stamped with the version from git.
-
-To release, push a version tag without a `v`, such as `0.2.0`, and GitHub Actions runs goreleaser. [Local development](docs/install.md#local-development) in the installation guide has the full walkthrough, including a first publish against the development server.
-
-### Building the website
-
-The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, except `security.md` and `adr/`, so a change to `docs/` is a change to the site.
-
-The guides (quick start, publishing with an agent, publishing from code) live in `site/content/docs/`, and the landing page is `site/layouts/home.html`. Building the site needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node and no theme.
-
-To install Hugo, preview the site and build it as CI does:
-
-```sh
-go install github.com/gohugoio/hugo@v0.168.0   # Hugo at the version CI uses
-hugo server --source site                      # preview at http://localhost:1313/, reloads on save
-hugo --source site --gc --minify               # build into site/public/ as CI does
-```
-
-Before changing the site or the docs, know that:
-
-- Pages in `docs/` stay plain Markdown that reads well on GitHub: no front matter, the first `# ` heading is the title, and links between pages are relative `.md` links (`install.md#tls-modes`). The build fails on a link to a page that does not exist.
-- A page appears in the sidebar, the previous and next links and the search once it is listed in `site/data/nav.toml`.
-- The fonts are self-hosted and subset to the characters the site uses. After adding Japanese text, run `site/subset-fonts.sh` (it needs `curl` and fonttools with brotli) and commit the regenerated files in `site/static/fonts/`.
-- `.github/workflows/pages.yml` builds the site for pull requests that touch `site/` or `docs/`, and deploys it from `main`. The repository's Pages source must be set to GitHub Actions.
+[Developing Kazari](docs/development.md) has the rest: building a stamped binary, releasing, and building the website.
 
 ## Documentation
 
@@ -195,13 +145,15 @@ The documentation, with guides for publishing with an agent and from code, is pu
 
 | Page                                         | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |
-| [Installing Kazari](docs/install.md)         | DNS, release binaries, systemd, Docker, Caddy, TLS, first user |
-| [Configuration](docs/configuration.md)       | YAML keys, `${}` references, `.env`, overrides, validation     |
+| [Installing Kazari](docs/install.md)         | Compose, packages, the binary, the preflight check, the first user |
+| [DNS and certificates](docs/certificates.md) | DNS records, DNS-01 providers, other providers, proxy examples |
+| [Configuration](docs/configuration.md)       | YAML keys, `${}` references, dotenv files, overrides, validation |
 | [Operating Kazari](docs/ops.md)              | Data layout, backup, upgrades, logs, metrics, jobs, abuse      |
 | [REST API](docs/api.md)                      | REST reference for the user and admin APIs                     |
 | [MCP server](docs/mcp.md)                    | MCP tools, resources, prompt and chunked uploads               |
-| [CLI](docs/cli.md)                           | The `kazari` client commands                                   |
+| [CLI](docs/cli.md)                           | The `kazari` server and client commands                        |
 | [Identity and sign-in](docs/identity.md)     | OAuth, OpenID Connect providers and user provisioning          |
+| [Developing Kazari](docs/development.md)     | Running from source, tests, releases, the website              |
 | [Security](docs/security.md)                 | Threat model and security design                               |
 | [Decision records](docs/adr/)                | Architecture decision records                                  |
 

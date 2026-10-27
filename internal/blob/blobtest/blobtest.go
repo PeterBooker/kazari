@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/blob"
 )
 
 // Run tests a blob.Store. newStore must return an empty store and is called

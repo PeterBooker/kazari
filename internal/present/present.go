@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/audit"
-	"kazari/internal/auth"
-	"kazari/internal/gate"
-	"kazari/internal/scheduler"
-	"kazari/internal/upload"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/gate"
+	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // Links builds public URLs. URL takes a host label ("demo" or "demo--v3")

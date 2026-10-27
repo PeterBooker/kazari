@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/api"
 )
 
 type captured struct {

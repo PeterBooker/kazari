@@ -12,9 +12,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X kazari/internal/buildinfo.version={{.Version}}
-      - -X kazari/internal/buildinfo.commit={{.Commit}}
-      - -X kazari/internal/buildinfo.date={{.Date}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.version={{.Version}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.commit={{.Commit}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.date={{.Date}}
     goos:
       - linux
       - darwin
@@ -33,9 +33,49 @@ archives:
       - LICENSE
       - README.md
       - deploy/kazari.yaml
+      - deploy/kazari.reference.yaml
       - deploy/kazari.env.example
       - deploy/kazari.service
+      - deploy/compose.yml
       - deploy/Caddyfile
+
+# deb and rpm packages: the binary, the unit, the two configuration files
+# (kept on upgrade) and the reference files under /usr/share/doc/kazari.
+nfpms:
+  - id: packages
+    package_name: kazari
+    vendor: Peter Booker
+    homepage: https://kazari.io/
+    maintainer: Peter Booker <mail@peterbooker.com>
+    description: |-
+      Self-hosted artifact host. One binary serves every page at
+      <slug>.<your-domain> under a wildcard certificate, with a REST API, an
+      MCP server for AI agents and a CLI.
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: deploy/kazari.service
+        dst: /usr/lib/systemd/system/kazari.service
+      - src: deploy/kazari.yaml
+        dst: /etc/kazari/kazari.yaml
+        type: config|noreplace
+      - src: deploy/kazari.env.example
+        dst: /etc/kazari/kazari.env
+        type: config|noreplace
+        file_info:
+          mode: 0600
+      - src: deploy/kazari.reference.yaml
+        dst: /usr/share/doc/kazari/kazari.reference.yaml
+      - src: deploy/compose.yml
+        dst: /usr/share/doc/kazari/compose.yml
+      - src: deploy/Caddyfile
+        dst: /usr/share/doc/kazari/Caddyfile
+      - src: LICENSE
+        dst: /usr/share/doc/kazari/LICENSE
+    scripts:
+      postinstall: deploy/packaging/postinstall.sh
+      preremove: deploy/packaging/preremove.sh
 
 checksum:
   name_template: checksums.txt
@@ -52,6 +92,52 @@ signs:
       - ${artifact}
       - --yes
     artifacts: checksum
+
+# brew install PeterBooker/tap/kazari. Needs HOMEBREW_TAP_TOKEN, a token
+# with write access to the tap repository; without it the cask is only
+# written to dist/.
+homebrew_casks:
+  - name: kazari
+    binaries:
+      - kazari
+    homepage: https://kazari.io/
+    description: Self-hosted artifact host and its CLI
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}{{ else }}true{{ end }}'
+    repository:
+      owner: PeterBooker
+      name: homebrew-tap
+      branch: main
+      token: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}{{ .Env.HOMEBREW_TAP_TOKEN }}{{ end }}'
+
+# The AUR package kazari-bin. Needs AUR_KEY, the private SSH key of the
+# AUR account that owns the package; without it the PKGBUILD is only
+# written to dist/.
+aurs:
+  - name: kazari-bin
+    homepage: https://kazari.io/
+    description: Self-hosted artifact host and its CLI
+    maintainers:
+      - Peter Booker <mail@peterbooker.com>
+    license: MIT
+    private_key: '{{ if index .Env "AUR_KEY" }}{{ .Env.AUR_KEY }}{{ end }}'
+    git_url: ssh://aur@aur.archlinux.org/kazari-bin.git
+    skip_upload: '{{ if index .Env "AUR_KEY" }}{{ if .Env.AUR_KEY }}false{{ else }}true{{ end }}{{ else }}true{{ end }}'
+    provides:
+      - kazari
+    conflicts:
+      - kazari
+    package: |-
+      install -Dm755 "./kazari" "${pkgdir}/usr/bin/kazari"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/kazari-bin/LICENSE"
+      install -Dm644 "./deploy/kazari.service" "${pkgdir}/usr/lib/systemd/system/kazari.service"
+      install -Dm644 "./deploy/kazari.yaml" "${pkgdir}/etc/kazari/kazari.yaml"
+      install -Dm600 "./deploy/kazari.env.example" "${pkgdir}/etc/kazari/kazari.env"
+      install -Dm644 "./deploy/kazari.reference.yaml" "${pkgdir}/usr/share/doc/kazari/kazari.reference.yaml"
+      install -Dm644 "./deploy/compose.yml" "${pkgdir}/usr/share/doc/kazari/compose.yml"
+      install -Dm644 "./deploy/Caddyfile" "${pkgdir}/usr/share/doc/kazari/Caddyfile"
+    backup:
+      - etc/kazari/kazari.yaml
+      - etc/kazari/kazari.env
 
 dockers:
   - id: amd64

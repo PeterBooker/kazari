@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 const page = `<html>

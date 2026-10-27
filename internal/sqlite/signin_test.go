@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/oauth"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 func TestOAuthStoreSignIn(t *testing.T) {

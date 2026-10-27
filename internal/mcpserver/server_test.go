@@ -17,15 +17,15 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
-	"kazari/internal/blob"
-	"kazari/internal/mcpserver"
-	"kazari/internal/present"
-	"kazari/internal/ratelimit"
-	"kazari/internal/sqlite"
-	"kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/upload"
 )
 
 const testCSP = "default-src 'self'; " +

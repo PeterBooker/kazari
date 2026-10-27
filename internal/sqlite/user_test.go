@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 var userT0 = time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)

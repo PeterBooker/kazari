@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
 )
 
 func TestShareLinks(t *testing.T) {

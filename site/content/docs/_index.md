@@ -13,7 +13,7 @@ Pick the path that fits what you want to do:
   <a href="quickstart/"><strong>Try it on your machine</strong><span>Run Kazari locally with Docker and publish a first page in about five minutes.</span></a>
   <a href="publish-with-an-agent/"><strong>Make pages with an agent</strong><span>Connect any agent, in the cloud or self-hosted, ask for a page, change it, share it and tidy it away.</span></a>
   <a href="publish-from-code/"><strong>Publish from code and CI</strong><span>The CLI, preview deployments from GitHub Actions, and the REST API.</span></a>
-  <a href="install/"><strong>Run it for your team</strong><span>DNS, certificates, Docker or systemd, the first admin user, then sign-in.</span></a>
+  <a href="install/"><strong>Run it for your team</strong><span>Docker Compose, a package or the binary, DNS and the wildcard certificate, the first admin user, then sign-in.</span></a>
 </div>
 
 ## Key ideas

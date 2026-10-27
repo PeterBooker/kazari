@@ -1,53 +1,111 @@
 # Installing Kazari
 
-This guide takes a fresh host to a first published artifact. It covers the DNS records and the wildcard certificate Kazari needs, the release binary under systemd or Docker, running behind a reverse proxy, and the first admin user and key. To run Kazari on your own machine for development instead, go to [Local development](#local-development).
+This guide takes a fresh server to a first published page. It covers the DNS records, running Kazari with Docker Compose, from a package or from the binary, the preflight check, the first admin user and key, and a first publish. To try Kazari on your own machine first, the [quick start](quickstart.md) needs none of this.
 
 The examples use `art.example.com` as the base domain. Replace it with yours.
 
-## Requirements
+## Choosing how to run it
 
-Before you start, you need:
+Every way of running Kazari uses the same two files: `kazari.yaml`, which names the domain, the contact email and the DNS provider, and a dotenv file with the secrets. Pick the path that fits the host:
 
-- **A domain you control**, used only for Kazari. Every artifact becomes a subdomain of it.
-- **Two DNS records** pointing at the host, plus the matching `AAAA` records for IPv6:
+| Path                                                  | Best for                                                     | Upgrade                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------- |
+| [Docker Compose](#running-with-docker-compose)        | Any Linux host with Docker                                   | `docker compose pull && docker compose up -d` |
+| [Package](#installing-the-package)                    | Debian, Ubuntu, Fedora, RHEL and their relatives             | Install the next `.deb` or `.rpm`           |
+| [Binary](#installing-the-binary)                      | Other Linux distributions, macOS, or no package manager      | Run the install script again               |
+| [Behind your own proxy](#running-behind-a-reverse-proxy) | A Caddy, nginx or Traefik that already holds the certificate | Any of the above, in proxy mode          |
+
+With the first three, Kazari obtains the wildcard certificate itself through the DNS provider's API. Behind a proxy, the proxy holds the certificate and Kazari serves plain HTTP.
+
+## Before you start
+
+You need:
+
+- **A domain used only for Kazari.** Every artifact becomes a subdomain of it, so nothing else should live under `art.example.com`.
+- **Two DNS records** pointing at the host, and the matching `AAAA` records only if the host really has IPv6:
 
   ```text
   art.example.com.      A     203.0.113.10
   *.art.example.com.    A     203.0.113.10
   ```
 
-  The wildcard covers `api.`, `mcp.`, `admin.`, every `<slug>.` and every `<slug>--v<N>.` host.
-- **A DNS provider API token** for the ACME DNS-01 challenge, which is the only way to get a wildcard certificate from Let's Encrypt. Kazari supports these providers:
-
-  | Provider     | `tls.dns_provider` | Credential in `tls.dns.api_token`                                    |
-  | ------------ | ------------------ | --------------------------------------------------------------------- |
-  | Cloudflare   | `cloudflare`       | API token with `Zone.DNS:Edit` on the zone                            |
-  | Hetzner DNS  | `hetzner`          | Hetzner DNS API token                                                 |
-  | AWS Route 53 | `route53`          | Empty (AWS default credential chain) or `ACCESS_KEY_ID:SECRET_ACCESS_KEY` |
-
-  You do not need a token if you bring your own certificate (`tls.mode: files`) or run behind a reverse proxy that holds the certificate (proxy mode).
+  The wildcard covers `api.`, `mcp.`, `admin.`, every `<slug>.` and every `<slug>--v<N>.` host. [DNS records](certificates.md#dns-records) explains the records and their pitfalls.
+- **An API token for the DNS provider**, which is how a wildcard certificate is obtained from Let's Encrypt. Kazari works with Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap and DuckDNS ([providers](certificates.md#providers)); for any other, issue the certificate with another tool ([using another DNS provider](certificates.md#using-another-dns-provider)). Behind your own proxy you need none.
 - **Ports 80 and 443** reachable, or a reverse proxy in front.
 - **A supported platform**: Linux on amd64 or arm64, or macOS on arm64. Kazari needs no CGO and no external database.
 
-## Installing the release binary
+## Running with Docker Compose
 
-Each release on GitHub carries these files:
-
-- `kazari_<version>_<os>_<arch>.tar.gz` archives, each holding the binary, the licence, the README and the files in `deploy/`.
-- An SBOM for each archive.
-- `checksums.txt`, the checksums of the files.
-- `checksums.txt.sigstore.json`, a Sigstore bundle for the checksums, signed with cosign.
-
-Set the version you want, then download its archive, the checksums and their signature:
+The Compose file runs the published image with the two configuration files beside it. In an empty directory, fetch the three files:
 
 ```sh
-VERSION=0.1.0
+curl -fsSLO https://kazari.io/deploy/compose.yml
+curl -fsSLO https://kazari.io/deploy/kazari.yaml
+curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env
+```
+
+Edit `kazari.yaml` with your domain, contact email and DNS provider, and put the provider's token in `.env`. Then start Kazari:
+
+```sh
+docker compose up -d
+docker compose logs -f
+```
+
+The log shows `kazari started`, then `serving` with the addresses, then `no users yet` with the next command, and within a minute `certificate obtained` for `*.art.example.com`. Compose waits for the health check, which asks the server over its socket.
+
+To check the DNS records and the token from inside the running container, run the [preflight check](#checking-the-setup):
+
+```sh
+docker compose exec kazari kazari check
+```
+
+The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION` in `.env`. Then go on to [creating the first admin user and key](#creating-the-first-admin-user-and-key).
+
+## Installing the package
+
+Each release carries `.deb` and `.rpm` packages for amd64 and arm64. They install the binary at `/usr/bin/kazari`, the systemd unit, the two configuration files under `/etc/kazari`, which upgrades leave alone, and the reference files under `/usr/share/doc/kazari`. Download the package for your platform from the [releases page](https://github.com/PeterBooker/kazari/releases) and install it:
+
+```sh
+sudo apt install ./kazari_<version>_amd64.deb      # Debian and Ubuntu
+sudo dnf install ./kazari-<version>.x86_64.rpm     # Fedora and RHEL
+```
+
+The package prints the remaining steps. Edit `/etc/kazari/kazari.yaml` with your domain, contact email and DNS provider, put the provider's token in `/etc/kazari/kazari.env`, then check and start:
+
+```sh
+sudo kazari check
+sudo systemctl enable --now kazari
+journalctl -u kazari -f
+```
+
+`kazari check` reports on the configuration, the DNS records, the token and the ports before anything runs ([checking the setup](#checking-the-setup)). The log then shows the same lines as under Compose. Go on to [creating the first admin user and key](#creating-the-first-admin-user-and-key).
+
+## Installing the binary
+
+The binary is the server and the client in one. Install it with the script, or by hand with the release verified, then set it up under systemd.
+
+### With the install script
+
+The script installs the latest release into `/usr/local/bin`, after checking the download against the release's `checksums.txt`:
+
+```sh
+curl -fsSL https://kazari.io/install.sh | sh
+```
+
+It prints the installed version. To install a particular release or into another directory, set `KAZARI_VERSION` or `KAZARI_BINDIR` before `sh`. To read the script first, open <https://kazari.io/install.sh>.
+
+### By hand, verifying the release
+
+Each release on GitHub carries archives named `kazari_<version>_<os>_<arch>.tar.gz`, each holding the binary and the files in `deploy/`, with an SBOM each, a `checksums.txt`, and `checksums.txt.sigstore.json`, a Sigstore bundle signed with keyless cosign. Set the version you want, then download the archive, the checksums and their signature:
+
+```sh
+VERSION=0.3.0
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/kazari_${VERSION}_linux_amd64.tar.gz
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt.sigstore.json
 ```
 
-The release workflow signs the checksums with keyless cosign. Verify that signature, then check the archive against the checksums:
+Verify the signature of the checksums, then the archive against them:
 
 ```sh
 cosign verify-blob checksums.txt \
@@ -66,131 +124,42 @@ sudo install -m 0755 kazari /usr/local/bin/kazari
 kazari version
 ```
 
-The same binary is the server (`kazari serve`) and the client. Every other command is a client command, described in the [CLI reference](cli.md).
+### Running under systemd
 
-## Running under systemd
-
-The archive's `deploy/` directory holds a systemd unit, `kazari.service`, with templates for its configuration and secrets. Copy them into place:
+The unit runs the server as a confined, unprivileged user. Put the unit and the two configuration files in place, from the archive's `deploy/` directory or from the site:
 
 ```sh
 sudo mkdir -p /etc/kazari
-sudo install -m 0644 deploy/kazari.yaml /etc/kazari/kazari.yaml
-sudo install -m 0600 deploy/kazari.env.example /etc/kazari/kazari.env
-sudo install -m 0644 deploy/kazari.service /etc/systemd/system/kazari.service
+sudo curl -fsSL https://kazari.io/deploy/kazari.yaml -o /etc/kazari/kazari.yaml
+sudo curl -fsSL https://kazari.io/deploy/kazari.env.example -o /etc/kazari/kazari.env
+sudo chmod 0600 /etc/kazari/kazari.env
+sudo curl -fsSL https://kazari.io/deploy/kazari.service -o /etc/systemd/system/kazari.service
 ```
 
-### Configuring the server
-
-Edit `/etc/kazari/kazari.yaml`. For ACME, the settings that matter are:
-
-```yaml
-base_domain: art.example.com
-data_dir: /var/lib/kazari
-
-tls:
-  mode: acme
-  email: ops@example.com
-  dns_provider: cloudflare
-  dns:
-    api_token: ${KAZARI_TLS_DNS_API_TOKEN}
-
-auth:
-  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
-```
-
-Each `${NAME}` is replaced at startup by the environment variable `NAME`, so the file itself holds no secrets.
-
-The unit passes `--config /etc/kazari/kazari.yaml`. Without that flag, `kazari serve` tries `$KAZARI_CONFIG`, then `/etc/kazari/kazari.yaml`, then runs on environment variables alone. It can also read a `.env` file, and `KAZARI_*` variables override the YAML file. The [configuration reference](configuration.md#where-the-file-comes-from) gives the order of each.
-
-### Storing the secrets
-
-Put the secret values in `/etc/kazari/kazari.env`, which the unit loads with `EnvironmentFile=`:
+Edit `/etc/kazari/kazari.yaml` with your domain, contact email and DNS provider, and put the provider's token in `/etc/kazari/kazari.env`. Then check, enable and start the service:
 
 ```sh
-KAZARI_TLS_DNS_API_TOKEN=your-cloudflare-token
-# openssl rand -hex 32
-KAZARI_AUTH_ADMIN_TOKEN=a-long-random-string
-# once you configure sign-in
-# KAZARI_AUTH_OIDC_CLIENT_SECRET=...
-```
-
-systemd reads this file as root before it drops privileges, so mode `0600` is right.
-
-A `${NAME}` reference to a variable that is not set stops startup with an error naming it. Define every variable the file refers to, as the template does, or delete the line from the YAML. The [environment references](configuration.md#environment-references) section has the full syntax.
-
-### What the unit does
-
-The unit runs the server as a confined, unprivileged user:
-
-- `ExecStart=/usr/local/bin/kazari serve --config /etc/kazari/kazari.yaml` starts the server.
-- `DynamicUser=yes` runs it as a transient unprivileged user. `StateDirectory=kazari` gives that user `/var/lib/kazari` (stored under `/var/lib/private/kazari`), and `KAZARI_DATA_DIR` points there.
-- `AmbientCapabilities=CAP_NET_BIND_SERVICE` lets it bind ports 80 and 443 without root.
-- `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and a system-call filter confine it to its state directory and `/tmp`.
-
-Because the service user is dynamic, `/etc/kazari/kazari.yaml` must be world-readable (`0644`). That is another reason to keep secrets in the environment file.
-
-### Starting the service
-
-Reload systemd, start the service and follow its log:
-
-```sh
+sudo kazari check
 sudo systemctl daemon-reload
 sudo systemctl enable --now kazari
 journalctl -u kazari -f
 ```
 
-Startup logs `kazari started` with the mode and the bound addresses. The first start then obtains the wildcard certificate in the background: watch the log for CertMagic's `certificate obtained successfully` line. If it does not come, see [certificate issuance](ops.md#the-certificate-is-not-issued).
+The unit does these things:
 
-If the configuration is invalid, the server exits with status 2 and lists every problem. Any other failure to start, such as a port in use, an unreachable OIDC issuer or a database that cannot be opened, exits with status 1.
+- `ExecStart=kazari serve --config /etc/kazari/kazari.yaml` starts the server, finding the binary in `/usr/local/bin` or `/usr/bin`.
+- `EnvironmentFile=/etc/kazari/kazari.env` supplies the secrets. systemd reads it as root before dropping privileges, so mode `0600` is right.
+- `DynamicUser=yes` runs it as a transient unprivileged user. `StateDirectory=kazari` gives that user `/var/lib/kazari` (stored under `/var/lib/private/kazari`), and `KAZARI_DATA_DIR` points there.
+- `AmbientCapabilities=CAP_NET_BIND_SERVICE` lets it bind ports 80 and 443 without root.
+- `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and a system-call filter confine it to its state directory and `/tmp`.
 
-## Running with Docker
-
-The image `ghcr.io/peterbooker/kazari` is distroless and runs as the `nonroot` user (UID 65532). It keeps its data in the volume `/var/lib/kazari` and exposes ports 80 and 443. Images are tagged with the release version and `latest`, for linux/amd64 and linux/arm64, and signed with cosign.
-
-The data directory must be writable by UID 65532. A named volume is initialised from the image and is writable as it is. A bind mount owned by root is not, so create the directory and hand it to that user first:
-
-```sh
-sudo mkdir -p /srv/kazari/data && sudo chown 65532:65532 /srv/kazari/data
-```
-
-### With a configuration file
-
-The image's default command is `serve --config /etc/kazari/kazari.yaml`. To use a configuration file, mount it at that path:
-
-```sh
-docker run -d --name kazari --restart unless-stopped \
-  -p 80:80 -p 443:443 \
-  -v /srv/kazari/data:/var/lib/kazari \
-  -v /etc/kazari/kazari.yaml:/etc/kazari/kazari.yaml:ro \
-  --env-file /etc/kazari/kazari.env \
-  ghcr.io/peterbooker/kazari:latest
-```
-
-### With environment variables only
-
-To configure everything through the environment instead, pass `serve` as the command:
-
-```sh
-docker run -d --name kazari --restart unless-stopped \
-  -p 80:80 -p 443:443 \
-  -v /srv/kazari/data:/var/lib/kazari \
-  -e KAZARI_BASE_DOMAIN=art.example.com \
-  -e KAZARI_TLS_EMAIL=ops@example.com \
-  -e KAZARI_TLS_DNS_PROVIDER=cloudflare \
-  --env-file /etc/kazari/kazari.env \
-  ghcr.io/peterbooker/kazari:latest serve
-```
+Because the service user is dynamic, `/etc/kazari/kazari.yaml` must be world-readable (`0644`). That is one more reason to keep secrets in the environment file.
 
 ## Running behind a reverse proxy
 
-If something else already terminates TLS on the host, run Kazari in *proxy mode*. It then serves plain HTTP on `listen.http` only. It takes the client IP from the last `X-Forwarded-For` entry, the one the proxy in front added, and then from `X-Real-IP`.
+If something else already terminates TLS on the host, run Kazari in *proxy mode*. It then serves plain HTTP on `listen.http` only, and takes the client IP from the last `X-Forwarded-For` entry, the one the proxy in front added, and then from `X-Real-IP`.
 
-> [!WARNING]
-> Use proxy mode behind exactly one proxy, and do not expose the plain port. A client that reaches the port directly can set its own `X-Forwarded-For` and pick its own IP. Behind a chain of two proxies, such as a CDN and then a proxy, the per-IP limits apply to the outer proxy's address.
-
-### Configuring Kazari
-
-Turn on proxy mode and bind the plain listener to the loopback address:
+Turn on proxy mode and bind the plain listener to the loopback address, in place of the `tls` section:
 
 ```yaml
 base_domain: art.example.com
@@ -201,88 +170,69 @@ listen:
   http: "127.0.0.1:8080"
 ```
 
-In proxy mode Kazari terminates no TLS, so it needs no `tls` settings beyond a valid `tls.mode`. Public URLs still use `https`, since `external_scheme` defaults to `https`.
+In proxy mode Kazari needs no DNS provider token. Public URLs still use `https`, since `external_scheme` defaults to `https`. The proxy must hold a certificate for `art.example.com` and `*.art.example.com` and forward every host to Kazari with the `Host` header intact; [proxy examples](certificates.md#proxy-examples) has Caddy, nginx and Traefik configurations.
 
-### Configuring the proxy
+> [!WARNING]
+> Use proxy mode behind exactly one proxy, and do not expose the plain port. A client that reaches the port directly can set its own `X-Forwarded-For` and pick its own IP. Behind a chain of two proxies, such as a CDN and then a proxy, the per-IP limits apply to the outer proxy's address.
 
-`deploy/Caddyfile` forwards the apex and every subdomain to Kazari, with Caddy holding the wildcard certificate:
+## Checking the setup
 
-```caddyfile
-*.art.example.com, art.example.com {
-	tls ops@example.com {
-		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-	}
+`kazari check` reads the configuration as `serve` would and reports on what the first start depends on, so a wrong record or a token without permission shows up before Let's Encrypt is asked. Run it on the server, before and after starting:
 
-	reverse_proxy 127.0.0.1:8080 {
-		header_up X-Forwarded-Host {host}
-		header_up X-Real-IP {remote_host}
-	}
-}
+```sh
+sudo kazari check
 ```
 
-The `dns cloudflare` directive needs a Caddy build with the `caddy-dns/cloudflare` module, made with `xcaddy build --with github.com/caddy-dns/cloudflare`. For another DNS provider, use its module instead.
+It prints one line per check and a summary:
 
-Any other proxy works the same way: forward every host to Kazari unchanged, with the `Host` header intact.
+```text
+config       ok    /etc/kazari/kazari.yaml, base domain art.example.com, mode acme via cloudflare, data in /var/lib/kazari
+data_dir     ok    /var/lib/kazari is writable
+dns          ok    art.example.com -> 203.0.113.10 (this host)
+dns          ok    api.art.example.com -> 203.0.113.10 (this host)
+dns          ok    check-7f3a9c01.art.example.com -> 203.0.113.10 (this host)
+dns token    ok    cloudflare wrote and removed a TXT record in zone example.com.
+ports        ok    :443 is free
+ports        ok    :80 is free
+admin socket ok    /var/lib/kazari/admin.sock (no server listening yet)
 
-## TLS modes
+all checks passed
+```
 
-`tls.mode` decides where the certificate comes from. Most instances use `acme`, the default. Use `files` when another tool manages the certificates, and `self-signed` for development and tests:
-
-| `tls.mode`    | Certificates                                 | Use for                              |
-| ------------- | -------------------------------------------- | ------------------------------------ |
-| `acme`        | Obtained from an ACME CA by DNS-01           | Production (default)                 |
-| `files`       | PEM files you provide                        | Your own CA or a certificate manager |
-| `self-signed` | Generated at start                           | Development and tests                |
-
-### `acme`
-
-CertMagic obtains and renews one certificate for `art.example.com` and `*.art.example.com` by DNS-01, and stores it in `data_dir/certmagic/`. This mode needs `tls.email` and, except for Route 53, `tls.dns.api_token`.
-
-`tls.ca` picks the ACME directory:
-
-- `letsencrypt`, the default.
-- `letsencrypt-staging`, for a dry run. Use it while you test, since production Let's Encrypt rate-limits failed attempts.
-- Any `https` directory URL.
-
-### `files`
-
-Kazari reads the PEM files at `tls.cert_file` and `tls.key_file`. The certificate must cover both `art.example.com` and `*.art.example.com`.
-
-Kazari checks the files every minute and reloads them when their size or modification time changes. A bad reload keeps the old certificate and logs a warning.
-
-### `self-signed`
-
-Kazari generates an ECDSA certificate at start, valid for the base domain, its wildcard, `127.0.0.1` and `::1`. Browsers warn about it.
+The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, and a port is in use while Kazari runs. A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
 
 ## Creating the first admin user and key
 
-The admin API lives at `https://admin.art.example.com/v1`. It accepts the admin token from `KAZARI_AUTH_ADMIN_TOKEN`, which must be at least 32 characters.
-
-Use the CLI, from any machine, to check the server and create a user with a key:
+A fresh instance has no users. Create the first admin and issue it a key on the server, where the `kazari` command reaches the admin API over a Unix socket in the data directory and needs no token. Under systemd, run it as root:
 
 ```sh
-export KAZARI_ADMIN_URL=https://admin.art.example.com
-export KAZARI_ADMIN_TOKEN=the-admin-token
+sudo kazari admin users create peter --email peter@example.com --role admin
+sudo kazari admin keys issue peter --label laptop        # prints kzk_... once
+```
 
-kazari admin health
-kazari admin users create peter --email peter@example.com --role admin
-kazari admin keys issue peter --label laptop        # prints kzk_... once
+Under Compose, the same commands run inside the container:
+
+```sh
+docker compose exec kazari kazari admin users create peter --email peter@example.com --role admin
+docker compose exec kazari kazari admin keys issue peter --label laptop
 ```
 
 The key is shown exactly once, so copy it now. A key issued without `--scopes` carries the member scopes (`artifacts:read`, `artifacts:write`, `artifacts:delete`) and acts as a member, even for an admin user.
 
-If you set `admin.listen`, the admin host is served only on that address. Run the CLI on the server with `KAZARI_ADMIN_URL=http://127.0.0.1:9443`, or through an SSH tunnel.
+### Administering from another machine
 
-### Retiring the admin token
-
-To stop using the token from the configuration, issue the admin user a key that also holds the `admin` scope:
+To run admin commands from your laptop, issue the admin user a key that also holds the `admin` scope, and point the CLI at the admin host with it:
 
 ```sh
-kazari admin keys issue peter --label admin \
-  --scopes artifacts:read,artifacts:write,artifacts:delete,admin
+sudo kazari admin keys issue peter --label admin --scopes artifacts:read,artifacts:write,artifacts:delete,admin
 ```
 
-Use that key on the admin host, then remove `KAZARI_AUTH_ADMIN_TOKEN`, as [retiring the admin token](configuration.md#retiring-the-admin-token) describes.
+```sh
+export KAZARI_ADMIN_URL=https://admin.art.example.com KAZARI_ADMIN_TOKEN=kzk_...
+kazari admin users list
+```
+
+An instance can also accept a fixed admin token, `KAZARI_AUTH_ADMIN_TOKEN` in the dotenv file, for scripts that run before any user exists; [the admin token](configuration.md#the-admin-token) covers it. If you set `admin.listen`, the admin host is served only on that address, and a remote CLI reaches it through an SSH tunnel.
 
 ## Verifying with a first publish
 
@@ -296,79 +246,14 @@ mkdir -p site && echo '<!doctype html><title>Hello</title><h1>Hello</h1>' > site
 kazari me
 kazari publish ./site --slug hello        # prints https://hello.art.example.com/
 curl -sI https://hello.art.example.com/
-curl -s https://art.example.com/health
 ```
 
-The first `curl` shows the published page's response headers, and the second checks the server's health endpoint.
-
-## Local development
-
-`deploy/dev.yaml` runs the server on your own machine, with no DNS or certificate: browsers resolve `*.localhost` to the loopback address. It uses proxy mode on `127.0.0.1:8080`, with `base_domain: localhost` and data in `./.data`.
-
-The admin token is `dev-admin-token`, unless `KAZARI_AUTH_ADMIN_TOKEN` is set in the environment or in `./.env`. The server listens on loopback only, since that token is public knowledge.
-
-Start the server, then create a user, issue a key and publish from a second terminal:
-
-```sh
-go run ./cmd/kazari serve --config deploy/dev.yaml
-
-# in another terminal
-go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin users create peter
-go run ./cmd/kazari --admin-url http://admin.localhost:8080 --admin-token dev-admin-token admin keys issue peter --label laptop
-
-KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari publish ./site --slug demo
-```
-
-Open `http://demo.localhost:8080/` to see the page. The MCP server is at `http://mcp.localhost:8080/`. To start again from nothing, delete `./.data`.
-
-> [!NOTE]
-> Most browsers and systemd-resolved resolve `*.localhost`. If a tool on your system does not, add the hosts you need to `/etc/hosts`: `127.0.0.1 api.localhost admin.localhost mcp.localhost demo.localhost`.
-
-The CLI reads `./.env` as well, so `KAZARI_URL` and `KAZARI_TOKEN` can live there instead of on the command line. Keep `.env` out of version control.
-
-### Docker Compose
-
-`compose.yml` at the repository root runs the same development server from the Docker image, so the URLs, the admin token and the commands above are unchanged. The Compose file:
-
-- builds `deploy/Dockerfile`;
-- mounts `deploy/dev.yaml` as the configuration, listening on every interface inside the container through `KAZARI_LISTEN_HTTP`;
-- publishes port 8080 on the loopback addresses only;
-- keeps the data in the named volume `kazari_data`, since the image's `KAZARI_DATA_DIR=/var/lib/kazari` replaces `./.data`;
-- passes `./.env` into the container when it exists.
-
-Start and manage it with the usual Compose commands:
-
-```sh
-docker compose up --build -d      # build and start; docker compose ps shows it healthy
-docker compose logs -f            # follow the server log
-docker compose watch              # rebuild and restart on source changes
-docker compose down               # stop; -v discards the data as well
-```
-
-### Building, testing and releasing
-
-These commands build a binary, run the same checks as CI and make a local release dry run:
-
-```sh
-# build, stamped with the version from git
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X kazari/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o kazari ./cmd/kazari
-
-go test -race ./...                                       # tests with the race detector
-test -z "$(gofmt -l .)"                                   # formatting check
-go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...    # lint
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
-
-goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release dry run
-```
-
-On pull requests and pushes to `main`, GitHub Actions runs gofmt, go vet, staticcheck, govulncheck, `go mod tidy -diff`, `go test -race` and the cross-builds.
-
-To release, push a tag named for the version without a `v`, such as `0.2.0`. The workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, and pushes the signed image to `ghcr.io/peterbooker/kazari`.
+The `curl` shows the published page's response headers, served under the wildcard certificate. If the handshake fails, the certificate has not been issued yet: [the certificate is not issued](certificates.md#the-certificate-is-not-issued) says where to look.
 
 ## Next steps
 
 - [MCP server](mcp.md): connect your agent to the instance.
 - [Sign-in and identity](identity.md): let people sign in with their organisation account through an identity provider.
+- [DNS and certificates](certificates.md): the records, the providers, other providers and proxy configurations.
 - [Configuration](configuration.md): every key, its default and how to set it from the environment.
 - [Operations](ops.md): backups, upgrades, logs, metrics and troubleshooting.

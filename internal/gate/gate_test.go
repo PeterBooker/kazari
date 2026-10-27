@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/gate"
-	"kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/gate"
+	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
 var now = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)

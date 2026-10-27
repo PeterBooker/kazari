@@ -37,6 +37,21 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: shellcheck
+        run: shellcheck site/static/install.sh deploy/packaging/*.sh
+      - name: goreleaser check
+        run: go run github.com/goreleaser/goreleaser/v2@latest check
+
+  install-script:
+    name: install.sh against the latest release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install with the script
+        run: |
+          KAZARI_BINDIR="$HOME/bin" sh site/static/install.sh
+          "$HOME/bin/kazari" version
+          "$HOME/bin/kazari" --help | grep -q serve
 
   test:
     name: Test

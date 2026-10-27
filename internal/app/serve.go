@@ -5,18 +5,20 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"kazari/internal/buildinfo"
-	"kazari/internal/certs"
-	"kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/certs"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // readTimeout and writeTimeout stop a stalled client holding a connection
@@ -60,8 +62,16 @@ func (a *App) Run(ctx context.Context) (err error) {
 		"https", addrs.HTTPS,
 		"http", addrs.HTTP,
 		"admin", addrs.Admin,
+		"socket", addrs.Socket,
 		"oidc", a.oidcOn,
 	)
+	a.log.Info("serving",
+		"pages", a.cfg.ExternalURL("<slug>"),
+		"api", a.cfg.ExternalURL("api"),
+		"mcp", a.cfg.ExternalURL("mcp"),
+		"admin", a.cfg.ExternalURL("admin"),
+	)
+	a.firstRunHint(context.WithoutCancel(ctx))
 
 	// Background work outlives the servers' shutdown so in-flight requests
 	// finish against a working system.
@@ -107,6 +117,21 @@ func (a *App) Run(ctx context.Context) (err error) {
 	return err
 }
 
+// firstRunHint tells an operator watching the log of a fresh instance how
+// to create the first admin, over the socket on this host or with the admin
+// token from anywhere.
+func (a *App) firstRunHint(ctx context.Context) {
+	users, err := a.users.ListUsers(ctx)
+	if err != nil || len(users) > 0 {
+		return
+	}
+	how := "set KAZARI_AUTH_ADMIN_TOKEN and run it with KAZARI_ADMIN_URL=" + strings.TrimSuffix(a.cfg.ExternalURL("admin"), "/")
+	if socket := a.Addrs().Socket; socket != "" {
+		how = "run it on this host (as the service user or root, or with docker exec), which uses the admin socket " + socket
+	}
+	a.log.Warn("no users yet", "next", "kazari admin users create <handle> --role admin, then kazari admin keys issue <handle>", "how", how)
+}
+
 // listen closes whatever it bound if it fails.
 func (a *App) listen() (servers []server, err error) {
 	defer func() {
@@ -149,11 +174,36 @@ func (a *App) listen() (servers []server, err error) {
 			return servers, err
 		}
 	}
+	if path := a.cfg.AdminSocketPath(); path != "" {
+		if addrs.Socket, err = a.bindSocket(path, &servers); err != nil {
+			return servers, err
+		}
+	}
 
 	a.mu.Lock()
 	a.addrs = addrs
 	a.mu.Unlock()
 	return servers, nil
+}
+
+// bindSocket serves the credential-free admin API on the Unix socket at
+// path, readable and writable by the service user alone. A socket file a
+// previous run left behind is replaced; the listener removes its own on
+// close.
+func (a *App) bindSocket(path string, servers *[]server) (string, error) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("app: remove stale admin socket %s: %w", path, err)
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return "", fmt.Errorf("app: listen admin socket on %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		ln.Close()
+		return "", fmt.Errorf("app: admin socket %s: %w", path, err)
+	}
+	*servers = append(*servers, server{name: "admin socket", srv: a.newServer(a.adminLocal), ln: ln})
+	return path, nil
 }
 
 func (a *App) newServer(h http.Handler) *http.Server {

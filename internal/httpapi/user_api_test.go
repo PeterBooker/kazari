@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
-	"kazari/internal/auth"
-	"kazari/internal/httpapi"
-	"kazari/internal/upload"
-	"kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 func TestCreateJSON(t *testing.T) {

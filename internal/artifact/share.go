@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/audit"
 )
 
 // Share link tokens are kzs_<prefix>_<secret>, lower-case unpadded base32

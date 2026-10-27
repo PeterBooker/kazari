@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"kazari/internal/audit"
-	"kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/blob"
 )
 
 const (

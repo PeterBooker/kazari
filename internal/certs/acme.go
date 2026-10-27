@@ -74,6 +74,7 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 	magic := certmagic.New(cache, certmagic.Config{
 		Storage: &certmagic.FileStorage{Path: cfg.StorageDir},
 		Logger:  zl,
+		OnEvent: certEvents(logger),
 	})
 	issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{
 		CA:     ca,
@@ -121,6 +122,26 @@ func (a *ACME) Run(ctx context.Context) error {
 
 func (a *ACME) stop() {
 	a.stopOnce.Do(a.cache.Stop)
+}
+
+// certEvents logs the outcome of each certificate order in plain words, so
+// an operator watching the log after the first start learns whether the
+// wildcard certificate arrived without reading CertMagic's own lines.
+func certEvents(logger *slog.Logger) func(context.Context, string, map[string]any) error {
+	return func(ctx context.Context, event string, data map[string]any) error {
+		name, _ := data["identifier"].(string)
+		renewal, _ := data["renewal"].(bool)
+		switch event {
+		case "cert_obtaining":
+			logger.InfoContext(ctx, "obtaining certificate", "name", name, "renewal", renewal)
+		case "cert_obtained":
+			logger.InfoContext(ctx, "certificate obtained", "name", name, "renewal", renewal, "issuer", data["issuer"])
+		case "cert_failed":
+			logger.ErrorContext(ctx, "certificate not obtained", "name", name, "renewal", renewal, "error", data["error"],
+				"hint", "check the DNS records and the DNS API token with kazari check; retries continue in the background")
+		}
+		return nil
+	}
 }
 
 func caURL(ca string) (string, error) {

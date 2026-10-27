@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/api"
 )
 
 // These methods need a Client for the admin host with the admin token or an

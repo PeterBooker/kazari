@@ -19,8 +19,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/auth"
-	"kazari/internal/oidc"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/oidc"
 )
 
 const (

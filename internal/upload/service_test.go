@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/artifact"
-	"kazari/internal/sqlite"
-	"kazari/internal/upload"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/upload"
 )
 
 type clock struct {

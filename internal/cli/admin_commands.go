@@ -8,82 +8,43 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/api"
 )
 
-const adminUsage = `usage: kazari admin <command>
-
-Commands:
-  users list
-  users create <handle> [--email] [--role] [--quota]
-  users update <handle> [--disable|--enable] [--role] [--quota] [--email]
-  keys list <handle>
-  keys issue <handle> [--label] [--scopes a,b] [--expires 720h]
-  keys revoke <handle> <prefix>
-  artifacts list [list flags]
-  transfer <slug> <handle>
-  hide <slug>
-  settings
-  jobs list
-  jobs run <name>
-  audit [--since RFC3339|duration] [--slug] [--limit]
-  health
-`
-
-func cmdAdmin(r *runner, args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Fprint(r.stderr, adminUsage)
-		if len(args) == 0 {
-			return errUsagePrinted
-		}
-		return nil
-	}
-	type sub map[string]commandFunc
-	groups := map[string]sub{
-		"users":     {"list": cmdAdminUsersList, "create": cmdAdminUsersCreate, "update": cmdAdminUsersUpdate},
-		"keys":      {"list": cmdAdminKeysList, "issue": cmdAdminKeysIssue, "revoke": cmdAdminKeysRevoke},
-		"artifacts": {"list": cmdAdminArtifactsList},
-		"jobs":      {"list": cmdAdminJobsList, "run": cmdAdminJobsRun},
-	}
-	single := map[string]commandFunc{
-		"transfer": cmdAdminTransfer,
-		"hide":     cmdAdminHide,
-		"settings": cmdAdminSettings,
-		"audit":    cmdAdminAudit,
-		"health":   cmdAdminHealth,
-	}
-	if cmd, ok := single[args[0]]; ok {
-		return cmd(r, args[1:])
-	}
-	g, ok := groups[args[0]]
-	if !ok {
-		return usagef("admin: unknown command %q (run kazari admin help)", args[0])
-	}
-	if len(args) < 2 {
-		return usagef("admin %s: want one of %s", args[0], strings.Join(slices.Sorted(maps.Keys(g)), ", "))
-	}
-	cmd, ok := g[args[1]]
-	if !ok {
-		return usagef("admin %s: unknown command %q, want one of %s", args[0], args[1],
-			strings.Join(slices.Sorted(maps.Keys(g)), ", "))
-	}
-	return cmd(r, args[2:])
+// AdminCmd groups the admin API commands. On the server's host they use the
+// admin socket and need no token.
+type AdminCmd struct {
+	Users     AdminUsersCmd     `cmd:"" help:"List, create and update users."`
+	Keys      AdminKeysCmd      `cmd:"" help:"List, issue and revoke a user's API keys."`
+	Artifacts AdminArtifactsCmd `cmd:"" help:"Artifacts of every owner."`
+	Jobs      AdminJobsCmd      `cmd:"" help:"The maintenance jobs."`
+	Transfer  AdminTransferCmd  `cmd:"" help:"Give an artifact to another user."`
+	Hide      AdminHideCmd      `cmd:"" help:"Unpublish an artifact at once."`
+	Settings  AdminSettingsCmd  `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
+	Audit     AdminAuditCmd     `cmd:"" help:"Read the audit log."`
+	Health    AdminHealthCmd    `cmd:"" help:"Check the server is up; needs no token."`
 }
 
-func cmdAdminUsersList(r *runner, args []string) error {
-	fs := r.newFlags("admin users list", "admin users list")
-	if _, err := parse(fs, args, 0, 0); err != nil {
-		return err
-	}
-	c, err := r.adminClient()
+// AdminUsersCmd manages users.
+type AdminUsersCmd struct {
+	List   AdminUsersListCmd   `cmd:"" help:"List every user with usage and quota."`
+	Create AdminUsersCreateCmd `cmd:"" help:"Create a user."`
+	Update AdminUsersUpdateCmd `cmd:"" help:"Change a user's role, quota, email or disabled state."`
+}
+
+// AdminUsersListCmd lists users.
+type AdminUsersListCmd struct{}
+
+func (c *AdminUsersListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	users, err := c.ListUsers(r.ctx)
+	users, err := cl.ListUsers(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(users)
 	}
 	tw := newTable(r.stdout)
@@ -100,7 +61,7 @@ func cmdAdminUsersList(r *runner, args []string) error {
 }
 
 func (r *runner) printUser(u *api.User) error {
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(u)
 	}
 	tw := newTable(r.stdout)
@@ -115,60 +76,56 @@ func (r *runner) printUser(u *api.User) error {
 	return tw.Flush()
 }
 
-func cmdAdminUsersCreate(r *runner, args []string) error {
-	fs := r.newFlags("admin users create", "admin users create <handle> [flags]")
-	email := fs.String("email", "", "email address")
-	role := fs.String("role", "", "member (default) or admin")
-	quota := fs.String("quota", "", "storage quota, e.g. 500MiB (server default if empty)")
-	pos, err := parse(fs, args, 1, 1)
-	if err != nil {
-		return err
-	}
-	req := api.CreateUserRequest{Handle: pos[0], Email: *email, Role: *role}
-	if *quota != "" {
-		n, err := parseSize(*quota)
+// AdminUsersCreateCmd creates a user.
+type AdminUsersCreateCmd struct {
+	Handle string `arg:"" help:"The user's handle."`
+	Email  string `help:"Email address." placeholder:"EMAIL"`
+	Role   string `help:"member (default) or admin." placeholder:"ROLE"`
+	Quota  string `help:"Storage quota, such as 500MiB (default: the server's)." placeholder:"SIZE"`
+}
+
+func (c *AdminUsersCreateCmd) Run(r *runner) error {
+	req := api.CreateUserRequest{Handle: c.Handle, Email: c.Email, Role: c.Role}
+	if c.Quota != "" {
+		n, err := parseSize(c.Quota)
 		if err != nil {
 			return usagef("admin users create: --quota: %v", err)
 		}
 		req.QuotaBytes = &n
 	}
-	c, err := r.adminClient()
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	u, err := c.CreateUser(r.ctx, req)
+	u, err := cl.CreateUser(r.ctx, req)
 	if err != nil {
 		return err
 	}
 	return r.printUser(u)
 }
 
-func cmdAdminUsersUpdate(r *runner, args []string) error {
-	fs := r.newFlags("admin users update", "admin users update <handle> [flags]")
-	disable := fs.Bool("disable", false, "disable the user (revokes every key)")
-	enable := fs.Bool("enable", false, "re-enable the user")
-	role := fs.String("role", "", "member or admin")
-	quota := fs.String("quota", "", "storage quota, e.g. 500MiB")
-	email := fs.String("email", "", "email address")
-	pos, err := parse(fs, args, 1, 1)
-	if err != nil {
-		return err
-	}
-	if *disable && *enable {
+// AdminUsersUpdateCmd changes a user.
+type AdminUsersUpdateCmd struct {
+	Handle  string  `arg:"" help:"The user's handle."`
+	Disable bool    `help:"Disable the user, which revokes every key."`
+	Enable  bool    `help:"Re-enable the user."`
+	Role    *string `help:"member or admin." placeholder:"ROLE"`
+	Quota   *string `help:"Storage quota, such as 500MiB; 0 is unlimited." placeholder:"SIZE"`
+	Email   *string `help:"Email address." placeholder:"EMAIL"`
+}
+
+func (c *AdminUsersUpdateCmd) Run(r *runner) error {
+	if c.Disable && c.Enable {
 		return usagef("admin users update: --disable and --enable are exclusive")
 	}
 	var req api.UpdateUserRequest
-	if *disable || *enable {
-		req.Disabled = disable
+	if c.Disable || c.Enable {
+		req.Disabled = &c.Disable
 	}
-	if flagSet(fs, "role") {
-		req.Role = role
-	}
-	if flagSet(fs, "email") {
-		req.Email = email
-	}
-	if flagSet(fs, "quota") {
-		n, err := parseSize(*quota)
+	req.Role = c.Role
+	req.Email = c.Email
+	if c.Quota != nil {
+		n, err := parseSize(*c.Quota)
 		if err != nil {
 			return usagef("admin users update: --quota: %v", err)
 		}
@@ -177,162 +134,176 @@ func cmdAdminUsersUpdate(r *runner, args []string) error {
 	if req == (api.UpdateUserRequest{}) {
 		return usagef("admin users update: nothing to change")
 	}
-	c, err := r.adminClient()
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	u, err := c.UpdateUser(r.ctx, pos[0], req)
+	u, err := cl.UpdateUser(r.ctx, c.Handle, req)
 	if err != nil {
 		return err
 	}
 	return r.printUser(u)
 }
 
-func cmdAdminKeysList(r *runner, args []string) error {
-	fs := r.newFlags("admin keys list", "admin keys list <handle>")
-	pos, err := parse(fs, args, 1, 1)
+// AdminKeysCmd manages API keys.
+type AdminKeysCmd struct {
+	List   AdminKeysListCmd   `cmd:"" help:"List a user's keys."`
+	Issue  AdminKeysIssueCmd  `cmd:"" help:"Issue a key; the secret is printed once."`
+	Revoke AdminKeysRevokeCmd `cmd:"" help:"Revoke a key by its prefix."`
+}
+
+// AdminKeysListCmd lists a user's keys.
+type AdminKeysListCmd struct {
+	Handle string `arg:"" help:"The user's handle."`
+}
+
+func (c *AdminKeysListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	c, err := r.adminClient()
-	if err != nil {
-		return err
-	}
-	keys, err := c.ListKeys(r.ctx, pos[0])
+	keys, err := cl.ListKeys(r.ctx, c.Handle)
 	if err != nil {
 		return err
 	}
 	return r.printKeys(keys)
 }
 
-func cmdAdminKeysIssue(r *runner, args []string) error {
-	fs := r.newFlags("admin keys issue", "admin keys issue <handle> [flags]")
-	label := fs.String("label", "", "key label")
-	scopes := fs.String("scopes", "", "comma-separated scopes (server default: read, write, delete)")
-	expires := fs.String("expires", "", "lifetime as a Go `duration`, e.g. 720h (no expiry if empty)")
-	pos, err := parse(fs, args, 1, 1)
-	if err != nil {
-		return err
-	}
-	if *expires != "" {
-		if _, err := time.ParseDuration(*expires); err != nil {
+// AdminKeysIssueCmd issues a key.
+type AdminKeysIssueCmd struct {
+	Handle  string `arg:"" help:"The user's handle."`
+	Label   string `help:"Key label." placeholder:"LABEL"`
+	Scopes  string `help:"Comma-separated scopes (default: artifacts:read,artifacts:write,artifacts:delete)." placeholder:"A,B"`
+	Expires string `help:"Lifetime as a Go duration, such as 720h (default: no expiry)." placeholder:"DURATION"`
+}
+
+func (c *AdminKeysIssueCmd) Run(r *runner) error {
+	if c.Expires != "" {
+		if _, err := time.ParseDuration(c.Expires); err != nil {
 			return usagef("admin keys issue: --expires: %v", err)
 		}
 	}
-	req := api.IssueKeyRequest{Label: *label, ExpiresIn: *expires}
-	for s := range strings.SplitSeq(*scopes, ",") {
+	req := api.IssueKeyRequest{Label: c.Label, ExpiresIn: c.Expires}
+	for s := range strings.SplitSeq(c.Scopes, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			req.Scopes = append(req.Scopes, s)
 		}
 	}
-	c, err := r.adminClient()
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	k, err := c.IssueKey(r.ctx, pos[0], req)
+	k, err := cl.IssueKey(r.ctx, c.Handle, req)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(k)
 	}
 	fmt.Fprintln(r.stdout, k.Key)
-	fmt.Fprintf(r.stderr, "issued key %s for %s; the key is shown only once\n", k.APIKey.Prefix, pos[0])
+	fmt.Fprintf(r.stderr, "issued key %s for %s; the key is shown only once\n", k.APIKey.Prefix, c.Handle)
 	return nil
 }
 
-func cmdAdminKeysRevoke(r *runner, args []string) error {
-	fs := r.newFlags("admin keys revoke", "admin keys revoke <handle> <prefix>")
-	pos, err := parse(fs, args, 2, 2)
+// AdminKeysRevokeCmd revokes a key.
+type AdminKeysRevokeCmd struct {
+	Handle string `arg:"" help:"The user's handle."`
+	Prefix string `arg:"" help:"The key's prefix, from keys list."`
+}
+
+func (c *AdminKeysRevokeCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	c, err := r.adminClient()
-	if err != nil {
+	if err := cl.RevokeKey(r.ctx, c.Handle, c.Prefix); err != nil {
 		return err
 	}
-	if err := c.RevokeKey(r.ctx, pos[0], pos[1]); err != nil {
-		return err
-	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(api.OK{OK: true})
 	}
-	fmt.Fprintf(r.stdout, "revoked %s\n", pos[1])
+	fmt.Fprintf(r.stdout, "revoked %s\n", c.Prefix)
 	return nil
 }
 
-func cmdAdminArtifactsList(r *runner, args []string) error {
-	o, parseArgs := addListFlags(r, "admin artifacts list", "admin artifacts list [flags]")
-	if err := parseArgs(args); err != nil {
-		return err
-	}
-	c, err := r.adminClient()
+// AdminArtifactsCmd lists artifacts across owners.
+type AdminArtifactsCmd struct {
+	List AdminArtifactsListCmd `cmd:"" help:"List every artifact, with its owner."`
+}
+
+// AdminArtifactsListCmd lists every artifact.
+type AdminArtifactsListCmd struct {
+	listFlags
+}
+
+func (c *AdminArtifactsListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	l, err := r.fetchList(o, func(p ListParams) (*api.ArtifactList, error) { return c.AdminListArtifacts(r.ctx, p) })
+	l, err := r.fetchList(&c.listFlags, func(p ListParams) (*api.ArtifactList, error) { return cl.AdminListArtifacts(r.ctx, p) })
 	if err != nil {
 		return err
 	}
 	return r.printList(l, true)
 }
 
-func cmdAdminTransfer(r *runner, args []string) error {
-	fs := r.newFlags("admin transfer", "admin transfer <slug> <handle>")
-	pos, err := parse(fs, args, 2, 2)
+// AdminTransferCmd changes an artifact's owner.
+type AdminTransferCmd struct {
+	Slug   string `arg:"" help:"Artifact slug."`
+	Handle string `arg:"" help:"The new owner's handle."`
+}
+
+func (c *AdminTransferCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	c, err := r.adminClient()
+	a, err := cl.Transfer(r.ctx, c.Slug, c.Handle)
 	if err != nil {
 		return err
 	}
-	a, err := c.Transfer(r.ctx, pos[0], pos[1])
-	if err != nil {
-		return err
-	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(a)
 	}
-	fmt.Fprintf(r.stdout, "%s now belongs to %s\n", pos[0], pos[1])
+	fmt.Fprintf(r.stdout, "%s now belongs to %s\n", c.Slug, c.Handle)
 	return nil
 }
 
-func cmdAdminHide(r *runner, args []string) error {
-	fs := r.newFlags("admin hide", "admin hide <slug>")
-	pos, err := parse(fs, args, 1, 1)
+// AdminHideCmd unpublishes an artifact.
+type AdminHideCmd struct {
+	Slug string `arg:"" help:"Artifact slug."`
+}
+
+func (c *AdminHideCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	c, err := r.adminClient()
+	a, err := cl.Hide(r.ctx, c.Slug)
 	if err != nil {
 		return err
 	}
-	a, err := c.Hide(r.ctx, pos[0])
-	if err != nil {
-		return err
-	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(a)
 	}
-	fmt.Fprintf(r.stdout, "%s is hidden (unpublished)\n", pos[0])
+	fmt.Fprintf(r.stdout, "%s is hidden (unpublished)\n", c.Slug)
 	return nil
 }
 
-func cmdAdminSettings(r *runner, args []string) error {
-	fs := r.newFlags("admin settings", "admin settings")
-	if _, err := parse(fs, args, 0, 0); err != nil {
-		return err
-	}
-	c, err := r.adminClient()
+// AdminSettingsCmd prints the effective configuration.
+type AdminSettingsCmd struct{}
+
+func (c *AdminSettingsCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	s, err := c.Settings(r.ctx)
+	s, err := cl.Settings(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(s)
 	}
 	lines := map[string]string{}
@@ -379,20 +350,25 @@ func scalar(v any) any {
 	}
 }
 
-func cmdAdminJobsList(r *runner, args []string) error {
-	fs := r.newFlags("admin jobs list", "admin jobs list")
-	if _, err := parse(fs, args, 0, 0); err != nil {
-		return err
-	}
-	c, err := r.adminClient()
+// AdminJobsCmd manages the maintenance jobs.
+type AdminJobsCmd struct {
+	List AdminJobsListCmd `cmd:"" help:"Show each job's interval, last run, next run and last error."`
+	Run  AdminJobsRunCmd  `cmd:"" help:"Run a job now and wait for it."`
+}
+
+// AdminJobsListCmd lists the jobs.
+type AdminJobsListCmd struct{}
+
+func (c *AdminJobsListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	jobs, err := c.Jobs(r.ctx)
+	jobs, err := cl.Jobs(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(jobs)
 	}
 	tw := newTable(r.stdout)
@@ -404,53 +380,53 @@ func cmdAdminJobsList(r *runner, args []string) error {
 	return tw.Flush()
 }
 
-func cmdAdminJobsRun(r *runner, args []string) error {
-	fs := r.newFlags("admin jobs run", "admin jobs run <name>")
-	pos, err := parse(fs, args, 1, 1)
+// AdminJobsRunCmd runs one job.
+type AdminJobsRunCmd struct {
+	Name string `arg:"" help:"sweep, gc, uploads-expire or oauth-cleanup."`
+}
+
+func (c *AdminJobsRunCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	c, err := r.adminClient()
-	if err != nil {
+	if err := cl.RunJob(r.ctx, c.Name); err != nil {
 		return err
 	}
-	if err := c.RunJob(r.ctx, pos[0]); err != nil {
-		return err
-	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(api.OK{OK: true})
 	}
-	fmt.Fprintf(r.stdout, "triggered %s\n", pos[0])
+	fmt.Fprintf(r.stdout, "triggered %s\n", c.Name)
 	return nil
 }
 
-func cmdAdminAudit(r *runner, args []string) error {
-	fs := r.newFlags("admin audit", "admin audit [flags]")
-	since := fs.String("since", "", "only events after this RFC 3339 time, or this Go duration ago (e.g. 24h)")
-	slug := fs.String("slug", "", "only events for this artifact")
-	limit := fs.Int("limit", 0, "maximum events")
-	if _, err := parse(fs, args, 0, 0); err != nil {
-		return err
-	}
-	sinceArg := ""
-	if *since != "" {
-		if t, err := time.Parse(time.RFC3339, *since); err == nil {
-			sinceArg = t.Format(time.RFC3339)
-		} else if d, derr := time.ParseDuration(*since); derr == nil {
-			sinceArg = r.now().Add(-d).UTC().Format(time.RFC3339)
+// AdminAuditCmd reads the audit log.
+type AdminAuditCmd struct {
+	Since string `help:"Only events after this RFC 3339 time, or this Go duration ago (such as 24h)." placeholder:"WHEN"`
+	Slug  string `help:"Only events for this artifact." placeholder:"SLUG"`
+	Limit int    `help:"Maximum events." placeholder:"N"`
+}
+
+func (c *AdminAuditCmd) Run(r *runner) error {
+	since := ""
+	if c.Since != "" {
+		if t, err := time.Parse(time.RFC3339, c.Since); err == nil {
+			since = t.Format(time.RFC3339)
+		} else if d, derr := time.ParseDuration(c.Since); derr == nil {
+			since = r.now().Add(-d).UTC().Format(time.RFC3339)
 		} else {
-			return usagef("admin audit: --since: want an RFC 3339 time or a duration, got %q", *since)
+			return usagef("admin audit: --since: want an RFC 3339 time or a duration, got %q", c.Since)
 		}
 	}
-	c, err := r.adminClient()
+	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	events, err := c.Audit(r.ctx, sinceArg, *slug, *limit)
+	events, err := cl.Audit(r.ctx, since, c.Slug, c.Limit)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(events)
 	}
 	tw := newTable(r.stdout)
@@ -461,20 +437,19 @@ func cmdAdminAudit(r *runner, args []string) error {
 	return tw.Flush()
 }
 
-func cmdAdminHealth(r *runner, args []string) error {
-	fs := r.newFlags("admin health", "admin health")
-	if _, err := parse(fs, args, 0, 0); err != nil {
-		return err
-	}
-	c, err := r.adminClient()
+// AdminHealthCmd checks liveness.
+type AdminHealthCmd struct{}
+
+func (c *AdminHealthCmd) Run(r *runner) error {
+	cl, err := r.adminClient(false)
 	if err != nil {
 		return err
 	}
-	h, err := c.Health(r.ctx)
+	h, err := cl.Health(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.json {
+	if r.g.JSON {
 		return r.printJSON(h)
 	}
 	fmt.Fprintf(r.stdout, "%s (server %s)\n", h.Status, dash(h.Version))

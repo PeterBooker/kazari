@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -58,6 +59,14 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 			applied = applied || ok
 		default:
 			raw, ok := lookup(key)
+			if !ok && f.Tag.Get("secret") == "true" {
+				// Docker, Swarm and Kubernetes mount secrets as files.
+				var err error
+				if raw, ok, err = secretFromFile(key+"_FILE", lookup); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
 			if !ok {
 				continue
 			}
@@ -69,6 +78,20 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 		}
 	}
 	return applied, errors.Join(errs...)
+}
+
+// secretFromFile reads the file named by the variable key, without its
+// trailing newline. ok is false when the variable is unset.
+func secretFromFile(key string, lookup func(string) (string, bool)) (string, bool, error) {
+	path, ok := lookup(key)
+	if !ok {
+		return "", false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("%s: %w", key, err)
+	}
+	return strings.TrimRight(string(data), "\r\n"), true, nil
 }
 
 func isTextUnmarshaler(v reflect.Value) bool {

@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/artifact"
-	"kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
 // Reserved paths on every artifact host.

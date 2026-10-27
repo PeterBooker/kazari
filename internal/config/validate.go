@@ -36,9 +36,13 @@ func (c *Config) Validate() error {
 			if c.TLS.CA != "letsencrypt" && c.TLS.CA != "letsencrypt-staging" && !isHTTPSURL(c.TLS.CA) {
 				v.add("tls.ca", "must be letsencrypt, letsencrypt-staging or an https ACME directory URL")
 			}
-			if v.oneOf("tls.dns_provider", c.TLS.DNSProvider, "cloudflare", "route53", "hetzner") &&
-				c.TLS.DNSProvider != "route53" && c.TLS.DNS.APIToken == "" {
-				v.add("tls.dns.api_token", "required for dns_provider "+c.TLS.DNSProvider+" (or set KAZARI_TLS_DNS_API_TOKEN)")
+			if v.oneOf("tls.dns_provider", c.TLS.DNSProvider, DNSProviders...) {
+				if c.TLS.DNSProvider != "route53" && c.TLS.DNS.APIToken == "" {
+					v.add("tls.dns.api_token", "required for dns_provider "+c.TLS.DNSProvider+" (or set KAZARI_TLS_DNS_API_TOKEN)")
+				}
+				if c.TLS.DNSProvider == "namecheap" && c.TLS.DNS.User == "" {
+					v.add("tls.dns.user", "required for dns_provider namecheap (or set KAZARI_TLS_DNS_USER)")
+				}
 			}
 		case "files":
 			v.required("tls.cert_file", c.TLS.CertFile)
@@ -88,6 +92,10 @@ func (c *Config) Validate() error {
 // MinAdminTokenLen is the shortest auth.admin_token accepted, except under a
 // localhost base domain, which only the local machine can reach.
 const MinAdminTokenLen = 32
+
+// DNSProviders are the tls.dns_provider values, as certs.NewDNSProvider
+// knows them.
+var DNSProviders = []string{"cloudflare", "route53", "hetzner", "digitalocean", "gandi", "ovh", "namecheap", "duckdns"}
 
 func isLocalhost(base string) bool {
 	return base == "localhost" || strings.HasSuffix(base, ".localhost")

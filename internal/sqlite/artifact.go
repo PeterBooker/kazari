@@ -13,7 +13,7 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 // ArtifactStore implements artifact.Store.

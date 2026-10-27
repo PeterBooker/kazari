@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"kazari/internal/api"
-	"kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 func TestShareLinkTools(t *testing.T) {

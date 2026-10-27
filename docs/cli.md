@@ -1,41 +1,50 @@
 # CLI
 
-The `kazari` binary is both the server and the client. `kazari serve` runs the server ([installation guide](install.md)), and every other command talks to a running instance over the [REST API](api.md).
+The `kazari` binary is both the server and the client. `kazari serve` runs the server and `kazari check` tests its setup ([server commands](#server-commands)); every other command talks to a running instance over the [REST API](api.md).
 
-This page covers setting up the client, then every command with its flags. The artifact commands need the instance's API address and an API key (`kzk_...`); the admin commands need the admin address and token.
+This page covers installing and setting up the client, the server commands, then every client command with its flags. The artifact commands need the instance's API address and an API key (`kzk_...`); the admin commands need the admin socket on the server's host, or the admin address and a token.
 
 ## Usage
 
 Every command has the same shape:
 
 ```text
-kazari [global flags] <command> [arguments] [flags]
+kazari [flags] <command> [arguments] [flags]
 ```
 
-Flags can come before or after positional arguments, so `kazari publish ./site --slug x` and `kazari publish --slug x ./site` are the same. `kazari help` lists the commands, and `kazari <command> -h` lists a command's flags.
+Flags can come before or after the command and its arguments, so `kazari publish ./site --slug x` and `kazari --json publish --slug x ./site` are the same. `kazari --help` lists the commands, `kazari <command> --help` lists a command's flags, and `kazari help admin keys` does the same for any command.
 
 ## Installing the client
 
-The binary in the release archive is the client too ([installing the release binary](install.md#installing-the-release-binary)). On a laptop, copying it into your path is enough:
+On a laptop, the install script puts the latest release into `/usr/local/bin`, after checking it against the release's checksums:
 
 ```sh
-install -m 0755 kazari ~/.local/bin/kazari
+curl -fsSL https://kazari.io/install.sh | sh
 ```
+
+`KAZARI_BINDIR=~/.local/bin` before `sh` installs it there instead, without `sudo`. On macOS with Homebrew, `brew install PeterBooker/tap/kazari` installs the same binary, and on Arch Linux the AUR package is `kazari-bin`. With Go, `go install github.com/PeterBooker/kazari/cmd/kazari@latest` builds it from source. On a server the binary is already there: the package, the archive and the Docker image each carry it ([installing Kazari](install.md)).
 
 ## Configuring the client
 
-Each setting comes from the first of these that is set: the global flag, the environment variable, the config file. The settings are:
+Each setting comes from the first of these that is set: the flag, the environment variable, the config file. The settings are:
 
-| Flag            | Variable             | Config key    | Meaning                                       |
-| --------------- | -------------------- | ------------- | --------------------------------------------- |
-| `--url`         | `KAZARI_URL`         | `url`         | User API root, such as `https://api.art.example.com` |
-| `--token`       | `KAZARI_TOKEN`       | `token`       | API key (`kzk_...`)                           |
-| `--admin-url`   | `KAZARI_ADMIN_URL`   | `admin_url`   | Admin API root, such as `https://admin.art.example.com` |
-| `--admin-token` | `KAZARI_ADMIN_TOKEN` | `admin_token` | Admin token, or an admin user's key with the `admin` scope |
-| `--config`      |                      |               | Config file path                              |
-| `--json`        |                      |               | Print the JSON response instead of text       |
+| Flag              | Variable              | Config key     | Meaning                                       |
+| ----------------- | --------------------- | -------------- | --------------------------------------------- |
+| `--url`           | `KAZARI_URL`          | `url`          | User API root, such as `https://api.art.example.com` |
+| `--token`         | `KAZARI_TOKEN`        | `token`        | API key (`kzk_...`)                           |
+| `--admin-url`     | `KAZARI_ADMIN_URL`    | `admin_url`    | Admin API root, such as `https://admin.art.example.com` |
+| `--admin-token`   | `KAZARI_ADMIN_TOKEN`  | `admin_token`  | Admin token, or an admin user's key with the `admin` scope |
+| `--admin-socket`  | `KAZARI_ADMIN_SOCKET` | `admin_socket` | Admin socket of a server on this host         |
+| `--client-config` |                       |                | Config file path                              |
+| `--json`          |                       |                | Print the JSON response instead of text       |
 
 Give the URLs without `/v1`, which the client adds. When no admin URL is set and the user URL starts with `api.`, the client derives the admin URL as `admin.<base>`. When no admin token is set, the client tries the user token on the admin host.
+
+### The admin socket
+
+On the server's own host, the admin commands need no URL and no token: the server serves the admin API on a Unix socket in its data directory, and the `kazari` command finds it through the server's configuration, from `$KAZARI_CONFIG`, `/etc/kazari/kazari.yaml` or `$KAZARI_DATA_DIR`, else in `./.data` under `serve --local`. The socket's permissions are the credential, so run the command as the service user or as root (`sudo kazari admin ...`), or inside the container (`docker compose exec kazari kazari admin ...`).
+
+An explicit `--admin-socket` wins over everything, an admin URL with a token wins over a socket that was merely found, and a command that finds neither says so. `admin health` needs no token even over a URL.
 
 ### Environment variables and `.env`
 
@@ -50,7 +59,7 @@ A variable already set in the process environment wins over the file.
 
 ### The config file
 
-The config file is `$XDG_CONFIG_HOME/kazari/config.yaml`, else `~/.config/kazari/config.yaml`. It is optional unless you name it with `--config`, and an unknown key in it is an error:
+The config file is `$XDG_CONFIG_HOME/kazari/config.yaml`, else `~/.config/kazari/config.yaml`. It is optional unless you name it with `--client-config`, and an unknown key in it is an error:
 
 ```yaml
 url: https://api.art.example.com
@@ -79,6 +88,46 @@ Every command exits with one of three codes:
 | `0`       | Success                                                                       |
 | `1`       | The command or the server failed; stderr shows `kazari: <code>: <message>`    |
 | `2`       | Usage or configuration error, such as a bad flag, a missing URL or token, or a bad config file |
+
+## Server commands
+
+`serve` and `check` read the server's configuration rather than the client's, so the flags above do not apply to them.
+
+### serve
+
+```text
+kazari serve [--config PATH] [--env-file PATH]
+kazari serve --local
+```
+
+Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE` or a dotenv file in the working directory ([how configuration is loaded](configuration.md#how-configuration-is-loaded)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use, exits with status 1.
+
+`--local` runs the preset for your own machine instead, with no DNS, certificate or token: `http://<slug>.localhost:8080/`, data in `./.data` ([the local preset](configuration.md#the-local-preset)).
+
+To run the server on your own machine:
+
+```sh
+kazari serve --local
+```
+
+The log ends with a `serving` line that names the addresses and, on a fresh instance, a `no users yet` line with the next command.
+
+### check
+
+```text
+kazari check [--config PATH] [--env-file PATH]
+kazari check --local
+```
+
+Loads the configuration as `serve` would, then checks what the first start depends on: that the data directory is writable, that the base domain, `api.` and a random subdomain resolve to this host, that the DNS provider token can write and remove a TXT record in the zone, that the listener ports are free, and whether a server is listening on the admin socket. It exits with status 2 for an invalid configuration, 1 if a check failed and 0 otherwise.
+
+To check a server's setup, run it on the server:
+
+```sh
+sudo kazari check
+```
+
+It prints one line per check; [checking the setup](install.md#checking-the-setup) shows the output and what each line means.
 
 ## Artifact commands
 
@@ -372,7 +421,7 @@ kazari version   # version, commit, build date and Go version of this binary
 
 ## Admin commands
 
-Admin commands manage users, keys, artifacts and the server. Every `admin` command uses the admin URL and token from [Configuring the client](#configuring-the-client).
+Admin commands manage users, keys, artifacts and the server. On the server's host they use [the admin socket](#the-admin-socket) and need no token; elsewhere they use the admin URL and token from [configuring the client](#configuring-the-client). `admin health` needs no token either way.
 
 | Command                                                                 | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/audit"
 )
 
 // AuditStore implements audit.Recorder and audit.Reader.

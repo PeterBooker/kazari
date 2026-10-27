@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"kazari/internal/artifact"
-	"kazari/internal/audit"
-	"kazari/internal/blob"
-	"kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 )
 
 var start = time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)

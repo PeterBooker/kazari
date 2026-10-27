@@ -35,3 +35,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: the Homebrew cask and the AUR package are skipped
+          # while these are unset. HOMEBREW_TAP_TOKEN writes to
+          # PeterBooker/homebrew-tap; AUR_KEY is the SSH key of the AUR
+          # account that owns kazari-bin.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          AUR_KEY: ${{ secrets.AUR_KEY }}

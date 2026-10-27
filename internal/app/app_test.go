@@ -20,10 +20,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kazari/internal/api"
-	"kazari/internal/app"
-	"kazari/internal/cli"
-	"kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/app"
+	"github.com/PeterBooker/kazari/internal/cli"
+	"github.com/PeterBooker/kazari/internal/config"
 )
 
 const adminToken = "test-admin"

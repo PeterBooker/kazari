@@ -75,10 +75,17 @@ type TLS struct {
 	DNS         DNS    `yaml:"dns"`
 }
 
-// DNS holds the DNS provider credentials.
+// DNS holds the DNS provider credentials. Which keys a provider reads is
+// documented with certs.NewDNSProvider.
 type DNS struct {
 	// Unused for route53, which reads the AWS credential chain.
 	APIToken string `yaml:"api_token" secret:"true"`
+	// ovh: the API endpoint, ovh-eu by default.
+	Endpoint string `yaml:"endpoint"`
+	// namecheap: the API user.
+	User string `yaml:"user"`
+	// namecheap: the allow-listed client IP; discovered when empty.
+	ClientIP string `yaml:"client_ip"`
 }
 
 // Limits bounds uploads, metadata and write rates.
@@ -141,7 +148,13 @@ func (o *OIDC) applyDefaults() {
 type Admin struct {
 	// When set, the admin host is served only on this listener.
 	Listen string `yaml:"listen"`
+	// Unix socket that serves the admin API without a token, relative to
+	// data_dir unless absolute; empty disables it.
+	Socket string `yaml:"socket"`
 }
+
+// DefaultAdminSocket is admin.socket's default, under data_dir.
+const DefaultAdminSocket = "admin.sock"
 
 // Log configures the slog logger.
 type Log struct {
@@ -192,11 +205,30 @@ func Default() Config {
 		Auth: Auth{
 			WritePolicy: "shared",
 		},
+		Admin: Admin{
+			Socket: DefaultAdminSocket,
+		},
 		Log: Log{
 			Level:  "info",
 			Format: "text",
 		},
 	}
+}
+
+// Local returns the preset of kazari serve --local: plain HTTP on
+// 127.0.0.1:8080 under the base domain localhost, which browsers resolve to
+// the local machine, with the data in ./.data. No DNS, certificate or token
+// is needed; the admin API is reached over the socket.
+func Local() Config {
+	c := Default()
+	c.BaseDomain = "localhost"
+	c.DataDir = "./.data"
+	c.ExternalScheme = "http"
+	c.ExternalPort = 8080
+	c.Listen = Listen{HTTP: "127.0.0.1:8080", ProxyMode: true}
+	c.TLS.Mode = "self-signed"
+	c.Log.Level = "debug"
+	return c
 }
 
 // DefaultEnvFile is the dotenv file Load reads by default.
@@ -224,13 +256,62 @@ func loadDotenv(envFile string) (map[string]string, error) {
 	return m, err
 }
 
+// LoadLocal is Load for the Local preset: no file, the dotenv file as Load
+// reads it, and KAZARI_* overrides on top of the preset.
+func LoadLocal(envFile string) (Config, error) {
+	dotenv, err := loadDotenv(envFile)
+	if err != nil {
+		return Config{}, err
+	}
+	return LoadWithBase(Local(), "", EnvLookup(dotenv))
+}
+
 // LoadWith applies, in order, Default, the YAML file at path (skipped when
 // empty; a missing file satisfies fs.ErrNotExist; unknown keys are errors),
 // the KAZARI_<PATH> overrides (lists comma-separated; any KAZARI_AUTH_OIDC_*
-// enables auth.oidc), then Validate. lookup resolves both ${NAME}
-// references and overrides.
+// enables auth.oidc; a secret also reads KAZARI_<PATH>_FILE), then Validate.
+// lookup resolves both ${NAME} references and overrides.
 func LoadWith(path string, lookup func(key string) (string, bool)) (Config, error) {
+	return LoadWithBase(Default(), path, lookup)
+}
+
+// LoadWithBase is LoadWith starting from base instead of Default.
+func LoadWithBase(base Config, path string, lookup func(key string) (string, bool)) (Config, error) {
+	cfg, err := load(base, path, lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("config: invalid:\n%w", err)
+	}
+	return cfg, nil
+}
+
+// Peek is LoadWith without Validate: enough for a client on the server's
+// host to learn where the server keeps its data and its admin socket. A
+// ${NAME} reference to a variable the client does not have, such as a
+// secret only the service reads, expands to "" instead of failing.
+func Peek(path string, lookup func(key string) (string, bool)) (Config, error) {
 	cfg := Default()
+	if path != "" {
+		lenient := func(key string) (string, bool) {
+			if v, ok := lookup(key); ok {
+				return v, true
+			}
+			return "", true
+		}
+		if err := decodeFile(path, &cfg, lenient); err != nil {
+			return Config{}, err
+		}
+	}
+	if err := applyEnv(&cfg, lookup); err != nil {
+		return Config{}, fmt.Errorf("config: environment: %w", err)
+	}
+	return cfg, nil
+}
+
+func load(base Config, path string, lookup func(key string) (string, bool)) (Config, error) {
+	cfg := base
 	if path != "" {
 		if err := decodeFile(path, &cfg, lookup); err != nil {
 			return Config{}, err
@@ -238,9 +319,6 @@ func LoadWith(path string, lookup func(key string) (string, bool)) (Config, erro
 	}
 	if err := applyEnv(&cfg, lookup); err != nil {
 		return Config{}, fmt.Errorf("config: environment: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return Config{}, fmt.Errorf("config: invalid:\n%w", err)
 	}
 	return cfg, nil
 }
@@ -318,6 +396,15 @@ func (c Config) UploadDir() string { return filepath.Join(c.DataDir, "uploads") 
 
 // CertStorageDir is CertMagic's storage root.
 func (c Config) CertStorageDir() string { return filepath.Join(c.DataDir, "certmagic") }
+
+// AdminSocketPath is the admin Unix socket, resolved against data_dir, or
+// "" when admin.socket is empty.
+func (c Config) AdminSocketPath() string {
+	if c.Admin.Socket == "" || filepath.IsAbs(c.Admin.Socket) {
+		return c.Admin.Socket
+	}
+	return filepath.Join(c.DataDir, c.Admin.Socket)
+}
 
 // Host returns sub.base_domain, or base_domain itself when sub is empty.
 func (c Config) Host(sub string) string {

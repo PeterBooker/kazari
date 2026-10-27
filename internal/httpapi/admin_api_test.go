@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"kazari/internal/api"
-	"kazari/internal/audit"
-	"kazari/internal/auth"
-	"kazari/internal/httpapi"
-	"kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/scheduler"
 )
 
 func TestAdminUsersAndKeys(t *testing.T) {
