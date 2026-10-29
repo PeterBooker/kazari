@@ -617,6 +617,82 @@ func TestWritePolicy(t *testing.T) {
 	}
 }
 
+// An offline artifact (unpublished or soft-deleted) can be changed,
+// republished or restored only by those who can read it: whoever cannot
+// see it gets not_found, under either policy.
+func TestOfflineWritesNeedInvolvement(t *testing.T) {
+	for _, policy := range []string{artifact.WriteShared, artifact.WriteOwner} {
+		t.Run(policy, func(t *testing.T) {
+			e := newEnv(t, artifact.Options{WritePolicy: policy})
+			alice := e.user(t, "alice")
+			bob := e.user(t, "bob")
+			carol := e.user(t, "carol")
+			root := artifact.Actor{Handle: "root", Admin: true}
+			e.create(t, alice, "demo")
+			// bob gets involved while the page is live.
+			if _, _, err := e.svc.Update(e.ctx, root, artifact.UpdateRequest{Slug: "demo", Files: files("b.txt", "b")}); err != nil {
+				t.Fatal(err)
+			}
+			if policy == artifact.WriteShared {
+				if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("bob was here")}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := e.store.Update(e.ctx, "demo", "bob", func(*artifact.Artifact) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.svc.SetVisibility(e.ctx, alice, "demo", artifact.Unpublished); err != nil {
+				t.Fatal(err)
+			}
+
+			writes := []struct {
+				name string
+				fn   func(actor artifact.Actor) error
+			}{
+				{"publish", func(a artifact.Actor) error { _, err := e.svc.Publish(e.ctx, a, "demo", 1); return err }},
+				{"visibility", func(a artifact.Actor) error { _, err := e.svc.SetVisibility(e.ctx, a, "demo", "public"); return err }},
+				{"update", func(a artifact.Actor) error {
+					_, _, err := e.svc.Update(e.ctx, a, artifact.UpdateRequest{Slug: "demo", Name: ptr("x")})
+					return err
+				}},
+				{"update files", func(a artifact.Actor) error {
+					_, _, err := e.svc.Update(e.ctx, a, artifact.UpdateRequest{Slug: "demo", Files: files("c.txt", "c")})
+					return err
+				}},
+				{"stale", func(a artifact.Actor) error { _, err := e.svc.MarkStale(e.ctx, a, "demo", 0); return err }},
+				{"delete", func(a artifact.Actor) error { return e.svc.Delete(e.ctx, a, "demo", false) }},
+				{"hard delete", func(a artifact.Actor) error { return e.svc.Delete(e.ctx, a, "demo", true) }},
+			}
+			for _, w := range writes {
+				wantErr(t, w.name+" by carol, uninvolved", w.fn(carol), artifact.ErrNotFound)
+			}
+			// bob can see it; the policy then decides.
+			wantBob := error(nil)
+			if policy == artifact.WriteOwner {
+				wantBob = artifact.ErrForbidden
+			}
+			if err := writes[2].fn(bob); !errors.Is(err, wantBob) {
+				t.Fatalf("update by bob, involved, under %s: err = %v, want %v", policy, err, wantBob)
+			}
+
+			if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+				t.Fatal(err)
+			}
+			restore := func(a artifact.Actor) error {
+				_, _, err := e.svc.Update(e.ctx, a, artifact.UpdateRequest{Slug: "demo", Restore: true})
+				return err
+			}
+			wantErr(t, "restore by carol", restore(carol), artifact.ErrNotFound)
+			wantErr(t, "hard delete by carol", e.svc.Delete(e.ctx, carol, "demo", true), artifact.ErrNotFound)
+			if err := restore(bob); !errors.Is(err, wantBob) {
+				t.Fatalf("restore by bob under %s: err = %v, want %v", policy, err, wantBob)
+			}
+			if err := restore(alice); err != nil {
+				t.Fatalf("restore by the owner: %v", err)
+			}
+		})
+	}
+}
+
 func TestStale(t *testing.T) {
 	e := newEnv(t, artifact.Options{DefaultGrace: 48 * time.Hour})
 	alice := e.user(t, "alice")

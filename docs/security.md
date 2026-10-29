@@ -384,7 +384,7 @@ With `admin.listen` set, the admin host is served only on that listener, and the
 
 Listings show public artifacts plus the caller's own. Unlisted artifacts are hidden from other people's listings but served to anyone who knows the URL.
 
-An unpublished (including hidden) or soft-deleted artifact is invisible to everyone except admins, its owner and the users who created or updated it. Only they can list it, get its record or read its files through the API or MCP.
+An unpublished (including hidden) or soft-deleted artifact is invisible to everyone except admins, its owner and the users who created or updated it. Only they can list it, get its record or read its files through the API or MCP, and only they can change it, republish it or restore it: under either write policy, anyone else gets `404` for those too, so an uninvolved member cannot bring back a page that was taken down.
 
 Changes are read-modify-write inside one transaction, so a concurrent update cannot undo a transfer, a delete or a visibility change, and the sweep re-checks a row inside the transaction that expires or purges it, so a restore between its listing and its write holds. Blob garbage collection is locked out while a publish writes and commits its blobs.
 
@@ -534,5 +534,5 @@ Scope: everything, including what the first review left out (`app`, `mcpserver`,
 | 43 | Info | Audit events named the handle only, not the credential that acted. | Fixed: artifact events carry `credential`; `oauth.grant` carries `key_prefix`. Tests: `TestAuditRecordsCredential`, `TestActorCredential`. |
 | 44 | Info | The public `/health` and the apex page disclosed the exact build version. | Fixed: only the admin host reports it. Test: `TestEndToEnd`. |
 | 45 | Low | The sweep's retention purge can still destroy an artifact restored between the sweep's listing and the purge. | Fixed: `Store.Purge` takes a check that runs on the current row in its transaction; the sweep skips a row restored or purged since the listing, and a hard delete checks the write policy there too. Tests: `TestSweepSparesArtifactRestoredSinceListing`, conformance `PurgeAndDeleteTombstone`. |
-| 46 | Info | Under the `shared` policy a member can republish or restore an artifact they cannot read (#31). | Left: design decision. Should `canWrite` under `shared` also require involvement for offline artifacts? |
+| 46 | Info | Under the `shared` policy a member can republish or restore an artifact they cannot read (#31). | Fixed: every write first applies the read rule of #31, so an offline artifact is `not_found` to an uninvolved member under either policy; the write policy decides after that. Test: `TestOfflineWritesNeedInvolvement`. |
 | 47 | Info | Refused authentication attempts (401, 403) are logged per request but not written to the audit log. | Left: the request log covers them; an audit entry per failure would need its own rate limit. |

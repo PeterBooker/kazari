@@ -136,7 +136,7 @@ The server interprets keys under `kazari.` itself, and accepts only these:
 
 #### Write policy
 
-By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can.
+By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can. An unpublished or soft-deleted artifact is the exception under both: only the people who can [read it](#get-an-artifact-get-artifactsslug) can change, republish or restore it.
 
 ## User API
 
@@ -302,7 +302,7 @@ Returns the artifact record and its versions, newest first. Add `?files=true` to
 { "artifact": { ... }, "versions": [ { "number": 3, "url": "https://q3-report--v3.art.example.com/", ... } ] }
 ```
 
-An unpublished or soft-deleted artifact is returned, with `unpublished_at` or `deleted_at` set, only to admins, its owner and the users who created or updated it: the people who also see it in their listings. Anyone else gets `404 not_found`. A purged artifact is `410 gone`.
+An unpublished or soft-deleted artifact is returned, with `unpublished_at` or `deleted_at` set, only to admins, its owner and the users who created or updated it: the people who also see it in their listings, and the only ones who can change, republish or restore it. Anyone else gets `404 not_found`. A purged artifact is `410 gone`.
 
 ### Update an artifact: `PUT /artifacts/{slug}`
 
