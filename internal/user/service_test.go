@@ -113,6 +113,9 @@ func TestValidateHandle(t *testing.T) {
 		{"al ice", false},
 		{"al.ice", false},
 		{"álice", false},
+		{"admin", false},
+		{"scheduler", false},
+		{"admin-2", true},
 	}
 	for _, tt := range tests {
 		err := user.ValidateHandle(tt.handle)
@@ -187,6 +190,7 @@ func TestCreateUserErrors(t *testing.T) {
 		{"duplicate email", user.CreateUserRequest{Handle: "alice2", Email: "ALICE@example.com"}, user.ErrEmailTaken},
 		{"short handle", user.CreateUserRequest{Handle: "a"}, user.ErrInvalidHandle},
 		{"upper-case handle", user.CreateUserRequest{Handle: "Alice"}, user.ErrInvalidHandle},
+		{"reserved handle", user.CreateUserRequest{Handle: "admin"}, user.ErrInvalidHandle},
 		{"bad role", user.CreateUserRequest{Handle: "carol", Role: "owner"}, user.ErrInvalidRole},
 	}
 	for _, tt := range tests {
@@ -946,6 +950,7 @@ func TestResolveIdentityHandleSuffix(t *testing.T) {
 		{"several collisions", []string{"alice", "alice-2", "alice-3"}, "Alice@example.com", "alice-4"},
 		{"truncated for suffix", []string{long}, long + "zz@example.com", strings.Repeat("x", 30) + "-2"},
 		{"short local part", []string{"user"}, "x@example.com", "user-2"},
+		{"reserved local part", nil, "admin@example.com", "admin-2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

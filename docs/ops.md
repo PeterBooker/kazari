@@ -288,7 +288,7 @@ Blobs written in the last hour survive one more `gc` run.
 
 ## Audit log
 
-Kazari records every change with its time, actor, action, slug and details. The actor is a handle, `admin` for the admin token, or `scheduler` for jobs.
+Kazari records every change with its time, actor, action, slug and details. The actor is a handle, `admin` for the admin token and the admin socket, or `scheduler` for jobs; no user can have either of those handles.
 
 Artifact events also carry `credential`, the credential that acted: `api_key:<prefix>`, `oauth:<grant>` or `admin_token`. An `oauth:` credential has one id per grant, the same across refreshes.
 
