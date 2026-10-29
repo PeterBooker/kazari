@@ -34,6 +34,12 @@ const (
 
 const gcBatch = 1000
 
+// QuotaSource answers a user's storage quota, 0 meaning unlimited.
+// user.Service implements it.
+type QuotaSource interface {
+	QuotaBytes(ctx context.Context, handle string) (int64, error)
+}
+
 // Options configures a Service. Zero values get the Default* values.
 type Options struct {
 	MaxVersionBytes  int64
@@ -52,7 +58,11 @@ type Options struct {
 	// live DefaultShareLinkTTL, or this when shorter.
 	MaxShareLinkTTL time.Duration
 	// Pages takes the snapshots Import publishes; nil disables Import.
-	Pages  PageSource
+	Pages PageSource
+	// Quotas gives the owner's quota when another member adds a version
+	// under WriteShared, so every version is charged to the owner. Nil
+	// leaves such versions uncharged.
+	Quotas QuotaSource
 	Now    func() time.Time
 	Logger *slog.Logger // audit failures; default slog.Default()
 }
@@ -186,7 +196,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 	}
 
 	// Checked early to spare a doomed upload; the store re-checks.
-	quota, err := s.quotaLeft(ctx, actor)
+	quota, err := s.quotaLeft(ctx, actor.Handle, actor.QuotaBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -251,17 +261,29 @@ func versionDetails(v *Version) map[string]string {
 	}
 }
 
-// quotaLeft is nil when the actor has no quota.
-func (s *Service) quotaLeft(ctx context.Context, actor Actor) (*int64, error) {
-	if actor.QuotaBytes <= 0 {
+// quotaLeft is nil when the owner has no quota.
+func (s *Service) quotaLeft(ctx context.Context, owner string, quotaBytes int64) (*int64, error) {
+	if quotaBytes <= 0 {
 		return nil, nil
 	}
-	used, err := s.store.Usage(ctx, actor.Handle)
+	used, err := s.store.Usage(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
-	left := actor.QuotaBytes - used
+	left := quotaBytes - used
 	return &left, nil
+}
+
+// ownerQuota is the quota a version of the artifact is charged against: the
+// actor's own when it is the owner, else the owner's from Options.Quotas.
+func (s *Service) ownerQuota(ctx context.Context, actor Actor, owner string) (int64, error) {
+	if actor.Handle == owner {
+		return actor.QuotaBytes, nil
+	}
+	if s.opts.Quotas == nil {
+		return 0, nil
+	}
+	return s.opts.Quotas.QuotaBytes(ctx, owner)
 }
 
 // Update changes fields and, unless req.Files is empty, adds a version of
@@ -336,17 +358,14 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 			base[f.Path] = f
 		}
 	}
-	// The actor carries only its own quota; another user's version is
-	// charged to the owner.
-	var (
-		quota      *int64
-		quotaBytes int64
-	)
-	if actor.Handle == a.OwnerHandle {
-		if quota, err = s.quotaLeft(ctx, actor); err != nil {
-			return nil, nil, err
-		}
-		quotaBytes = actor.QuotaBytes
+	// Every version is charged to the owner, whoever adds it.
+	quotaBytes, err := s.ownerQuota(ctx, actor, a.OwnerHandle)
+	if err != nil {
+		return nil, nil, err
+	}
+	quota, err := s.quotaLeft(ctx, a.OwnerHandle, quotaBytes)
+	if err != nil {
+		return nil, nil, err
 	}
 	v := &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
 	err = s.holdBlobs(func() error {

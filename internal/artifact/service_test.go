@@ -325,6 +325,34 @@ func TestQuota(t *testing.T) {
 	e.create(t, unlimited, "three", "c.txt", strings.Repeat("c", 100))
 }
 
+// quotas is a QuotaSource over a map; a handle not in it is unlimited.
+type quotas map[string]int64
+
+func (q quotas) QuotaBytes(_ context.Context, handle string) (int64, error) { return q[handle], nil }
+
+func TestQuotaChargesOwner(t *testing.T) {
+	e := newEnv(t, artifact.Options{Quotas: quotas{"alice": 20}})
+	alice := e.user(t, "alice")
+	bob := e.user(t, "bob")
+	e.create(t, alice, "one", "a.txt", strings.Repeat("a", 15))
+
+	// 15 carried + 6 new on top of the 15 stored would make alice's usage 36.
+	_, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "one", Files: files("b.txt", strings.Repeat("b", 6))})
+	wantErr(t, "bob's version over alice's quota", err, artifact.ErrQuotaExceeded)
+
+	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "one", Files: files("a.txt", "abc")}); err != nil {
+		t.Fatalf("bob's version within alice's quota: %v", err)
+	}
+	for handle, want := range map[string]int64{"alice": 18, "bob": 0} {
+		used, err := e.svc.Usage(e.ctx, handle)
+		if err != nil || used != want {
+			t.Errorf("Usage(%s) = %d, %v, want %d", handle, used, err, want)
+		}
+	}
+	_, _, err = e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "one", Files: files("a.txt", "abcd")})
+	wantErr(t, "bob's next version over alice's quota", err, artifact.ErrQuotaExceeded)
+}
+
 func TestContentType(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice := e.user(t, "alice")
@@ -1261,16 +1289,15 @@ func TestTransfer(t *testing.T) {
 
 	_, err = e.svc.Transfer(e.ctx, alice, "demo", "alice")
 	wantErr(t, "transfer by previous owner", err, artifact.ErrForbidden)
-	if _, err := e.svc.Transfer(e.ctx, bob, "demo", "alice"); err != nil {
-		t.Fatalf("Transfer by owner: %v", err)
-	}
+	_, err = e.svc.Transfer(e.ctx, bob, "demo", "alice")
+	wantErr(t, "transfer by owner", err, artifact.ErrForbidden)
 
-	page, err := e.svc.List(e.ctx, root, artifact.ListQuery{All: true, Owner: "alice"})
+	page, err := e.svc.List(e.ctx, root, artifact.ListQuery{All: true, Owner: "bob"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Items) != 1 || page.Items[0].Slug != "demo" {
-		t.Errorf("owner=alice listing = %+v", page.Items)
+		t.Errorf("owner=bob listing = %+v", page.Items)
 	}
 }
 

@@ -733,7 +733,7 @@ The response carries the secret, this once only:
 
 `GET /artifacts` lists every artifact regardless of visibility. It takes the user API's [list parameters](#list-artifacts-get-artifacts), plus `owner=<handle>`.
 
-`POST /artifacts/{slug}/transfer` gives an artifact to the user named in `owner`. An unknown handle is `422`.
+`POST /artifacts/{slug}/transfer` gives an artifact to the user named in `owner`, whose quota its versions then count against. Only admins can transfer. An unknown handle is `422`.
 
 `POST /artifacts/{slug}/hide` unpublishes an artifact in one call, as part of the [abuse response](ops.md#responding-to-abuse).
 

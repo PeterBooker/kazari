@@ -201,6 +201,23 @@ func TestCreateUserErrors(t *testing.T) {
 	}
 }
 
+func TestQuotaBytes(t *testing.T) {
+	f := newFixture(t, user.Options{DefaultQuota: 1024})
+	f.mustCreate(t, "alice", "alice@example.com", user.RoleMember)
+	if _, err := f.svc.CreateUser(context.Background(), user.CreateUserRequest{Handle: "bob", QuotaBytes: ptr(int64(0))}); err != nil {
+		t.Fatal(err)
+	}
+	for handle, want := range map[string]int64{"alice": 1024, "bob": 0} {
+		got, err := f.svc.QuotaBytes(context.Background(), handle)
+		if err != nil || got != want {
+			t.Errorf("QuotaBytes(%s) = %d, %v, want %d", handle, got, err, want)
+		}
+	}
+	if _, err := f.svc.QuotaBytes(context.Background(), "nobody"); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("QuotaBytes(nobody) err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestUpdateUser(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})
