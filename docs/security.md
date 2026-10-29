@@ -256,7 +256,7 @@ A chunked upload (`/v1/uploads`) belongs to the user who began it. Anyone else g
 
 Upload ids are 16 random bytes. Each id's exact shape is checked before it is used as a directory name, so it cannot escape the staging root. Staged files are stored under numeric names, never under their paths.
 
-Each chunk must start at the staged size, and a retry of the last chunk is acknowledged. A chunk's content type is checked like a manifest's when the chunk arrives.
+Each chunk must start at the staged size, and a retry of the last chunk is acknowledged. A chunk's content type is checked like a manifest's when the chunk arrives. A publish reads each staged file up to the size recorded for it, so a chunk that arrives while the publish runs is not published.
 
 The open-upload limit is checked in the transaction that creates the upload. Expired uploads and orphaned directories are swept.
 
@@ -493,7 +493,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`, `oauth`
 | 14 | Low | Reuse of an authorization code is logged, but tokens already issued from that code are not revoked (OAuth 2.1 recommends revoking). | Left: needs the store to link a code to its token family. |
 | 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Left: design decision. Require admins to have explicitly linked identities, or use Entra's `xms_edov` claim? The `preferred_username` stand-in is now Entra-only (#36); the Entra `email_verified` question is still open. |
 | 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Left: add a `ReservedSlugs` field to `site.Options` and wire it from `app`? |
-| 17 | Info | Staged upload files are handed to the publish as open files. A concurrent chunk to the same upload during the publish can grow the content past its recorded size. This only affects the owner's own upload, and the artifact caps still apply. | Left: wrap each staged file in a reader capped at its recorded size if exact staging semantics matter. |
+| 17 | Info | Staged upload files are handed to the publish as open files. A concurrent chunk to the same upload during the publish can grow the content past its recorded size. This only affects the owner's own upload, and the artifact caps still apply. | Fixed: each staged file is read through a section reader capped at its recorded size. Test: `TestFilesCapAtRecordedSize`. |
 | 18 | Info | The admin-token principal uses the handle `admin`, which a real user can also have, so audit attribution is ambiguous. | Left: reserve the handle or use a distinct actor name. |
 
 ## Findings log (whole-repository review, 2026-10-24)
