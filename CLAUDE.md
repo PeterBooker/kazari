@@ -1,6 +1,6 @@
 # Kazari
 
-Self-hosted artifact host: one Go binary serves each artifact as a static site at `<slug>.<base-domain>` under a wildcard certificate, plus a REST API (`api.`), an MCP server with OAuth 2.1 (`mcp.`), an admin API (`admin.`, and a Unix socket in the data directory for the CLI on the same host) and a CLI. `docs/` is the operator documentation, `docs/adr/` the decisions, `site/` the Hugo website at <https://kazari.io/>, which also publishes `docs/` (except `security.md` and `adr/`) and the files in `deploy/` under `/deploy/`.
+Self-hosted artifact host: one Go binary serves each artifact as a static site at `<slug>.<base-domain>` under a wildcard certificate, plus a REST API (`api.`), an MCP server with OAuth 2.1 (`mcp.`), an admin API (`admin.`, and a Unix socket in the data directory for the CLI on the same host) and a CLI. `docs/` is the operator documentation, `docs/adr/` the decisions, `site/` the Hugo website at <https://kazari.io/>, which also publishes `docs/` (except `adr/`) and the files in `deploy/` under `/deploy/`.
 
 ## Commands
 

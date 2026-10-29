@@ -47,7 +47,7 @@ enableGitInfo = true
   [[module.mounts]]
     source = "../docs"
     target = "content/docs"
-    files = ["! security.md", "! adr/**"]
+    files = ["! adr/**"]
   [[module.mounts]]
     source = "static"
     target = "static"
