@@ -65,9 +65,11 @@ type Store interface {
 	ListRetentionDue(ctx context.Context, before time.Time) ([]Artifact, error)  // deleted_at <= before, not purged
 	ListTombstonesDue(ctx context.Context, before time.Time) ([]Artifact, error) // purged_at <= before
 
-	// Purge deletes every version and file row, clears the published pointer
-	// and sets purged_at; the row stays as a tombstone.
-	Purge(ctx context.Context, slug string, at time.Time) error
+	// Purge calls fn, when not nil, on the current row and, when it returns
+	// nil, deletes every version and file row, clears the published pointer
+	// and sets purged_at, in one transaction; the row stays as a tombstone.
+	// An error from fn writes nothing and is returned as is.
+	Purge(ctx context.Context, slug string, at time.Time, fn func(a *Artifact) error) error
 
 	// DeleteTombstone removes the row, freeing the slug.
 	DeleteTombstone(ctx context.Context, slug string) error
