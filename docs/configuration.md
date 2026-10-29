@@ -293,7 +293,7 @@ How artifacts are served:
 | -------------------- | ----------- | --------- | -------------------------------------------------------------------------------- |
 | `csp`                | string      | see below | `Content-Security-Policy` sent with every artifact response; `""` sends none.    |
 | `allow_csp_override` | bool        | `true`    | Let an artifact's `kazari.csp` metadata replace `csp` for its own files.         |
-| `reserved_slugs`     | string list | see below | Slugs no artifact can take. Each must be non-empty and lower-case.               |
+| `reserved_slugs`     | string list | see below | Slugs no artifact can take or be served under. Each must be non-empty and lower-case. |
 | `default_visibility` | string      | `public`  | Visibility of an artifact created without one: `public`, `unlisted` or `members`. |
 | `share_link_max_ttl` | duration    | `90d`     | The longest a share link can stay valid.                                         |
 
@@ -314,6 +314,8 @@ Each artifact is its own origin, so a looser per-artifact CSP only affects that 
 #### Reserved slugs
 
 The default reserved slugs are `api`, `mcp`, `admin`, `www`, `mail`, `ns1`, `ns2`, `autoconfig`, `autodiscover` and `localhost`. If you replace the list, keep `api`, `mcp` and `admin`, which are Kazari's own hosts.
+
+A reserved slug cannot be created, and an artifact that already has it is not served: adding a slug to the list takes an existing artifact with that slug offline at `<slug>.<base>` and on its version hosts, until the slug is removed from the list again.
 
 #### Default visibility
 

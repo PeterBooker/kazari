@@ -81,7 +81,7 @@ The site handler accepts a host in one shape only (`internal/site/host.go`). It 
 
 The label splits on the last `--v` followed by digits, with no leading zeros and at most nine digits, and the slug must pass the [slug rules](#slug-rules). Anything else gets the instance 404 page, including the apex, deeper subdomains and IDNA labels (which contain `--`).
 
-Reserved slugs such as `api`, `mcp`, `admin` and `www` cannot be created, and the host router sends the control-plane hosts elsewhere before the site handler runs.
+Reserved slugs such as `api`, `mcp`, `admin` and `www` cannot be created, the host router sends the control-plane hosts elsewhere before the site handler runs, and the site handler itself answers a reserved slug with the instance 404 page whatever the store holds, so an artifact created before its slug was reserved stops serving.
 
 ### Path handling
 
@@ -497,7 +497,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`, `oauth`
 | 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Fixed: #24 limits `mcp.` per client IP, and `oauth-cleanup` removes clients that complete no grant within 7 days (`granted_at`, migration `0005`). Tests: `TestOAuthStoreDeleteUnusedClients`, `TestCleanup`. |
 | 14 | Low | Reuse of an authorization code is logged, but tokens already issued from that code are not revoked (OAuth 2.1 recommends revoking). | Fixed: the code records the token family it was exchanged for (migration `0006`), and a second presentation revokes that family. Tests: `TestCodeReuseRevokesTokens`, `TestOAuthStoreConsumeCode`. |
 | 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Fixed: an existing admin links by email only when `admin_emails` names the address; any other admin needs an identity linked by hand. A missing Entra `email_verified` still counts as verified, for the configured tenant issuer alone (the ID token's issuer is checked). The `preferred_username` stand-in is Entra-only (#36). Test: `TestResolveIdentity`. |
-| 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Left: add a `ReservedSlugs` field to `site.Options` and wire it from `app`? |
+| 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Fixed: `site.Options.ReservedSlugs`, wired from `app`, answers a reserved slug with 404 on the latest and version hosts. Test: `TestReservedSlugs`. |
 | 17 | Info | Staged upload files are handed to the publish as open files. A concurrent chunk to the same upload during the publish can grow the content past its recorded size. This only affects the owner's own upload, and the artifact caps still apply. | Fixed: each staged file is read through a section reader capped at its recorded size. Test: `TestFilesCapAtRecordedSize`. |
 | 18 | Info | The admin-token principal uses the handle `admin`, which a real user can also have, so audit attribution is ambiguous. | Left: reserve the handle or use a distinct actor name. |
 
