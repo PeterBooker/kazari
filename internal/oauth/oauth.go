@@ -53,6 +53,7 @@ type Client struct {
 	RedirectURIs []string
 	CreatedAt    time.Time
 	FetchedAt    *time.Time // CIMD cache time, nil for DCR clients
+	GrantedAt    *time.Time // when the client first completed a grant; nil until then
 }
 
 // Request is a pending authorization request.
@@ -153,10 +154,15 @@ type ViewSession struct {
 
 // Store is the persistence contract. Users are referenced by handle.
 type Store interface {
-	// UpsertClient inserts c or replaces its name, redirect URIs and fetch time.
+	// UpsertClient inserts c or replaces its name, redirect URIs and fetch
+	// time, never GrantedAt.
 	UpsertClient(ctx context.Context, c *Client) error
 	// GetClient returns ErrNotFound for an unknown id.
 	GetClient(ctx context.Context, id string) (*Client, error)
+	// DeleteUnusedClients removes clients created before the given time
+	// that never completed a grant and have no pending request or code,
+	// and returns how many.
+	DeleteUnusedClients(ctx context.Context, before time.Time) (int, error)
 
 	CreateRequest(ctx context.Context, r *Request) error
 	// GetRequest returns a request, expired or not, or ErrNotFound.
@@ -172,7 +178,7 @@ type Store interface {
 	ConsumeCode(ctx context.Context, hash string, at time.Time) (*Code, error)
 
 	// CreateTokens stores a pair that starts a new family, setting both IDs
-	// and FamilyID (the refresh token's id).
+	// and FamilyID (the refresh token's id), and marks the client granted.
 	CreateTokens(ctx context.Context, access, refresh *Token) error
 	// GetToken returns revoked and expired tokens too, or ErrNotFound.
 	GetToken(ctx context.Context, hash string) (*Token, error)
@@ -246,8 +252,9 @@ type Options struct {
 	// Resource is the MCP URL as clients enter it, e.g.
 	// https://mcp.art.example.com/.
 	Resource string
-	// Zero means the Default*TTL.
-	AccessTTL, RefreshTTL, RequestTTL, CodeTTL time.Duration
+	// Zero means the Default*TTL. ClientTTL is how long a registered or
+	// fetched client that completes no grant is kept.
+	AccessTTL, RefreshTTL, RequestTTL, CodeTTL, ClientTTL time.Duration
 	// Scopes offered to clients (default auth.MemberScopes). auth.ScopeAdmin
 	// is dropped so a client an admin approves cannot open the admin host.
 	Scopes []string
@@ -277,6 +284,7 @@ const (
 	DefaultCodeTTL     = 5 * time.Minute
 	DefaultSessionTTL  = 12 * time.Hour
 	DefaultViewCodeTTL = time.Minute
+	DefaultClientTTL   = 7 * 24 * time.Hour
 )
 
 // Service is the authorization server.
@@ -315,6 +323,9 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	}
 	if opts.CodeTTL <= 0 {
 		opts.CodeTTL = DefaultCodeTTL
+	}
+	if opts.ClientTTL <= 0 {
+		opts.ClientTTL = DefaultClientTTL
 	}
 	if opts.SessionTTL <= 0 {
 		opts.SessionTTL = DefaultSessionTTL
@@ -441,9 +452,16 @@ func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 	return nil
 }
 
-// Cleanup deletes expired requests, codes and tokens, returning the count.
+// Cleanup deletes expired requests, codes, tokens and sign-ins, and clients
+// that completed no grant within ClientTTL, returning the count.
 func (s *Service) Cleanup(ctx context.Context) (int, error) {
-	return s.store.DeleteExpired(ctx, s.now())
+	now := s.now()
+	n, err := s.store.DeleteExpired(ctx, now)
+	if err != nil {
+		return n, err
+	}
+	clients, err := s.store.DeleteUnusedClients(ctx, now.Add(-s.opts.ClientTTL))
+	return n + clients, err
 }
 
 func (s *Service) record(ctx context.Context, actor, action string, details map[string]string) {

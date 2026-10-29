@@ -150,7 +150,7 @@ Kazari runs four maintenance jobs on its own:
 | `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period |
 | `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
-| `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, and expired browser sign-ins, sign-in codes and sessions |
+| `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within 7 days of registering |
 
 `gc` spares recent blobs so that a publish in progress never loses one. It also removes temporary files a crash left behind: blob writes and spilled bundles older than an hour.
 

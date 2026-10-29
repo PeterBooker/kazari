@@ -851,6 +851,7 @@ func TestGrants(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
+	unused := e.register("https://idle.example/cb")
 	clientID, tr := e.flow("")
 	resp, _ := e.get("/oauth/authorize?" + authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")).Encode())
 	location(t, resp)
@@ -866,10 +867,20 @@ func TestCleanup(t *testing.T) {
 	if next := e.refresh(clientID, tr.RefreshToken, ""); next.status != http.StatusOK {
 		t.Errorf("refresh token removed by cleanup: %d %s", next.status, next.Error)
 	}
+	if _, err := e.svc.GetClient(ctx, unused); err != nil {
+		t.Errorf("client without a grant removed after 2h: %v", err)
+	}
 	e.clock.Advance(31 * 24 * time.Hour)
-	// two refresh tokens and the second access token
-	if n, err := e.svc.Cleanup(ctx); err != nil || n != 3 {
-		t.Errorf("Cleanup after 31 days = %d, %v; want 3", n, err)
+	// two refresh tokens, the second access token and the client that
+	// never completed a grant (7 days)
+	if n, err := e.svc.Cleanup(ctx); err != nil || n != 4 {
+		t.Errorf("Cleanup after 31 days = %d, %v; want 4", n, err)
+	}
+	if _, err := e.svc.GetClient(ctx, unused); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("GetClient(unused) err = %v, want ErrNotFound", err)
+	}
+	if _, err := e.svc.GetClient(ctx, clientID); err != nil {
+		t.Errorf("client with a grant removed: %v", err)
 	}
 }
 

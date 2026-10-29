@@ -63,13 +63,13 @@ func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) error {
 
 func (s *OAuthStore) GetClient(ctx context.Context, id string) (*oauth.Client, error) {
 	var (
-		c       = oauth.Client{ID: id}
-		uris    string
-		created int64
-		fetched sql.NullInt64
+		c                = oauth.Client{ID: id}
+		uris             string
+		created          int64
+		fetched, granted sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT name, redirect_uris, created_at, fetched_at
-		FROM oauth_client WHERE id = ?`, id).Scan(&c.Name, &uris, &created, &fetched)
+	err := s.db.QueryRowContext(ctx, `SELECT name, redirect_uris, created_at, fetched_at, granted_at
+		FROM oauth_client WHERE id = ?`, id).Scan(&c.Name, &uris, &created, &fetched, &granted)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = oauth.ErrNotFound
 	}
@@ -81,7 +81,25 @@ func (s *OAuthStore) GetClient(ctx context.Context, id string) (*oauth.Client, e
 	}
 	c.CreatedAt = fromNanos(created)
 	c.FetchedAt = ptrTime(fetched)
+	c.GrantedAt = ptrTime(granted)
 	return &c, nil
+}
+
+// DeleteUnusedClients spares a client with a pending request or code: both
+// are short-lived, and a grant may be about to complete.
+func (s *OAuthStore) DeleteUnusedClients(ctx context.Context, before time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM oauth_client
+		WHERE granted_at IS NULL AND created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM oauth_request r WHERE r.client_id = oauth_client.id)
+		  AND NOT EXISTS (SELECT 1 FROM oauth_code c WHERE c.client_id = oauth_client.id)`, toNanos(before))
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete unused clients: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete unused clients: %w", err)
+	}
+	return int(n), nil
 }
 
 // CreateRequest binds a non-empty UserHandle at once.
@@ -275,7 +293,12 @@ func oauthInsertPair(ctx context.Context, tx *sql.Tx, family int64, access, refr
 
 func (s *OAuthStore) CreateTokens(ctx context.Context, access, refresh *oauth.Token) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
-		return oauthInsertPair(ctx, tx, 0, access, refresh)
+		if err := oauthInsertPair(ctx, tx, 0, access, refresh); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE oauth_client SET granted_at = COALESCE(granted_at, ?) WHERE id = ?`,
+			toNanos(refresh.CreatedAt), refresh.ClientID)
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("sqlite: create oauth tokens: %w", err)
