@@ -71,10 +71,11 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) error
 	if err != nil {
 		return err
 	}
-	if err := s.checkWritable(actor, a, false); err != nil {
+	involved, err := s.involved(ctx, actor, slug)
+	if err != nil {
 		return err
 	}
-	return s.checkReadable(ctx, actor, a)
+	return s.checkWritable(actor, a, involved, false)
 }
 
 // CreateShareLink creates a link that opens slug without signing in until

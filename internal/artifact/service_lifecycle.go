@@ -37,27 +37,19 @@ func (s *Service) Get(ctx context.Context, actor Actor, slug string) (*Artifact,
 	return a, versions, nil
 }
 
-// checkReadable hides an unpublished or soft-deleted artifact from all but
-// admins, the owner and those who created or updated it, as the listing
-// does. Any actor may read a live artifact: every visibility is served to
-// anyone signed in.
+// checkReadable is canRead with the involvement looked up: an unpublished
+// or soft-deleted artifact is hidden from all but admins, the owner and
+// those who created or updated it, as the listing does. Any actor may read
+// a live artifact: every visibility is served to anyone signed in.
 func (s *Service) checkReadable(ctx context.Context, actor Actor, a *Artifact) error {
-	if a.UnpublishedAt == nil && a.DeletedAt == nil {
-		return nil
+	involved, err := s.involved(ctx, actor, a.Slug)
+	if err != nil {
+		return err
 	}
-	if actor.Admin || (actor.Handle != "" && actor.Handle == a.OwnerHandle) {
-		return nil
+	if !canRead(actor, a, involved) {
+		return ErrNotFound
 	}
-	if actor.Handle != "" {
-		ok, err := s.store.Involved(ctx, a.Slug, actor.Handle)
-		if err != nil {
-			return err
-		}
-		if ok {
-			return nil
-		}
-	}
-	return ErrNotFound
+	return nil
 }
 
 // List returns one page of artifacts visible to actor. Only admins may set
@@ -173,8 +165,12 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 // with hard purges it now, leaving the blobs for CollectGarbage.
 func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) error {
 	if hard {
-		err := s.store.Purge(ctx, slug, s.now(), func(a *Artifact) error {
-			return s.checkWritable(actor, a, true)
+		involved, err := s.involved(ctx, actor, slug)
+		if err != nil {
+			return err
+		}
+		err = s.store.Purge(ctx, slug, s.now(), func(a *Artifact) error {
+			return s.checkWritable(actor, a, involved, true)
 		})
 		if err != nil {
 			return err

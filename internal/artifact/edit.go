@@ -102,7 +102,11 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := s.checkWritable(actor, a, false); err != nil {
+	involved, err := s.involved(ctx, actor, req.Slug)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := s.checkWritable(actor, a, involved, false); err != nil {
 		return nil, nil, nil, err
 	}
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {

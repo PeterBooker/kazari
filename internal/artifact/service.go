@@ -142,6 +142,27 @@ func (s *Service) canWrite(actor Actor, a *Artifact) bool {
 	return actor.Admin || actor.Handle == a.OwnerHandle
 }
 
+// canRead reports whether actor may see the artifact: anyone a live one,
+// and an offline one (unpublished or soft-deleted) only admins, the owner
+// and those involved in it, as the listing shows it.
+func canRead(actor Actor, a *Artifact, involved bool) bool {
+	if a.UnpublishedAt == nil && a.DeletedAt == nil {
+		return true
+	}
+	return actor.Admin || (actor.Handle != "" && actor.Handle == a.OwnerHandle) || involved
+}
+
+// involved reports whether actor created or updated the artifact, for
+// canRead; false when the answer cannot matter. It is asked before the
+// store's transaction: the actor rows only ever grow, so an earlier answer
+// never allows what a current one would refuse.
+func (s *Service) involved(ctx context.Context, actor Actor, slug string) (bool, error) {
+	if actor.Admin || actor.Handle == "" {
+		return false, nil
+	}
+	return s.store.Involved(ctx, slug, actor.Handle)
+}
+
 // record logs a failure rather than returning it: the change it describes
 // has already happened.
 func (s *Service) record(ctx context.Context, actor Actor, action, slug string, details map[string]string) {
@@ -292,20 +313,18 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
 	}
+	involved, err := s.involved(ctx, actor, req.Slug)
+	if err != nil {
+		return nil, nil, err
+	}
 	now := s.now()
 	// The store calls apply on the row it writes, inside its transaction, so
 	// a concurrent transfer or delete is neither lost nor ignored.
 	var restoring bool
 	apply := func(a *Artifact) error {
-		if a.PurgedAt != nil {
-			return ErrGone
-		}
 		restoring = a.DeletedAt != nil
-		if restoring && !req.Restore {
-			return ErrNotFound
-		}
-		if !s.canWrite(actor, a) {
-			return ErrForbidden
+		if err := s.checkWritable(actor, a, involved, req.Restore); err != nil {
+			return err
 		}
 		if err := s.applyFields(a, req); err != nil {
 			return err
@@ -451,11 +470,17 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 	return nil
 }
 
-func (s *Service) checkWritable(actor Actor, a *Artifact, allowDeleted bool) error {
+// checkWritable applies, in order, the lifecycle, the visibility and the
+// write policy: what an actor cannot read it cannot change either, so an
+// offline artifact is ErrNotFound to anyone outside it under either policy.
+func (s *Service) checkWritable(actor Actor, a *Artifact, involved, allowDeleted bool) error {
 	if a.PurgedAt != nil {
 		return ErrGone
 	}
 	if a.DeletedAt != nil && !allowDeleted {
+		return ErrNotFound
+	}
+	if !canRead(actor, a, involved) {
 		return ErrNotFound
 	}
 	if !s.canWrite(actor, a) {
@@ -471,9 +496,13 @@ var errUnchanged = errors.New("artifact: unchanged")
 // store's transaction, then records action with change's details.
 func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDeleted bool, action string,
 	change func(a *Artifact) (map[string]string, error)) (*Artifact, error) {
+	involved, err := s.involved(ctx, actor, slug)
+	if err != nil {
+		return nil, err
+	}
 	var details map[string]string
-	err := s.store.Update(ctx, slug, actor.Handle, func(a *Artifact) error {
-		if err := s.checkWritable(actor, a, allowDeleted); err != nil {
+	err = s.store.Update(ctx, slug, actor.Handle, func(a *Artifact) error {
+		if err := s.checkWritable(actor, a, involved, allowDeleted); err != nil {
 			return err
 		}
 		d, err := change(a)
