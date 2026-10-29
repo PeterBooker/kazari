@@ -55,8 +55,7 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := q.Get("state")
-	fail := func(code, desc string) { redirectError(w, r, redirectURI, state, code, desc) }
+	fail := func(code, desc string) { s.invalidRequest(w, code, desc) }
 
 	if q.Get("response_type") != "code" {
 		fail("unsupported_response_type", "response_type must be code")
@@ -93,7 +92,7 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		Scopes:        scopes,
 		CodeChallenge: challenge,
 		Resource:      resource,
-		ClientState:   state,
+		ClientState:   q.Get("state"),
 		ExpiresAt:     s.now().Add(s.opts.RequestTTL),
 	}
 	var verifier string
@@ -115,6 +114,17 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderConsent(w, http.StatusOK, c, req, "", scopes, "")
+}
+
+// invalidRequest answers a request the server cannot act on with a page.
+// Anyone can register a client, so until the person has approved or denied
+// the request on the consent page, which names the redirect host, the
+// redirect URI is not trusted and nothing is sent there: a redirect would
+// make this host an open redirector (RFC 9700 section 4.11.2).
+func (s *Service) invalidRequest(w http.ResponseWriter, code, desc string) {
+	s.message(w, http.StatusBadRequest, "Invalid request",
+		"The application sent a request this server cannot accept. Start again from your application.",
+		code+": "+desc)
 }
 
 // parseScopes orders scopes like Options.Scopes; empty means all of them and
@@ -144,7 +154,8 @@ func (s *Service) checkResource(param string) (string, bool) {
 	return "", false
 }
 
-// redirectError sends an RFC 6749 section 4.1.2.1 error to the client.
+// redirectError sends an RFC 6749 section 4.1.2.1 error to the client. Only
+// a decision made on the consent page may end here; see invalidRequest.
 func redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
 	v := url.Values{"error": {code}}
 	if desc != "" {
@@ -255,11 +266,11 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	if e := q.Get("error"); e != "" {
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
-		desc := "sign-in at the identity provider failed: " + e
 		if d := q.Get("error_description"); d != "" {
-			desc += ": " + d
+			e += ": " + d
 		}
-		redirectError(w, r, req.RedirectURI, req.ClientState, "access_denied", desc)
+		s.message(w, http.StatusBadRequest, "Sign-in failed",
+			"The identity provider did not complete the sign-in. Start again from your application.", e)
 		return
 	}
 	if req.UserHandle != "" {
@@ -305,7 +316,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	if len(scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
-		redirectError(w, r, req.RedirectURI, req.ClientState, "invalid_scope", "none of the requested scopes is available to this account")
+		s.invalidRequest(w, "invalid_scope", "none of the requested scopes is available to this account")
 		return
 	}
 	c, err := s.store.GetClient(ctx, req.ClientID)
