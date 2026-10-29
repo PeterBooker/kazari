@@ -98,7 +98,7 @@ auth:
   #   client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
   #   allowed_domains: [example.com]  # verified email domains that may sign in
   #   auto_provision: true            # create a member on first sign-in from an allowed domain
-  #   admin_emails: []                # provisioned with the admin role
+  #   admin_emails: []                # provisioned with the admin role; existing admins link by email only when listed
 
 admin:
   listen: ""                         # e.g. "127.0.0.1:9443": serve the admin host here only, not publicly

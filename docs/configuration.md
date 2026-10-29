@@ -362,7 +362,7 @@ The section's keys:
 | `client_secret`   | secret      | none    | Client secret. Required.                                                                           |
 | `allowed_domains` | string list | `[]`    | Verified email domains that can sign in.                                                           |
 | `auto_provision`  | bool        | `true`  | Create a member on first sign-in from an allowed domain.                                           |
-| `admin_emails`    | string list | `[]`    | Emails provisioned with the admin role.                                                            |
+| `admin_emails`    | string list | `[]`    | Emails provisioned with the admin role, and the only existing admins who may link by email.        |
 
 ### `admin`
 

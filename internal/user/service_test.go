@@ -746,15 +746,19 @@ func TestResolveIdentity(t *testing.T) {
 			}
 		}
 	}
-	linked := func(handle, subject string) setup {
+	admin := func(handle, email string) setup {
+		return func(t *testing.T, f *fixture) { f.mustCreate(t, handle, email, user.RoleAdmin) }
+	}
+	linkedAs := func(handle, subject string, role user.Role) setup {
 		return func(t *testing.T, f *fixture) {
-			f.mustCreate(t, handle, "", "")
+			f.mustCreate(t, handle, "", role)
 			if err := f.store.LinkIdentity(context.Background(), handle,
 				user.Identity{Issuer: issuer, Subject: subject, LastLoginAt: t0}); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
+	linked := func(handle, subject string) setup { return linkedAs(handle, subject, "") }
 	both := func(a, b setup) setup {
 		return func(t *testing.T, f *fixture) { a(t, f); b(t, f) }
 	}
@@ -797,6 +801,14 @@ func TestResolveIdentity(t *testing.T) {
 		{"email link, disabled user", user.Options{},
 			disabled("alice", "alice@example.com"),
 			identity("s1", "alice@example.com", true), "", "", user.ErrDisabled},
+		{"email link, admin not in admin_emails", user.Options{AllowedDomains: []string{"example.com"}},
+			admin("root", "root@example.com"),
+			identity("s1", "root@example.com", true), "", "", user.ErrNotProvisioned},
+		{"email link, admin in admin_emails", user.Options{AdminEmails: []string{" Root@EXAMPLE.com"}},
+			admin("root", "root@example.com"),
+			identity("s1", "root@example.com", true), "root", user.RoleAdmin, nil},
+		{"linked admin identity", user.Options{}, linkedAs("root", "s1", user.RoleAdmin),
+			identity("s1", "root@example.com", true), "root", user.RoleAdmin, nil},
 		{"email link preferred over provisioning", auto,
 			existing("alice", "alice@example.com"),
 			identity("s1", "alice@example.com", true), "alice", user.RoleMember, nil},
