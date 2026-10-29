@@ -150,17 +150,19 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 	})
 }
 
-// Transfer gives the artifact to newOwner. Only admins and the owner may,
-// whatever the write policy; soft-deleted artifacts too, so content can be
-// handed over before the purge. An unknown handle is ErrInvalidArgument.
+// Transfer gives the artifact to newOwner. Only admins may, whatever the
+// write policy: the versions move onto the new owner's quota, and nothing
+// asks that owner. Soft-deleted artifacts can be transferred too, so content
+// can be handed over before the purge. An unknown handle is
+// ErrInvalidArgument.
 func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner string) (*Artifact, error) {
 	if newOwner == "" {
 		return nil, Errorf(ErrInvalidArgument, "a new owner is required")
 	}
+	if !actor.Admin {
+		return nil, Errorf(ErrForbidden, "only an admin may transfer %q", slug)
+	}
 	return s.modify(ctx, actor, slug, true, audit.ArtifactTransfer, func(a *Artifact) (map[string]string, error) {
-		if !actor.Admin && actor.Handle != a.OwnerHandle {
-			return nil, Errorf(ErrForbidden, "only the owner or an admin may transfer %q", slug)
-		}
 		from := a.OwnerHandle
 		a.OwnerHandle = newOwner
 		return map[string]string{"from": from, "to": newOwner}, nil

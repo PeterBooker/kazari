@@ -125,6 +125,20 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}
 	auditStore := sqlite.NewAuditStore(a.db)
 
+	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), Now: now}
+	if o := cfg.Auth.OIDC; o != nil {
+		userOpts.AllowedDomains = o.AllowedDomains
+		userOpts.AutoProvision = o.AutoProvision
+		userOpts.AdminEmails = o.AdminEmails
+	}
+	// oauthSvc is set below, before any request.
+	var oauthSvc *oauth.Service
+	userOpts.OnDisable = func(ctx context.Context, handle string) error {
+		return oauthSvc.RevokeAllForUser(ctx, handle)
+	}
+	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
+	a.users = users
+
 	var fetcher *fetch.Client
 	artOpts := artifact.Options{
 		MaxVersionBytes:   int64(cfg.Limits.MaxVersionBytes),
@@ -138,6 +152,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		WritePolicy:       cfg.Auth.WritePolicy,
 		DefaultVisibility: artifact.Visibility(cfg.Serve.DefaultVisibility),
 		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
+		Quotas:            users,
 		Now:               now,
 		Logger:            log,
 	}
@@ -166,20 +181,6 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxOpenPerOwner: cfg.Limits.MaxOpenUploads,
 		Now:             now,
 	})
-
-	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), Now: now}
-	if o := cfg.Auth.OIDC; o != nil {
-		userOpts.AllowedDomains = o.AllowedDomains
-		userOpts.AutoProvision = o.AutoProvision
-		userOpts.AdminEmails = o.AdminEmails
-	}
-	// oauthSvc is set below, before any request.
-	var oauthSvc *oauth.Service
-	userOpts.OnDisable = func(ctx context.Context, handle string) error {
-		return oauthSvc.RevokeAllForUser(ctx, handle)
-	}
-	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
-	a.users = users
 
 	mcpURL := cfg.ExternalURL("mcp")
 	var idp oauth.IdentityProvider

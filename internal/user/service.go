@@ -144,6 +144,16 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	return s.store.ListUsers(ctx)
 }
 
+// QuotaBytes returns the user's quota, 0 meaning unlimited, for versions
+// that other members add to their artifacts. ErrNotFound.
+func (s *Service) QuotaBytes(ctx context.Context, handle string) (int64, error) {
+	u, err := s.store.GetUser(ctx, handle)
+	if err != nil {
+		return 0, err
+	}
+	return u.QuotaBytes, nil
+}
+
 // UpdateUserRequest changes the non-nil fields of a user.
 type UpdateUserRequest struct {
 	Email       *string

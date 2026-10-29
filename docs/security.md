@@ -379,7 +379,7 @@ With `admin.listen` set, the admin host is served only on that listener, and the
 
 ### Write policy
 
-`auth.write_policy` decides who can change an artifact. The default, `shared`, lets any member with `artifacts:write` change any artifact; `owner` limits changes to the owner and admins. Transfer is always limited to the owner or an admin.
+`auth.write_policy` decides who can change an artifact. The default, `shared`, lets any member with `artifacts:write` change any artifact; `owner` limits changes to the owner and admins. A version is charged to the owner's quota whoever adds it. Transfer is admin-only, because it moves the artifact's usage onto the new owner's quota without asking them.
 
 Listings show public artifacts plus the caller's own. Unlisted artifacts are hidden from other people's listings but served to anyone who knows the URL.
 
@@ -487,7 +487,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`, `oauth`
 | 8 | Low | `kazari.csp` rejected only CR/LF. Other control characters and non-ASCII went into the header. | Fixed: printable ASCII only. Test: `TestValidateMetadataCSP`. |
 | 9 | Low | `GET /v1/artifacts/{slug}/files/...` served artifact HTML/SVG inline, unsandboxed, on the `api.` origin. Bearer auth makes this hard to exploit from a browser, but it is the control-plane origin. | Fixed: `Content-Security-Policy: default-src 'none'; sandbox`. Test: `TestCreateMultipart` header table. |
 | 10 | Info | The site path check let backslashes through. No stored path can contain one, but browsers read `\` as `/` in `Location`. | Fixed as defence in depth: backslash paths are refused. Test: `TestPathRules`. |
-| 11 | Medium | Quota can be dodged. Under the shared policy, a version added by a non-owner is charged to nobody (`artifact/service.go` `Update`). An owner can also transfer an artifact to any user without their consent (`Transfer`), moving usage onto that user's quota and then growing it without limit. | Left: design decision. Should a version be charged to the owner's quota (needs the owner's quota at update time), and should non-admin transfers need the recipient's acceptance or be admin-only? |
+| 11 | Medium | Quota can be dodged. Under the shared policy, a version added by a non-owner is charged to nobody (`artifact/service.go` `Update`). An owner can also transfer an artifact to any user without their consent (`Transfer`), moving usage onto that user's quota and then growing it without limit. | Fixed: a version is charged to the owner's quota whoever adds it (`artifact.Options.Quotas` looks the owner's up), and transfers are admin-only. Tests: `TestQuotaChargesOwner`, `TestTransfer`. |
 | 12 | Low | Before consent, authorization errors redirect to any redirect URI the client registered. DCR and CIMD are open to anyone, so `mcp.<base>` can be used as an open redirect (RFC 9700 section 4.11.2). | Left: changing this affects client interop. Should errors for unverified clients render a page instead of redirecting? |
 | 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Left: needs the control-plane per-IP limit on `mcp.` (wired in `app`), and possibly expiry of DCR clients that never complete a grant. Partly addressed by #24: `mcp.` is now limited per client IP; expiry of unused clients is still open. |
 | 14 | Low | Reuse of an authorization code is logged, but tokens already issued from that code are not revoked (OAuth 2.1 recommends revoking). | Left: needs the store to link a code to its token family. |
