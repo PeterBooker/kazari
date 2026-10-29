@@ -161,7 +161,7 @@ Kazari makes a provisioned user's handle from the local part of their email:
 3. Trim leading `-` and `_`, and trailing `-`.
 4. Cut it to 32 characters.
 
-A result shorter than 2 characters becomes `user`. If the handle is taken, Kazari adds a suffix: `jane.doe@example.com` becomes `jane-doe`, then `jane-doe-2`, `jane-doe-3`.
+A result shorter than 2 characters becomes `user`. If the handle is taken, or is one of the reserved `admin` and `scheduler`, Kazari adds a suffix: `jane.doe@example.com` becomes `jane-doe`, then `jane-doe-2`, `jane-doe-3`.
 
 ### Admin-created users
 

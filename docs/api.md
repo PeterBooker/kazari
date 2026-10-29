@@ -700,7 +700,7 @@ curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "$ADMIN/audit?slug=q3-re
 
 A user's fields follow these rules:
 
-- `handle` is 2 to 32 characters of `a-z`, `0-9`, `_` and `-`, starting with a letter or digit.
+- `handle` is 2 to 32 characters of `a-z`, `0-9`, `_` and `-`, starting with a letter or digit. `admin` and `scheduler` are reserved: they name the admin token and the scheduler in the audit log.
 - `role` is `member` (the default) or `admin`.
 - `quota_bytes` defaults to `limits.default_user_quota` when omitted, and `0` means unlimited.
 - `email` is stored lower-case and must be unique.

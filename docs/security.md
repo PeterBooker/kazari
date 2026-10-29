@@ -370,7 +370,7 @@ Admin power comes from the `admin` scope, not from the role alone: a principal i
 
 `/v1/` on `admin.` accepts the configured admin token, or a credential that resolves to an admin principal (the admin role and the `admin` scope). The admin token is compared by SHA-256, then in constant time, and must be at least 32 characters.
 
-The same API is served without a credential on the admin socket, `admin.sock` in the data directory (`admin.socket`), which the server creates with mode `0600` and the CLI uses on the server's host. The socket's permissions are the trust boundary: whoever can open it already owns the database beside it. Requests over it act as the `admin` principal with the source `local` and are not rate-limited.
+The same API is served without a credential on the admin socket, `admin.sock` in the data directory (`admin.socket`), which the server creates with mode `0600` and the CLI uses on the server's host. The socket's permissions are the trust boundary: whoever can open it already owns the database beside it. Requests over it act as the `admin` principal with the source `local` and are not rate-limited. The handles `admin` and `scheduler` are reserved, so an audit row by either is the admin token, the socket or a job, never a user.
 
 Everything else gets `401` or `403`. Every attempt counts against the per-IP limit, so tokens cannot be guessed at speed.
 
@@ -499,7 +499,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`, `oauth`
 | 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Fixed: an existing admin links by email only when `admin_emails` names the address; any other admin needs an identity linked by hand. A missing Entra `email_verified` still counts as verified, for the configured tenant issuer alone (the ID token's issuer is checked). The `preferred_username` stand-in is Entra-only (#36). Test: `TestResolveIdentity`. |
 | 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Fixed: `site.Options.ReservedSlugs`, wired from `app`, answers a reserved slug with 404 on the latest and version hosts. Test: `TestReservedSlugs`. |
 | 17 | Info | Staged upload files are handed to the publish as open files. A concurrent chunk to the same upload during the publish can grow the content past its recorded size. This only affects the owner's own upload, and the artifact caps still apply. | Fixed: each staged file is read through a section reader capped at its recorded size. Test: `TestFilesCapAtRecordedSize`. |
-| 18 | Info | The admin-token principal uses the handle `admin`, which a real user can also have, so audit attribution is ambiguous. | Left: reserve the handle or use a distinct actor name. |
+| 18 | Info | The admin-token principal uses the handle `admin`, which a real user can also have, so audit attribution is ambiguous. | Fixed: `admin` and `scheduler` (the sweep's actor) are reserved handles; creation refuses them and provisioning skips to `admin-2`. Tests: `TestValidateHandle`, `TestCreateUserErrors`, `TestResolveIdentityHandleSuffix`. |
 
 ## Findings log (whole-repository review, 2026-10-24)
 

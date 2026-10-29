@@ -25,12 +25,20 @@ const touchInterval = time.Minute
 
 var handleRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
+// ReservedHandles name the actors Kazari itself writes to the audit log,
+// the admin token and socket and the scheduler, so no user can be mistaken
+// for them.
+var ReservedHandles = []string{"admin", "scheduler"}
+
 // ValidateHandle reports ErrInvalidHandle unless h is 2 to 32 characters of
-// [a-z0-9_-] starting with a letter or digit.
+// [a-z0-9_-] starting with a letter or digit, and not reserved.
 func ValidateHandle(h string) error {
 	if len(h) < MinHandleLen || len(h) > MaxHandleLen || !handleRE.MatchString(h) {
 		return fmt.Errorf("%w: %q must be %d to %d characters of a-z, 0-9, _ and -, starting with a letter or digit",
 			ErrInvalidHandle, h, MinHandleLen, MaxHandleLen)
+	}
+	if slices.Contains(ReservedHandles, h) {
+		return fmt.Errorf("%w: %q is reserved", ErrInvalidHandle, h)
 	}
 	return nil
 }
@@ -510,6 +518,9 @@ const maxHandleAttempts = 1000
 func (s *Service) provision(ctx context.Context, email, name string, role Role) (*User, error) {
 	base := DeriveHandle(email)
 	for n := 1; n <= maxHandleAttempts; n++ {
+		if slices.Contains(ReservedHandles, handleWithSuffix(base, n)) {
+			continue
+		}
 		u := &User{
 			Handle:      handleWithSuffix(base, n),
 			Email:       email,
