@@ -222,9 +222,11 @@ func (s *Service) write(id string, f StagedFile, chunk []byte) error {
 	return fh.Close()
 }
 
-// Files opens the staged files as FileInputs sorted by path, with *os.File as
-// Content; an empty upload is artifact.ErrInvalidArgument. Call cleanup after
-// the publish succeeds or fails: it closes the files and removes the upload.
+// Files opens the staged files as FileInputs sorted by path; each Content
+// reads its file up to the size recorded for it, so a chunk appended while
+// the publish runs changes nothing. An empty upload is
+// artifact.ErrInvalidArgument. Call cleanup after the publish succeeds or
+// fails: it closes the files and removes the upload.
 func (s *Service) Files(ctx context.Context, owner, id string) ([]artifact.FileInput, func() error, error) {
 	unlock := s.locks.lock(id)
 	defer unlock()
@@ -255,7 +257,9 @@ func (s *Service) Files(ctx context.Context, owner, id string) ([]artifact.FileI
 			return nil, nil, errors.Join(fmt.Errorf("upload: files %s: %w", id, err), closeAll())
 		}
 		opened = append(opened, fh)
-		inputs = append(inputs, artifact.FileInput{Path: f.Path, Content: fh, ContentType: f.ContentType})
+		inputs = append(inputs, artifact.FileInput{
+			Path: f.Path, Content: io.NewSectionReader(fh, 0, f.Bytes), ContentType: f.ContentType,
+		})
 	}
 
 	var (

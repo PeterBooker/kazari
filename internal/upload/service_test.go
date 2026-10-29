@@ -430,9 +430,6 @@ func TestFiles(t *testing.T) {
 	}
 	var meta [][2]string
 	for _, f := range files {
-		if _, ok := f.Content.(*os.File); !ok {
-			t.Errorf("%s: Content is %T, want *os.File", f.Path, f.Content)
-		}
 		meta = append(meta, [2]string{f.Path, f.ContentType})
 	}
 	wantMeta := [][2]string{
@@ -463,6 +460,24 @@ func TestFiles(t *testing.T) {
 	}
 	if err := cleanup(); err != nil {
 		t.Errorf("second cleanup: %v", err)
+	}
+}
+
+// A chunk that arrives after Files opened the staged file, which the publish
+// may still be reading, is not published: Content stops at the recorded size.
+func TestFilesCapAtRecordedSize(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, upload.Options{})
+	u := e.begin(t, "alice")
+	e.appendChunk(t, u.ID, "a", 0, "abc")
+	files, cleanup, err := e.svc.Files(ctx, "alice", u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	e.appendChunk(t, u.ID, "a", 3, "def")
+	if diff := cmp.Diff(map[string]string{"a": "abc"}, readFiles(t, files)); diff != "" {
+		t.Errorf("content (-want +got):\n%s", diff)
 	}
 }
 
