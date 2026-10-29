@@ -139,7 +139,7 @@ The `issuer` must be exactly the `issuer` value that the provider's discovery do
 After the ID token is verified, Kazari resolves the person to a user in this order:
 
 1. **Known identity.** An identity already linked by `(issuer, subject)` signs in as its user.
-2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty), an existing user with that email gets this identity linked and signs in.
+2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty), an existing user with that email gets this identity linked and signs in. An existing **admin** links this way only when `admin_emails` names the address; any other admin needs an identity linked by hand ([Admin-created users](#admin-created-users)), so a verified address alone never takes over an admin account.
 3. **Auto-provision.** Otherwise, if `auto_provision` is on and the verified email's domain is in `allowed_domains`, Kazari creates a new user. Its role is `admin` if the email is in `admin_emails`, else `member`; its quota is `limits.default_user_quota`; its display name is the IdP's `name`.
 4. **Refused.** Otherwise the person sees "No access ... Ask your administrator for access." and nothing is issued.
 
@@ -149,7 +149,7 @@ What this means in practice:
 
 - With `allowed_domains` empty, nobody is auto-provisioned. Only admin-created users with a matching email, or a linked identity, can sign in.
 - With `auto_provision: false`, `allowed_domains` limits which admin-created users can link by email.
-- `admin_emails` applies only when a user is first provisioned. To promote an existing user, use `kazari admin users update <handle> --role admin`.
+- `admin_emails` does two things: a user provisioned with a listed email is an admin, and an existing admin with a listed email may link by email. It never changes the role of an existing user; to promote one, use `kazari admin users update <handle> --role admin`.
 - After the first sign-in the match is on `(issuer, subject)`, so a later change of email address at the IdP does not create a second user.
 
 ### Handles
@@ -171,7 +171,7 @@ To let someone in ahead of their first sign-in, create their user with their ema
 kazari admin users create jdoe --email jane.doe@example.com
 ```
 
-To pin a user to a specific IdP account whatever its email, link the identity with the admin API. There is no CLI command for this yet:
+An admin created this way signs in by email only if `admin_emails` lists the address. Otherwise, and to pin any user to a specific IdP account whatever its email, link the identity with the admin API. There is no CLI command for this yet:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: application/json' \

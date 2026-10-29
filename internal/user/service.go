@@ -380,10 +380,11 @@ func (s *Service) touch(ctx context.Context, k *APIKey, now time.Time) {
 
 // ResolveIdentity maps an upstream identity to, in order: the user linked to
 // (issuer, subject); the user with its verified email, if the domain is
-// allowed (any domain when AllowedDomains is empty); a new user, an admin if
-// in AdminEmails, when AutoProvision is on and the domain is listed; else
-// ErrNotProvisioned. A disabled user yields ErrDisabled. Success refreshes the
-// link's last_login_at.
+// allowed (any domain when AllowedDomains is empty) and, for an admin, the
+// email is in AdminEmails; a new user, an admin if in AdminEmails, when
+// AutoProvision is on and the domain is listed; else ErrNotProvisioned. A
+// disabled user yields ErrDisabled. Success refreshes the link's
+// last_login_at.
 func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User, error) {
 	u, err := s.store.GetIdentity(ctx, id.Issuer, id.Subject)
 	switch {
@@ -409,6 +410,13 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User,
 		u, err := s.store.GetUserByEmail(ctx, email)
 		switch {
 		case err == nil:
+			// A verified address alone must not take over an admin
+			// account: the operator either lists the address or links the
+			// identity by hand.
+			if u.Role == RoleAdmin && u.DisabledAt == nil && !s.adminEmail(email) {
+				return nil, fmt.Errorf("%w: admin %q links by email only when admin_emails names it; link the identity instead",
+					ErrNotProvisioned, u.Handle)
+			}
 			return s.login(ctx, u, id)
 		case !errors.Is(err, ErrNotFound):
 			return nil, err
@@ -419,7 +427,7 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User,
 		return nil, ErrNotProvisioned
 	}
 	role := RoleMember
-	if slices.ContainsFunc(s.opts.AdminEmails, func(e string) bool { return normalizeEmail(e) == email }) {
+	if s.adminEmail(email) {
 		role = RoleAdmin
 	}
 	u, err = s.provision(ctx, email, strings.TrimSpace(id.Name), role)
@@ -427,6 +435,11 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User,
 		return nil, err
 	}
 	return s.login(ctx, u, id)
+}
+
+// adminEmail reports whether Options.AdminEmails names the normalised email.
+func (s *Service) adminEmail(email string) bool {
+	return slices.ContainsFunc(s.opts.AdminEmails, func(e string) bool { return normalizeEmail(e) == email })
 }
 
 func (s *Service) login(ctx context.Context, u *User, id auth.Identity) (*User, error) {
