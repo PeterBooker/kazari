@@ -348,6 +348,59 @@ func TestOAuthStoreTokens(t *testing.T) {
 	}
 }
 
+func TestOAuthStoreDeleteUnusedClients(t *testing.T) {
+	ctx := context.Background()
+	s := oauthTestStores(t)
+	for _, id := range []string{"dcr_unused", "dcr_pending", "dcr_coded", "dcr_young"} {
+		created := oauthT0
+		if id == "dcr_young" {
+			created = oauthT0.Add(time.Hour)
+		}
+		if err := s.UpsertClient(ctx, &oauth.Client{ID: id, RedirectURIs: []string{"https://app.example/cb"}, CreatedAt: created}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateRequest(ctx, &oauth.Request{ID: "r", ClientID: "dcr_pending", RedirectURI: "u", CodeChallenge: "c", ExpiresAt: oauthT0.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateCode(ctx, &oauth.Code{Hash: "h", ClientID: "dcr_coded", UserHandle: "alice", RedirectURI: "u", CodeChallenge: "c", ExpiresAt: oauthT0.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// dcr_test completes a grant, which CreateTokens records on the client.
+	a, r := oauthPair("alice", nil, oauthT0.Add(time.Minute), 0)
+	if err := s.CreateTokens(ctx, a, r); err != nil {
+		t.Fatal(err)
+	}
+	granted, err := s.GetClient(ctx, "dcr_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if granted.GrantedAt == nil || !granted.GrantedAt.Equal(oauthT0.Add(time.Minute)) {
+		t.Fatalf("GrantedAt = %v, want %v", granted.GrantedAt, oauthT0.Add(time.Minute))
+	}
+	// A later upsert (a CIMD refetch) keeps it.
+	granted.Name = "renamed"
+	if err := s.UpsertClient(ctx, granted); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.DeleteUnusedClients(ctx, oauthT0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteUnusedClients = %d, want 1", n)
+	}
+	if _, err := s.GetClient(ctx, "dcr_unused"); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("unused client kept: %v", err)
+	}
+	for _, id := range []string{"dcr_test", "dcr_pending", "dcr_coded", "dcr_young"} {
+		if _, err := s.GetClient(ctx, id); err != nil {
+			t.Errorf("GetClient(%s) after cleanup: %v", id, err)
+		}
+	}
+}
+
 func TestOAuthStoreDeleteExpired(t *testing.T) {
 	ctx := context.Background()
 	s := oauthTestStores(t)

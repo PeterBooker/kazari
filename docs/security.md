@@ -338,6 +338,7 @@ Each limit, its default, and where it is enforced:
 | Share link lifetime | 7 days by default, at most 90 days (`serve.share_link_max_ttl`) | |
 | Browser sign-in session | 12 h; a view code 1 min, single use | every view session ends with its sign-in session |
 | Client ID metadata document | 64 KiB, 10 s, cached 1 h, no redirects, public addresses only | |
+| Registered or fetched client without a grant | kept 7 days | removed by the `oauth-cleanup` job; a client that has completed a grant is kept |
 | File named by `url` | 25 MiB (`limits.max_file_bytes`), all of a publish's together 50 MiB, 15 s per request (`fetch.timeout`), 60 s together (`fetch.budget`), 5 redirects, public addresses only, no credentials | spilled to `data_dir/tmp` before the publish |
 | Page import | the version limits, 4 MiB for the page and each stylesheet, 60 s in all (`fetch.budget`), 4 imports at once per instance | resources that do not fit stay remote and are reported, at most 100 of them |
 
@@ -394,6 +395,8 @@ The `mcp.` host runs an OAuth 2.1 authorization server for MCP clients.
 #### Clients and redirects
 
 Only public clients are supported, and PKCE with S256 is required: a 43-character challenge and a verifier of 43 to 128 characters, compared in constant time.
+
+Registration is open and rate-limited per IP. A client that completes no grant within seven days is forgotten by the `oauth-cleanup` job, so registrations that never go anywhere do not accumulate; a client that has completed a grant is kept.
 
 Redirect URIs must be `https`, or `http` on a loopback host. They are matched exactly, except that the port of a loopback URI is ignored (RFC 8252). `resource` must name this server's MCP URL.
 
@@ -489,7 +492,7 @@ Scope: `internal/site`, `artifact`, `httpapi`, `upload`, `auth`, `user`, `oauth`
 | 10 | Info | The site path check let backslashes through. No stored path can contain one, but browsers read `\` as `/` in `Location`. | Fixed as defence in depth: backslash paths are refused. Test: `TestPathRules`. |
 | 11 | Medium | Quota can be dodged. Under the shared policy, a version added by a non-owner is charged to nobody (`artifact/service.go` `Update`). An owner can also transfer an artifact to any user without their consent (`Transfer`), moving usage onto that user's quota and then growing it without limit. | Fixed: a version is charged to the owner's quota whoever adds it (`artifact.Options.Quotas` looks the owner's up), and transfers are admin-only. Tests: `TestQuotaChargesOwner`, `TestTransfer`. |
 | 12 | Low | Before consent, authorization errors redirect to any redirect URI the client registered. DCR and CIMD are open to anyone, so `mcp.<base>` can be used as an open redirect (RFC 9700 section 4.11.2). | Left: changing this affects client interop. Should errors for unverified clients render a page instead of redirecting? |
-| 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Left: needs the control-plane per-IP limit on `mcp.` (wired in `app`), and possibly expiry of DCR clients that never complete a grant. Partly addressed by #24: `mcp.` is now limited per client IP; expiry of unused clients is still open. |
+| 13 | Low | Dynamic client registration is unauthenticated and unbounded: every POST adds a row. | Fixed: #24 limits `mcp.` per client IP, and `oauth-cleanup` removes clients that complete no grant within 7 days (`granted_at`, migration `0005`). Tests: `TestOAuthStoreDeleteUnusedClients`, `TestCleanup`. |
 | 14 | Low | Reuse of an authorization code is logged, but tokens already issued from that code are not revoked (OAuth 2.1 recommends revoking). | Left: needs the store to link a code to its token family. |
 | 15 | Low | For Entra ID, a missing `email_verified` counts as verified and `preferred_username` stands in for email. Any verified email links to the existing user with that email, admins included. | Left: design decision. Require admins to have explicitly linked identities, or use Entra's `xms_edov` claim? The `preferred_username` stand-in is now Entra-only (#36); the Entra `email_verified` question is still open. |
 | 16 | Info | The site handler does not check reserved slugs itself. It relies on the host router (in `app`, not reviewed here) and on create-time validation, so an artifact created before its slug was added to `reserved_slugs` stays servable. | Left: add a `ReservedSlugs` field to `site.Options` and wire it from `app`? |
