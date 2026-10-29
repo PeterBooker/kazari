@@ -140,11 +140,21 @@ func TestOAuthStoreConsumeCode(t *testing.T) {
 	if diff := cmp.Diff(&want, got); diff != "" {
 		t.Errorf("ConsumeCode (-want +got):\n%s", diff)
 	}
-	if _, err := s.ConsumeCode(ctx, "h1", used); !errors.Is(err, oauth.ErrCodeUsed) {
+	if err := s.LinkCodeFamily(ctx, "h1", 7); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.ConsumeCode(ctx, "h1", used)
+	if !errors.Is(err, oauth.ErrCodeUsed) {
 		t.Errorf("second ConsumeCode err = %v, want ErrCodeUsed", err)
+	}
+	if again == nil || again.FamilyID != 7 {
+		t.Errorf("second ConsumeCode code = %+v, want FamilyID 7", again)
 	}
 	if _, err := s.ConsumeCode(ctx, "nope", used); !errors.Is(err, oauth.ErrNotFound) {
 		t.Errorf("ConsumeCode(nope) err = %v, want ErrNotFound", err)
+	}
+	if err := s.LinkCodeFamily(ctx, "nope", 7); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("LinkCodeFamily(nope) err = %v, want ErrNotFound", err)
 	}
 }
 

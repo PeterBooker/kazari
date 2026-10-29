@@ -79,10 +79,21 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 	now := s.now()
 	// Consume first: a code is spent by any attempt, failed or not.
 	c, err := s.store.ConsumeCode(ctx, hashSecret(code), now)
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCodeUsed) {
-		if errors.Is(err, ErrCodeUsed) {
-			s.log.WarnContext(ctx, "oauth: authorization code reused", "client_id", clientID)
+	if errors.Is(err, ErrCodeUsed) {
+		// One of the two presenters holds a stolen code, and nothing says
+		// which, so the tokens the first one got are revoked (OAuth 2.1
+		// section 4.1.2).
+		s.log.WarnContext(ctx, "oauth: authorization code reused", "client_id", clientID, "family", c.FamilyID)
+		if c.FamilyID != 0 {
+			if err := s.store.RevokeFamily(ctx, c.FamilyID, now); err != nil {
+				s.serverError(w, r, "revoke family", err)
+				return
+			}
 		}
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
+		return
+	}
+	if errors.Is(err, ErrNotFound) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
 		return
 	}
@@ -123,6 +134,10 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 	if err := s.store.CreateTokens(ctx, &access.Token, &refresh.Token); err != nil {
 		s.serverError(w, r, "store tokens", err)
 		return
+	}
+	if err := s.store.LinkCodeFamily(ctx, c.Hash, refresh.FamilyID); err != nil {
+		// The tokens are issued; a reuse of this code then revokes nothing.
+		s.log.ErrorContext(ctx, "oauth: link code to its tokens", "err", err)
 	}
 	s.writeTokens(w, access, refresh)
 }

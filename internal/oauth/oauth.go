@@ -84,6 +84,7 @@ type Code struct {
 	KeyPrefix     string // the API key that approved it; "" after an identity-provider sign-in
 	ExpiresAt     time.Time
 	UsedAt        *time.Time
+	FamilyID      int64 // the token family it was exchanged for; 0 until then
 }
 
 // Token is an issued access or refresh token. Only its hash is stored.
@@ -174,8 +175,12 @@ type Store interface {
 
 	CreateCode(ctx context.Context, c *Code) error
 	// ConsumeCode atomically marks the code used at at and returns it.
-	// ErrNotFound for an unknown code, ErrCodeUsed for a second use.
+	// ErrNotFound for an unknown code; ErrCodeUsed for a second use, still
+	// with the code, so the caller can revoke what the first use obtained.
 	ConsumeCode(ctx context.Context, hash string, at time.Time) (*Code, error)
+	// LinkCodeFamily records the token family a consumed code was
+	// exchanged for. ErrNotFound.
+	LinkCodeFamily(ctx context.Context, hash string, familyID int64) error
 
 	// CreateTokens stores a pair that starts a new family, setting both IDs
 	// and FamilyID (the refresh token's id), and marks the client granted.
