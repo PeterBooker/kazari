@@ -173,14 +173,10 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 // with hard purges it now, leaving the blobs for CollectGarbage.
 func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) error {
 	if hard {
-		a, err := s.store.Get(ctx, slug)
+		err := s.store.Purge(ctx, slug, s.now(), func(a *Artifact) error {
+			return s.checkWritable(actor, a, true)
+		})
 		if err != nil {
-			return err
-		}
-		if err := s.checkWritable(actor, a, true); err != nil {
-			return err
-		}
-		if err := s.store.Purge(ctx, slug, s.now()); err != nil {
 			return err
 		}
 		s.record(ctx, actor, audit.ArtifactPurge, slug, nil)
@@ -302,12 +298,23 @@ func (s *Service) Sweep(ctx context.Context) (SweepReport, error) {
 		s.record(ctx, System, audit.ArtifactDelete, a.Slug, map[string]string{"reason": "expired"})
 	}
 
-	due, err := s.store.ListRetentionDue(ctx, now.Add(-s.opts.Retention))
+	retained := now.Add(-s.opts.Retention)
+	due, err := s.store.ListRetentionDue(ctx, retained)
 	if err != nil {
 		fail(err)
 	}
 	for _, a := range due {
-		if err := s.store.Purge(ctx, a.Slug, now); err != nil {
+		err := s.store.Purge(ctx, a.Slug, now, func(cur *Artifact) error {
+			// The row may have been restored or purged since the listing.
+			if cur.DeletedAt == nil || cur.DeletedAt.After(retained) || cur.PurgedAt != nil {
+				return errUnchanged
+			}
+			return nil
+		})
+		if errors.Is(err, errUnchanged) {
+			continue
+		}
+		if err != nil {
 			fail(fmt.Errorf("artifact: sweep purge %s: %w", a.Slug, err))
 			continue
 		}

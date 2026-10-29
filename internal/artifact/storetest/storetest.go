@@ -200,7 +200,7 @@ func testCreateSlugTaken(t *testing.T, h *harness) {
 		t.Fatalf("owner after failed create = %q, want alice", got.OwnerHandle)
 	}
 
-	if err := h.store.Purge(h.ctx, "taken", at(2*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "taken", at(2*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = h.store.Create(h.ctx, a, newVersion("bob", at(time.Hour), file("x", "x")), 0)
@@ -670,7 +670,7 @@ func testListFilters(t *testing.T, h *harness) {
 		}
 		h.create(t, a)
 	}
-	if err := h.store.Purge(h.ctx, "tomb-carol", at(24*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "tomb-carol", at(24*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	ub := h.get(t, "unl-bob")
@@ -885,7 +885,7 @@ func testResolve(t *testing.T, h *harness) {
 		t.Fatalf("deleted resolve: %+v", p)
 	}
 
-	if err := h.store.Purge(h.ctx, "demo", at(4*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "demo", at(4*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	for name, resolve := range map[string]func() (*artifact.Published, error){
@@ -954,7 +954,7 @@ func testUsage(t *testing.T, h *harness) {
 		t.Errorf("SizeBytes of one = %d, want 8", got.SizeBytes)
 	}
 
-	if err := h.store.Purge(h.ctx, "two", at(time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "two", at(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := h.store.Usage(h.ctx, "alice"); got != 8 {
@@ -981,10 +981,10 @@ func testLifecycleQueries(t *testing.T, h *harness) {
 	mk("purged-1", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(time.Hour)) })
 	mk("purged-2", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(time.Hour)) })
 	mk("live", func(a *artifact.Artifact) {})
-	if err := h.store.Purge(h.ctx, "purged-2", at(200*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "purged-2", at(200*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.Purge(h.ctx, "purged-1", at(100*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "purged-1", at(100*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1031,7 +1031,20 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 	wantErr(t, "DeleteTombstone of live artifact", h.store.DeleteTombstone(h.ctx, "demo"), artifact.ErrInvalidArgument)
 	h.get(t, "demo")
 
-	if err := h.store.Purge(h.ctx, "demo", at(2*time.Hour)); err != nil {
+	// fn sees the current row, and its error writes nothing.
+	refused := errors.New("still live")
+	err := h.store.Purge(h.ctx, "demo", at(90*time.Minute), func(cur *artifact.Artifact) error {
+		if cur.LatestVersion != 2 || cur.DeletedAt != nil {
+			t.Errorf("Purge fn saw %+v", cur)
+		}
+		return refused
+	})
+	wantErr(t, "Purge refused by fn", err, refused)
+	if got := h.get(t, "demo"); got.PurgedAt != nil || got.DeletedAt != nil || got.LatestVersion != 2 {
+		t.Fatalf("refused purge wrote: %+v", got)
+	}
+
+	if err := h.store.Purge(h.ctx, "demo", at(2*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	got := h.get(t, "demo")
@@ -1062,7 +1075,7 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 		t.Fatalf("files after purge = %v", files)
 	}
 
-	if err := h.store.Purge(h.ctx, "demo", at(5*time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "demo", at(5*time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.get(t, "demo"); !got.PurgedAt.Equal(at(2 * time.Hour)) {
@@ -1075,7 +1088,7 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 	_, err = h.store.Get(h.ctx, "demo")
 	wantErr(t, "Get after DeleteTombstone", err, artifact.ErrNotFound)
 	wantErr(t, "DeleteTombstone missing", h.store.DeleteTombstone(h.ctx, "demo"), artifact.ErrNotFound)
-	wantErr(t, "Purge missing", h.store.Purge(h.ctx, "demo", at(0)), artifact.ErrNotFound)
+	wantErr(t, "Purge missing", h.store.Purge(h.ctx, "demo", at(0), nil), artifact.ErrNotFound)
 }
 
 func testBlobs(t *testing.T, h *harness) {
@@ -1132,7 +1145,7 @@ func testBlobs(t *testing.T, h *harness) {
 		t.Fatalf("DeleteBlob of missing row: %v", err)
 	}
 
-	if err := h.store.Purge(h.ctx, "demo", at(time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "demo", at(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff(sorted(free1, used), unref(at(3*time.Hour), 10)); diff != "" {
@@ -1243,7 +1256,7 @@ func testShareLinksFollowTheRow(t *testing.T, h *harness) {
 	if err := h.store.CreateShareLink(h.ctx, "demo", l, hashOf("token")); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.Purge(h.ctx, "demo", at(time.Hour)); err != nil {
+	if err := h.store.Purge(h.ctx, "demo", at(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token")); err != nil {

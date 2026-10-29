@@ -721,11 +721,16 @@ func (s *ArtifactStore) ListTombstonesDue(ctx context.Context, before time.Time)
 
 // Purge also sets deleted_at if unset, so a hard delete leaves the same
 // tombstone as the sweep. Purging again keeps the original purged_at.
-func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time) error {
+func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn func(a *artifact.Artifact) error) error {
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
-		aid, err := lookupArtifactID(ctx, tx, slug)
+		aid, a, err := readArtifactTx(ctx, tx, slug)
 		if err != nil {
 			return err
+		}
+		if fn != nil {
+			if err := fn(a); err != nil {
+				return err
+			}
 		}
 		ts := toNanos(at)
 		if _, err := tx.ExecContext(ctx,

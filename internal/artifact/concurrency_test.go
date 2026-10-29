@@ -169,6 +169,11 @@ func (h *hookStore) AddVersion(ctx context.Context, slug string, v *artifact.Ver
 	return h.ArtifactStore.AddVersion(ctx, slug, v, expected, quota, fn)
 }
 
+func (h *hookStore) Purge(ctx context.Context, slug string, at time.Time, fn func(*artifact.Artifact) error) error {
+	h.fire()
+	return h.ArtifactStore.Purge(ctx, slug, at, fn)
+}
+
 func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 	root := artifact.Actor{Handle: "root", Admin: true}
 	tests := []struct {
@@ -255,6 +260,37 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 			}
 			tt.check(t, a)
 		})
+	}
+}
+
+func TestSweepSparesArtifactRestoredSinceListing(t *testing.T) {
+	e := newEnv(t, artifact.Options{Retention: time.Hour})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo")
+	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(2 * time.Hour)
+	hs := &hookStore{ArtifactStore: e.store}
+	svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Retention: time.Hour, Now: e.clock.Now})
+	hs.before = func() {
+		if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true}); err != nil {
+			t.Errorf("restore: %v", err)
+		}
+	}
+	rep, err := svc.Sweep(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Purged != 0 {
+		t.Fatalf("Sweep = %+v, want nothing purged", rep)
+	}
+	a, err := e.store.Get(e.ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.PurgedAt != nil || a.DeletedAt != nil || a.LatestVersion != 1 {
+		t.Fatalf("after sweep: %+v, want restored with its version", a)
 	}
 }
 
