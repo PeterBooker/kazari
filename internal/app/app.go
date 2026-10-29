@@ -300,6 +300,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}, mcpOpts)
 	siteH := site.NewHandler(arts, blobs, site.Options{
 		BaseDomain:       cfg.BaseDomain,
+		ReservedSlugs:    cfg.Serve.ReservedSlugs,
 		DefaultCSP:       cfg.Serve.CSP,
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),

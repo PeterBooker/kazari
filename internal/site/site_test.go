@@ -523,6 +523,27 @@ func TestStates(t *testing.T) {
 	}
 }
 
+// A reserved slug is not served even when the store holds an artifact under
+// it, as one created before the slug was reserved.
+func TestReservedSlugs(t *testing.T) {
+	fx := newFixture(t)
+	fx.add(t, "www", 10, 1, nil, []testFile{{"index.html", "text/html", "squatted"}})
+	open := fx.handler(Options{DefaultCSP: testCSP})
+	reserved := fx.handler(Options{DefaultCSP: testCSP, ReservedSlugs: []string{"api", "www"}})
+	for _, host := range []string{"www.art.test", "WWW.art.test", "www--v1.art.test"} {
+		if rec := do(t, open, http.MethodGet, host, "/", nil); rec.Code != http.StatusOK {
+			t.Errorf("%s without reserved slugs: status = %d, want 200", host, rec.Code)
+		}
+		rec := do(t, reserved, http.MethodGet, host, "/", nil)
+		if rec.Code != http.StatusNotFound || rec.Body.String() != string(defaultNotFoundPage) {
+			t.Errorf("%s with www reserved: status = %d, body %q", host, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := do(t, reserved, http.MethodGet, "demo.art.test", "/", nil); rec.Code != http.StatusOK {
+		t.Errorf("demo with www reserved: status = %d, want 200", rec.Code)
+	}
+}
+
 func TestCustomInstancePages(t *testing.T) {
 	fx := newFixture(t)
 	h := fx.handler(Options{NotFoundPage: []byte("my 404"), GonePage: []byte("my 410")})

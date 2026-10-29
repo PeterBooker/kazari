@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,11 @@ const ReservedPrefix = "/" + artifact.ReservedDir + "/"
 // Options configures the handler. Only BaseDomain is required.
 type Options struct {
 	BaseDomain string
+	// ReservedSlugs are never served, whatever the store holds: an
+	// artifact created before its slug was reserved stops serving, and the
+	// handler does not rely on the host router alone to keep control-plane
+	// labels away from it.
+	ReservedSlugs []string
 	// DefaultCSP is sent with every response; empty sends none unless the
 	// artifact has its own.
 	DefaultCSP string
@@ -128,7 +134,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug, version, ok := ParseHost(r.Host, h.opts.BaseDomain)
-	if !ok {
+	if !ok || slices.Contains(h.opts.ReservedSlugs, slug) {
 		h.writeError(w, r, http.StatusNotFound)
 		return
 	}
