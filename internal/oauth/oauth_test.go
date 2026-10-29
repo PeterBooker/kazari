@@ -187,7 +187,9 @@ func checkPageHeaders(t *testing.T, resp *http.Response) {
 	}
 }
 
-func TestAuthorizeErrorsRedirect(t *testing.T) {
+// An invalid request renders a page: the client is unverified until the
+// person has seen the consent page, so its redirect URI gets nothing.
+func TestAuthorizeErrorsRenderPage(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	const redirect = "https://app.example/cb"
 	clientID := e.register(redirect)
@@ -218,14 +220,16 @@ func TestAuthorizeErrorsRedirect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, _ := e.get("/oauth/authorize?" + tt.params.Encode())
-			loc := location(t, resp)
-			if got := loc.Scheme + "://" + loc.Host + loc.Path; got != redirect {
-				t.Errorf("redirected to %s, want %s", got, redirect)
+			resp, body := e.get("/oauth/authorize?" + tt.params.Encode())
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
 			}
-			q := loc.Query()
-			if q.Get("error") != tt.want || q.Get("state") != "client-state" || q.Get("error_description") == "" {
-				t.Errorf("redirect query = %v, want error %s with state", q, tt.want)
+			if loc := resp.Header.Get("Location"); loc != "" {
+				t.Errorf("redirected to %s", loc)
+			}
+			checkPageHeaders(t, resp)
+			if !strings.Contains(body, "<html") || !strings.Contains(body, tt.want) {
+				t.Errorf("body is not a page naming %s: %s", tt.want, body)
 			}
 		})
 	}
@@ -454,9 +458,15 @@ func TestCallbackFailures(t *testing.T) {
 		clientID := e.register(redirect)
 		resp, _ := e.get("/oauth/authorize?" + authorizeParams(clientID, redirect, "", newPKCE("v")).Encode())
 		state := location(t, resp).Query().Get("state")
-		resp, _ = e.get("/oauth/callback?" + url.Values{"error": {"access_denied"}, "state": {state}}.Encode())
-		if q := location(t, resp).Query(); q.Get("error") != "access_denied" || q.Get("state") != "client-state" {
-			t.Errorf("redirect query = %v", q)
+		resp, body := e.get("/oauth/callback?" + url.Values{"error": {"access_denied"}, "state": {state}}.Encode())
+		// The person has not seen the consent page, so the client's URI is
+		// still untrusted.
+		if resp.StatusCode != http.StatusBadRequest || resp.Header.Get("Location") != "" {
+			t.Errorf("status = %d, Location %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
+		}
+		checkPageHeaders(t, resp)
+		if !strings.Contains(body, "access_denied") {
+			t.Errorf("page does not name the upstream error: %s", body)
 		}
 	})
 	t.Run("bad upstream code", func(t *testing.T) {
