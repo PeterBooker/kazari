@@ -7,7 +7,7 @@ description: House style for Kazari's documentation, modelled on the Laravel doc
 
 The Laravel docs are easy to read because every page has the same shape and every section moves the same way: what it is for, the smallest example that works, what that example did, then one option at a time. Kazari's docs keep that shape and leave out Laravel's sales talk and padding ([Left out on purpose](#left-out-on-purpose)).
 
-This skill covers how a page reads. The mechanics live elsewhere: mounts, links, alerts and `nav.toml` in `.claude/rules/docs.md`, the files that state each behaviour in the `docs-check` skill, the Hugo check in `CLAUDE.md`. It does not apply to `docs/adr/` or the findings logs in `docs/security.md`, which record decisions as they were made.
+This skill covers how a page reads. The mechanics live elsewhere: mounts, links, alerts and `nav.toml` in `.claude/rules/docs.md`, the files that state each behaviour in the `docs-check` skill, the Hugo check in `CLAUDE.md`. It does not apply to `docs/adr/`, which records decisions as they were made.
 
 ## Readers
 
