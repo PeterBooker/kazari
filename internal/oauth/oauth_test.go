@@ -532,6 +532,35 @@ func TestConsentCSRF(t *testing.T) {
 	}
 }
 
+// A code presented twice revokes the tokens its first use obtained: one of
+// the two presenters stole it, and the server cannot tell which.
+func TestCodeReuseRevokesTokens(t *testing.T) {
+	ctx := context.Background()
+	const redirect = "https://app.example/cb"
+	p := newPKCE("verifier")
+	e := newEnv(t, envOptions{})
+	clientID := e.register(redirect)
+	e.signIn(authorizeParams(clientID, redirect, "", p))
+	code := e.approve(nil)
+	tr := e.exchange(clientID, redirect, code, p)
+	if tr.status != http.StatusOK {
+		t.Fatalf("exchange = %d %s", tr.status, tr.Error)
+	}
+	if _, err := e.svc.Authenticate(ctx, tr.AccessToken); err != nil {
+		t.Fatalf("access token before reuse: %v", err)
+	}
+
+	if again := e.exchange(clientID, redirect, code, p); again.status != http.StatusBadRequest || again.Error != "invalid_grant" {
+		t.Errorf("second exchange = %d %s, want 400 invalid_grant", again.status, again.Error)
+	}
+	if _, err := e.svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("access token after reuse: err = %v, want ErrInvalidToken", err)
+	}
+	if r := e.refresh(clientID, tr.RefreshToken, ""); r.status != http.StatusBadRequest || r.Error != "invalid_grant" {
+		t.Errorf("refresh after reuse = %d %s, want 400 invalid_grant", r.status, r.Error)
+	}
+}
+
 func TestTokenErrors(t *testing.T) {
 	const redirect = "https://app.example/cb"
 	p := newPKCE("verifier")

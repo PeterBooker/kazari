@@ -224,24 +224,41 @@ func (s *OAuthStore) ConsumeCode(ctx context.Context, hash string, at time.Time)
 		}
 		return nil
 	})
+	if errors.Is(err, oauth.ErrCodeUsed) {
+		return c, fmt.Errorf("sqlite: consume oauth code: %w", err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: consume oauth code: %w", err)
 	}
 	return c, nil
 }
 
+func (s *OAuthStore) LinkCodeFamily(ctx context.Context, hash string, familyID int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE oauth_code SET family_id = ? WHERE code_hash = ?`, familyID, hash)
+	if err != nil {
+		return fmt.Errorf("sqlite: link oauth code: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		if err == nil {
+			err = oauth.ErrNotFound
+		}
+		return fmt.Errorf("sqlite: link oauth code: %w", err)
+	}
+	return nil
+}
+
 func oauthGetCode(ctx context.Context, tx *sql.Tx, hash string) (*oauth.Code, error) {
 	var (
-		c       = oauth.Code{Hash: hash}
-		scopes  string
-		expires int64
-		used    sql.NullInt64
+		c            = oauth.Code{Hash: hash}
+		scopes       string
+		expires      int64
+		used, family sql.NullInt64
 	)
 	err := tx.QueryRowContext(ctx, `SELECT c.client_id, u.handle, c.scopes, c.redirect_uri,
-			c.code_challenge, c.resource, c.key_prefix, c.expires_at, c.used_at
+			c.code_challenge, c.resource, c.key_prefix, c.expires_at, c.used_at, c.family_id
 		FROM oauth_code c JOIN user u ON u.id = c.user_id
 		WHERE c.code_hash = ?`, hash).Scan(&c.ClientID, &c.UserHandle, &scopes, &c.RedirectURI,
-		&c.CodeChallenge, &c.Resource, &c.KeyPrefix, &expires, &used)
+		&c.CodeChallenge, &c.Resource, &c.KeyPrefix, &expires, &used, &family)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrNotFound
 	}
@@ -251,6 +268,7 @@ func oauthGetCode(ctx context.Context, tx *sql.Tx, hash string) (*oauth.Code, er
 	c.Scopes = oauthSplitScopes(scopes)
 	c.ExpiresAt = fromNanos(expires)
 	c.UsedAt = ptrTime(used)
+	c.FamilyID = family.Int64
 	return &c, nil
 }
 
