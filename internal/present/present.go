@@ -228,6 +228,13 @@ func Upload(u *upload.Upload, maxChunk, maxTotal int64) api.Upload {
 	return api.Upload{UploadID: u.ID, ExpiresAt: u.ExpiresAt, MaxChunkBytes: maxChunk, MaxTotalBytes: maxTotal}
 }
 
+// ArchiveURL is where an upload's archive is PUT; base is the REST root,
+// e.g. https://api.art.example.com/v1. The token travels in the query, as
+// presigned URLs do everywhere, so one plain URL is all a shell needs.
+func ArchiveURL(base, id, token string) string {
+	return strings.TrimSuffix(base, "/") + "/uploads/" + url.PathEscape(id) + "/archive?token=" + url.QueryEscape(token)
+}
+
 // Chunk converts a staged file after a chunk was appended.
 func Chunk(f upload.StagedFile) api.ChunkResult {
 	return api.ChunkResult{Path: f.Path, BytesReceived: f.Bytes}
@@ -354,7 +361,7 @@ func statusFor(code string) int {
 	case api.CodeTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case api.CodeTooManyFiles, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument,
-		api.CodeEditNotFound, api.CodeEditAmbiguous:
+		api.CodeEditNotFound, api.CodeEditAmbiguous, api.CodeDigestMismatch:
 		return http.StatusUnprocessableEntity
 	case api.CodeQuotaExceeded, api.CodeTooManyUploads:
 		return http.StatusForbidden

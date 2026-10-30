@@ -87,3 +87,13 @@ func TestLinks(t *testing.T) {
 		t.Error("nil URL func should yield empty URL")
 	}
 }
+
+func TestArchiveURL(t *testing.T) {
+	got := ArchiveURL("https://api.art.example.com/v1/", "Zm9v", "tok-en_1")
+	if want := "https://api.art.example.com/v1/uploads/Zm9v/archive?token=tok-en_1"; got != want {
+		t.Errorf("ArchiveURL = %q, want %q", got, want)
+	}
+	if status, body := Error(artifact.ErrDigestMismatch); status != http.StatusUnprocessableEntity || body.Code != api.CodeDigestMismatch {
+		t.Errorf("Error(ErrDigestMismatch) = %d %+v", status, body)
+	}
+}

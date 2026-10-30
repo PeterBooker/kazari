@@ -53,7 +53,7 @@ limits:
   metadata_max_pairs: 64
   write_rate_per_minute: 60
   default_user_quota: 2GiB
-  inline_guidance_bytes: 2MiB        # quoted in tool descriptions as the point to switch to chunks
+  inline_guidance_bytes: 2MiB        # quoted in tool descriptions as the point to switch to an upload
   max_chunk_bytes: 4MiB              # per upload_chunk call, after base64 decoding
   upload_ttl: 1h
   max_open_uploads: 5                # per user

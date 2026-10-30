@@ -96,7 +96,7 @@ Kazari serves static files: HTML, CSS, JavaScript, images, fonts and data files.
 - **A page can start from an existing site.** Ask for a copy of a page and the agent imports it: the markup, styles, fonts and images come along, scripts and trackers do not, so the copy is a static page on your domain. Links in the copy still point at the original site. A site that draws its pages with JavaScript imports as an empty shell, and a page behind a login cannot be fetched; save such a page from your browser and ask the agent to publish the files. Copy only pages you have the right to reuse.
 - **Each page is its own site.** `localStorage` and cookies are private to the page, so a prototype can remember state without seeing anyone else's.
 - **Single-page apps need one setting.** An app that routes in the browser needs every path to serve `index.html`: ask your agent to set the metadata `kazari.spa` to `true`.
-- **Large pages work.** By default, a version can hold up to 50 MiB and 2,000 files, and one file up to 25 MiB. Above about 2 MiB, the agent is told to send files in chunks.
+- **Large pages work.** By default, a version can hold up to 50 MiB and 2,000 files, and one file up to 25 MiB. Above about 2 MiB, the agent is told to send files in chunks, or as one archive when it has a shell.
 
 Your instance's limits and allowed sources can differ from these defaults. The tool descriptions your agent sees always state the real ones.
 

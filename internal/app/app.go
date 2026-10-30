@@ -249,6 +249,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		}),
 	)
 
+	apiBase := cfg.ExternalURL("api") + "v1"
 	mcpOpts := mcpserver.Options{
 		BaseDomain:          cfg.BaseDomain,
 		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
@@ -261,7 +262,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
 		CSP:                 cfg.Serve.CSP,
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,
-		APIBaseURL:          cfg.ExternalURL("api") + "v1",
+		APIBaseURL:          apiBase,
 		MCPURL:              mcpURL,
 		DefaultVisibility:   cfg.Serve.DefaultVisibility,
 		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
@@ -277,6 +278,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
 		Now:           now,
 		TempDir:       tempDir(cfg),
+		APIBaseURL:    apiBase,
 		Skill:         mcpserver.Skill(links, mcpOpts),
 	})
 	adminDeps := httpapi.AdminDeps{

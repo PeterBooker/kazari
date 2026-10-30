@@ -8,6 +8,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/upload"
 )
 
 // texts are generated from Options so they state the configured limits.
@@ -23,6 +24,7 @@ type texts struct {
 	visibility string
 	inline     string
 	chunks     string
+	archive    string
 
 	instructions string
 	tools        map[string]string
@@ -75,10 +77,18 @@ func newTexts(links present.Links, o Options) texts {
 
 	t.inline = fmt.Sprintf("Inline files: give each file in files[] as {path, content, encoding, content_type}; encoding is "+
 		"\"utf8\" (default, for text) or \"base64\" (for binary). When any single file or all files together exceed %s, "+
-		"do not inline them: call begin_upload, send the content with upload_chunk, then pass upload_id here. Inline "+
-		"files[] given in the same call are merged with the staged files and win on a path clash. The upload is consumed "+
-		"by this call whether it succeeds or fails.",
+		"do not inline them: call begin_upload, stage the content (upload_chunk, or an archive sent to archive_url), "+
+		"then pass upload_id here. Inline files[] given in the same call are merged with the staged files and win on a "+
+		"path clash. The upload is consumed by this call whether it succeeds or fails.",
 		size(o.InlineGuidanceBytes))
+
+	t.archive = fmt.Sprintf("With a shell: 1) From inside the page's directory, zip -r ../site.zip . (or tar czf "+
+		"../site.tar.gz .), so paths start at the page root. 2) begin_upload with archive_sha256 (sha256sum site.zip) "+
+		"and archive_bytes (wc -c < site.zip); the archive may be at most %s. 3) curl --fail-with-body -T site.zip "+
+		"'<archive_url>': the URL needs no credential, accepts only a body with that digest, and is spent by the first "+
+		"one that matches; after %d bodies that do not, the upload is removed. 4) create_artifact or update_artifact "+
+		"with upload_id. If curl cannot reach the host, the sandbox's network policy blocks it: tell the user, and "+
+		"fall back to upload_chunk.", size(o.MaxTotalBytes), upload.MaxArchiveAttempts)
 	if o.Fetch {
 		t.inline += " " + urlFile
 	}
@@ -104,7 +114,8 @@ func newTexts(links present.Links, o Options) texts {
 		"- Change a page: read_file with anchors: true, then edit_file with expected_version set to the latest_version "+
 		"the read returned. On version_conflict or anchor_mismatch, read again and redo the edit; never resend it "+
 		"unchanged. update_artifact adds, replaces or deletes whole files.\n"+
-		"- Content above %s: begin_upload, upload_chunk for each file, then create_artifact or update_artifact with upload_id.\n"+
+		"- Content above %s: begin_upload, then upload_chunk for each file or, with a shell, one archive sent to "+
+		"archive_url; then create_artifact or update_artifact with upload_id.\n"+
 		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
 		"before delete_artifact with hard: true. update_artifact with restore: true undoes a soft delete.\n"+
 		"- Sharing a \"members\" page with someone who cannot sign in to this instance: create_share_link, then give "+
@@ -207,13 +218,15 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"if your client has not loaded that skill.",
 
 		"begin_upload": strings.Join([]string{
-			fmt.Sprintf("Start a chunked upload, for content too large to inline (any file, or all files together, "+
-				"above %s). Returns upload_id, expires_at, max_chunk_bytes and max_total_bytes.", size(o.InlineGuidanceBytes)),
-			"Recipe: 1) begin_upload. 2) For each file call upload_chunk with offset 0, then with offset = the " +
+			fmt.Sprintf("Start an upload, for content too large to inline (any file, or all files together, above %s). "+
+				"Returns upload_id, expires_at, max_chunk_bytes and max_total_bytes, and with archive_sha256 and "+
+				"archive_bytes also archive_url.", size(o.InlineGuidanceBytes)),
+			"Without a shell: 1) begin_upload. 2) For each file call upload_chunk with offset 0, then with offset = the " +
 				"bytes_received of the previous chunk, until the whole file is sent. 3) Call create_artifact or " +
-				"update_artifact with upload_id (plus any small inline files or delete entries). That call consumes the " +
-				"upload whether it succeeds or fails; begin a new upload to retry. discard_upload drops an upload you no " +
-				"longer need; unused ones expire at expires_at.",
+				"update_artifact with upload_id (plus any small inline files or delete entries).",
+			t.archive,
+			"The publishing call consumes the upload whether it succeeds or fails; begin a new upload to retry. " +
+				"discard_upload drops an upload you no longer need; unused ones expire at expires_at.",
 			t.chunks,
 		}, "\n\n"),
 
