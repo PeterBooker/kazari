@@ -679,3 +679,30 @@ func TestDiscardUpload(t *testing.T) {
 		t.Errorf("discard as reader = %q", msg)
 	}
 }
+
+func TestBeginUploadArchive(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	sum := sha256.Sum256([]byte("archive"))
+	digest := hex.EncodeToString(sum[:])
+	up, res := ok[api.Upload](t, cs, "begin_upload", map[string]any{"archive_sha256": digest, "archive_bytes": 7})
+	prefix := "https://api.art.test/v1/uploads/" + up.UploadID + "/archive?token="
+	if !strings.HasPrefix(up.ArchiveURL, prefix) || len(up.ArchiveURL) != len(prefix)+43 {
+		t.Fatalf("archive_url = %q, want %s<43 characters>", up.ArchiveURL, prefix)
+	}
+	if line := firstLine(res); !strings.Contains(line, "curl --fail-with-body -T") || !strings.Contains(line, up.ArchiveURL) {
+		t.Errorf("summary = %q", line)
+	}
+	for name, args := range map[string]map[string]any{
+		"size alone": {"archive_bytes": 7},
+		"bad digest": {"archive_sha256": "abc", "archive_bytes": 7},
+	} {
+		if msg := fails(t, cs, "begin_upload", args); !strings.HasPrefix(msg, "invalid_argument: ") {
+			t.Errorf("%s: %q", name, msg)
+		}
+	}
+	msg := fails(t, cs, "begin_upload", map[string]any{"archive_sha256": digest, "archive_bytes": upload.DefaultMaxTotalBytes + 1})
+	if !strings.HasPrefix(msg, "too_large: ") {
+		t.Errorf("over the limit: %q", msg)
+	}
+}

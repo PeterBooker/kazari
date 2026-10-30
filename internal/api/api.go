@@ -23,6 +23,7 @@ const (
 	CodeUnauthorized     = "unauthorized"
 	CodeGone             = "gone"
 	CodeOffsetMismatch   = "upload_offset_mismatch"
+	CodeDigestMismatch   = "upload_digest_mismatch"
 	CodeRateLimited      = "rate_limited"
 	CodeHandleTaken      = "handle_taken"
 	CodeEmailTaken       = "email_taken"
@@ -284,12 +285,28 @@ type OK struct {
 	OK bool `json:"ok"`
 }
 
-// Upload describes a chunked upload.
+// BeginUploadRequest is the optional body of POST /uploads. Both fields
+// together ask for an archive URL; the response then carries archive_url.
+type BeginUploadRequest struct {
+	ArchiveSHA256 string `json:"archive_sha256,omitempty"`
+	ArchiveBytes  int64  `json:"archive_bytes,omitempty"`
+}
+
+// Upload describes an upload. ArchiveURL is set when the upload was begun
+// with a digest: a PUT of the archive to it needs no credential.
 type Upload struct {
 	UploadID      string    `json:"upload_id"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	MaxChunkBytes int64     `json:"max_chunk_bytes"`
 	MaxTotalBytes int64     `json:"max_total_bytes"`
+	ArchiveURL    string    `json:"archive_url,omitempty"`
+}
+
+// ArchiveResult acknowledges an archive received at an upload's archive URL.
+type ArchiveResult struct {
+	UploadID string `json:"upload_id"`
+	Files    int    `json:"files"`
+	Bytes    int64  `json:"bytes"`
 }
 
 // ChunkResult acknowledges one chunk.

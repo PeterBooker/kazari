@@ -44,6 +44,7 @@ var (
 	ErrUploadNotFound  = &Error{Code: "upload_not_found", Message: "upload not found"}
 	ErrLinkNotFound    = &Error{Code: "share_link_not_found", Message: "share link not found"}
 	ErrTooManyUploads  = &Error{Code: "too_many_uploads", Message: "too many open uploads"}
+	ErrDigestMismatch  = &Error{Code: "upload_digest_mismatch", Message: "the archive does not match the digest the upload was begun with"}
 	ErrEditNotFound    = &Error{Code: "edit_not_found", Message: "text to replace not found"}
 	ErrEditAmbiguous   = &Error{Code: "edit_ambiguous", Message: "text to replace matches more than once"}
 	ErrAnchorMismatch  = &Error{Code: "anchor_mismatch", Message: "anchor does not match the file"}

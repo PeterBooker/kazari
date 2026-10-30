@@ -3,7 +3,10 @@ package upload
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -24,12 +27,19 @@ const (
 	DefaultMaxFiles        = artifact.DefaultMaxFiles
 	DefaultTTL             = time.Hour
 	DefaultMaxOpenPerOwner = 5
+	// MaxArchiveAttempts bounds what a leaked archive URL costs: after this
+	// many bodies that miss the digest the upload is gone, not open until
+	// its TTL for anyone to keep pouring bytes into.
+	MaxArchiveAttempts = 3
 )
 
-// base64url without padding encodes idBytes random bytes as idLen characters.
+// base64url without padding encodes idBytes random bytes as idLen characters
+// and tokenBytes as tokenLen.
 const (
-	idBytes = 16
-	idLen   = 22
+	idBytes    = 16
+	idLen      = 22
+	tokenBytes = 32
+	tokenLen   = 43
 )
 
 // Options configures a Service. Zero fields take the Default constants.
@@ -79,6 +89,9 @@ func New(store Store, opts Options) *Service {
 // MaxChunkBytes is the largest chunk AppendChunk accepts.
 func (s *Service) MaxChunkBytes() int64 { return s.opts.MaxChunkBytes }
 
+// MaxFiles is the most files one upload may stage.
+func (s *Service) MaxFiles() int { return s.opts.MaxFiles }
+
 // OffsetMismatchError unwraps to artifact.ErrOffsetMismatch, so
 // artifact.CodeOf reports its code. Current is the staged size, where the
 // client should resume.
@@ -98,16 +111,42 @@ func (e *OffsetMismatchError) Unwrap() error { return artifact.ErrOffsetMismatch
 // Begin starts an upload for owner. MaxOpenPerOwner holds under concurrent
 // Begins: the store checks it in the insert's transaction.
 func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
-	b := make([]byte, idBytes)
-	if _, err := rand.Read(b); err != nil {
-		return nil, fmt.Errorf("upload: begin: %w", err)
+	return s.begin(ctx, owner, nil)
+}
+
+// BeginArchive starts an upload that also accepts one archive of exactly
+// sum (hex SHA-256) and size bytes at a URL carrying the returned token,
+// without a credential. The token is returned once; the store keeps its
+// hash. The digest is required, not optional, because the URL will pass
+// through a model's context and logs: bound to the bytes, it lets whoever
+// holds it stage nothing the owner does not already have.
+func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64) (*Upload, string, error) {
+	sum = strings.ToLower(sum)
+	if raw, err := hex.DecodeString(sum); err != nil || len(raw) != sha256.Size {
+		return nil, "", artifact.Errorf(artifact.ErrInvalidArgument, "archive_sha256 must be the hex SHA-256 of the archive")
 	}
+	if size <= 0 {
+		return nil, "", artifact.Errorf(artifact.ErrInvalidArgument, "archive_bytes must be the size of the archive")
+	}
+	if size > s.opts.MaxTotalBytes {
+		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %d bytes", s.opts.MaxTotalBytes)
+	}
+	token := randomText(tokenBytes)
+	u, err := s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size})
+	if err != nil {
+		return nil, "", err
+	}
+	return u, token, nil
+}
+
+func (s *Service) begin(ctx context.Context, owner string, a *Archive) (*Upload, error) {
 	now := s.opts.Now()
 	u := &Upload{
-		ID:        base64.RawURLEncoding.EncodeToString(b),
+		ID:        randomText(idBytes),
 		Owner:     owner,
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.opts.TTL),
+		Archive:   a,
 	}
 	// Row first, so the orphan sweep never sees a directory whose row is
 	// still being written.
@@ -306,6 +345,121 @@ func (s *Service) Abort(ctx context.Context, owner, id string) error {
 	return s.remove(ctx, id)
 }
 
+// Archive returns the upload that token opens, so the caller can size the
+// body before reading any of it. An unknown, expired, spent or foreign
+// token is artifact.ErrUploadNotFound, like every other reason.
+func (s *Service) Archive(ctx context.Context, id, token string) (*Upload, error) {
+	return s.loadArchive(ctx, id, token)
+}
+
+// RejectArchive counts a body that missed the digest and returns how many
+// more may be sent; at zero the upload is removed.
+func (s *Service) RejectArchive(ctx context.Context, id, token string) (int, error) {
+	unlock := s.locks.lock(id)
+	defer unlock()
+	if _, err := s.loadArchive(ctx, id, token); err != nil {
+		return 0, err
+	}
+	n, err := s.store.CountArchiveAttempt(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("upload: reject archive %s: %w", id, err)
+	}
+	left := max(MaxArchiveAttempts-n, 0)
+	if left == 0 {
+		return 0, s.remove(ctx, id)
+	}
+	return left, nil
+}
+
+// ReceiveArchive stages files as the archive of the upload token opens and
+// spends the token. Once the token is accepted, any failure removes the
+// upload: the digest already matched, so the same bytes would fail the
+// same way, and the owner has to begin again with a corrected archive.
+func (s *Service) ReceiveArchive(ctx context.Context, id, token string, files []artifact.FileInput) (*Upload, error) {
+	unlock := s.locks.lock(id)
+	defer unlock()
+	u, err := s.loadArchive(ctx, id, token)
+	if err != nil {
+		return nil, err
+	}
+	staged, err := s.stage(ctx, u, files)
+	if err == nil {
+		if err = s.store.ReceiveArchive(ctx, id, staged, u.Bytes, s.opts.Now()); err != nil {
+			err = fmt.Errorf("upload: receive archive %s: %w", id, err)
+		}
+	}
+	if err != nil {
+		return nil, errors.Join(err, s.remove(context.WithoutCancel(ctx), id))
+	}
+	return s.load(ctx, u.Owner, id, false)
+}
+
+// stage writes each file to a fresh staging file, adding its size to u.
+func (s *Service) stage(ctx context.Context, u *Upload, files []artifact.FileInput) ([]StagedFile, error) {
+	if len(files) == 0 {
+		return nil, artifact.Errorf(artifact.ErrInvalidArgument, "the archive has no files")
+	}
+	if err := os.MkdirAll(s.dir(u.ID), 0o700); err != nil {
+		return nil, fmt.Errorf("upload: stage %s: %w", u.ID, err)
+	}
+	taken := make(map[string]bool, len(u.Files)+len(files))
+	next := 0
+	for _, f := range u.Files {
+		taken[f.Path] = true
+		next = max(next, f.StagingIndex+1)
+	}
+	left := s.opts.MaxTotalBytes - u.Bytes
+	staged := make([]StagedFile, 0, len(files))
+	for _, in := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		clean, err := artifact.ValidatePath(in.Path)
+		if err != nil {
+			return nil, err
+		}
+		if taken[clean] {
+			return nil, artifact.Errorf(artifact.ErrInvalidArgument, "the archive names %q twice", clean)
+		}
+		if len(u.Files)+len(staged) >= s.opts.MaxFiles {
+			return nil, artifact.Errorf(artifact.ErrTooManyFiles, "more than %d files in one upload", s.opts.MaxFiles)
+		}
+		n, err := s.writeNew(u.ID, next, in.Content, left)
+		if err != nil {
+			return nil, err
+		}
+		taken[clean] = true
+		staged = append(staged, StagedFile{Path: clean, StagingIndex: next, Bytes: n})
+		next++
+		left -= n
+		u.Bytes += n
+	}
+	return staged, nil
+}
+
+// writeNew copies r to a new staging file and refuses more than left bytes.
+// A reader's own error passes through when it carries a code, so a corrupt
+// archive entry is reported as the client's fault, not the server's.
+func (s *Service) writeNew(id string, index int, r io.Reader, left int64) (int64, error) {
+	fh, err := os.OpenFile(s.stagingPath(id, index), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return 0, fmt.Errorf("upload: stage %s: %w", id, err)
+	}
+	n, err := io.Copy(fh, io.LimitReader(r, left+1))
+	if cerr := fh.Close(); err == nil {
+		err = cerr
+	}
+	switch {
+	case err != nil && artifact.CodeOf(err) != "":
+		return 0, err
+	case err != nil:
+		return 0, fmt.Errorf("upload: stage %s: %w", id, err)
+	case n > left:
+		return 0, artifact.Errorf(artifact.ErrTooLarge, "upload larger than %d bytes", s.opts.MaxTotalBytes)
+	}
+	return n, nil
+}
+
 // ExpireStale removes expired uploads and staging directories with no row
 // (left by a crash), returns how many and continues past errors.
 func (s *Service) ExpireStale(ctx context.Context) (int, error) {
@@ -365,6 +519,37 @@ func (s *Service) removeOrphan(ctx context.Context, id string) (int, error) {
 // load hides every reason the upload is unavailable to owner behind
 // artifact.ErrUploadNotFound.
 func (s *Service) load(ctx context.Context, owner, id string, allowExpired bool) (*Upload, error) {
+	u, err := s.get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if u.Owner != owner || (!allowExpired && !s.opts.Now().Before(u.ExpiresAt)) {
+		return nil, artifact.ErrUploadNotFound
+	}
+	return u, nil
+}
+
+// loadArchive is load for the holder of an archive token, who is nobody in
+// particular: the token stands in for the owner. The id is not a secret, but
+// the token is, so its comparison takes the same time whether or not it
+// matches.
+func (s *Service) loadArchive(ctx context.Context, id, token string) (*Upload, error) {
+	if len(token) != tokenLen {
+		return nil, artifact.ErrUploadNotFound
+	}
+	u, err := s.get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	a := u.Archive
+	if a == nil || !a.ReceivedAt.IsZero() || !s.opts.Now().Before(u.ExpiresAt) ||
+		subtle.ConstantTimeCompare([]byte(hashToken(token)), []byte(a.TokenHash)) != 1 {
+		return nil, artifact.ErrUploadNotFound
+	}
+	return u, nil
+}
+
+func (s *Service) get(ctx context.Context, id string) (*Upload, error) {
 	if !validID(id) {
 		return nil, artifact.ErrUploadNotFound
 	}
@@ -375,10 +560,18 @@ func (s *Service) load(ctx context.Context, owner, id string, allowExpired bool)
 		}
 		return nil, fmt.Errorf("upload: get %s: %w", id, err)
 	}
-	if u.Owner != owner || (!allowExpired && !s.opts.Now().Before(u.ExpiresAt)) {
-		return nil, artifact.ErrUploadNotFound
-	}
 	return u, nil
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func randomText(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func (s *Service) remove(ctx context.Context, id string) error {

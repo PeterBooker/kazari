@@ -160,12 +160,13 @@ The user API's base URL is `https://api.<base>/v1`. These are its routes, with t
 | `DELETE` | `/artifacts/{slug}/share-links/{prefix}` | write  | `204`                       |
 | `POST`   | `/uploads`                               | write  | `201` upload                |
 | `PATCH`  | `/uploads/{id}/files/{path...}`          | write  | `200` chunk result          |
+| `PUT`    | `/uploads/{id}/archive`                  | none   | `200` archive result        |
 | `DELETE` | `/uploads/{id}`                          | write  | `204`                       |
 | `GET`    | `/skill`                                 | read   | `200` the instance's skill  |
 | `GET`    | `/me`                                    | any    | `200` caller                |
 | `GET`    | `/me/keys`                               | any    | `200` caller's keys         |
 
-In the scope column, `read`, `write` and `delete` stand for `artifacts:read`, `artifacts:write` and `artifacts:delete`, and `any` means any valid credential.
+In the scope column, `read`, `write` and `delete` stand for `artifacts:read`, `artifacts:write` and `artifacts:delete`, `any` means any valid credential, and `none` means no credential: the token in the URL of an [archive upload](#archive-uploads) stands for one.
 
 ### Create an artifact: `POST /artifacts`
 
@@ -558,7 +559,7 @@ Revokes a link at once: browsers that opened it lose access on their next reques
 
 ### Chunked uploads
 
-Chunked uploads are for bundles that are too big for one request, and for clients that cannot build a tar. Files are staged on the server, then published by passing the `upload_id` to create or update. An upload takes three steps:
+Chunked uploads are for bundles that are too big for one request, and for clients that cannot build a tar. Files are staged on the server, then published by passing the `upload_id` to create or update. A client that can build an archive but holds no credential uses an [archive upload](#archive-uploads) instead. An upload takes three steps:
 
 1. Begin an upload with `POST /uploads`.
 2. Send each file in chunks with `PATCH /uploads/{id}/files/{path...}`.
@@ -604,7 +605,7 @@ Each upload is held to these limits:
 | Limit                      | Applies to                             | Over the limit                       |
 | -------------------------- | -------------------------------------- | ------------------------------------ |
 | `limits.max_chunk_bytes`   | Each chunk                             | `413 too_large`                      |
-| `limits.max_version_bytes` | Each upload                            | `413 too_large`                      |
+| `limits.max_version_bytes` | Each upload, and an archive            | `413 too_large`                      |
 | `limits.max_files`         | Paths in an upload                     | `422 too_many_files`                 |
 | `limits.max_open_uploads`  | Open uploads per user                  | `403 too_many_uploads`               |
 | `limits.upload_ttl`        | Time until an untouched upload expires | `404 upload_not_found` afterwards    |
@@ -635,6 +636,55 @@ curl -sS -H "$AUTH" -H 'Content-Type: application/json' $API/artifacts -d "{
   \"files\": [{ \"path\": \"index.html\", \"content\": \"<script src=data.json></script>\" }]
 }"
 ```
+
+### Archive uploads
+
+An archive upload stages a whole site in one request from a shell that holds no credential. An agent in a sandbox is the usual case: its MCP connection is signed in, its shell is not, and the files are too large to pass through tool calls. The agent asks for the upload where it is signed in, and the shell sends the archive to a URL that stands in for the credential.
+
+The URL opens that one upload, accepts only a body with the digest and size the upload was begun with, and is spent by the first body that matches. An archive upload takes three steps:
+
+1. Begin an upload with `POST /uploads`, giving `archive_sha256` and `archive_bytes`.
+2. Send the archive to the `archive_url` of the response with `PUT /uploads/{id}/archive`, without a credential.
+3. Publish with `POST /artifacts` or `PUT /artifacts/{slug}`, passing `upload_id`.
+
+#### Begin an archive upload: `POST /uploads`
+
+The body names the archive the URL will accept, a zip or a gzip-compressed tar:
+
+```json
+{ "archive_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "archive_bytes": 1048576 }
+```
+
+The response is that of a [chunked upload](#chunked-uploads) plus `archive_url`:
+
+```json
+{ "upload_id": "Zm9vYmFyYmF6cXV4cXV1eA", "expires_at": "2026-10-24T10:00:00Z",
+  "max_chunk_bytes": 4194304, "max_total_bytes": 52428800,
+  "archive_url": "https://api.art.example.com/v1/uploads/Zm9vYmFyYmF6cXV4cXV1eA/archive?token=..." }
+```
+
+The archive may be at most `limits.max_version_bytes`; a larger one is `413 too_large`, and one field without the other is `422 invalid_argument`. The URL lives as long as the upload, `limits.upload_ttl`, 1 hour by default, and the upload counts against `limits.max_open_uploads` like any other.
+
+#### Send the archive: `PUT /uploads/{id}/archive`
+
+Send the archive as the body, with no `Authorization` header; the `token` in the query is the credential:
+
+```sh
+curl --fail-with-body -T site.zip "$ARCHIVE_URL"
+```
+
+Kazari reads the body only once the token has opened an upload, caps it at `archive_bytes`, and keeps it only when its SHA-256 is `archive_sha256`. The response counts what was staged:
+
+```json
+{ "upload_id": "Zm9vYmFyYmF6cXV4cXV1eA", "files": 12, "bytes": 1048576 }
+```
+
+Regular files are staged under their paths in the archive, with a leading `./` removed, and follow the [path rules](#file-paths) of a bundle; directories, links and other entries are skipped. Archive the contents of the site's directory rather than the directory itself, so that `index.html` sits at the root.
+
+A body that does not match is `422 upload_digest_mismatch`, and the message counts the attempts left: after three, the upload is removed. A body that matches but cannot be staged, for example a zip with a path that escapes, is `422` with the archive's error, and the upload is removed too, because the same bytes would fail the same way. Once an archive is received the token is spent, and it answers `404 upload_not_found` like an unknown one.
+
+> [!NOTE]
+> The URL carries the token, so it appears wherever the request is logged. Kazari's own request log records the path without the query; a reverse proxy in front of it may not. A logged URL grants the right to stage bytes the owner already had, once, until the upload expires, and nothing else.
 
 ### The instance's skill: `GET /skill`
 
@@ -793,6 +843,7 @@ These are the codes, with their HTTP status and meaning:
 | `too_many_files`         | 422    | More than `limits.max_files` in a version or upload                                |
 | `edit_not_found`         | 422    | Edit: an `old_text` matched nowhere; the message names the closest lines           |
 | `edit_ambiguous`         | 422    | Edit: an `old_text` matched more than once without `replace_all`                   |
+| `upload_digest_mismatch` | 422    | The body sent to an archive URL does not have the declared size and SHA-256        |
 | `unauthorized`           | 401    | Missing, invalid, expired or revoked credential                                    |
 | `forbidden`              | 403    | Missing scope, write policy, disabled user, or admin role required                 |
 | `quota_exceeded`         | 403    | The owner's storage quota would be exceeded                                        |

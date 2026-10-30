@@ -156,7 +156,7 @@ func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	b := &bundle{f: f}
 	capped := &capReader{r: zr, left: limit,
 		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)}
-	if err := b.fill(tar.NewReader(capped)); err != nil {
+	if err := b.fill(tar.NewReader(capped), limit, capped.err); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
 	// Drain so the gzip checksum is verified.
@@ -169,7 +169,10 @@ func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	return b, nil
 }
 
-func (b *bundle) fill(tr *tar.Reader) error {
+// fill charges each entry's declared size against limit before copying it:
+// archive/tar materialises a sparse entry's holes from zeros that never pass
+// the capping reader, so the read-side cap alone does not bound the spill.
+func (b *bundle) fill(tr *tar.Reader, limit int64, tooLarge error) error {
 	var off int64
 	for {
 		hdr, err := tr.Next()
@@ -193,6 +196,9 @@ func (b *bundle) fill(tr *tar.Reader) error {
 		// overlong one now.
 		if len(name) > artifact.PathMaxBytes {
 			return artifact.Errorf(artifact.ErrInvalidPath, "bundle entry name longer than %d bytes", artifact.PathMaxBytes)
+		}
+		if hdr.Size > limit-off {
+			return tooLarge
 		}
 		n, err := io.Copy(b.f, tr)
 		if err != nil {
