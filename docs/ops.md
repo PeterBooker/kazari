@@ -227,6 +227,8 @@ Every request gets a server span named after its method and route, such as `GET 
 
 On `mcp.`, each JSON-RPC method gets its own span under the request's, named as the MCP semantic conventions do: `tools/call create_artifact` for a tool call, or the method alone, such as `tools/list` or `resources/read`. A tool span carries the tool, the negotiated protocol version, the sizes of the arguments and the result, and the outcome: a tool that failed is `error.type=tool_error` with Kazari's error code in `kazari.error.code`; one that asked the user for confirmation has a `kazari.mcp.input_request` event. Tool arguments and results themselves are never recorded.
 
+Below the request, each change or lookup has a span named for the operation, the same whether it came over REST or MCP: `artifact.create`, `artifact.edit`, `upload.append_chunk`, `oauth.token` and so on, with the slug, version, file count and size. Under those come a span per store method, such as `ArtifactStore.AddVersion`, and per blob read or write (`blob.put`, `blob.open`), which show where a request's time went. A fetch for an import, a file named by URL, a client metadata document or the identity provider adds a `GET` client span per attempt, redirects included, with the host and the URL's query values hidden.
+
 An MCP client can also pass `traceparent` in a request's `params._meta`. The tool span then joins that trace, with a link to the HTTP request's span.
 
 A server error (`5xx`) marks the span as failed, with `error.type` set to Kazari's error code. A panic adds an `exception` event. Requests for `/health`, `/v1/health` and `/metrics` are counted but not traced.
