@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -144,4 +145,35 @@ func logRecords(req *collogpb.ExportLogsServiceRequest) []logRecord {
 		}
 	}
 	return out
+}
+
+func TestNewLogsExports(t *testing.T) {
+	var buf bytes.Buffer
+	newTelemetry(t, Options{
+		OTLP:    OTLP{Endpoint: "http://localhost:4318"},
+		Traces:  Traces{OTLP: true},
+		Metrics: Metrics{Prometheus: true},
+		Logs:    Logs{OTLP: true},
+		Logger:  jsonLogger(&buf),
+	})
+	var got struct {
+		Msg     string
+		Traces  map[string]string
+		Metrics map[string]string
+		Logs    map[string]string
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("want one JSON line: %v\n%s", err, buf.String())
+	}
+	want := map[string]string{"endpoint": "http://localhost:4318/v1/traces", "protocol": ProtocolHTTP}
+	if got.Msg != "telemetry: exporting over OTLP" || !maps.Equal(got.Traces, want) ||
+		got.Logs["endpoint"] != "http://localhost:4318/v1/logs" || got.Metrics != nil {
+		t.Errorf("start line = %s", buf.String())
+	}
+
+	buf.Reset()
+	newTelemetry(t, Options{Metrics: Metrics{Prometheus: true}, Logger: jsonLogger(&buf)})
+	if buf.Len() != 0 {
+		t.Errorf("logged with nothing exported over OTLP: %s", buf.String())
+	}
 }

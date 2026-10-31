@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -91,6 +92,7 @@ type Telemetry struct {
 	logLevel  slog.Level
 	log       *limitedLog
 	shutdown  []func(context.Context) error
+	exports   []slog.Attr // a group per signal exported over OTLP
 }
 
 // New builds the providers. A signal that goes nowhere has a nil provider:
@@ -122,6 +124,9 @@ func New(ctx context.Context, o Options) (*Telemetry, error) {
 	}
 	if err := t.buildLogs(ctx, o, res); err != nil {
 		return nil, errors.Join(err, t.Shutdown(ctx))
+	}
+	if len(t.exports) > 0 {
+		o.Logger.LogAttrs(ctx, slog.LevelInfo, "telemetry: exporting over OTLP", t.exports...)
 	}
 	return t, nil
 }
@@ -158,6 +163,8 @@ func (t *Telemetry) endpoint(on bool, o Options, signal, path string) (*endpoint
 	e, err := newEndpoint(o.OTLP, signal, path, o.Logger)
 	if e != nil {
 		t.shutdown = append(t.shutdown, func(context.Context) error { return e.close() })
+		t.exports = append(t.exports, slog.Group(strings.ToLower(signal),
+			slog.String("endpoint", e.url.Redacted()), slog.String("protocol", e.protocol)))
 	}
 	return e, err
 }
