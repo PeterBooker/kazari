@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -41,10 +42,11 @@ type Options struct {
 	Logger *slog.Logger     // nil means slog.Default()
 	Now    func() time.Time // nil means time.Now
 
-	// SpanExporter and MetricReader replace their signal's OTLP exporter
-	// whatever the endpoint, for tests.
+	// SpanExporter, MetricReader and LogExporter replace their signal's
+	// OTLP exporter whatever the endpoint, for tests.
 	SpanExporter sdktrace.SpanExporter
 	MetricReader sdkmetric.Reader
+	LogExporter  sdklog.Exporter
 }
 
 // OTLP is the destination of every exported signal.
@@ -75,15 +77,18 @@ type Metrics struct {
 	Interval   time.Duration
 }
 
-// Logs selects the export of log records.
+// Logs selects the export of log records and the lowest level exported.
 type Logs struct {
-	OTLP bool
+	OTLP  bool
+	Level slog.Level
 }
 
 // Telemetry owns the SDK providers.
 type Telemetry struct {
 	providers instrument.Providers
 	metrics   http.Handler
+	logs      slog.Handler // nil without log export
+	logLevel  slog.Level
 	log       *limitedLog
 	shutdown  []func(context.Context) error
 }
@@ -113,6 +118,9 @@ func New(ctx context.Context, o Options) (*Telemetry, error) {
 		return nil, errors.Join(err, t.Shutdown(ctx))
 	}
 	if err := t.buildTraces(ctx, o, res); err != nil {
+		return nil, errors.Join(err, t.Shutdown(ctx))
+	}
+	if err := t.buildLogs(ctx, o, res); err != nil {
 		return nil, errors.Join(err, t.Shutdown(ctx))
 	}
 	return t, nil

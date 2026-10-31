@@ -130,7 +130,7 @@ func (a *App) firstRunHint(ctx context.Context) {
 	if socket := a.Addrs().Socket; socket != "" {
 		how = "run it on this host (as the service user or root, or with docker exec), which uses the admin socket " + socket
 	}
-	a.log.Warn("no users yet", "next", "kazari admin users create <handle> --role admin, then kazari admin keys issue <handle>", "how", how)
+	a.log.WarnContext(ctx, "no users yet", "next", "kazari admin users create <handle> --role admin, then kazari admin keys issue <handle>", "how", how)
 }
 
 // listen closes whatever it bound if it fails.

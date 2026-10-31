@@ -156,7 +156,7 @@ func (s *Scheduler) loop(ctx context.Context, st *jobState) {
 		}
 		err := s.run(ctx, st)
 		if errors.Is(err, ErrRunning) {
-			s.logger.Debug("scheduler: skipped run, job already running", "job", st.job.Name)
+			s.logger.DebugContext(ctx, "scheduler: skipped run, job already running", "job", st.job.Name)
 		}
 		delay = s.interval(st.job.Every)
 	}
@@ -226,7 +226,7 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.mu.Unlock()
 
 	if err != nil {
-		s.logger.Error("scheduler: job failed", "job", st.job.Name, "err", err)
+		s.logger.ErrorContext(ctx, "scheduler: job failed", "job", st.job.Name, "err", err)
 	}
 	return err
 }

@@ -3,7 +3,6 @@
 package mcpserver
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -153,7 +152,7 @@ func newBuilder(d Deps, o Options) *builder {
 		d:          d,
 		o:          o,
 		log:        log,
-		sdkLog:     slog.New(minLevel{min: slog.LevelWarn, Handler: log.Handler()}),
+		sdkLog:     slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
 		text:       text,
 		schema:     mcp.NewSchemaCache(),
 		editSchema: editFileSchema(),
@@ -250,23 +249,6 @@ func checkProtocolVersion(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-type minLevel struct {
-	min slog.Level
-	slog.Handler
-}
-
-func (h minLevel) Enabled(ctx context.Context, l slog.Level) bool {
-	return l >= h.min && h.Handler.Enabled(ctx, l)
-}
-
-func (h minLevel) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return minLevel{min: h.min, Handler: h.Handler.WithAttrs(attrs)}
-}
-
-func (h minLevel) WithGroup(name string) slog.Handler {
-	return minLevel{min: h.min, Handler: h.Handler.WithGroup(name)}
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {

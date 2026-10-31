@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -60,10 +61,11 @@ type Options struct {
 	Now    func() time.Time // nil means time.Now
 	Logger *slog.Logger     // nil means slog.Default()
 
-	// SpanExporter and MetricReader replace their signal's OTLP exporter
-	// whatever the endpoint, for tests.
+	// SpanExporter, MetricReader and LogExporter replace their signal's
+	// OTLP exporter whatever the endpoint, for tests.
 	SpanExporter sdktrace.SpanExporter
 	MetricReader sdkmetric.Reader
+	LogExporter  sdklog.Exporter
 }
 
 const scope = "github.com/PeterBooker/kazari/internal/app"
@@ -127,6 +129,7 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
+	log = tel.Logger(log)
 	a := &App{cfg: cfg, log: log, tel: tel, tracer: tel.Providers().Tracer(scope), started: make(chan struct{})}
 	if err := a.start(ctx, now); err != nil {
 		if a.db == nil {
@@ -155,7 +158,7 @@ func (a *App) start(ctx context.Context, now func() time.Time) (err error) {
 // TelemetryOptions maps the telemetry section onto the SDK's options.
 func TelemetryOptions(cfg config.Config) telemetry.Options {
 	t := cfg.Telemetry
-	return telemetry.Options{
+	o := telemetry.Options{
 		ServiceName:    t.ServiceName,
 		ServiceVersion: buildinfo.Get().Version,
 		Environment:    t.Environment,
@@ -179,14 +182,18 @@ func TelemetryOptions(cfg config.Config) telemetry.Options {
 			OTLP:       t.Metrics.OTLP,
 			Interval:   t.Metrics.Interval.Std(),
 		},
-		Logs: telemetry.Logs{OTLP: t.Logs.OTLP},
+		Logs: telemetry.Logs{OTLP: t.Logs.OTLP, Level: cfg.SlogLevel()},
 	}
+	if t.Logs.Level != "" {
+		o.Logs.Level = config.ParseLevel(t.Logs.Level)
+	}
+	return o
 }
 
 func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now func() time.Time) telemetry.Options {
 	o := TelemetryOptions(cfg)
 	o.Logger, o.Now = log, now
-	o.SpanExporter, o.MetricReader = opts.SpanExporter, opts.MetricReader
+	o.SpanExporter, o.MetricReader, o.LogExporter = opts.SpanExporter, opts.MetricReader, opts.LogExporter
 	return o
 }
 

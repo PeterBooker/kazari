@@ -1,11 +1,18 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/PeterBooker/kazari/internal/app"
@@ -94,4 +101,82 @@ func names(sink spanSink) []string {
 		out = append(out, s.Name)
 	}
 	return out
+}
+
+// logSink keeps exported log records.
+type logSink struct {
+	mu      sync.Mutex
+	records []sdklog.Record
+}
+
+func (s *logSink) Export(_ context.Context, rs []sdklog.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range rs {
+		s.records = append(s.records, r.Clone())
+	}
+	return nil
+}
+func (s *logSink) Shutdown(context.Context) error   { return nil }
+func (s *logSink) ForceFlush(context.Context) error { return nil }
+
+func TestLogsCarryTraceIDs(t *testing.T) {
+	var stderr bytes.Buffer
+	spans, logs := spanSink{tracetest.NewInMemoryExporter()}, &logSink{}
+	ctx, cancel := context.WithCancel(context.Background())
+	a, err := app.New(ctx, testConfig(t), app.Options{
+		Logger:       slog.New(slog.NewJSONHandler(&stderr, nil)),
+		SpanExporter: spans,
+		LogExporter:  logs,
+	})
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	<-a.Started()
+	wantStatus(t, do(t, client(a.Addrs().HTTP), http.MethodGet, "http://admin.localhost/v1/users", adminToken, ""), http.StatusOK, "admin users")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	server, ok := spansByName(spans)["GET /v1/users"]
+	if !ok {
+		t.Fatalf("no server span: %v", names(spans))
+	}
+	var line map[string]any
+	for l := range strings.SplitSeq(stderr.String(), "\n") {
+		if strings.Contains(l, `"msg":"request"`) && strings.Contains(l, "/v1/users") {
+			if err := json.Unmarshal([]byte(l), &line); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if line["trace_id"] != server.SpanContext.TraceID().String() || line["ip"] == nil {
+		t.Errorf("access log = %v, want trace_id %s and the client ip", line, server.SpanContext.TraceID())
+	}
+
+	logs.mu.Lock()
+	defer logs.mu.Unlock()
+	found := false
+	for _, r := range logs.records {
+		if r.Body().AsString() != "request" {
+			continue
+		}
+		found = true
+		if r.TraceID() != server.SpanContext.TraceID() {
+			t.Errorf("exported access log has trace id %s", r.TraceID())
+		}
+		r.WalkAttributes(func(kv attribute.KeyValue) bool {
+			if kv.Key == "ip" {
+				t.Error("exported access log carries the client ip")
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Error("the access log was not exported")
+	}
 }
