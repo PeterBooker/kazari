@@ -231,6 +231,30 @@ func TestLogger(t *testing.T) {
 	}
 }
 
+func TestLoggerProbes(t *testing.T) {
+	tests := []struct {
+		path   string
+		status int
+		level  string
+	}{
+		{"/health", http.StatusOK, "DEBUG"},
+		{"/metrics", http.StatusOK, "DEBUG"},
+		{"/metrics", http.StatusUnauthorized, "INFO"},
+		{"/health", http.StatusServiceUnavailable, "ERROR"},
+		{"/healthz", http.StatusOK, "INFO"},
+	}
+	for _, tt := range tests {
+		l, buf := newJSONLogger()
+		h := Logger(l, "/health", "/metrics")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tt.status)
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if got := decodeLines(t, buf)[0]["level"]; got != tt.level {
+			t.Errorf("%s answering %d logged at %v, want %s", tt.path, tt.status, got, tt.level)
+		}
+	}
+}
+
 func TestLoggerTruncatesUserAgent(t *testing.T) {
 	l, buf := newJSONLogger()
 	h := Logger(l)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

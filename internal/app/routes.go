@@ -33,20 +33,26 @@ func (a *App) routes(h hosts) http.Handler {
 	return normalizeHost(mux)
 }
 
-// untracedPaths are counted but never traced: probes and scrapes arrive every
-// few seconds and say nothing about what an agent did.
-var untracedPaths = []string{"/health", "/v1/health", "/metrics"}
+// probePaths are counted but never traced, and log at debug when they
+// succeed: probes and scrapes arrive every few seconds and say nothing about
+// what an agent did.
+var probePaths = []string{"/health", "/v1/health", "/metrics"}
 
 func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
 	observe := middleware.ObserveOptions{
 		ControlPlane: name == instrument.SurfaceAPI || name == instrument.SurfaceMCP || name == instrument.SurfaceAdmin,
-		Skip:         untracedPaths,
+		Skip:         probePaths,
+	}
+	// On an artifact host these are pages like any other.
+	var probes []string
+	if control {
+		probes = probePaths
 	}
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
 		middleware.RealIP(a.cfg.Listen.ProxyMode),
 		a.obs.Observe(name, observe),
-		middleware.Logger(a.log),
+		middleware.Logger(a.log, probes...),
 		middleware.Recover(a.log),
 	}
 	if control {
