@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -25,7 +26,7 @@ func (t *Telemetry) buildMetrics(ctx context.Context, o Options, res *resource.R
 	opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
 	readers := 0
 	if o.Metrics.Prometheus {
-		reader, handler, err := newPrometheus()
+		reader, handler, err := newPrometheus(t.log)
 		if err != nil {
 			return err
 		}
@@ -82,7 +83,7 @@ func (t *Telemetry) buildMetrics(ctx context.Context, o Options, res *resource.R
 // newPrometheus serves OpenTelemetry names translated the Prometheus way
 // (dots to underscores, unit and _total suffixes) beside client_golang's
 // process collector, the one family no Go instrumentation covers.
-func newPrometheus() (sdkmetric.Reader, http.Handler, error) {
+func newPrometheus(log *limitedLog) (sdkmetric.Reader, http.Handler, error) {
 	reg := prometheus.NewRegistry()
 	if err := reg.Register(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})); err != nil {
 		return nil, nil, fmt.Errorf("telemetry: %w", err)
@@ -98,5 +99,12 @@ func newPrometheus() (sdkmetric.Reader, http.Handler, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("telemetry: prometheus: %w", err)
 	}
-	return exp, promhttp.HandlerFor(reg, promhttp.HandlerOpts{EnableOpenMetrics: true}), nil
+	return exp, promhttp.HandlerFor(reg, promhttp.HandlerOpts{EnableOpenMetrics: true, ErrorLog: scrapeLog{log}}), nil
+}
+
+// scrapeLog reports a failed scrape, which the scraper sees only as a 500.
+type scrapeLog struct{ log *limitedLog }
+
+func (l scrapeLog) Println(v ...any) {
+	l.log.warn("scrape", "telemetry: metrics scrape failed", "err", strings.TrimSpace(fmt.Sprintln(v...)))
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +12,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/app"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/preflight"
+	"github.com/PeterBooker/kazari/internal/telemetry"
 )
 
 const defaultConfigPath = "/etc/kazari/kazari.yaml"
@@ -69,6 +71,8 @@ func (c *ServeCmd) Run(r *runner) error {
 		return err
 	}
 	logger := cfg.Logger(r.stderr)
+	slog.SetDefault(logger)
+	telemetry.CaptureLibraryLogs(logger)
 	ctx, stop := signal.NotifyContext(r.ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a, err := app.New(ctx, cfg, app.Options{Logger: logger})
