@@ -1,6 +1,7 @@
 // Package preflight checks a configuration against the world before the
-// first start: the data directory, the DNS records, the DNS provider token
-// and the listener ports. kazari check prints its findings.
+// first start: the data directory, the DNS records, the DNS provider token,
+// the listener ports and the OpenTelemetry endpoint. kazari check prints its
+// findings.
 package preflight
 
 import (
@@ -23,6 +24,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/telemetry"
 )
 
 // Status is a finding's severity: ok, warn (worth knowing, not blocking),
@@ -38,7 +40,7 @@ const (
 
 // Finding is one line of the report.
 type Finding struct {
-	Check  string // data_dir, dns, dns token, ports, admin socket
+	Check  string // data_dir, dns, dns token, ports, admin socket, metrics, telemetry
 	Status Status
 	Detail string
 }
@@ -57,6 +59,9 @@ type Options struct {
 	Nameservers []string
 	// Timeout bounds the DNS token check. Default: a minute.
 	Timeout time.Duration
+	// Telemetry is the telemetry section as the server builds it; nil skips
+	// the check of the OTLP endpoint.
+	Telemetry *telemetry.Options
 }
 
 // Run performs every check and returns the findings; Failed reports whether
@@ -71,7 +76,51 @@ func Run(ctx context.Context, cfg config.Config, opts Options) []Finding {
 	checkDNSToken(ctx, cfg, opts, add)
 	checkPorts(cfg, add)
 	checkSocket(cfg, add)
+	checkMetrics(cfg, add)
+	if opts.Telemetry != nil {
+		checkTelemetry(ctx, *opts.Telemetry, add)
+	}
 	return out
+}
+
+// checkMetrics warns that a scraper of the public admin host gets nothing
+// until the scrape token is set, which 0.3.0 made a requirement.
+func checkMetrics(cfg config.Config, add adder) {
+	t := cfg.Telemetry.Metrics
+	if !t.Prometheus || t.Token != "" || cfg.Admin.Listen != "" || config.IsLocalhost(cfg.BaseDomain) {
+		return
+	}
+	add("metrics", Warn, "/metrics is not served on %s without telemetry.metrics.token; set it, or scrape admin.listen on a private address",
+		cfg.Host("admin"))
+}
+
+// checkTelemetry sends one record per enabled signal to its OTLP endpoint.
+func checkTelemetry(ctx context.Context, o telemetry.Options, add adder) {
+	for _, w := range telemetry.Warnings(o) {
+		add("telemetry", Warn, "%s", w)
+	}
+	results := telemetry.Check(ctx, o)
+	if len(results) == 0 {
+		add("telemetry", Skip, "no OTLP endpoint is set; nothing is exported")
+		return
+	}
+	type target struct{ protocol, endpoint string }
+	var order []target
+	accepted := map[target][]string{}
+	for _, r := range results {
+		t := target{r.Protocol, strings.TrimSuffix(r.Endpoint, "/v1/"+r.Signal)}
+		if r.Err != nil {
+			add("telemetry", Fail, "%s %s: %s refused: %v; %s", t.protocol, t.endpoint, r.Signal, r.Err, r.Problem)
+			continue
+		}
+		if _, seen := accepted[t]; !seen {
+			order = append(order, t)
+		}
+		accepted[t] = append(accepted[t], r.Signal)
+	}
+	for _, t := range order {
+		add("telemetry", OK, "%s %s: %s accepted", t.protocol, t.endpoint, strings.Join(accepted[t], ", "))
+	}
 }
 
 // Failed reports whether any finding is a Fail.

@@ -68,6 +68,9 @@ type endpoint struct {
 	timeout time.Duration
 	tls     *tls.Config // nil for plaintext
 	server  []attribute.KeyValue
+	// noRetry fails at once, for kazari check, which should not sit through
+	// thirty seconds of backoff to report a refusal.
+	noRetry bool
 
 	http *http.Client
 	conn *grpc.ClientConn
@@ -251,7 +254,7 @@ func (e *endpoint) metricExporter(ctx context.Context) (sdkmetric.Exporter, erro
 			otlpmetricgrpc.WithGRPCConn(e.conn),
 			otlpmetricgrpc.WithTimeout(e.timeout),
 			otlpmetricgrpc.WithRetry(otlpmetricgrpc.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {
@@ -273,7 +276,7 @@ func (e *endpoint) metricExporter(ctx context.Context) (sdkmetric.Exporter, erro
 			otlpmetrichttp.WithCompression(compression),
 			otlpmetrichttp.WithTimeout(e.timeout),
 			otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {

@@ -89,7 +89,8 @@ func (c *CheckCmd) Run(r *runner) error {
 		return err
 	}
 	fmt.Fprintf(r.stdout, "%-12s %-5s %s\n", "config", preflight.OK, preflight.Describe(cfg, source))
-	findings := preflight.Run(r.ctx, cfg, preflight.Options{})
+	tel := app.TelemetryOptions(cfg)
+	findings := preflight.Run(r.ctx, cfg, preflight.Options{Telemetry: &tel})
 	preflight.Write(r.stdout, findings)
 	if preflight.Failed(findings) {
 		return errors.New("preflight checks failed")

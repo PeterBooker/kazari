@@ -138,7 +138,7 @@ func (e *endpoint) logExporter(ctx context.Context) (sdklog.Exporter, error) {
 			otlploggrpc.WithGRPCConn(e.conn),
 			otlploggrpc.WithTimeout(e.timeout),
 			otlploggrpc.WithRetry(otlploggrpc.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {
@@ -157,7 +157,7 @@ func (e *endpoint) logExporter(ctx context.Context) (sdklog.Exporter, error) {
 			otlploghttp.WithCompression(compression),
 			otlploghttp.WithTimeout(e.timeout),
 			otlploghttp.WithRetry(otlploghttp.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {

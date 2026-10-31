@@ -137,7 +137,7 @@ func (e *endpoint) spanExporter(ctx context.Context) (sdktrace.SpanExporter, err
 			otlptracegrpc.WithGRPCConn(e.conn),
 			otlptracegrpc.WithTimeout(e.timeout),
 			otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {
@@ -160,7 +160,7 @@ func (e *endpoint) spanExporter(ctx context.Context) (sdktrace.SpanExporter, err
 			otlptracehttp.WithEncoding(encoding),
 			otlptracehttp.WithTimeout(e.timeout),
 			otlptracehttp.WithRetry(otlptracehttp.RetryConfig{
-				Enabled: true, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
+				Enabled: !e.noRetry, InitialInterval: retryInitial, MaxInterval: retryMax, MaxElapsedTime: retryElapsed,
 			}),
 		}
 		if e.headers != nil {

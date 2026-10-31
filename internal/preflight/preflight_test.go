@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"github.com/PeterBooker/kazari/internal/telemetry"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -72,6 +76,7 @@ func byCheck(findings []Finding, check string) []Finding {
 
 func TestRunAllGood(t *testing.T) {
 	cfg := acmeConfig(t)
+	cfg.Telemetry.Metrics.Token = "scrape-0123456789abcdef0123456789"
 	dns := &fakeDNS{}
 	findings := Run(context.Background(), cfg, Options{
 		Lookup: lookupAll("203.0.113.10"), LocalAddrs: localAddrs("203.0.113.10"), DNSProvider: dns, Zone: "example.com.",
@@ -200,5 +205,53 @@ func TestDescribe(t *testing.T) {
 	local := config.Local()
 	if got := Describe(local, ""); got != "environment only, base domain localhost, mode proxy, data in .data" {
 		t.Errorf("Describe(local) = %q", got)
+	}
+}
+
+func TestMetricsTokenWarning(t *testing.T) {
+	cfg := acmeConfig(t)
+	findings := byCheck(Run(context.Background(), cfg, Options{
+		Lookup: lookupAll("203.0.113.10"), LocalAddrs: localAddrs("203.0.113.10"), DNSProvider: &fakeDNS{}, Zone: "example.com.",
+	}), "metrics")
+	if len(findings) != 1 || findings[0].Status != Warn {
+		t.Errorf("metrics findings = %+v, want a warning without a token", findings)
+	}
+	cfg.Admin.Listen = "127.0.0.1:9443"
+	if f := byCheck(Run(context.Background(), cfg, Options{
+		Lookup: lookupAll("203.0.113.10"), LocalAddrs: localAddrs("203.0.113.10"), DNSProvider: &fakeDNS{}, Zone: "example.com.",
+	}), "metrics"); len(f) != 0 {
+		t.Errorf("metrics findings with admin.listen = %+v", f)
+	}
+}
+
+func TestTelemetryCheck(t *testing.T) {
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+	}))
+	defer ok.Close()
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer refused.Close()
+
+	run := func(o telemetry.Options) []Finding {
+		var out []Finding
+		checkTelemetry(context.Background(), o, func(check string, s Status, format string, args ...any) {
+			out = append(out, Finding{Check: check, Status: s, Detail: fmt.Sprintf(format, args...)})
+		})
+		return out
+	}
+	none := run(telemetry.Options{Traces: telemetry.Traces{OTLP: true}})
+	if len(none) != 1 || none[0].Status != Skip {
+		t.Errorf("no endpoint: %+v", none)
+	}
+	good := run(telemetry.Options{OTLP: telemetry.OTLP{Endpoint: ok.URL + "/otlp", Protocol: telemetry.ProtocolHTTP},
+		Traces: telemetry.Traces{OTLP: true}, Metrics: telemetry.Metrics{OTLP: true}, Logs: telemetry.Logs{OTLP: true}})
+	if len(good) != 1 || good[0].Status != OK || good[0].Detail != "http/protobuf "+ok.URL+"/otlp: traces, metrics, logs accepted" {
+		t.Errorf("accepted: %+v", good)
+	}
+	bad := run(telemetry.Options{OTLP: telemetry.OTLP{Endpoint: refused.URL, Protocol: telemetry.ProtocolHTTP}, Traces: telemetry.Traces{OTLP: true}})
+	if len(bad) != 1 || bad[0].Status != Fail || !strings.Contains(bad[0].Detail, "check telemetry.otlp.headers") {
+		t.Errorf("refused: %+v", bad)
 	}
 }
