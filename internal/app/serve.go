@@ -163,7 +163,7 @@ func (a *App) listen() (servers []server, err error) {
 		}
 		if a.cfg.Listen.HTTP != "" {
 			redirect := middleware.Chain(redirectHandler(a.cfg),
-				middleware.RequestID(), middleware.RealIP(false), middleware.Logger(a.log), middleware.Recover(a.log))
+				middleware.RequestID(), middleware.RealIP(false), a.obs.Observe("redirect"), middleware.Logger(a.log), middleware.Recover(a.log))
 			if addrs.HTTP, err = bind("http", a.cfg.Listen.HTTP, redirect, nil); err != nil {
 				return servers, err
 			}

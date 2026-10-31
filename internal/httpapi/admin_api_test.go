@@ -281,3 +281,45 @@ func TestAdminIPRateLimit(t *testing.T) {
 		e.call(http.MethodGet, e.a(p), "", nil, http.StatusOK, nil)
 	}
 }
+
+func TestAdminMetricsToken(t *testing.T) {
+	const token = "scrape-0123456789abcdef0123456789"
+	metrics := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("up 1\n")) })
+	get := func(base, bearer string) *http.Response {
+		t.Helper()
+		r, err := http.NewRequest(http.MethodGet, base+"/metrics", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	guarded := httptestServer(t, httpapi.NewAdminAPI(httpapi.AdminDeps{Metrics: metrics}, httpapi.AdminOptions{MetricsToken: token}))
+	for _, bearer := range []string{"", "wrong", token + "x", adminToken} {
+		resp := get(guarded, bearer)
+		if resp.StatusCode != http.StatusUnauthorized || !strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "Bearer") {
+			t.Errorf("token %q: status %d, WWW-Authenticate %q; want 401 with a Bearer challenge",
+				bearer, resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+		}
+	}
+	if resp := get(guarded, token); resp.StatusCode != http.StatusOK {
+		t.Errorf("right token: status %d", resp.StatusCode)
+	}
+
+	open := httptestServer(t, httpapi.NewAdminAPI(httpapi.AdminDeps{Metrics: metrics}, httpapi.AdminOptions{}))
+	if resp := get(open, ""); resp.StatusCode != http.StatusOK {
+		t.Errorf("without MetricsToken: status %d, want 200", resp.StatusCode)
+	}
+	absent := httptestServer(t, httpapi.NewAdminAPI(httpapi.AdminDeps{}, httpapi.AdminOptions{MetricsToken: token}))
+	if resp := get(absent, token); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("without Metrics: status %d, want 404", resp.StatusCode)
+	}
+}

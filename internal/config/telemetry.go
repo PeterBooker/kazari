@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -150,7 +151,7 @@ func (v *validator) telemetry(c *Config) {
 	}
 	v.ratio("telemetry.traces.sample_ratio", t.Traces.SampleRatio)
 	v.ratio("telemetry.traces.site_sample_ratio", t.Traces.SiteSampleRatio)
-	if tok := t.Metrics.Token; tok != "" && len(tok) < MinAdminTokenLen && !isLocalhost(c.BaseDomain) {
+	if tok := t.Metrics.Token; tok != "" && len(tok) < MinAdminTokenLen && !IsLocalhost(c.BaseDomain) {
 		v.add("telemetry.metrics.token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
 	}
 	if t.Metrics.Interval.Std() < MinMetricsInterval {
@@ -203,4 +204,33 @@ func checkTLSFiles(o OTLP) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Warnings are settings that are valid but probably not what was meant;
+// startup logs them and kazari check prints them.
+func (t Telemetry) Warnings() []string {
+	var out []string
+	if t.OTLP.Endpoint == "" {
+		if t.Metrics.OTLP {
+			out = append(out, "telemetry.metrics.otlp is true but telemetry.otlp.endpoint is empty, so metrics are not pushed")
+		}
+		if t.Logs.OTLP {
+			out = append(out, "telemetry.logs.otlp is true but telemetry.otlp.endpoint is empty, so logs are not exported")
+		}
+		return out
+	}
+	if u, err := url.Parse(t.OTLP.Endpoint); err == nil && u.Scheme == "http" && !nearby(u.Hostname()) {
+		out = append(out, "telemetry.otlp.endpoint sends headers and telemetry to "+u.Hostname()+" unencrypted; use https")
+	}
+	return out
+}
+
+// nearby reports a host that plain HTTP reaches without crossing the
+// internet: loopback, a private address, or a single-label name such as a
+// Compose service.
+func nearby(host string) bool {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.IsLoopback() || ip.IsPrivate()
+	}
+	return !strings.Contains(host, ".") || IsLocalhost(host)
 }

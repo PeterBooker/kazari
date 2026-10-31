@@ -105,6 +105,23 @@ func RequireAdmin(token string, fallback Authenticator) func(http.Handler) http.
 	}
 }
 
+// RequireToken accepts only the bearer token, compared in constant time, for
+// an endpoint that serves a machine rather than a principal.
+func RequireToken(token string) func(http.Handler) http.Handler {
+	want := sha256.Sum256([]byte(token))
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t, _ := BearerToken(r)
+			got := sha256.Sum256([]byte(t))
+			if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+				unauthorized(w, BearerOptions{}, "invalid or missing bearer token")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // AsLocalAdmin treats every request as the admin principal, with
 // SourceLocal. Only a listener whose transport is the credential, such as a
 // Unix socket owned by the service user, may use it.

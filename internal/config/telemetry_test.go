@@ -304,3 +304,37 @@ func writeKeyPair(t *testing.T, dir string) (certFile, keyFile string) {
 	}
 	return certFile, keyFile
 }
+
+func TestTelemetryWarnings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Telemetry)
+		want   []string
+	}{
+		{"defaults", func(*Telemetry) {}, nil},
+		{"metrics without endpoint", func(t *Telemetry) { t.Metrics.OTLP = true }, []string{"telemetry.metrics.otlp is true"}},
+		{"logs without endpoint", func(t *Telemetry) { t.Logs.OTLP = true }, []string{"telemetry.logs.otlp is true"}},
+		{"public plaintext", func(t *Telemetry) { t.OTLP.Endpoint = "http://otlp.example.com:4318" }, []string{"otlp.example.com unencrypted"}},
+		{"public plaintext ipv6", func(t *Telemetry) { t.OTLP.Endpoint = "http://[2001:db8::1]:4318" }, []string{"2001:db8::1 unencrypted"}},
+		{"https", func(t *Telemetry) { t.OTLP.Endpoint = "https://otlp.example.com" }, nil},
+		{"compose service", func(t *Telemetry) { t.OTLP.Endpoint = "http://otel-collector:4318" }, nil},
+		{"loopback", func(t *Telemetry) { t.OTLP.Endpoint = "http://127.0.0.1:4318" }, nil},
+		{"private", func(t *Telemetry) { t.OTLP.Endpoint = "http://10.1.2.3:4318" }, nil},
+		{"localhost", func(t *Telemetry) { t.OTLP.Endpoint = "http://localhost:4318" }, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tel := Default().Telemetry
+			tt.mutate(&tel)
+			got := tel.Warnings()
+			if len(got) != len(tt.want) {
+				t.Fatalf("Warnings() = %q, want %d", got, len(tt.want))
+			}
+			for i, w := range tt.want {
+				if !strings.Contains(got[i], w) {
+					t.Errorf("warning %q does not contain %q", got[i], w)
+				}
+			}
+		})
+	}
+}

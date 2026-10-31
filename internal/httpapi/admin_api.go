@@ -38,7 +38,7 @@ type AdminDeps struct {
 	Jobs      *scheduler.Scheduler
 	Grants    GrantStore
 	Settings  func() map[string]any // effective config, secrets redacted
-	Metrics   http.Handler          // mounted at /metrics without authentication
+	Metrics   http.Handler          // mounted at /metrics, behind AdminOptions.MetricsToken
 	Links     present.Links
 	Logger    *slog.Logger
 }
@@ -57,6 +57,9 @@ type AdminOptions struct {
 	// Local serves every request as the admin principal, with no credential
 	// and no rate limit, for the admin Unix socket. AdminToken is ignored.
 	Local bool
+	// MetricsToken is the bearer token /metrics requires; empty leaves it
+	// open.
+	MetricsToken string
 }
 
 type adminAPI struct {
@@ -65,8 +68,8 @@ type adminAPI struct {
 }
 
 // NewAdminAPI returns the admin host handler: /v1 behind the admin token or an
-// admin-role key (or open, with AdminOptions.Local), /health and /metrics
-// open.
+// admin-role key (or open, with AdminOptions.Local), /health open and
+// /metrics behind AdminOptions.MetricsToken.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	h := &adminAPI{base: newBase(d.Logger, d.Links), d: d}
 	if o.IPRatePerMinute == 0 {
@@ -106,7 +109,11 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	top.HandleFunc("GET /health", Health)
 	top.HandleFunc("GET /v1/health", Health) // the CLI addresses everything under /v1
 	if d.Metrics != nil {
-		top.Handle("GET /metrics", d.Metrics)
+		metrics := d.Metrics
+		if o.MetricsToken != "" {
+			metrics = auth.RequireToken(o.MetricsToken)(metrics)
+		}
+		top.Handle("GET /metrics", metrics)
 	}
 	if o.Local {
 		top.Handle("/v1/", auth.AsLocalAdmin()(jsonFallback(v1, &h.base)))

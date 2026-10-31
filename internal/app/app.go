@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -27,7 +29,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
-	"github.com/PeterBooker/kazari/internal/metrics"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/oidc"
 	"github.com/PeterBooker/kazari/internal/present"
@@ -36,6 +38,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/site"
 	"github.com/PeterBooker/kazari/internal/snapshot"
 	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/telemetry"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -44,12 +47,19 @@ const (
 	uploadsExpireEvery = 10 * time.Minute
 	oauthCleanupEvery  = time.Hour
 	staleTempAge       = time.Hour // older temp files are crash leftovers
+	// telemetryFlushTimeout bounds the last export at shutdown, so a dead
+	// collector cannot hold the process.
+	telemetryFlushTimeout = 5 * time.Second
 )
 
 // Options are the process-level inputs that do not belong in the config.
 type Options struct {
 	Now    func() time.Time // nil means time.Now
 	Logger *slog.Logger     // nil means slog.Default()
+
+	// MetricReader replaces the OTLP metric reader whatever the endpoint,
+	// for tests.
+	MetricReader sdkmetric.Reader
 }
 
 // Addrs are the bound listener addresses, empty for one not configured.
@@ -67,6 +77,8 @@ type App struct {
 	mode string
 
 	db         *sqlite.DB
+	tel        *telemetry.Telemetry
+	obs        *middleware.Observer
 	sched      *scheduler.Scheduler
 	users      *user.Service
 	certs      certs.Source // nil in proxy mode
@@ -104,16 +116,50 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		}
 	}
 
-	db, err := sqlite.Open(ctx, cfg.DBPath())
+	tel, err := telemetry.New(ctx, telemetryOptions(cfg, opts, log, now))
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-	a := &App{cfg: cfg, log: log, db: db, started: make(chan struct{})}
+	for _, w := range cfg.Telemetry.Warnings() {
+		log.Warn("config: " + w)
+	}
+	a := &App{cfg: cfg, log: log, tel: tel, started: make(chan struct{})}
+	if a.db, err = sqlite.Open(ctx, cfg.DBPath()); err != nil {
+		a.flushTelemetry()
+		return nil, fmt.Errorf("app: %w", err)
+	}
 	if err := a.build(ctx, now); err != nil {
-		db.Close()
+		a.Close()
 		return nil, err
 	}
 	return a, nil
+}
+
+func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now func() time.Time) telemetry.Options {
+	t := cfg.Telemetry
+	return telemetry.Options{
+		ServiceName:    t.ServiceName,
+		ServiceVersion: buildinfo.Get().Version,
+		Environment:    t.Environment,
+		OTLP: telemetry.OTLP{
+			Endpoint:    t.OTLP.Endpoint,
+			Protocol:    t.OTLP.Protocol,
+			Headers:     t.OTLP.Headers,
+			Compression: t.OTLP.Compression,
+			Timeout:     t.OTLP.Timeout.Std(),
+			CAFile:      t.OTLP.CAFile,
+			CertFile:    t.OTLP.CertFile,
+			KeyFile:     t.OTLP.KeyFile,
+		},
+		Metrics: telemetry.Metrics{
+			Prometheus: t.Metrics.Prometheus,
+			OTLP:       t.Metrics.OTLP,
+			Interval:   t.Metrics.Interval.Std(),
+		},
+		Logger:       log,
+		Now:          now,
+		MetricReader: opts.MetricReader,
+	}
 }
 
 func (a *App) build(ctx context.Context, now func() time.Time) error {
@@ -207,19 +253,19 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	})
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
-	m := metrics.New()
+	a.obs = middleware.NewObserver(a.tel.Providers(), cfg.Listen.ProxyMode)
 	// One write budget per credential across the user API and MCP.
 	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, now)
 
-	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now},
-		job(m, "sweep", cfg.Lifecycle.SweepInterval.Std(), func(ctx context.Context) error {
+	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: a.tel.Providers()},
+		scheduler.Job{Name: "sweep", Every: cfg.Lifecycle.SweepInterval.Std(), Run: func(ctx context.Context) error {
 			rep, err := arts.Sweep(ctx)
 			if rep != (artifact.SweepReport{}) {
 				log.InfoContext(ctx, "sweep", "soft_deleted", rep.SoftDeleted, "purged", rep.Purged, "freed", rep.Freed)
 			}
 			return err
-		}),
-		job(m, "gc", cfg.Lifecycle.GCInterval.Std(), func(ctx context.Context) error {
+		}},
+		scheduler.Job{Name: "gc", Every: cfg.Lifecycle.GCInterval.Std(), Run: func(ctx context.Context) error {
 			n, err := arts.CollectGarbage(ctx)
 			if n > 0 {
 				log.InfoContext(ctx, "gc", "blobs_deleted", n)
@@ -232,21 +278,21 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 				log.InfoContext(ctx, "gc", "temp_files_removed", puts+spills+downloads)
 			}
 			return errors.Join(err, perr, serr, derr)
-		}),
-		job(m, "uploads-expire", uploadsExpireEvery, func(ctx context.Context) error {
+		}},
+		scheduler.Job{Name: "uploads-expire", Every: uploadsExpireEvery, Run: func(ctx context.Context) error {
 			n, err := uploads.ExpireStale(ctx)
 			if n > 0 {
 				log.InfoContext(ctx, "uploads expired", "count", n)
 			}
 			return err
-		}),
-		job(m, "oauth-cleanup", oauthCleanupEvery, func(ctx context.Context) error {
+		}},
+		scheduler.Job{Name: "oauth-cleanup", Every: oauthCleanupEvery, Run: func(ctx context.Context) error {
 			n, err := oauthSvc.Cleanup(ctx)
 			if n > 0 {
 				log.DebugContext(ctx, "oauth cleanup", "rows", n)
 			}
 			return err
-		}),
+		}},
 	)
 
 	mcpOpts := mcpserver.Options{
@@ -287,14 +333,23 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Jobs:      a.sched,
 		Grants:    grantStore{oauthSvc},
 		Settings:  cfg.Redacted,
-		Metrics:   m.Handler(),
+		Metrics:   a.tel.MetricsHandler(),
 		Links:     links,
 		Logger:    log,
 	}
-	adminH := httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now})
 	if cfg.AdminSocketPath() != "" {
-		a.adminLocal = a.surface(m, "admin", true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now}))
+		a.adminLocal = a.surface("admin", true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now}))
 	}
+	adminOpts := httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now}
+	if cfg.Admin.Listen == "" && !config.IsLocalhost(cfg.BaseDomain) {
+		// On the public listener the gauges and exemplar trace ids are for
+		// the operator's scraper alone.
+		adminOpts.MetricsToken = cfg.Telemetry.Metrics.Token
+		if adminOpts.MetricsToken == "" {
+			adminDeps.Metrics = nil
+		}
+	}
+	adminH := httpapi.NewAdminAPI(adminDeps, adminOpts)
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
 	}, mcpOpts)
@@ -317,20 +372,20 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		return err
 	}
 
-	a.admin = a.surface(m, "admin", true, adminH)
+	a.admin = a.surface("admin", true, adminH)
 	publicAdmin := a.admin
 	if cfg.Admin.Listen != "" {
-		publicAdmin = a.surface(m, "admin", true, http.NotFoundHandler())
+		publicAdmin = a.surface("admin", true, http.NotFoundHandler())
 	}
 	// One per-IP budget for OAuth and MCP, applied before authentication
 	// like the user API's.
 	mcpLimit := ratelimit.Middleware(ratelimit.New(ratelimit.DefaultIPPerMinute, now), ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
-		api:   a.surface(m, "api", true, apiH),
-		mcp:   a.surface(m, "mcp", true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		api:   a.surface("api", true, apiH),
+		mcp:   a.surface("mcp", true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
 		admin: publicAdmin,
-		apex:  a.surface(m, "apex", true, apexH),
-		site:  a.surface(m, "site", false, siteH),
+		apex:  a.surface("apex", true, apexH),
+		site:  a.surface("site", false, siteH),
 	})
 
 	a.mode = "proxy"
@@ -361,12 +416,6 @@ func viewCallback(cfg config.Config) func(host string) (string, bool) {
 		}
 		return cfg.ExternalURL(host) + strings.TrimPrefix(gate.CallbackPath, "/"), true
 	}
-}
-
-func job(m *metrics.Metrics, name string, every time.Duration, fn func(context.Context) error) scheduler.Job {
-	return scheduler.Job{Name: name, Every: every, Run: func(ctx context.Context) error {
-		return m.Job(name, func() error { return fn(ctx) })()
-	}}
 }
 
 func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
@@ -433,14 +482,26 @@ func (a *App) Addrs() Addrs {
 	return a.addrs
 }
 
-// Close closes the database; it is idempotent and Run calls it on exit.
+// Close flushes telemetry and closes the database; it is idempotent and Run
+// calls it on exit.
 func (a *App) Close() error {
 	a.closeOnce.Do(func() {
+		a.flushTelemetry()
 		if err := a.db.Close(); err != nil {
 			a.closeErr = fmt.Errorf("app: close database: %w", err)
 		}
 	})
 	return a.closeErr
+}
+
+// flushTelemetry logs a failed flush instead of returning it: losing the last
+// export is no reason for a non-zero exit.
+func (a *App) flushTelemetry() {
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+	defer cancel()
+	if err := a.tel.Shutdown(ctx); err != nil {
+		a.log.Warn("telemetry: final flush failed", "err", err)
+	}
 }
 
 // grantStore adapts oauth.Service to httpapi.GrantStore.

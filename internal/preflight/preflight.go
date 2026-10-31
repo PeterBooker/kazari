@@ -122,7 +122,7 @@ func checkDataDir(cfg config.Config, add adder) {
 // only a wildcard record answers, and compares the answers with this host's
 // addresses.
 func checkDNS(ctx context.Context, cfg config.Config, opts Options, add adder) {
-	if isLocalhost(cfg.BaseDomain) {
+	if config.IsLocalhost(cfg.BaseDomain) {
 		add("dns", Skip, "%s resolves to this machine without records", cfg.BaseDomain)
 		return
 	}
@@ -257,10 +257,6 @@ func checkSocket(cfg config.Config, add adder) {
 	}
 	conn.Close()
 	add("admin socket", OK, "%s (a server is listening)", path)
-}
-
-func isLocalhost(base string) bool {
-	return base == "localhost" || strings.HasSuffix(base, ".localhost")
 }
 
 func randomLabel() string {

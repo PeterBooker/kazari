@@ -12,7 +12,6 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/httpapi"
-	"github.com/PeterBooker/kazari/internal/metrics"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
@@ -33,13 +32,13 @@ func (a *App) routes(h hosts) http.Handler {
 	return normalizeHost(mux)
 }
 
-func (a *App) surface(m *metrics.Metrics, name string, control bool, h http.Handler) http.Handler {
+func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
 		middleware.RealIP(a.cfg.Listen.ProxyMode),
+		a.obs.Observe(name),
 		middleware.Logger(a.log),
 		middleware.Recover(a.log),
-		m.HTTP(name),
 	}
 	if control {
 		mws = append(mws, middleware.SecurityHeaders())
@@ -53,7 +52,7 @@ func mcpMux(oauthH, mcpH http.Handler) http.Handler {
 	mux.Handle("/.well-known/", oauthH)
 	mux.Handle("/oauth/", oauthH)
 	mux.Handle("/", mcpH)
-	return mux
+	return middleware.Routed(mux)
 }
 
 // normalizeHost makes host patterns match API.Example.com and example.com.
@@ -108,7 +107,7 @@ func apexHandler(cfg config.Config) (http.Handler, error) {
 		}
 	})
 	mux.HandleFunc("/", http.NotFound)
-	return mux, nil
+	return middleware.Routed(mux), nil
 }
 
 func redirectHandler(cfg config.Config) http.Handler {

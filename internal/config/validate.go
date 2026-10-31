@@ -75,7 +75,7 @@ func (c *Config) Validate() error {
 	}
 
 	v.oneOf("auth.write_policy", c.Auth.WritePolicy, "shared", "owner")
-	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !isLocalhost(c.BaseDomain) {
+	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !IsLocalhost(c.BaseDomain) {
 		v.add("auth.admin_token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
 	}
 	if o := c.Auth.OIDC; o != nil {
@@ -106,7 +106,9 @@ const MinAdminTokenLen = 32
 // knows them.
 var DNSProviders = []string{"cloudflare", "route53", "hetzner", "digitalocean", "gandi", "ovh", "namecheap", "duckdns"}
 
-func isLocalhost(base string) bool {
+// IsLocalhost reports a localhost base domain, which only the local machine
+// reaches.
+func IsLocalhost(base string) bool {
 	return base == "localhost" || strings.HasSuffix(base, ".localhost")
 }
 
