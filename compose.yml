@@ -16,6 +16,11 @@
 #
 # A ./.env (start from deploy/kazari.env.example) is passed into the container
 # for KAZARI_* overrides.
+#
+# The telemetry profile adds Grafana with Tempo, Prometheus and Loki behind
+# an OpenTelemetry Collector, at http://localhost:3000/:
+#   export KAZARI_TELEMETRY_OTLP_ENDPOINT=http://lgtm:4318 KAZARI_TELEMETRY_METRICS_OTLP=true KAZARI_TELEMETRY_LOGS_OTLP=true
+#   docker compose --profile telemetry up --build -d
 
 services:
   kazari:
@@ -37,6 +42,10 @@ services:
       # --local binds loopback; inside the container the published port
       # must listen on every interface (the ports above stay on loopback).
       KAZARI_LISTEN_HTTP: ":8080"
+      KAZARI_TELEMETRY_OTLP_ENDPOINT: ${KAZARI_TELEMETRY_OTLP_ENDPOINT:-}
+      KAZARI_TELEMETRY_METRICS_OTLP: ${KAZARI_TELEMETRY_METRICS_OTLP:-false}
+      KAZARI_TELEMETRY_LOGS_OTLP: ${KAZARI_TELEMETRY_LOGS_OTLP:-false}
+      KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO: ${KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO:-0.01}
     healthcheck:
       # Over the admin socket in the data volume, which needs no token.
       test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
@@ -55,6 +64,12 @@ services:
             - docs/
             - site/
             - "*.md"
+
+  lgtm:
+    image: grafana/otel-lgtm:0.38.1
+    profiles: [telemetry]
+    ports:
+      - "127.0.0.1:3000:3000"
 
 volumes:
   data:

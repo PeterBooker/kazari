@@ -24,6 +24,11 @@ services:
       - data:/var/lib/kazari
     env_file:
       - .env
+    # To export traces to an OpenTelemetry collector or vendor, set its
+    # endpoint here or in .env; a vendor's token goes in .env as
+    # KAZARI_TELEMETRY_OTLP_HEADERS.
+    # environment:
+    #   KAZARI_TELEMETRY_OTLP_ENDPOINT: http://otel-collector:4318
     healthcheck:
       # Over the admin socket in the data volume, which needs no token.
       test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
