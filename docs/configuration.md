@@ -377,7 +377,7 @@ The admin socket for this host, and an optional separate listener for the admin 
 
 The socket is created with mode `0600`, so only the service user and root can use it. The `kazari` command on the same host finds it through the server's configuration (`$KAZARI_CONFIG`, `/etc/kazari/kazari.yaml` or `$KAZARI_DATA_DIR`) and uses it for every `admin` command with no token ([admin commands](cli.md#admin-commands)). Requests over it act as the `admin` principal, with no rate limit.
 
-The listener serves `/v1`, `/health` and `/metrics` whatever the `Host` header. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point a remote admin CLI at this address.
+The listener serves `/v1`, `/health` and `/metrics` whatever the `Host` header, `/metrics` with no credential. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point a remote admin CLI at this address.
 
 ### `log`
 
@@ -387,6 +387,55 @@ Log level and format:
 | -------- | ------ | ------- | ------------------------------------ |
 | `level`  | string | `info`  | `debug`, `info`, `warn` or `error`.  |
 | `format` | string | `text`  | `text` or `json` (slog handlers).    |
+
+### `telemetry`
+
+OpenTelemetry: the Prometheus metrics endpoint and the export of telemetry over OTLP to a collector or vendor. Kazari ignores the `OTEL_*` environment variables; these keys are the only settings.
+
+| Key            | Type   | Default  | Meaning                                                              |
+| -------------- | ------ | -------- | -------------------------------------------------------------------- |
+| `service_name` | string | `kazari` | The resource's `service.name`; `service.version` is the release.    |
+| `environment`  | string | `""`     | The resource's `deployment.environment.name`, such as `production`. |
+
+### `telemetry.otlp`
+
+The one OTLP destination every exported signal shares:
+
+| Key           | Type     | Default         | Meaning                                                                                       |
+| ------------- | -------- | --------------- | --------------------------------------------------------------------------------------------- |
+| `endpoint`    | string   | `""`            | The collector's or vendor's base URL, such as `http://otel-collector:4318`. `""` exports nothing. |
+| `protocol`    | string   | `http/protobuf` | `http/protobuf`, usually on port 4318, or `grpc`, usually on port 4317.                      |
+| `headers`     | map      | `{}`            | Headers sent with every export, such as a vendor's API token. A secret.                       |
+| `compression` | string   | `gzip`          | `gzip` or `none`.                                                                             |
+| `timeout`     | duration | `10s`           | The longest one export attempt may take. Failed exports are retried for up to 30 seconds.     |
+| `ca_file`     | string   | `""`            | PEM roots that verify an `https` endpoint; `""` uses the system roots.                        |
+| `cert_file`   | string   | `""`            | Client certificate for mutual TLS, reread when it changes. Set with `key_file`.              |
+| `key_file`    | string   | `""`            | The client certificate's key.                                                                 |
+
+With `http/protobuf`, Kazari appends the signal's path to the endpoint's, so `https://otlp.example.com/otlp` receives metrics at `https://otlp.example.com/otlp/v1/metrics`. With `grpc`, the endpoint has no path; `http` connects in plain text and `https` with TLS.
+
+To keep a vendor's token out of the file, reference it from the dotenv file:
+
+```yaml
+telemetry:
+  otlp:
+    endpoint: https://otlp.example.com
+    headers:
+      authorization: "Bearer ${KAZARI_OTLP_TOKEN}"
+```
+
+As an environment variable, `KAZARI_TELEMETRY_OTLP_HEADERS` takes the form `name=value,name=value`, with the values percent-encoded: `authorization=Bearer%20<token>`.
+
+### `telemetry.metrics`
+
+The metrics endpoint and the optional push of metrics over OTLP:
+
+| Key          | Type     | Default | Meaning                                                                                                 |
+| ------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `prometheus` | bool     | `true`  | Serve `/metrics` on the admin host ([metrics](ops.md#metrics)).                                         |
+| `token`      | string   | `""`    | The bearer token `/metrics` needs on the public listener; while it is empty, `/metrics` is not served there. A secret. |
+| `otlp`       | bool     | `false` | Also push metrics to `telemetry.otlp.endpoint`.                                                         |
+| `interval`   | duration | `60s`   | How often metrics are pushed; at least `5s`.                                                            |
 
 ## Validation rules
 
@@ -406,6 +455,10 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost`: a development instance that only its own machine can reach.
 - With `auth.oidc`, `issuer` is an `https` URL, and `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.
+- `telemetry.otlp.protocol` is `http/protobuf` or `grpc`, and `telemetry.otlp.compression` is `gzip` or `none`.
+- `telemetry.otlp.endpoint`, when set, is an absolute `http` or `https` URL with no credentials, query or fragment, and with no path under `grpc`. Credentials belong in `telemetry.otlp.headers`, because the endpoint appears in `kazari check`, `kazari admin settings` and error messages.
+- `telemetry.otlp.headers` are valid header names and values, `telemetry.otlp.timeout` is greater than 0, and `ca_file`, `cert_file` and `key_file` can be read, with `cert_file` and `key_file` set together.
+- `telemetry.metrics.token`, when set, is at least 32 characters, with the same `localhost` exception as `auth.admin_token`, and `telemetry.metrics.interval` is at least `5s`.
 
 Because every number in `limits` must be greater than 0, `write_rate_per_minute` cannot be set to 0 to turn off rate limiting, and `default_user_quota` cannot be 0. To give one user an unlimited quota, set it through the admin API instead:
 

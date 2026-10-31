@@ -657,7 +657,7 @@ To install it, save it with [`kazari skill`](cli.md#skill) as `~/.claude/skills/
 
 ## Admin API
 
-The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials). `/health`, `/v1/health` and `/metrics` need no credential. On the server's host the same API is served on the admin socket in the data directory, where no credential is needed; the CLI uses it ([the admin socket](cli.md#the-admin-socket)).
+The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials). `/health` and `/v1/health` need no credential. On the public listener, `/metrics` needs the scrape token, `telemetry.metrics.token`, as a bearer token, and is absent while that is empty ([metrics](ops.md#metrics)). On the server's host the same API is served on the admin socket in the data directory, where no credential is needed; the CLI uses it ([the admin socket](cli.md#the-admin-socket)).
 
 These are its routes, with the body or query parameters each takes and its response on success:
 
@@ -682,7 +682,7 @@ These are its routes, with the body or query parameters each takes and its respo
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
 | `GET`    | `/audit`                            | `since`, `slug`, `actor`, `limit`                         | `200` events                            |
 | `GET`    | `/health` (also `/v1/health`)       |                                                           | `200` `{"status":"ok","version":"..."}` |
-| `GET`    | `/metrics`                          |                                                           | Prometheus text                         |
+| `GET`    | `/metrics`                          | `Authorization: Bearer <telemetry.metrics.token>`         | Prometheus text or OpenMetrics          |
 
 For example, these calls create a user with a 1 GiB quota, issue them a key for CI that can read and write and expires in 90 days, run the sweep job and read the last 20 audit events for `q3-report`:
 

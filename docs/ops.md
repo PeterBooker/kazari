@@ -106,26 +106,55 @@ journalctl -u kazari -o cat | grep -i certificate
 
 ## Metrics
 
-Kazari serves Prometheus metrics at `https://admin.<base>/metrics`. When `admin.listen` is set, the admin host leaves the public listener, and the metrics are served only at `http://<admin.listen>/metrics`.
+Kazari serves Prometheus metrics at `/metrics` on the admin host. The names follow the OpenTelemetry semantic conventions, translated the Prometheus way: dots become underscores, the unit becomes a `_seconds` or `_bytes` suffix, and counters end in `_total`.
 
-> [!WARNING]
-> The metrics endpoint needs no credential. Set `admin.listen` to a private address and scrape that, or restrict `/metrics` at your proxy or firewall.
+Where `/metrics` is served depends on `admin.listen`:
+
+- With `admin.listen` set, it is served at `http://<admin.listen>/metrics` with no credential, and not on the public listener.
+- Without it, `https://admin.<base>/metrics` needs `Authorization: Bearer <telemetry.metrics.token>`. While the token is empty, the public listener does not serve `/metrics` at all.
+- The admin socket always serves it with no credential, and so does a `localhost` base domain.
+
+The token keeps the metrics, and the trace ids attached to them as exemplars, for your own scraper. To generate one, run:
+
+```sh
+openssl rand -hex 32
+```
+
+Set the result as `KAZARI_TELEMETRY_METRICS_TOKEN` in the dotenv file and restart.
+
+### Available metrics
 
 Kazari exports these metrics:
 
-| Metric                                 | Type      | Labels                         |
-| -------------------------------------- | --------- | ------------------------------ |
-| `kazari_http_requests_total`           | counter   | `surface`, `method`, `status`  |
-| `kazari_http_request_duration_seconds` | histogram | `surface`                      |
-| `kazari_http_requests_in_flight`       | gauge     | `surface`                      |
-| `kazari_job_runs_total`                | counter   | `job`, `result` (`ok`/`error`) |
-| `kazari_job_duration_seconds`          | histogram | `job`                          |
+| Metric                                   | Type      | Labels                                                                                                                                       |
+| ---------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http_server_request_duration_seconds`   | histogram | `kazari_surface`, `http_request_method`, `http_response_status_code`, `http_route`, `url_scheme`, `network_protocol_version`, `error_type` |
+| `http_server_active_requests`            | gauge     | `kazari_surface`, `http_request_method`, `url_scheme`                                                                                        |
+| `http_server_response_body_size_bytes`   | histogram | As `http_server_request_duration_seconds`                                                                                                    |
+| `kazari_job_duration_seconds`            | histogram | `kazari_job_name`, `error_type`                                                                                                              |
+| `go_*`                                   | various   | The Go runtime: `go_memory_used_bytes`, `go_goroutine_count`, `go_schedule_duration_seconds` and others                                      |
+| `process_*`                              | various   | CPU, memory and file descriptors of the process                                                                                              |
+| `target_info`                            | gauge     | The service: `service_name`, `service_version`, `service_instance_id`, `host_name`                                                           |
 
-`surface` is `site` (artifact pages), `api`, `mcp`, `admin` or `apex` (the base domain itself). The standard Go runtime (`go_*`) and process (`process_*`) collectors are included.
+`kazari_surface` is `site` (artifact pages), `api`, `mcp`, `admin`, `apex` (the base domain itself) or `redirect` (the plain-HTTP listener that redirects to HTTPS). `http_route` is the route that matched, such as `/v1/artifacts/{slug}` or `/{path...}` for an artifact's files; it is absent when no route matched. `error_type` is set on failures only: the status code of a `5xx` response, or `_OTHER` for a failed job.
+
+A histogram's `_count` counts requests or runs, so no separate counter exists: the request rate is `rate(http_server_request_duration_seconds_count[5m])`.
 
 ### Scraping
 
-With `admin.listen` set to `"127.0.0.1:9443"`, the Prometheus scrape job is:
+On the public listener, the Prometheus scrape job reads the token from a file:
+
+```yaml
+scrape_configs:
+  - job_name: kazari
+    scheme: https
+    authorization:
+      credentials_file: /etc/prometheus/kazari-token
+    static_configs:
+      - targets: ["admin.art.example.com"]
+```
+
+With `admin.listen` set to `"127.0.0.1:9443"`, no token is needed:
 
 ```yaml
 scrape_configs:
@@ -134,12 +163,29 @@ scrape_configs:
       - targets: ["127.0.0.1:9443"]      # admin.listen: "127.0.0.1:9443"
 ```
 
+To keep the trace ids that link a latency bucket to a trace, start Prometheus with `--enable-feature=exemplar-storage`.
+
 ### Alerts
 
 Two alerts are worth setting:
 
-- `increase(kazari_job_runs_total{result="error"}[1h]) > 0`, for a failing job.
-- A high rate of `kazari_http_requests_total{status=~"5.."}`, for server errors.
+- `increase(kazari_job_duration_seconds_count{error_type!=""}[1h]) > 0`, for a failing job.
+- A high rate of `http_server_request_duration_seconds_count{http_response_status_code=~"5.."}`, for server errors.
+
+### Upgrading from 0.2
+
+Kazari 0.3 renamed every metric, and `https://admin.<base>/metrics` now needs the token described above. Update the scrape job and these queries:
+
+| 0.2                                                    | 0.3                                                                                                       |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `kazari_http_requests_total{surface, method, status}`  | `http_server_request_duration_seconds_count{kazari_surface, http_request_method, http_response_status_code}` |
+| `kazari_http_request_duration_seconds{surface}`        | `http_server_request_duration_seconds`, with the buckets of the semantic conventions                      |
+| `kazari_http_requests_in_flight{surface}`              | `http_server_active_requests{kazari_surface, http_request_method, url_scheme}`                            |
+| `kazari_job_runs_total{job, result}`                   | `kazari_job_duration_seconds_count{kazari_job_name, error_type}`                                          |
+| `kazari_job_duration_seconds{job}`                     | The same name, with the label `kazari_job_name`                                                           |
+| `go_*` from the Prometheus client                      | `go_*` with semantic-convention names, such as `go_memory_used_bytes` and `go_goroutine_count`           |
+
+The old `job` label collided with Prometheus's own target label, which stored it as `exported_job`; `kazari_job_name` does not.
 
 ## Scheduled jobs
 
