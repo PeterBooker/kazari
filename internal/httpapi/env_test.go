@@ -66,12 +66,12 @@ func newEnv(t *testing.T, c config) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"))
+	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func newEnv(t *testing.T, c config) *env {
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: art, Uploads: uploads, Users: users, Auth: users, Links: links,
-		Writes: ratelimit.New(c.writeRate, now), Fetch: fc,
+		Writes: ratelimit.New(c.writeRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential}), Fetch: fc,
 	}, c.user))
 	t.Cleanup(userSrv.Close)
 	admSrv := httptest.NewServer(httpapi.NewAdminAPI(httpapi.AdminDeps{

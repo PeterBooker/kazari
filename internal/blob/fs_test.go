@@ -15,7 +15,7 @@ import (
 
 func TestFSConformance(t *testing.T) {
 	blobtest.Run(t, func(t *testing.T) blob.Store {
-		fs, err := blob.NewFS(filepath.Join(t.TempDir(), "blobs"))
+		fs, err := blob.NewFS(filepath.Join(t.TempDir(), "blobs"), blob.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -25,7 +25,7 @@ func TestFSConformance(t *testing.T) {
 
 func TestFSLayout(t *testing.T) {
 	dir := t.TempDir()
-	fs, err := blob.NewFS(dir)
+	fs, err := blob.NewFS(dir, blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestFSLayout(t *testing.T) {
 
 func TestFSRemoveStaleTemp(t *testing.T) {
 	dir := t.TempDir()
-	fs, err := blob.NewFS(dir)
+	fs, err := blob.NewFS(dir, blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestFSRemoveStaleTemp(t *testing.T) {
 }
 
 func TestFSRejectsMalformedHash(t *testing.T) {
-	fs, err := blob.NewFS(t.TempDir())
+	fs, err := blob.NewFS(t.TempDir(), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestFSRejectsMalformedHash(t *testing.T) {
 
 func TestFSPutCancelled(t *testing.T) {
 	dir := t.TempDir()
-	fs, err := blob.NewFS(dir)
+	fs, err := blob.NewFS(dir, blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

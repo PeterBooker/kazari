@@ -12,7 +12,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
+
+const scope = "github.com/PeterBooker/kazari/internal/scheduler"
 
 var ErrUnknownJob = errors.New("scheduler: unknown job")
 
@@ -38,7 +47,8 @@ type Options struct {
 	// Jitter is the fraction of Every by which intervals vary, and the cap
 	// of the random delay before the first run. Zero means 0.1, negative
 	// disables it, and it is capped at 0.5.
-	Jitter float64
+	Jitter    float64
+	Telemetry instrument.Providers
 }
 
 // JobStatus is a snapshot of one job's state.
@@ -53,20 +63,27 @@ type JobStatus struct {
 
 // Scheduler runs a fixed set of jobs, at most one run at a time per job.
 type Scheduler struct {
-	logger *slog.Logger
-	now    func() time.Time
-	jitter float64
-	jobs   map[string]*jobState
+	logger   *slog.Logger
+	now      func() time.Time
+	jitter   float64
+	jobs     map[string]*jobState
+	duration metric.Float64Histogram
+	tracer   trace.Tracer
 }
 
 type jobState struct {
-	job Job
+	job         Job
+	spanName    string
+	okAttrs     metric.MeasurementOption
+	failedAttrs metric.MeasurementOption
+	nameAttr    metric.ObserveOption
 
-	mu      sync.Mutex
-	running bool
-	lastRun *time.Time
-	lastErr string
-	nextRun *time.Time
+	mu          sync.Mutex
+	running     bool
+	lastRun     *time.Time
+	lastSuccess *time.Time
+	lastErr     string
+	nextRun     *time.Time
 }
 
 // New returns a Scheduler for jobs; a later job replaces an earlier one of
@@ -77,6 +94,11 @@ func New(opts Options, jobs ...Job) *Scheduler {
 		now:    opts.Now,
 		jitter: opts.Jitter,
 		jobs:   make(map[string]*jobState, len(jobs)),
+		duration: instrument.Handle(opts.Telemetry.Meter(scope).Float64Histogram("kazari.job.duration",
+			metric.WithDescription("Duration of scheduler job runs."),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(0.01, 0.04, 0.16, 0.64, 2.56, 10.24, 40.96, 163.84))),
+		tracer: opts.Telemetry.Tracer(scope),
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
@@ -93,8 +115,16 @@ func New(opts Options, jobs ...Job) *Scheduler {
 		s.jitter = maxJitter
 	}
 	for _, j := range jobs {
-		s.jobs[j.Name] = &jobState{job: j}
+		name := instrument.JobName.String(j.Name)
+		s.jobs[j.Name] = &jobState{
+			job:         j,
+			spanName:    "job " + j.Name,
+			okAttrs:     metric.WithAttributeSet(attribute.NewSet(name)),
+			failedAttrs: metric.WithAttributeSet(attribute.NewSet(name, semconv.ErrorTypeKey.String(instrument.Other))),
+			nameAttr:    metric.WithAttributeSet(attribute.NewSet(name)),
+		}
 	}
+	s.observeLastSuccess(opts.Telemetry.Meter(scope))
 	return s
 }
 
@@ -130,7 +160,7 @@ func (s *Scheduler) loop(ctx context.Context, st *jobState) {
 		}
 		err := s.run(ctx, st)
 		if errors.Is(err, ErrRunning) {
-			s.logger.Debug("scheduler: skipped run, job already running", "job", st.job.Name)
+			s.logger.DebugContext(ctx, "scheduler: skipped run, job already running", "job", st.job.Name)
 		}
 		delay = s.interval(st.job.Every)
 	}
@@ -174,11 +204,22 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.running = true
 	st.mu.Unlock()
 
+	// A root span on schedule; a child of the request that triggered it
+	// otherwise.
+	ctx, span := s.tracer.Start(instrument.WithSurface(ctx, instrument.SurfaceScheduler), st.spanName,
+		trace.WithAttributes(instrument.JobName.String(st.job.Name)))
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	start := s.now()
+	began := time.Now()
 	err := safeRun(runCtx, st.job)
+	instrument.End(span, err, "")
+	attrs := st.okAttrs
+	if err != nil {
+		attrs = st.failedAttrs
+	}
+	s.duration.Record(ctx, time.Since(began).Seconds(), attrs)
 
 	st.mu.Lock()
 	st.running = false
@@ -186,11 +227,13 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.lastErr = ""
 	if err != nil {
 		st.lastErr = err.Error()
+	} else {
+		st.lastSuccess = &start
 	}
 	st.mu.Unlock()
 
 	if err != nil {
-		s.logger.Error("scheduler: job failed", "job", st.job.Name, "err", err)
+		s.logger.ErrorContext(ctx, "scheduler: job failed", "job", st.job.Name, "err", err)
 	}
 	return err
 }
@@ -235,4 +278,23 @@ func copyTime(t *time.Time) *time.Time {
 	}
 	c := *t
 	return &c
+}
+
+// observeLastSuccess reports when each job last succeeded, so an alert can
+// fire when that is older than a few intervals; a job that never succeeded
+// reports nothing.
+func (s *Scheduler) observeLastSuccess(m metric.Meter) {
+	gauge := instrument.Handle(m.Float64ObservableGauge("kazari.job.last_success.timestamp",
+		metric.WithUnit("s"), metric.WithDescription("When each job last succeeded, in seconds since the Unix epoch.")))
+	_ = instrument.Handle(m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		for _, st := range s.jobs {
+			st.mu.Lock()
+			last := st.lastSuccess
+			st.mu.Unlock()
+			if last != nil {
+				o.ObserveFloat64(gauge, float64(last.UnixNano())/1e9, st.nameAttr)
+			}
+		}
+		return nil
+	}, gauge))
 }

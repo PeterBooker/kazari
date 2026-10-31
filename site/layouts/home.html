@@ -103,7 +103,7 @@
           <ul>
             <li>One binary, SQLite and a directory of files</li>
             <li>Wildcard TLS, OIDC sign-in, quotas and rate limits</li>
-            <li>An audit log and Prometheus metrics</li>
+            <li>An audit log, OpenTelemetry and Prometheus</li>
           </ul>
           <a class="card-link" href="{{ (site.GetPage "/docs/install").RelPermalink }}">Install {{ partial "icon.html" "arrow" }}</a>
         </article>
@@ -231,7 +231,7 @@ curl https://api.art.example.com/v1/artifacts \
         <div class="feature">{{ partial "icon.html" "shield" }}<h3>Safe defaults</h3><p>An origin per page, a Content-Security-Policy that still allows the common CDNs, no search indexing unless you ask, quotas and rate limits.</p></div>
         <div class="feature">{{ partial "icon.html" "upload" }}<h3>Small pages and big sites</h3><p>Inline files for a single page, tar.gz bundles for whole sites, resumable chunked uploads for MCP clients without a shell, one-time archive URLs for agents without a key.</p></div>
         <div class="feature">{{ partial "icon.html" "box" }}<h3>Simple to run</h3><p>One static Go binary or a distroless image. SQLite and a directory of blobs are the only state. Wildcard certificates by ACME DNS-01.</p></div>
-        <div class="feature">{{ partial "icon.html" "activity" }}<h3>Observable</h3><p>Structured request logs, Prometheus metrics, an admin API and an append-only audit log of every change.</p></div>
+        <div class="feature">{{ partial "icon.html" "activity" }}<h3>Observable</h3><p>OpenTelemetry traces of every request and tool call, Prometheus metrics, structured logs, an admin API and an append-only audit log of every change.</p></div>
         <div class="feature">{{ partial "icon.html" "clock" }}<h3>Tidy by default</h3><p>Pages you no longer need retire themselves on a schedule you set, and every step up to the purge can be undone.</p></div>
       </div>
     </div>

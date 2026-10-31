@@ -53,6 +53,7 @@ type Config struct {
 	Auth      Auth      `yaml:"auth"`
 	Admin     Admin     `yaml:"admin"`
 	Log       Log       `yaml:"log"`
+	Telemetry Telemetry `yaml:"telemetry"`
 }
 
 // Listen holds the public listener addresses.
@@ -227,6 +228,7 @@ func Default() Config {
 			Level:  "info",
 			Format: "text",
 		},
+		Telemetry: defaultTelemetry(),
 	}
 }
 
@@ -445,8 +447,12 @@ func (c Config) ExternalURL(sub string) string {
 }
 
 // SlogLevel returns log.level as a slog.Level (info when unrecognised).
-func (c Config) SlogLevel() slog.Level {
-	switch c.Log.Level {
+func (c Config) SlogLevel() slog.Level { return ParseLevel(c.Log.Level) }
+
+// ParseLevel returns a log.level value as a slog.Level (info when
+// unrecognised).
+func ParseLevel(level string) slog.Level {
+	switch level {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":
@@ -458,13 +464,21 @@ func (c Config) SlogLevel() slog.Level {
 	}
 }
 
-// Logger returns a logger writing to w in log.format at log.level.
-func (c Config) Logger(w io.Writer) *slog.Logger {
+// Logger returns a logger writing to w in log.format at log.level. With
+// journal, w is the journal stream systemd connected, and each line starts
+// with its syslog priority.
+func (c Config) Logger(w io.Writer, journal bool) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: c.SlogLevel()}
-	if c.Log.Format == "json" {
-		return slog.New(slog.NewJSONHandler(w, opts))
+	handler := func(w io.Writer) slog.Handler {
+		if c.Log.Format == "json" {
+			return slog.NewJSONHandler(w, opts)
+		}
+		return slog.NewTextHandler(w, opts)
 	}
-	return slog.New(slog.NewTextHandler(w, opts))
+	if journal {
+		return slog.New(newPriorityHandler(w, handler))
+	}
+	return slog.New(handler(w))
 }
 
 // Redacted returns the configuration as a JSON-friendly map keyed like the
@@ -489,6 +503,11 @@ func redactStruct(v reflect.Value) map[string]any {
 }
 
 func redactValue(v reflect.Value, secret bool) any {
+	// Before the Stringer check, so a secret type with a String method never
+	// prints its value.
+	if secret {
+		return redactSecret(v)
+	}
 	if s, ok := v.Interface().(fmt.Stringer); ok {
 		return s.String()
 	}
@@ -507,12 +526,26 @@ func redactValue(v reflect.Value, secret bool) any {
 		}
 		return out
 	case reflect.String:
-		if secret && v.String() != "" {
-			return "***"
-		}
 		return v.String()
 	default:
 		return v.Interface()
+	}
+}
+
+// redactSecret keeps the keys of a map, such as header names, and whether a
+// value is set.
+func redactSecret(v reflect.Value) any {
+	switch {
+	case v.Kind() == reflect.Map:
+		out := make(map[string]any, v.Len())
+		for _, k := range v.MapKeys() {
+			out[fmt.Sprint(k.Interface())] = "***"
+		}
+		return out
+	case v.IsZero():
+		return ""
+	default:
+		return "***"
 	}
 }
 

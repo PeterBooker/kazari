@@ -170,3 +170,32 @@ func TestFilesRunPolls(t *testing.T) {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 }
+
+func TestFilesClientCertificateReloads(t *testing.T) {
+	certFile, keyFile := pairPaths(t)
+	base := time.Now().Add(-time.Hour)
+	writePair(t, certFile, keyFile, "client-1.test", base)
+	f, err := NewFiles(certFile, keyFile, FilesOptions{Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cn := func() string {
+		t.Helper()
+		c, err := f.GetClientCertificate(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Leaf.Subject.CommonName
+	}
+	if got := cn(); got != "client-1.test" {
+		t.Fatalf("CN = %q", got)
+	}
+	writePair(t, certFile, keyFile, "client-2.test", base.Add(time.Minute))
+	if got := cn(); got != "client-2.test" {
+		t.Errorf("CN after rotation = %q, want client-2.test without Run", got)
+	}
+	writeFile(t, certFile, []byte("half written"), base.Add(2*time.Minute))
+	if got := cn(); got != "client-2.test" {
+		t.Errorf("CN after a broken write = %q, want client-2.test kept", got)
+	}
+}

@@ -46,7 +46,7 @@ func newEnv(t *testing.T, opts upload.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	tmp := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(tmp, "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(tmp, "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

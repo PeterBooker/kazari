@@ -62,7 +62,15 @@ type PageSource interface {
 }
 
 // Import takes a snapshot of req.URL and publishes it as a new artifact.
-func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (*Artifact, *Version, *ImportReport, error) {
+func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (_ *Artifact, v *Version, report *ImportReport, err error) {
+	ctx, span := s.span(ctx, "artifact.import", req.Slug)
+	defer func() {
+		s.published(ctx, publishImport, v, err)
+		s.countOutcome(ctx, s.m.imports, err)
+		versionAttrs(span, v)
+		importAttrs(span, report)
+		endSpan(span, err)
+	}()
 	if s.opts.Pages == nil {
 		return nil, nil, nil, Errorf(ErrForbidden, "fetching URLs is disabled on this instance")
 	}

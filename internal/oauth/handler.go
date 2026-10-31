@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // Endpoint paths, relative to the issuer.
@@ -41,7 +43,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
 	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
 	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
-	return mux
+	return middleware.Routed(mux)
 }
 
 // cors lets browser-based MCP clients call the JSON endpoints; none use
@@ -117,19 +119,24 @@ type registrationResponse struct {
 }
 
 func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.register")
+	defer func() {
+		s.m.registrations.Add(r.Context(), 1, out.attrs(registrationMethodKey.String("dcr")))
+		endHandle(span, out)
+	}()
 	var m clientMetadata
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err := dec.Decode(&m); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeOAuthError(w, http.StatusRequestEntityTooLarge, "invalid_client_metadata", "request body is too large")
+			writeOAuthError(w, r, http.StatusRequestEntityTooLarge, "invalid_client_metadata", "request body is too large")
 			return
 		}
-		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "request body is not valid JSON client metadata")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_client_metadata", "request body is not valid JSON client metadata")
 		return
 	}
 	if code, desc := m.validate(); code != "" {
-		writeOAuthError(w, http.StatusBadRequest, code, desc)
+		writeOAuthError(w, r, http.StatusBadRequest, code, desc)
 		return
 	}
 	now := s.now()
@@ -141,7 +148,7 @@ func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.UpsertClient(r.Context(), c); err != nil {
 		s.log.ErrorContext(r.Context(), "oauth: register client", "err", err)
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "could not store the client")
+		writeOAuthError(w, r, http.StatusInternalServerError, "server_error", "could not store the client")
 		return
 	}
 	s.log.InfoContext(r.Context(), "oauth: client registered", "client_id", c.ID, "client_name", c.Name)
@@ -171,7 +178,11 @@ type oauthError struct {
 	ErrorDescription string `json:"error_description,omitempty"`
 }
 
-func writeOAuthError(w http.ResponseWriter, status int, code, desc string) {
+func writeOAuthError(w http.ResponseWriter, r *http.Request, status int, code, desc string) {
+	if o, ok := r.Context().Value(outcomeKey{}).(*outcome); ok {
+		o.code = code
+	}
+	middleware.SetErrorCode(r.Context(), code)
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer error="`+code+`"`)
 	}

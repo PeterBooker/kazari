@@ -13,5 +13,5 @@ Kazari is open source (MIT) and runs as one Go binary with SQLite and a director
 {{ end }}
 ## Optional
 
-- [Source code]({{ site.Params.repo }}): the repository, with the README and the architecture decision records
+- [Source code]({{ site.Params.repo }}): the repository, with the README
 - [Releases]({{ site.Params.repo }}/releases): binaries for Linux and macOS; the image is `ghcr.io/peterbooker/kazari`

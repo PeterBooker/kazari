@@ -18,6 +18,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/certs"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
@@ -129,7 +130,7 @@ func (a *App) firstRunHint(ctx context.Context) {
 	if socket := a.Addrs().Socket; socket != "" {
 		how = "run it on this host (as the service user or root, or with docker exec), which uses the admin socket " + socket
 	}
-	a.log.Warn("no users yet", "next", "kazari admin users create <handle> --role admin, then kazari admin keys issue <handle>", "how", how)
+	a.log.WarnContext(ctx, "no users yet", "next", "kazari admin users create <handle> --role admin, then kazari admin keys issue <handle>", "how", how)
 }
 
 // listen closes whatever it bound if it fails.
@@ -163,7 +164,7 @@ func (a *App) listen() (servers []server, err error) {
 		}
 		if a.cfg.Listen.HTTP != "" {
 			redirect := middleware.Chain(redirectHandler(a.cfg),
-				middleware.RequestID(), middleware.RealIP(false), middleware.Logger(a.log), middleware.Recover(a.log))
+				middleware.RequestID(), middleware.RealIP(false), a.obs.Observe(instrument.SurfaceRedirect, middleware.ObserveOptions{NoTraces: true}), middleware.Logger(a.log, probePaths...), middleware.Recover(a.log))
 			if addrs.HTTP, err = bind("http", a.cfg.Listen.HTTP, redirect, nil); err != nil {
 				return servers, err
 			}

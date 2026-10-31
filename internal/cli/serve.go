@@ -3,7 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +13,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/app"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/preflight"
+	"github.com/PeterBooker/kazari/internal/telemetry"
 )
 
 const defaultConfigPath = "/etc/kazari/kazari.yaml"
@@ -68,7 +71,9 @@ func (c *ServeCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	logger := cfg.Logger(r.stderr)
+	logger := cfg.Logger(r.stderr, journald(r.env("JOURNAL_STREAM"), r.stderr))
+	slog.SetDefault(logger)
+	telemetry.CaptureLibraryLogs(logger)
 	ctx, stop := signal.NotifyContext(r.ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a, err := app.New(ctx, cfg, app.Options{Logger: logger})
@@ -76,6 +81,22 @@ func (c *ServeCmd) Run(r *runner) error {
 		return err
 	}
 	return a.Run(ctx)
+}
+
+// journald reports whether w is the journal stream systemd connected, which
+// it names in JOURNAL_STREAM as device:inode; a redirect to a file or pipe
+// keeps the variable but not the stream.
+func journald(stream string, w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok || stream == "" {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && stream == fmt.Sprintf("%d:%d", st.Dev, st.Ino)
 }
 
 // CheckCmd validates the configuration and runs the preflight checks.
@@ -89,7 +110,8 @@ func (c *CheckCmd) Run(r *runner) error {
 		return err
 	}
 	fmt.Fprintf(r.stdout, "%-12s %-5s %s\n", "config", preflight.OK, preflight.Describe(cfg, source))
-	findings := preflight.Run(r.ctx, cfg, preflight.Options{})
+	tel := app.TelemetryOptions(cfg)
+	findings := preflight.Run(r.ctx, cfg, preflight.Options{Telemetry: &tel})
 	preflight.Write(r.stdout, findings)
 	if preflight.Failed(findings) {
 		return errors.New("preflight checks failed")

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"maps"
 	"strconv"
@@ -62,9 +65,10 @@ type Options struct {
 	// Quotas gives the owner's quota when another member adds a version
 	// under WriteShared, so every version is charged to the owner. Nil
 	// leaves such versions uncharged.
-	Quotas QuotaSource
-	Now    func() time.Time
-	Logger *slog.Logger // audit failures; default slog.Default()
+	Quotas    QuotaSource
+	Now       func() time.Time
+	Logger    *slog.Logger // audit failures; default slog.Default()
+	Telemetry instrument.Providers
 }
 
 func (o Options) withDefaults() Options {
@@ -118,6 +122,9 @@ type Service struct {
 	rec   audit.Recorder
 	opts  Options
 
+	tracer trace.Tracer
+	m      metrics
+
 	// blobMu orders publishes against the garbage collector: a Put of stored
 	// content writes nothing, so the blob looks unreferenced until its
 	// version commits. Publishes hold the read side over that window,
@@ -130,7 +137,11 @@ func New(store Store, blobs blob.Store, rec audit.Recorder, opts Options) *Servi
 	if rec == nil {
 		rec = audit.Nop{}
 	}
-	return &Service{store: store, blobs: blobs, rec: rec, opts: opts.withDefaults()}
+	meter := opts.Telemetry.Meter(scope)
+	s := &Service{store: store, blobs: blobs, rec: rec, opts: opts.withDefaults(),
+		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter)}
+	s.observeCensus(meter)
+	return s
 }
 
 func (s *Service) now() time.Time { return s.opts.Now().UTC() }
@@ -173,6 +184,7 @@ func (s *Service) record(ctx context.Context, actor Actor, action, slug string, 
 		}
 		details["credential"] = actor.Credential
 	}
+	s.m.actions.Add(ctx, 1, metric.WithAttributes(auditActionKey.String(action), surfaceAttr(ctx)))
 	e := audit.Event{At: s.now(), Actor: actor.Handle, Action: action, Slug: slug, Details: details}
 	if err := s.rec.Record(ctx, e); err != nil {
 		s.opts.Logger.ErrorContext(ctx, "audit record failed", "action", action, "slug", slug, "err", err)
@@ -180,7 +192,9 @@ func (s *Service) record(ctx context.Context, actor Actor, action, slug string, 
 }
 
 // Create creates an artifact with its first version, owned by actor.
-func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*Artifact, *Version, error) {
+func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_ *Artifact, v *Version, err error) {
+	ctx, span := s.span(ctx, "artifact.create", req.Slug)
+	defer func() { s.published(ctx, publishCreate, v, err); versionAttrs(span, v); endSpan(span, err) }()
 	if actor.Handle == "" {
 		return nil, nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
@@ -236,7 +250,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (*
 	if a.Metadata == nil {
 		a.Metadata = map[string]string{}
 	}
-	v := &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
 	err = s.holdBlobs(func() error {
 		files, size, err := s.buildFiles(ctx, nil, req.Files, quota)
 		if err != nil {
@@ -309,7 +323,21 @@ func (s *Service) ownerQuota(ctx context.Context, actor Actor, owner string) (in
 
 // Update changes fields and, unless req.Files is empty, adds a version of
 // the latest files plus the changes; otherwise the version is nil.
-func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*Artifact, *Version, error) {
+func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (_ *Artifact, v *Version, err error) {
+	ctx, span := s.span(ctx, "artifact.update", req.Slug)
+	defer func() {
+		if len(req.Files) > 0 {
+			s.published(ctx, publishUpdate, v, err)
+		}
+		versionAttrs(span, v)
+		endSpan(span, err)
+	}()
+	return s.update(ctx, actor, req)
+}
+
+// update is Update without its span and count, for Edit, which publishes
+// through it under its own.
+func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_ *Artifact, v *Version, err error) {
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
 	}
@@ -386,7 +414,7 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	v := &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
 	err = s.holdBlobs(func() error {
 		files, size, err := s.buildFiles(ctx, base, req.Files, quota)
 		if err != nil {

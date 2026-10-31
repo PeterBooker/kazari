@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/trace"
 	"regexp"
 	"slices"
 	"strconv"
@@ -60,16 +62,18 @@ type Options struct {
 	// update; the user stays disabled.
 	OnDisable func(ctx context.Context, handle string) error
 	// Now defaults to time.Now.
-	Now func() time.Time
+	Now       func() time.Time
+	Telemetry instrument.Providers
 }
 
 // Service manages users, API keys and identity links. Audit events are
 // best-effort: a failure to record one does not fail the operation.
 type Service struct {
-	store Store
-	audit audit.Recorder
-	opts  Options
-	now   func() time.Time
+	store  Store
+	audit  audit.Recorder
+	opts   Options
+	now    func() time.Time
+	tracer trace.Tracer
 
 	mu      sync.Mutex
 	touched map[string]time.Time // key prefix -> last last_used_at write
@@ -86,7 +90,9 @@ func New(store Store, rec audit.Recorder, opts Options) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{store: store, audit: rec, opts: opts, now: now, touched: map[string]time.Time{}}
+	s := &Service{store: store, audit: rec, opts: opts, now: now, tracer: opts.Telemetry.Tracer(scope), touched: map[string]time.Time{}}
+	s.observeUsers(opts.Telemetry.Meter(scope))
+	return s
 }
 
 // CreateUserRequest describes a new user.
@@ -100,7 +106,9 @@ type CreateUserRequest struct {
 
 // CreateUser creates a user. ErrInvalidHandle, ErrInvalidRole,
 // ErrHandleTaken, ErrEmailTaken.
-func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
+func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (_ *User, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.create")
+	defer func() { endSpan(span, err) }()
 	if err := ValidateHandle(req.Handle); err != nil {
 		return nil, err
 	}
@@ -174,7 +182,9 @@ type UpdateUserRequest struct {
 // UpdateUser applies req. Disabling stamps DisabledAt, revokes every key and
 // runs Options.OnDisable; enabling clears DisabledAt (revoked keys and grants
 // stay revoked).
-func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (*User, error) {
+func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (_ *User, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.update")
+	defer func() { endSpan(span, err) }()
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
 		return nil, err
@@ -238,7 +248,9 @@ func ScopesFor(u *User) []string {
 // IssueKey creates an API key and returns it with the key string, which is
 // never available again. Empty scopes mean auth.MemberScopes; expiresIn <= 0
 // means no expiry. ErrNotFound, ErrDisabled, ErrInvalidScope.
-func (s *Service) IssueKey(ctx context.Context, handle, label string, scopes []string, expiresIn time.Duration) (*APIKey, string, error) {
+func (s *Service) IssueKey(ctx context.Context, handle, label string, scopes []string, expiresIn time.Duration) (_ *APIKey, _ string, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.issue_key")
+	defer func() { endSpan(span, err) }()
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
 		return nil, "", err
@@ -297,7 +309,9 @@ func (s *Service) ListKeys(ctx context.Context, handle string) ([]APIKey, error)
 }
 
 // RevokeKey revokes one of the user's keys. ErrKeyNotFound.
-func (s *Service) RevokeKey(ctx context.Context, handle, prefix string) error {
+func (s *Service) RevokeKey(ctx context.Context, handle, prefix string) (err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.revoke_key")
+	defer func() { endSpan(span, err) }()
 	if err := s.store.RevokeKey(ctx, handle, prefix, s.now()); err != nil {
 		return err
 	}
@@ -347,6 +361,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	}, nil
 }
 
+// Recognize implements auth.Recognizer for API keys.
+func (s *Service) Recognize(token string) (string, bool) {
+	_, _, ok := ParseKey(token)
+	return auth.SourceAPIKey, ok
+}
+
 // KeyStatus reports on the key with prefix, for credentials derived from it
 // (an OAuth grant lives only while its key is active). ErrKeyNotFound.
 func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, error) {
@@ -393,7 +413,9 @@ func (s *Service) touch(ctx context.Context, k *APIKey, now time.Time) {
 // AutoProvision is on and the domain is listed; else ErrNotProvisioned. A
 // disabled user yields ErrDisabled. Success refreshes the link's
 // last_login_at.
-func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (*User, error) {
+func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (_ *User, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.resolve_identity")
+	defer func() { endSpan(span, err) }()
 	u, err := s.store.GetIdentity(ctx, id.Issuer, id.Subject)
 	switch {
 	case err == nil:
@@ -477,12 +499,14 @@ func (s *Service) ListIdentities(ctx context.Context, handle string) ([]Identity
 // LinkIdentity links (issuer, subject) to the user by hand, so an admin can
 // pre-provision who may sign in as whom. An identity linked to another user
 // moves to this one. ErrInvalidIdentity, ErrNotFound.
-func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, email string) error {
+func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, email string) (err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.link_identity")
+	defer func() { endSpan(span, err) }()
 	issuer, subject = strings.TrimSpace(issuer), strings.TrimSpace(subject)
 	if issuer == "" || subject == "" {
 		return ErrInvalidIdentity
 	}
-	err := s.store.LinkIdentity(ctx, handle, Identity{
+	err = s.store.LinkIdentity(ctx, handle, Identity{
 		Issuer:       issuer,
 		Subject:      subject,
 		EmailAtLogin: normalizeEmail(email),

@@ -48,6 +48,17 @@ docker compose exec kazari kazari admin keys issue peter --label laptop
 
 `docker compose watch` rebuilds and restarts the container when the source changes, and `docker compose down` stops it; add `-v` to discard the data as well. `deploy/compose.yml` is the Compose file for a real server.
 
+### Watching traces and metrics
+
+The `telemetry` profile adds [grafana/otel-lgtm](https://github.com/grafana/docker-otel-lgtm): an OpenTelemetry Collector with Tempo, Prometheus and Loki behind Grafana. To start it with Kazari exporting all three signals to it, run:
+
+```sh
+export KAZARI_TELEMETRY_OTLP_ENDPOINT=http://lgtm:4318 KAZARI_TELEMETRY_METRICS_OTLP=true KAZARI_TELEMETRY_LOGS_OTLP=true
+docker compose --profile telemetry up --build -d
+```
+
+Grafana answers at <http://localhost:3000/>. Under Explore, Tempo shows each request's trace, Prometheus the metrics and Loki the log lines, which link to their trace. The local preset samples one page view in a hundred, as a server does; to trace every one, also export `KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO=1`.
+
 ## Building, testing and releasing
 
 These commands build a binary, run the same checks as CI and make a local release dry run:
@@ -73,7 +84,7 @@ To release, push a tag named for the version without a `v`, such as `0.3.0`. The
 
 ## Building the website
 
-The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, except `adr/`, and the files in `deploy/` under `/deploy/`, so a change to either directory is a change to the site. The guides live in `site/content/docs/`, the landing page is `site/layouts/home.html`, and the install script is `site/static/install.sh`.
+The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, and the files in `deploy/` under `/deploy/`, so a change to either directory is a change to the site. The guides live in `site/content/docs/`, the landing page is `site/layouts/home.html`, and the install script is `site/static/install.sh`.
 
 Building the site needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node and no theme. Install it, preview the site and build it as CI does:
 

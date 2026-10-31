@@ -22,6 +22,9 @@ func (g *fakeGate) Allow(w http.ResponseWriter, _ *http.Request, p *artifact.Pub
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.allowed = append(g.allowed, host)
+	if !p.Visibility.Gated() {
+		return true
+	}
 	if !g.allow {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("gate says no to " + p.Slug))
@@ -82,9 +85,9 @@ func TestGatedAsksTheGate(t *testing.T) {
 	if want := []string{"team", "team--v1", "team", "team"}; !slices.Equal(g.allowed, want) {
 		t.Fatalf("Allow hosts = %v, want %v", g.allowed, want)
 	}
-	// Public artifacts never ask.
+	// Public artifacts pass the gate too, which counts them and lets them through.
 	g.allowed = nil
-	if rec := do(t, h, http.MethodGet, "demo.art.test", "/", nil); rec.Code != http.StatusOK || len(g.allowed) != 0 {
+	if rec := do(t, h, http.MethodGet, "demo.art.test", "/", nil); rec.Code != http.StatusOK || !slices.Equal(g.allowed, []string{"demo"}) {
 		t.Fatalf("public artifact: status %d, Allow calls %v", rec.Code, g.allowed)
 	}
 

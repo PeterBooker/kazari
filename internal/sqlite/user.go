@@ -15,14 +15,14 @@ import (
 
 // UserStore implements user.Store.
 type UserStore struct {
-	db *sql.DB
+	db *DB
 }
 
 var _ user.Store = (*UserStore)(nil)
 
 // NewUserStore returns a user store backed by db.
 func NewUserStore(db *DB) *UserStore {
-	return &UserStore{db: db.DB}
+	return &UserStore{db: db}
 }
 
 const userColumns = `user.id, user.handle, user.email, user.display_name, user.role,
@@ -78,7 +78,9 @@ func userLookupID(ctx context.Context, tx *sql.Tx, handle string) (int64, error)
 	return id, err
 }
 
-func (s *UserStore) CreateUser(ctx context.Context, u *user.User) error {
+func (s *UserStore) CreateUser(ctx context.Context, u *user.User) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.CreateUser")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user
 		(handle, email, display_name, role, quota_bytes, disabled_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -93,7 +95,9 @@ func (s *UserStore) CreateUser(ctx context.Context, u *user.User) error {
 	return nil
 }
 
-func (s *UserStore) GetUser(ctx context.Context, handle string) (*user.User, error) {
+func (s *UserStore) GetUser(ctx context.Context, handle string) (_ *user.User, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.GetUser")
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM user WHERE handle = ?`, handle)
 	if err := userScan(row, &u); err != nil {
@@ -105,7 +109,9 @@ func (s *UserStore) GetUser(ctx context.Context, handle string) (*user.User, err
 	return &u, nil
 }
 
-func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*user.User, error) {
+func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (_ *user.User, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.GetUserByEmail")
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM user WHERE lower(email) = lower(?)`, email)
@@ -118,7 +124,9 @@ func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*user.Use
 	return &u, nil
 }
 
-func (s *UserStore) ListUsers(ctx context.Context) ([]user.User, error) {
+func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.ListUsers")
+	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM user ORDER BY handle`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list users: %w", err)
@@ -138,7 +146,9 @@ func (s *UserStore) ListUsers(ctx context.Context) ([]user.User, error) {
 	return users, nil
 }
 
-func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) error {
+func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.UpdateUser")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `UPDATE user
 		SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
 		WHERE handle = ?`,
@@ -168,8 +178,10 @@ func userJoinScopes(scopes []string) string { return strings.Join(scopes, " ") }
 
 func userSplitScopes(s string) []string { return strings.Fields(s) }
 
-func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.CreateKey")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, k.UserHandle)
 		if err != nil {
 			return err
@@ -214,7 +226,9 @@ func userScanKey(s userRowScanner, k *user.APIKey, extra ...any) error {
 	return nil
 }
 
-func (s *UserStore) GetKey(ctx context.Context, prefix string) (*user.APIKey, *user.User, error) {
+func (s *UserStore) GetKey(ctx context.Context, prefix string) (_ *user.APIKey, _ *user.User, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.GetKey")
+	defer func() { end(err) }()
 	var (
 		k        user.APIKey
 		u        user.User
@@ -228,7 +242,7 @@ func (s *UserStore) GetKey(ctx context.Context, prefix string) (*user.APIKey, *u
 		user.disabled_at, user.created_at
 		FROM api_key JOIN user ON user.id = api_key.user_id
 		WHERE api_key.prefix = ?`, prefix)
-	err := userScanKey(row, &k, &u.ID, &email, &u.DisplayName, &role, &u.QuotaBytes, &disabled, &created)
+	err = userScanKey(row, &k, &u.ID, &email, &u.DisplayName, &role, &u.QuotaBytes, &disabled, &created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = user.ErrKeyNotFound
@@ -243,9 +257,11 @@ func (s *UserStore) GetKey(ctx context.Context, prefix string) (*user.APIKey, *u
 	return &k, &u, nil
 }
 
-func (s *UserStore) ListKeys(ctx context.Context, handle string) ([]user.APIKey, error) {
+func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKey, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.ListKeys")
+	defer func() { end(err) }()
 	var keys []user.APIKey
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -273,7 +289,9 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) ([]user.APIKey,
 	return keys, nil
 }
 
-func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) error {
+func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.RevokeKey")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `UPDATE api_key
 		SET revoked_at = coalesce(revoked_at, ?)
 		WHERE prefix = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
@@ -287,8 +305,10 @@ func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at tim
 	return nil
 }
 
-func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Time) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.RevokeAllKeys")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -304,7 +324,9 @@ func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Ti
 	return nil
 }
 
-func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) error {
+func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.TouchKey")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE api_key SET last_used_at = ? WHERE prefix = ?`, toNanos(at), prefix)
 	if err == nil {
@@ -316,7 +338,9 @@ func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) e
 	return nil
 }
 
-func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (*user.User, error) {
+func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (_ *user.User, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.GetIdentity")
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+`
 		FROM user_identity JOIN user ON user.id = user_identity.user_id
@@ -330,8 +354,10 @@ func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (*u
 	return &u, nil
 }
 
-func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Identity) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Identity) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.LinkIdentity")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -352,7 +378,9 @@ func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Ide
 	return nil
 }
 
-func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error {
+func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.UnlinkIdentity")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM user_identity
 		WHERE issuer = ? AND subject = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
 		issuer, subject, handle)
@@ -365,9 +393,11 @@ func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject 
 	return nil
 }
 
-func (s *UserStore) ListIdentities(ctx context.Context, handle string) ([]user.Identity, error) {
+func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user.Identity, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.ListIdentities")
+	defer func() { end(err) }()
 	var ids []user.Identity
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -395,4 +425,26 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) ([]user.I
 		return nil, fmt.Errorf("sqlite: list identities of %q: %w", handle, err)
 	}
 	return ids, nil
+}
+
+func (s *UserStore) CountUsers(ctx context.Context) (_ []user.Count, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.CountUsers")
+	defer func() { end(err) }()
+	rows, err := s.db.QueryContext(ctx, `SELECT role, disabled_at IS NOT NULL, COUNT(*) FROM user GROUP BY 1, 2`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	defer rows.Close()
+	var out []user.Count
+	for rows.Next() {
+		var c user.Count
+		if err := rows.Scan(&c.Role, &c.Disabled, &c.Count); err != nil {
+			return nil, fmt.Errorf("sqlite: count users: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	return out, nil
 }

@@ -3,14 +3,17 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 	"unicode/utf8"
 )
 
 const maxUserAgent = 200
 
-// Logger writes one line per completed request, at Error for 5xx.
-func Logger(l *slog.Logger) func(http.Handler) http.Handler {
+// Logger writes one line per completed request, at Error for 5xx. A request
+// for one of probes that succeeds logs at Debug: health checks and scrapes
+// arrive every few seconds and would bury the requests worth reading.
+func Logger(l *slog.Logger, probes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -19,8 +22,11 @@ func Logger(l *slog.Logger) func(http.Handler) http.Handler {
 
 			status := rw.Status()
 			level := slog.LevelInfo
-			if status >= 500 {
+			switch {
+			case status >= 500:
 				level = slog.LevelError
+			case status < 400 && slices.Contains(probes, r.URL.Path):
+				level = slog.LevelDebug
 			}
 			l.LogAttrs(r.Context(), level, "request",
 				slog.String("method", r.Method),

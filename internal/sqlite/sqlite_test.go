@@ -12,7 +12,7 @@ import (
 func TestOpenMigratesIdempotently(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kazari.db")
 	ctx := context.Background()
-	db, err := Open(ctx, path)
+	db, err := Open(ctx, path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestOpenMigratesIdempotently(t *testing.T) {
 	}
 	db.Close()
 
-	db, err = Open(ctx, path)
+	db, err = Open(ctx, path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, opts user.Options) *fixture {
 	t.Helper()
-	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
+	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

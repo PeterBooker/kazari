@@ -13,20 +13,22 @@ import (
 
 // UploadStore implements upload.Store.
 type UploadStore struct {
-	db *sql.DB
+	db *DB
 }
 
 var _ upload.Store = (*UploadStore)(nil)
 
 // NewUploadStore returns an upload store backed by db.
 func NewUploadStore(db *DB) *UploadStore {
-	return &UploadStore{db: db.DB}
+	return &UploadStore{db: db}
 }
 
 // Create needs an existing owner. The count runs in the insert's immediate
 // transaction, so concurrent creates cannot both take the last slot.
-func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int) (err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.Create")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var ownerID int64
 		err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE handle = ?`, u.Owner).Scan(&ownerID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -65,9 +67,11 @@ func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int)
 }
 
 // Get sorts files by path.
-func (s *UploadStore) Get(ctx context.Context, id string) (*upload.Upload, error) {
+func (s *UploadStore) Get(ctx context.Context, id string) (_ *upload.Upload, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.Get")
+	defer func() { end(err) }()
 	var u *upload.Upload
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx,
 			`SELECT `+uploadColumns+`
 			 FROM upload u JOIN user usr ON usr.id = u.owner_id
@@ -90,8 +94,10 @@ func (s *UploadStore) Get(ctx context.Context, id string) (*upload.Upload, error
 }
 
 // UpsertFile returns artifact.ErrUploadNotFound for an unknown id.
-func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.StagedFile, totalBytes int64) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.StagedFile, totalBytes int64) (err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.UpsertFile")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE upload SET bytes = ? WHERE id = ?`, totalBytes, id)
 		if err != nil {
 			return err
@@ -121,8 +127,10 @@ func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.Staged
 
 // ReceiveArchive spends the archive in the same statement that checks it is
 // unspent, so two bodies racing for one token cannot both be received.
-func (s *UploadStore) ReceiveArchive(ctx context.Context, id string, files []upload.StagedFile, totalBytes int64, at time.Time) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UploadStore) ReceiveArchive(ctx context.Context, id string, files []upload.StagedFile, totalBytes int64, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.ReceiveArchive")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE upload SET bytes = ?, archive_received_at = ?
 			 WHERE id = ? AND archive_token_hash != '' AND archive_received_at IS NULL`,
@@ -157,9 +165,11 @@ func (s *UploadStore) ReceiveArchive(ctx context.Context, id string, files []upl
 }
 
 // CountArchiveAttempt returns artifact.ErrUploadNotFound for an unknown id.
-func (s *UploadStore) CountArchiveAttempt(ctx context.Context, id string) (int, error) {
+func (s *UploadStore) CountArchiveAttempt(ctx context.Context, id string) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.CountArchiveAttempt")
+	defer func() { end(err) }()
 	var n int
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE upload SET archive_attempts = archive_attempts + 1 WHERE id = ?`, id)
 		if err != nil {
 			return err
@@ -180,8 +190,10 @@ func (s *UploadStore) CountArchiveAttempt(ctx context.Context, id string) (int, 
 }
 
 // Delete returns artifact.ErrUploadNotFound for an unknown id.
-func (s *UploadStore) Delete(ctx context.Context, id string) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *UploadStore) Delete(ctx context.Context, id string) (err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.Delete")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM upload_file WHERE upload_id = ?`, id); err != nil {
 			return err
 		}
@@ -205,9 +217,11 @@ func (s *UploadStore) Delete(ctx context.Context, id string) error {
 }
 
 // ListExpired returns the oldest expiry first, each upload with its files.
-func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) ([]upload.Upload, error) {
+func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []upload.Upload, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.ListExpired")
+	defer func() { end(err) }()
 	var out []upload.Upload
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
 			`SELECT `+uploadColumns+`
 			 FROM upload u JOIN user usr ON usr.id = u.owner_id
@@ -242,9 +256,11 @@ func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) ([]upload.
 }
 
 // CountOpen counts the uploads owned by the handle, expired or not.
-func (s *UploadStore) CountOpen(ctx context.Context, owner string) (int, error) {
+func (s *UploadStore) CountOpen(ctx context.Context, owner string) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.CountOpen")
+	defer func() { end(err) }()
 	var n int
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM upload u JOIN user usr ON usr.id = u.owner_id
 		 WHERE usr.handle = ?`, owner).Scan(&n)
 	if err != nil {
@@ -295,4 +311,13 @@ func uploadFiles(ctx context.Context, tx *sql.Tx, id string) ([]upload.StagedFil
 		files = append(files, f)
 	}
 	return files, rows.Err()
+}
+
+func (s *UploadStore) CountAll(ctx context.Context) (n int64, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.CountAll")
+	defer func() { end(err) }()
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM upload`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("sqlite: count uploads: %w", err)
+	}
+	return n, nil
 }

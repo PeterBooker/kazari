@@ -144,3 +144,17 @@ func (f *Files) statFiles() (fileStamp, error) {
 		certSize: c.Size(), keySize: k.Size(),
 	}, nil
 }
+
+// NotAfter implements Source.
+func (f *Files) NotAfter() time.Time { return f.cert.Load().Leaf.NotAfter }
+
+// GetClientCertificate is GetCertificate for the client side of TLS. It
+// reloads changed files itself, so a client with no Run loop, such as a
+// telemetry exporter, still presents a rotated pair.
+func (f *Files) GetClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	if err := f.reloadIfChanged(); err != nil {
+		f.logger.Warn("certs: reload failed, keeping previous certificate",
+			"cert_file", f.certFile, "key_file", f.keyFile, "err", err)
+	}
+	return f.cert.Load(), nil
+}

@@ -9,6 +9,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // Resolver looks up what to serve for a slug. ResolvePublished and
@@ -42,6 +45,16 @@ type Gate interface {
 // ReservedPrefix is left to the Gate on every artifact host; no artifact file
 // can live under it (artifact.ReservedDir).
 const ReservedPrefix = "/" + artifact.ReservedDir + "/"
+
+// fileRoute is http.route for every file of an artifact.
+const fileRoute = "/{path...}"
+
+// The artifact a request is for, on its server span; version 0 is the
+// published host.
+const (
+	slugKey    = attribute.Key("kazari.artifact.slug")
+	versionKey = attribute.Key("kazari.artifact.version")
+)
 
 // Options configures the handler. Only BaseDomain is required.
 type Options struct {
@@ -138,6 +151,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusNotFound)
 		return
 	}
+	if span := trace.SpanFromContext(r.Context()); span.IsRecording() {
+		span.SetAttributes(slugKey.String(slug), versionKey.Int(version))
+	}
 
 	p, err := h.resolve(r.Context(), slug, version)
 	if err != nil {
@@ -161,20 +177,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if version != 0 {
 		host += artifact.VersionSeparator + strconv.Itoa(version)
 	}
-	if reserved || p.Visibility.Gated() {
-		if h.opts.Gate == nil {
+	if h.opts.Gate == nil {
+		if reserved || p.Visibility.Gated() {
 			h.writeError(w, r, http.StatusNotFound)
 			return
 		}
+	} else {
 		if reserved {
 			h.opts.Gate.ServeReserved(w, r, p, host)
 			return
 		}
+		// Public pages pass the gate too, which counts them.
 		if !h.opts.Gate.Allow(w, r, p, host) {
 			return
 		}
 	}
 
+	middleware.SetRoute(r.Context(), fileRoute)
 	files, err := h.resolver.Files(r.Context(), p.VersionID)
 	if err != nil {
 		h.internalError(w, r, fmt.Errorf("load files of %s version %d: %w", slug, p.VersionNumber, err))

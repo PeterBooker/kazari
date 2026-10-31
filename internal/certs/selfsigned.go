@@ -47,6 +47,9 @@ func (s *SelfSigned) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, err
 	return s.cert, nil
 }
 
+// NotAfter implements Source.
+func (s *SelfSigned) NotAfter() time.Time { return s.cert.Leaf.NotAfter }
+
 // Run blocks until ctx is done; a self-signed certificate needs no upkeep.
 func (s *SelfSigned) Run(ctx context.Context) error {
 	<-ctx.Done()

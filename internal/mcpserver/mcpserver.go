@@ -3,9 +3,9 @@
 package mcpserver
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -19,6 +19,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -84,7 +86,8 @@ type Options struct {
 	Fetch bool
 	// Now is the clock that decides whether a share link is active
 	// (default time.Now).
-	Now func() time.Time
+	Now       func() time.Time
+	Telemetry instrument.Providers
 }
 
 func (o Options) withDefaults(d Deps) Options {
@@ -136,6 +139,7 @@ type builder struct {
 	editSchema *jsonschema.Schema
 	preview    string
 	previewUI  map[string]any
+	obs        *observer
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -150,13 +154,25 @@ func newBuilder(d Deps, o Options) *builder {
 		d:          d,
 		o:          o,
 		log:        log,
-		sdkLog:     slog.New(minLevel{min: slog.LevelWarn, Handler: log.Handler()}),
+		sdkLog:     slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
 		text:       text,
 		schema:     mcp.NewSchemaCache(),
 		editSchema: editFileSchema(),
 		preview:    preview,
 		previewUI:  ui,
+		obs:        newObserver(o.Telemetry, toolNames(text, o)),
 	}
+}
+
+// toolNames are the tools a server registers, the bounded set of
+// gen_ai.tool.name.
+func toolNames(t texts, o Options) []string {
+	names := slices.Collect(maps.Keys(t.tools))
+	if !o.Fetch {
+		names = slices.DeleteFunc(names, func(n string) bool { return n == "import_page" })
+	}
+	slices.Sort(names)
+	return names
 }
 
 // NewServer builds an MCP server whose handlers act as p.
@@ -177,6 +193,9 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 			SchemaCache:  b.schema,
 		},
 	)
+	if b.obs.enabled {
+		s.AddReceivingMiddleware(b.obs.middleware(p))
+	}
 	b.addTools(s, p)
 	b.addResources(s, p)
 	b.addPrompt(s)
@@ -203,7 +222,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 		DisableLocalhostProtection: true,
 		MaxRequestBodyBytes:        b.bodyLimit(),
 	})
-	authed := auth.RequireBearer(d.Auth, auth.BearerOptions{ResourceMetadataURL: b.o.ResourceMetadataURL})(stream)
+	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(withProtocolVersion(stream))
 	return b.checkOrigin(checkProtocolVersion(authed))
 }
 
@@ -225,7 +244,7 @@ func (b *builder) checkOrigin(next http.Handler) http.Handler {
 		if origin != "" {
 			o := normalizeOrigin(origin)
 			if o != normalizeOrigin("https://"+r.Host) && !slices.Contains(allowed, o) {
-				writeError(w, http.StatusForbidden, api.CodeForbidden, "origin "+origin+" is not allowed")
+				writeError(w, r, http.StatusForbidden, api.CodeForbidden, "origin "+origin+" is not allowed")
 				return
 			}
 		}
@@ -241,7 +260,7 @@ func checkProtocolVersion(next http.Handler) http.Handler {
 	supported := mcp.SupportedProtocolVersions()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v := r.Header.Get("MCP-Protocol-Version"); v != "" && !slices.Contains(supported, v) {
-			writeError(w, http.StatusBadRequest, api.CodeInvalidArgument,
+			writeError(w, r, http.StatusBadRequest, api.CodeInvalidArgument,
 				"unsupported MCP-Protocol-Version "+v+"; supported: "+strings.Join(supported, ", "))
 			return
 		}
@@ -249,24 +268,8 @@ func checkProtocolVersion(next http.Handler) http.Handler {
 	})
 }
 
-type minLevel struct {
-	min slog.Level
-	slog.Handler
-}
-
-func (h minLevel) Enabled(ctx context.Context, l slog.Level) bool {
-	return l >= h.min && h.Handler.Enabled(ctx, l)
-}
-
-func (h minLevel) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return minLevel{min: h.min, Handler: h.Handler.WithAttrs(attrs)}
-}
-
-func (h minLevel) WithGroup(name string) slog.Handler {
-	return minLevel{min: h.min, Handler: h.Handler.WithGroup(name)}
-}
-
-func writeError(w http.ResponseWriter, status int, code, msg string) {
+func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
+	middleware.SetErrorCode(r.Context(), code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(api.ErrorResponse{Error: api.Error{Code: code, Message: msg}})

@@ -3,6 +3,7 @@ package oauth
 import (
 	"crypto/subtle"
 	"errors"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"net/http"
 	"slices"
 	"strings"
@@ -21,20 +22,29 @@ type tokenResponse struct {
 }
 
 func (s *Service) serveToken(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.token")
+	defer func() {
+		grant := grantTypeKey.String(instrument.OneOf(r.PostForm.Get("grant_type"), "authorization_code", "refresh_token"))
+		s.m.tokens.Add(r.Context(), 1, out.attrs(grant))
+		if span.IsRecording() {
+			span.SetAttributes(grant)
+		}
+		endHandle(span, out)
+	}()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := r.ParseForm(); err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "the body must be application/x-www-form-urlencoded")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "the body must be application/x-www-form-urlencoded")
 		return
 	}
 	f := r.PostForm
 	clientID := f.Get("client_id")
 	if clientID == "" {
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "client_id is required")
+		writeOAuthError(w, r, http.StatusUnauthorized, "invalid_client", "client_id is required")
 		return
 	}
 	if _, err := s.store.GetClient(r.Context(), clientID); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "unknown client")
+			writeOAuthError(w, r, http.StatusUnauthorized, "invalid_client", "unknown client")
 			return
 		}
 		s.serverError(w, r, "load client", err)
@@ -46,9 +56,9 @@ func (s *Service) serveToken(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		s.grantRefresh(w, r, clientID)
 	case "":
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "grant_type is required")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "grant_type is required")
 	default:
-		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
+		writeOAuthError(w, r, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
 	}
 }
 
@@ -58,21 +68,21 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 	code, verifier, redirectURI := f.Get("code"), f.Get("code_verifier"), f.Get("redirect_uri")
 	switch {
 	case code == "":
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code is required")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "code is required")
 		return
 	case verifier == "":
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_verifier is required")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "code_verifier is required")
 		return
 	case redirectURI == "":
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
 		return
 	case !pkceValue.MatchString(verifier):
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_verifier is malformed")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "code_verifier is malformed")
 		return
 	}
 	resource, ok := s.checkResource(f.Get("resource"))
 	if !ok {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "unknown resource")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_target", "unknown resource")
 		return
 	}
 
@@ -90,11 +100,11 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 				return
 			}
 		}
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
 		return
 	}
 	if errors.Is(err, ErrNotFound) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the authorization code is invalid or has been used")
 		return
 	}
 	if err != nil {
@@ -103,19 +113,19 @@ func (s *Service) grantCode(w http.ResponseWriter, r *http.Request, clientID str
 	}
 	switch {
 	case c.ClientID != clientID:
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code was issued to another client")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the authorization code was issued to another client")
 		return
 	case !now.Before(c.ExpiresAt):
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the authorization code has expired")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the authorization code has expired")
 		return
 	case c.RedirectURI != redirectURI:
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri does not match the authorization request")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "redirect_uri does not match the authorization request")
 		return
 	case subtle.ConstantTimeCompare([]byte(s256(verifier)), []byte(c.CodeChallenge)) != 1:
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "code_verifier does not match the code challenge")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "code_verifier does not match the code challenge")
 		return
 	case resource != "" && c.Resource != "" && resource != c.Resource:
-		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the authorization request")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_target", "resource does not match the authorization request")
 		return
 	}
 	if !s.userActive(w, r, c.UserHandle) {
@@ -147,12 +157,12 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	f := r.PostForm
 	raw := f.Get("refresh_token")
 	if raw == "" {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "refresh_token is required")
 		return
 	}
 	old, err := s.store.GetToken(ctx, hashSecret(raw))
 	if errors.Is(err, ErrNotFound) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid")
 		return
 	}
 	if err != nil {
@@ -161,7 +171,7 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	}
 	now := s.now()
 	if old.Kind != KindRefresh || old.ClientID != clientID {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid")
 		return
 	}
 	if old.ReplacedBy != nil {
@@ -173,18 +183,18 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 			s.serverError(w, r, "revoke family", err)
 			return
 		}
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
 		return
 	}
 	if old.RevokedAt != nil || !now.Before(old.ExpiresAt) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token has expired or been revoked")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has expired or been revoked")
 		return
 	}
 	scopes := old.Scopes
 	if sc := strings.Fields(f.Get("scope")); len(sc) > 0 {
 		for _, x := range sc {
 			if !slices.Contains(old.Scopes, x) || !slices.Contains(s.opts.Scopes, x) {
-				writeOAuthError(w, http.StatusBadRequest, "invalid_scope", "scope may only narrow the original grant")
+				writeOAuthError(w, r, http.StatusBadRequest, "invalid_scope", "scope may only narrow the original grant")
 				return
 			}
 		}
@@ -203,7 +213,7 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	err = s.store.Rotate(ctx, old.ID, now, &access.Token, &refresh.Token)
 	if errors.Is(err, ErrNotFound) {
 		// Lost a race with a concurrent refresh of the same token.
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
 		return
 	}
 	if err != nil {
@@ -217,7 +227,7 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 func (s *Service) userActive(w http.ResponseWriter, r *http.Request, handle string) bool {
 	u, err := s.users.GetUser(r.Context(), handle)
 	if errors.Is(err, user.ErrNotFound) || (err == nil && u.DisabledAt != nil) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the user may no longer sign in")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the user may no longer sign in")
 		return false
 	}
 	if err != nil {
@@ -236,7 +246,7 @@ func (s *Service) keyActive(w http.ResponseWriter, r *http.Request, prefix, hand
 		return nil, false
 	}
 	if !live {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the API key that approved this grant is no longer valid")
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the API key that approved this grant is no longer valid")
 		return nil, false
 	}
 	return expires, true
@@ -277,5 +287,5 @@ func (s *Service) writeTokens(w http.ResponseWriter, access, refresh issued) {
 
 func (s *Service) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {
 	s.log.ErrorContext(r.Context(), "oauth: "+what, "err", err)
-	writeOAuthError(w, http.StatusInternalServerError, "server_error", "internal error")
+	writeOAuthError(w, r, http.StatusInternalServerError, "server_error", "internal error")
 }

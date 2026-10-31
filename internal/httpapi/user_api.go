@@ -18,6 +18,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -65,7 +67,8 @@ type UserOptions struct {
 	// Now clocks the rate limiters. Default: time.Now.
 	Now func() time.Time
 	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
-	Skill string
+	Skill     string
+	Telemetry instrument.Providers
 }
 
 func (o UserOptions) withDefaults(d UserDeps) UserOptions {
@@ -104,7 +107,7 @@ type userAPI struct {
 // artifacts:delete.
 func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
-	h := &userAPI{base: newBase(d.Logger, d.Links), d: d, o: o}
+	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o}
 
 	read := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeRead, false, fn) }
 	write := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeWrite, true, fn) }
@@ -133,14 +136,20 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("GET /v1/me/keys", h.guard("", false, h.myKeys))
 
 	var protected http.Handler = jsonFallback(mux, &h.base)
-	protected = auth.RequireBearer(d.Auth, auth.BearerOptions{})(protected)
+	protected = auth.RequireBearer(d.Auth, auth.Options{Telemetry: o.Telemetry})(protected)
 	// Only a PUT of an archive passes without a bearer; a pattern with a
 	// method matches that method alone, so any other request for the path
 	// falls through to the protected handler and gets its 401.
 	open := http.NewServeMux()
-	open.Handle("PUT /v1/uploads/{id}/archive", h.serve(h.receiveArchive))
+	receive := h.serve(h.receiveArchive)
+	open.HandleFunc("PUT /v1/uploads/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+		// jsonFallback reports the route of every request past the bearer
+		// check; this one never reaches it.
+		middleware.SetRoute(r.Context(), r.Pattern)
+		receive.ServeHTTP(w, r)
+	})
 	open.Handle("/", protected)
-	return h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(open)
+	return h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(open)
 }
 
 func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {

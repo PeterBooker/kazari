@@ -47,7 +47,6 @@ enableGitInfo = true
   [[module.mounts]]
     source = "../docs"
     target = "content/docs"
-    files = ["! adr/**"]
   [[module.mounts]]
     source = "static"
     target = "static"
@@ -56,4 +55,4 @@ enableGitInfo = true
   [[module.mounts]]
     source = "../deploy"
     target = "static/deploy"
-    files = ["compose.yml", "kazari.yaml", "kazari.reference.yaml", "kazari.env.example", "kazari.service", "Caddyfile"]
+    files = ["compose.yml", "kazari.yaml", "kazari.reference.yaml", "kazari.env.example", "kazari.service", "Caddyfile", "otel-collector.yaml"]

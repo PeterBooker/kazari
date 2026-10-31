@@ -12,7 +12,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/httpapi"
-	"github.com/PeterBooker/kazari/internal/metrics"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
@@ -33,13 +33,27 @@ func (a *App) routes(h hosts) http.Handler {
 	return normalizeHost(mux)
 }
 
-func (a *App) surface(m *metrics.Metrics, name string, control bool, h http.Handler) http.Handler {
+// probePaths are counted but never traced, and log at debug when they
+// succeed: probes and scrapes arrive every few seconds and say nothing about
+// what an agent did.
+var probePaths = []string{"/health", "/v1/health", "/metrics"}
+
+func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
+	observe := middleware.ObserveOptions{
+		ControlPlane: name == instrument.SurfaceAPI || name == instrument.SurfaceMCP || name == instrument.SurfaceAdmin,
+		Skip:         probePaths,
+	}
+	// On an artifact host these are pages like any other.
+	var probes []string
+	if control {
+		probes = probePaths
+	}
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
 		middleware.RealIP(a.cfg.Listen.ProxyMode),
-		middleware.Logger(a.log),
+		a.obs.Observe(name, observe),
+		middleware.Logger(a.log, probes...),
 		middleware.Recover(a.log),
-		m.HTTP(name),
 	}
 	if control {
 		mws = append(mws, middleware.SecurityHeaders())
@@ -53,7 +67,7 @@ func mcpMux(oauthH, mcpH http.Handler) http.Handler {
 	mux.Handle("/.well-known/", oauthH)
 	mux.Handle("/oauth/", oauthH)
 	mux.Handle("/", mcpH)
-	return mux
+	return middleware.Routed(mux)
 }
 
 // normalizeHost makes host patterns match API.Example.com and example.com.
@@ -108,7 +122,7 @@ func apexHandler(cfg config.Config) (http.Handler, error) {
 		}
 	})
 	mux.HandleFunc("/", http.NotFound)
-	return mux, nil
+	return middleware.Routed(mux), nil
 }
 
 func redirectHandler(cfg config.Config) http.Handler {

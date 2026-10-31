@@ -109,3 +109,40 @@ admin:
 log:
   level: info                        # debug | info | warn | error
   format: text                       # text | json
+
+# OpenTelemetry: traces, metrics and logs, exported over OTLP to one
+# collector or vendor. Nothing is exported until an endpoint is set, here or
+# in OTEL_EXPORTER_OTLP_ENDPOINT; then spans are, and metrics and logs follow
+# their own otlp switch. A key set here wins over its OTEL_* variable; a key
+# left unset ("", 0s or empty) falls back to that variable, then to the
+# OpenTelemetry SDK's default, noted after "else".
+telemetry:
+  service_name: ""                   # service.name; else OTEL_SERVICE_NAME, else kazari
+  environment: ""                    # deployment.environment.name, e.g. production; else OTEL_RESOURCE_ATTRIBUTES
+  otlp:
+    endpoint: ""                     # collector or vendor base URL; else OTEL_EXPORTER_OTLP_ENDPOINT
+    protocol: ""                     # http/protobuf (port 4318) | grpc (port 4317); else OTEL_EXPORTER_OTLP_PROTOCOL, else http/protobuf
+    # Sent with every export, e.g. authorization: "Bearer ${KAZARI_OTLP_TOKEN}";
+    # else OTEL_EXPORTER_OTLP_HEADERS. KAZARI_TELEMETRY_OTLP_HEADERS takes
+    # name=value,name=value instead.
+    headers: {}
+    compression: ""                  # gzip | none; else OTEL_EXPORTER_OTLP_COMPRESSION, else none
+    timeout: 0s                      # one export attempt; else OTEL_EXPORTER_OTLP_TIMEOUT, else 10s. Failed exports are retried for up to 30s
+    ca_file: ""                      # PEM roots for an https endpoint; else OTEL_EXPORTER_OTLP_CERTIFICATE, else the system roots
+    cert_file: ""                    # client certificate and key for mutual TLS, both or neither;
+    key_file: ""                     # else OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE and _CLIENT_KEY
+  traces:
+    otlp: true                       # export spans when an endpoint is set
+    # New traces on api., mcp., admin. and the admin socket, and on artifact
+    # hosts and the apex. With both unset, OTEL_TRACES_SAMPLER decides when
+    # set, else 1.0 and 0.01.
+    sample_ratio:
+    site_sample_ratio:
+  metrics:
+    prometheus: true                 # /metrics on the admin host
+    token: ""                        # bearer token for /metrics on the public listener; "" = not served there
+    otlp: false                      # also push to the endpoint
+    interval: 0s                     # push interval, at least 5s; else OTEL_METRIC_EXPORT_INTERVAL, else 60s
+  logs:
+    otlp: false                      # also export log records to the endpoint; stderr is unchanged
+    level: ""                        # lowest level exported over OTLP; "" follows log.level

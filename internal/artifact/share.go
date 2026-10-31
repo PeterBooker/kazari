@@ -83,7 +83,12 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) error
 // Options.MaxShareLinkTTL; a longer ttl is ErrInvalidArgument). label is a
 // note such as who the link is for. It returns the link and its token,
 // which is never available again.
-func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration) (*ShareLink, string, error) {
+func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration) (_ *ShareLink, _ string, err error) {
+	ctx, span := s.span(ctx, "artifact.share_link.create", slug)
+	defer func() {
+		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("create"))
+		endSpan(span, err)
+	}()
 	if ttl > s.opts.MaxShareLinkTTL {
 		return nil, "", Errorf(ErrInvalidArgument, "a share link may live at most %s", formatTTL(s.opts.MaxShareLinkTTL))
 	}
@@ -119,7 +124,12 @@ func (s *Service) ListShareLinks(ctx context.Context, actor Actor, slug string) 
 
 // RevokeShareLink ends the link with prefix at once; browsers that opened
 // it lose access on their next request. Revoking twice is not an error.
-func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix string) error {
+func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix string) (err error) {
+	ctx, span := s.span(ctx, "artifact.share_link.revoke", slug)
+	defer func() {
+		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("revoke"))
+		endSpan(span, err)
+	}()
 	if err := s.shareable(ctx, actor, slug); err != nil {
 		return err
 	}
@@ -149,7 +159,9 @@ func (s *Service) CheckShareLink(ctx context.Context, slug, token string) (*Shar
 
 // OpenShareLink is CheckShareLink for a browser opening the link: it also
 // counts the use.
-func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (*ShareLink, error) {
+func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *ShareLink, err error) {
+	ctx, span := s.span(ctx, "artifact.share_link.open", slug)
+	defer func() { s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("open")); endSpan(span, err) }()
 	l, err := s.CheckShareLink(ctx, slug, token)
 	if err != nil {
 		return nil, err

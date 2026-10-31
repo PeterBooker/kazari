@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"net/http"
 	"net/url"
 	"strings"
@@ -93,6 +94,8 @@ func ReturnPath(p string) string {
 
 // serveSignIn starts a browser sign-in for an artifact host.
 func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.sign_in")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	q := r.URL.Query()
 	t, ok := s.target(q.Get("host"), q.Get("path"), q.Get("nonce"))
@@ -176,6 +179,8 @@ func lifetime(d time.Duration) string {
 // form. Like the consent form, it must come from the form itself: an
 // attacker's page could otherwise sign a visitor in as the attacker.
 func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.sign_in")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	if !s.sameOrigin(r) {
 		s.message(w, http.StatusForbidden, "Request rejected",
@@ -200,6 +205,7 @@ func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.keys.Authenticate(ctx, strings.TrimSpace(f.Get("api_key")))
+	s.keySignIn(ctx, err)
 	if err != nil || !p.HasScope(auth.ScopeRead) {
 		if err != nil && !errors.Is(err, auth.ErrInvalidToken) {
 			s.log.ErrorContext(ctx, "oauth: authenticate api key", "err", err)
@@ -218,6 +224,8 @@ func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
 
 // serveSignInCallback finishes a browser sign-in at the identity provider.
 func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.callback")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	q := r.URL.Query()
 	expired := func() {
@@ -263,6 +271,7 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.idp.Exchange(ctx, q.Get("code"), req.Nonce, req.UpstreamVerifier)
 	if err != nil {
+		s.signedIn(ctx, viaOIDC, signInFailed)
 		s.log.WarnContext(ctx, "oauth: identity provider exchange", "err", err)
 		s.message(w, http.StatusBadGateway, "Sign-in failed",
 			"The identity provider's response could not be verified. Open the page you wanted again.", "")
@@ -271,6 +280,7 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 	u, err := s.users.ResolveIdentity(ctx, id)
 	if errors.Is(err, user.ErrNotProvisioned) || errors.Is(err, user.ErrDisabled) {
 		s.log.InfoContext(ctx, "oauth: identity not admitted", "issuer", id.Issuer, "subject", id.Subject, "email", id.Email, "err", err)
+		s.signedIn(ctx, viaOIDC, signInNotAdmitted)
 		s.message(w, http.StatusForbidden, "No access",
 			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", id.Email)
 		return
@@ -280,6 +290,7 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
 		return
 	}
+	s.signedIn(ctx, viaOIDC, signInOK)
 	sess, err := s.startSession(ctx, w, u.Handle, "")
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
@@ -393,7 +404,9 @@ func (s *Service) sendToHost(w http.ResponseWriter, r *http.Request, sess *Sessi
 // malformed nonce never matches: a code made for the S256 of "" would
 // otherwise sign in any browser that has no nonce cookie, as whoever made
 // it.
-func (s *Service) Redeem(ctx context.Context, code, host, nonce string) (View, error) {
+func (s *Service) Redeem(ctx context.Context, code, host, nonce string) (_ View, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "oauth.redeem")
+	defer func() { instrument.End(span, err, redeemCode(err)) }()
 	if len(code) != tokenLen {
 		return View{}, ErrNotFound
 	}
@@ -475,4 +488,13 @@ func (s *Service) viewSession(ctx context.Context, host, token string) (*ViewSes
 		return nil, ErrNotFound
 	}
 	return v, nil
+}
+
+// redeemCode keeps an unknown or expired code, a stale browser tab, out of
+// the internal errors.
+func redeemCode(err error) string {
+	if errors.Is(err, ErrNotFound) {
+		return "not_found"
+	}
+	return ""
 }

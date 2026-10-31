@@ -45,7 +45,7 @@ func (c *clock) Advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-func testConfig(t *testing.T) config.Config {
+func testConfig(t testing.TB) config.Config {
 	t.Helper()
 	cfg := config.Default()
 	cfg.BaseDomain = "localhost"
@@ -74,11 +74,18 @@ type instance struct {
 	done  chan error
 }
 
-func start(t *testing.T, cfg config.Config) *instance {
+func start(t testing.TB, cfg config.Config) *instance {
+	t.Helper()
+	return startWith(t, cfg, app.Options{})
+}
+
+// startWith runs the app with opts, its clock and logger filled in.
+func startWith(t testing.TB, cfg config.Config, opts app.Options) *instance {
 	t.Helper()
 	clk := &clock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 	ctx, cancel := context.WithCancel(context.Background())
-	a, err := app.New(ctx, cfg, app.Options{Now: clk.Now, Logger: testLogger()})
+	opts.Now, opts.Logger = clk.Now, testLogger()
+	a, err := app.New(ctx, cfg, opts)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -181,7 +188,7 @@ func truncate(s string) string {
 	return s
 }
 
-func bundle(t *testing.T, files map[string]string) *bytes.Buffer {
+func bundle(t testing.TB, files map[string]string) *bytes.Buffer {
 	t.Helper()
 	dir := t.TempDir()
 	for name, content := range files {
@@ -397,7 +404,10 @@ func TestEndToEnd(t *testing.T) {
 
 	metrics := get(t, hc, "http://admin.localhost/metrics")
 	wantStatus(t, metrics, http.StatusOK, "metrics")
-	for _, want := range []string{"kazari_http_requests_total", `surface="site"`, `surface="mcp"`, `job="sweep"`} {
+	for _, want := range []string{
+		"http_server_request_duration_seconds_count", `kazari_surface="site"`, `kazari_surface="mcp"`,
+		`http_route="/{path...}"`, `http_route="/.well-known/oauth-protected-resource"`, `kazari_job_name="sweep"`, "target_info{", "go_goroutine_count",
+	} {
 		if !strings.Contains(metrics.body, want) {
 			t.Errorf("metrics lack %s", want)
 		}

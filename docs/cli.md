@@ -121,6 +121,14 @@ kazari check --local
 
 Loads the configuration as `serve` would, then checks what the first start depends on: that the data directory is writable, that the base domain, `api.` and a random subdomain resolve to this host, that the DNS provider token can write and remove a TXT record in the zone, that the listener ports are free, and whether a server is listening on the admin socket. It exits with status 2 for an invalid configuration, 1 if a check failed and 0 otherwise.
 
+With an OpenTelemetry endpoint set ([`telemetry.otlp`](configuration.md#telemetryotlp), or `OTEL_EXPORTER_OTLP_ENDPOINT`), it also sends one record of each signal that exports: a span and a log record named `kazari check`, and a gauge `kazari.check`. That tests the protocol, the path, TLS and the headers in one go:
+
+```text
+telemetry    ok    http/protobuf https://otlp.example.com/otlp: traces, metrics accepted
+```
+
+A refusal names what to fix: `401` and `403` point at `telemetry.otlp.headers`, a refused connection or a certificate error at the endpoint and `ca_file`. The test records stay in the backend like any other. `check` also warns when `/metrics` is not served on the public admin host because `telemetry.metrics.token` is empty.
+
 To check a server's setup, run it on the server:
 
 ```sh

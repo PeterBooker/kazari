@@ -3,6 +3,8 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,7 +18,7 @@ var userT0 = time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)
 
 func userTestStore(t *testing.T) *UserStore {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,5 +362,29 @@ func TestUserStoreIdentities(t *testing.T) {
 	}
 	if _, err := s.GetIdentity(ctx, first.Issuer, first.Subject); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("GetIdentity after unlink = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUserStoreCountUsers(t *testing.T) {
+	s := userTestStore(t)
+	ctx := context.Background()
+	userMustCreate(t, s, "ann", "", user.RoleAdmin)
+	userMustCreate(t, s, "bob", "", user.RoleMember)
+	carol := userMustCreate(t, s, "carol", "", user.RoleMember)
+	disabled := userT0
+	carol.DisabledAt = &disabled
+	if err := s.UpdateUser(ctx, carol); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := s.CountUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, c := range counts {
+		got[fmt.Sprintf("%s/%v", c.Role, c.Disabled)] = c.Count
+	}
+	if want := map[string]int64{"admin/false": 1, "member/false": 1, "member/true": 1}; !maps.Equal(got, want) {
+		t.Errorf("CountUsers = %v, want %v", got, want)
 	}
 }

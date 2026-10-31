@@ -20,7 +20,7 @@ The documentation and guides are at <https://kazari.io/docs/>.
 - **Large bundles.** Inline JSON for small pages, `multipart` with a `tar.gz` bundle for sites, chunked uploads for MCP clients with no shell, and a one-time archive URL for agents with a shell but no key.
 - **Lifecycle.** Mark an artifact stale with a grace period. When the grace period lapses the artifact is soft-deleted, it is purged after the retention period, and its slug is freed after the tombstone period. Every step is reversible until the purge and lands in the audit log.
 - **Sign-in through your identity provider.** An OAuth 2.1 authorization server for MCP clients (PKCE, Dynamic Client Registration, Client ID Metadata Documents, refresh-token rotation) federates to one OpenID Connect provider: Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik and others. No passwords are stored, and API keys work everywhere too.
-- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start. SQLite and a blob directory are the only state. Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
+- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start. SQLite and a blob directory are the only state. OpenTelemetry traces, metrics and logs over OTLP, Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
 
 ## Quick start
 
@@ -142,22 +142,19 @@ go run honnef.co/go/tools/cmd/staticcheck@latest ./...  # lint
 
 ## Documentation
 
-The documentation, with guides for publishing with an agent and from code, is published at <https://kazari.io/docs/>. Its reference pages are the files in `docs/`. The decision records are only here, not on the website:
+The documentation, with guides for publishing with an agent and from code, is published at <https://kazari.io/docs/>. Its reference pages are the files in `docs/`:
 
 | Page                                         | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |
 | [Installing Kazari](docs/install.md)         | Compose, packages, the binary, the preflight check, the first user |
 | [DNS and certificates](docs/certificates.md) | DNS records, DNS-01 providers, other providers, proxy examples |
 | [Configuration](docs/configuration.md)       | YAML keys, `${}` references, dotenv files, overrides, validation |
-| [Operating Kazari](docs/ops.md)              | Data layout, backup, upgrades, logs, metrics, jobs, abuse      |
+| [Operating Kazari](docs/ops.md)              | Data layout, backup, upgrades, logs, metrics, tracing, jobs, abuse |
 | [REST API](docs/api.md)                      | REST reference for the user and admin APIs                     |
 | [MCP server](docs/mcp.md)                    | MCP tools, resources, prompt and chunked uploads               |
 | [CLI](docs/cli.md)                           | The `kazari` server and client commands                        |
 | [Identity and sign-in](docs/identity.md)     | OAuth, OpenID Connect providers and user provisioning          |
 | [Developing Kazari](docs/development.md)     | Running from source, tests, releases, the website              |
->>>
-
-| [Decision records](docs/adr/)                | Architecture decision records                                  |
 
 ## Status
 

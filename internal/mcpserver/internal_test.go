@@ -1,9 +1,21 @@
 package mcpserver
 
 import (
+	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/present"
 )
 
 func TestParseGrace(t *testing.T) {
@@ -87,5 +99,55 @@ func TestDecode(t *testing.T) {
 	}
 	if _, err := decode("p", "x", "hex"); err == nil {
 		t.Errorf("decode with encoding hex: no error")
+	}
+}
+
+func TestObserverBoundsMethods(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	o := newObserver(instrument.Providers{MeterProvider: mp}, []string{"get_artifact"})
+	handler := o.middleware(auth.Principal{Source: auth.SourceAPIKey})(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return nil, &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "no such method"}
+	})
+	for i := range 50 {
+		_, _ = handler(context.Background(), fmt.Sprintf("invented/method-%d", i), &mcp.ListToolsRequest{})
+	}
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	series := 0
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.server.operation.duration" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+				series++
+				name, _ := dp.Attributes.Value("mcp.method.name")
+				status, _ := dp.Attributes.Value("rpc.response.status_code")
+				_, hasErr := dp.Attributes.Value("error.type")
+				if name.AsString() != "_OTHER" || status.AsString() != "-32601" || hasErr || dp.Count != 50 {
+					t.Errorf("point = %v count %d", dp.Attributes.ToSlice(), dp.Count)
+				}
+			}
+		}
+	}
+	if series != 1 {
+		t.Errorf("series = %d, want 1", series)
+	}
+}
+
+func TestToolNames(t *testing.T) {
+	for _, fetch := range []bool{true, false} {
+		names := toolNames(newTexts(present.Links{URL: func(string) string { return "" }}, Options{Fetch: fetch}.withDefaults(Deps{})), Options{Fetch: fetch})
+		want := 19
+		if !fetch {
+			want = 18
+		}
+		if len(names) != want || slices.Contains(names, "import_page") != fetch {
+			t.Errorf("fetch %v: %d names %v", fetch, len(names), names)
+		}
 	}
 }

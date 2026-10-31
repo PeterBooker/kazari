@@ -29,6 +29,8 @@ const (
 var pkceValue = regexp.MustCompile(`^[A-Za-z0-9._~-]{43,128}$`)
 
 func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.authorize")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	q := r.URL.Query()
 
@@ -242,6 +244,8 @@ func (s *Service) pendingRequest(w http.ResponseWriter, r *http.Request) (*Reque
 }
 
 func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.callback")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	if s.idp == nil {
 		s.message(w, http.StatusNotFound, "Not found", "No identity provider is configured.", "")
@@ -281,6 +285,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.idp.Exchange(ctx, q.Get("code"), req.Nonce, req.UpstreamVerifier)
 	if err != nil {
+		s.signedIn(ctx, viaOIDC, signInFailed)
 		s.log.WarnContext(ctx, "oauth: identity provider exchange", "err", err)
 		s.message(w, http.StatusBadGateway, "Sign-in failed",
 			"The identity provider's response could not be verified. Start again from your application.", "")
@@ -289,6 +294,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	u, err := s.users.ResolveIdentity(ctx, id)
 	if errors.Is(err, user.ErrNotProvisioned) || errors.Is(err, user.ErrDisabled) {
 		s.log.InfoContext(ctx, "oauth: identity not admitted", "issuer", id.Issuer, "subject", id.Subject, "email", id.Email, "err", err)
+		s.signedIn(ctx, viaOIDC, signInNotAdmitted)
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
 		s.message(w, http.StatusForbidden, "No access",
@@ -300,6 +306,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
 		return
 	}
+	s.signedIn(ctx, viaOIDC, signInOK)
 	if err := s.store.BindRequest(ctx, req.ID, u.Handle); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			s.message(w, http.StatusBadRequest, "Sign-in already used",
@@ -363,6 +370,8 @@ func (s *Service) sameOrigin(r *http.Request) bool {
 }
 
 func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.consent")
+	defer endHandle(span, out)
 	ctx := r.Context()
 	if !s.sameOrigin(r) {
 		s.message(w, http.StatusForbidden, "Request rejected",
@@ -480,6 +489,7 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		return approval{}, false
 	}
 	p, err := s.keys.Authenticate(ctx, strings.TrimSpace(r.PostForm.Get("api_key")))
+	s.keySignIn(ctx, err)
 	if err != nil {
 		if !errors.Is(err, auth.ErrInvalidToken) {
 			s.log.ErrorContext(ctx, "oauth: authenticate api key", "err", err)

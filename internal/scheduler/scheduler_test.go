@@ -5,10 +5,19 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 var fixed = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -267,5 +276,112 @@ func TestJitterBounds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestJobDuration(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	s := New(Options{Logger: slog.New(slog.DiscardHandler), Telemetry: instrument.Providers{MeterProvider: mp}},
+		Job{Name: "sweep", Run: func(context.Context) error { return nil }},
+		Job{Name: "gc", Run: func(context.Context) error { return errors.New("disk full") }},
+	)
+	for _, name := range []string{"sweep", "sweep", "gc"} {
+		_ = s.Trigger(context.Background(), name)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]uint64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.job.duration" || m.Unit != "s" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+				name, _ := dp.Attributes.Value("kazari.job.name")
+				errType, _ := dp.Attributes.Value("error.type")
+				got[name.AsString()+"/"+errType.AsString()] = dp.Count
+			}
+		}
+	}
+	want := map[string]uint64{"sweep/": 2, "gc/_OTHER": 1}
+	if !maps.Equal(got, want) {
+		t.Errorf("runs = %v, want %v", got, want)
+	}
+}
+
+func TestJobSpans(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	defer tp.Shutdown(context.Background())
+	s := New(Options{Logger: slog.New(slog.DiscardHandler), Telemetry: instrument.Providers{TracerProvider: tp}},
+		Job{Name: "sweep", Run: func(context.Context) error { return nil }},
+		Job{Name: "gc", Run: func(context.Context) error { return errors.New("disk full") }},
+	)
+	_ = s.Trigger(context.Background(), "sweep")
+	ctx, parent := tp.Tracer("test").Start(context.Background(), "POST /v1/jobs/{name}/run")
+	_ = s.Trigger(ctx, "gc")
+	parent.End()
+
+	byName := map[string]sdktrace.ReadOnlySpan{}
+	for _, sp := range rec.Ended() {
+		byName[sp.Name()] = sp
+	}
+	if sp := byName["job sweep"]; sp == nil || sp.Parent().IsValid() || sp.Status().Code == codes.Error {
+		t.Errorf("job sweep = %v, want a successful root span", sp)
+	}
+	gc := byName["job gc"]
+	if gc == nil || gc.Parent().SpanID() != parent.SpanContext().SpanID() || gc.Status().Code != codes.Error {
+		t.Fatalf("job gc = %v, want a failed child of the request", gc)
+	}
+	attrs := map[string]string{}
+	for _, kv := range gc.Attributes() {
+		attrs[string(kv.Key)] = kv.Value.String()
+	}
+	if attrs["kazari.job.name"] != "gc" || attrs["error.type"] != "internal" {
+		t.Errorf("attributes = %v", attrs)
+	}
+}
+
+func TestLastSuccess(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	fail := false
+	opts := testOptions()
+	opts.Telemetry = instrument.Providers{MeterProvider: mp}
+	s := New(opts, Job{Name: "gc", Run: func(context.Context) error {
+		if fail {
+			return errors.New("disk full")
+		}
+		return nil
+	}}, Job{Name: "never", Run: func(context.Context) error { return errors.New("no") }})
+	_ = s.Trigger(context.Background(), "gc")
+	fail = true
+	_ = s.Trigger(context.Background(), "gc")
+	_ = s.Trigger(context.Background(), "never")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.job.last_success.timestamp" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Gauge[float64]).DataPoints {
+				name, _ := dp.Attributes.Value("kazari.job.name")
+				got[name.AsString()] = dp.Value
+			}
+		}
+	}
+	if len(got) != 1 || got["gc"] != float64(fixed.Unix()) {
+		t.Errorf("last success = %v, want gc at %d and nothing for a job that never succeeded", got, fixed.Unix())
 	}
 }

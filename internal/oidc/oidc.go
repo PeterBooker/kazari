@@ -12,12 +12,19 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 
+	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
+
+const scope = "github.com/PeterBooker/kazari/internal/oidc"
 
 var DefaultScopes = []string{gooidc.ScopeOpenID, "email", "profile"}
 
@@ -47,6 +54,9 @@ type Config struct {
 	// InsecureSkipIssuerCheck accepts a discovery document and ID tokens of
 	// another issuer. For tests only.
 	InsecureSkipIssuerCheck bool
+	Telemetry               instrument.Providers
+	// Fetch records the requests to the provider; nil records nothing.
+	Fetch *fetch.Observer
 }
 
 // Provider is a discovered OpenID Connect provider.
@@ -55,11 +65,13 @@ type Provider struct {
 	oauth    oauth2.Config
 	verifier *gooidc.IDTokenVerifier
 	client   *http.Client
+	tracer   trace.Tracer
+	fetch    *fetch.Observer
 }
 
 // New discovers the provider; it fails when the discovery document names a
 // different issuer.
-func New(ctx context.Context, cfg Config) (*Provider, error) {
+func New(ctx context.Context, cfg Config) (_ *Provider, err error) {
 	switch {
 	case cfg.Issuer == "":
 		return nil, errors.New("oidc: issuer is required")
@@ -71,13 +83,21 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	if len(cfg.Scopes) == 0 {
 		cfg.Scopes = DefaultScopes
 	}
+	if cfg.HTTPClient == nil && cfg.Fetch != nil {
+		cfg.HTTPClient = &http.Client{Transport: cfg.Fetch.Transport(http.DefaultTransport)}
+	}
 	if cfg.HTTPClient != nil {
 		ctx = gooidc.ClientContext(ctx, cfg.HTTPClient)
 	}
 	if cfg.InsecureSkipIssuerCheck {
 		ctx = gooidc.InsecureIssuerURLContext(ctx, cfg.Issuer)
 	}
+	tracer := cfg.Telemetry.Tracer(scope)
+	ctx, span := instrument.StartChild(fetch.WithPurpose(ctx, fetch.PurposeOIDC), tracer, "oidc.discover")
+	defer func() { instrument.End(span, err, "") }()
+	start := time.Now()
 	p, err := gooidc.NewProvider(ctx, cfg.Issuer)
+	cfg.Fetch.Done(ctx, start, 0, errorType(err))
 	if err != nil {
 		return nil, fmt.Errorf("oidc: discover %s: %w", cfg.Issuer, err)
 	}
@@ -95,7 +115,18 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 			SkipIssuerCheck: cfg.InsecureSkipIssuerCheck,
 		}),
 		client: cfg.HTTPClient,
+		tracer: tracer,
+		fetch:  cfg.Fetch,
 	}, nil
+}
+
+// errorType is error.type of a failed request to the provider: the
+// libraries' errors carry no status, only whether it timed out.
+func errorType(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fetch.ErrorType(err)
 }
 
 // Issuer returns the configured issuer URL.
@@ -116,10 +147,12 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 	if code == "" {
 		return auth.Identity{}, errors.New("oidc: callback has no code")
 	}
+	ctx = fetch.WithPurpose(ctx, fetch.PurposeOIDC)
 	if p.client != nil {
 		ctx = context.WithValue(ctx, oauth2.HTTPClient, p.client)
+		ctx = gooidc.ClientContext(ctx, p.client)
 	}
-	tok, err := p.oauth.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier))
+	tok, err := p.exchange(ctx, code, codeVerifier)
 	if err != nil {
 		return auth.Identity{}, fmt.Errorf("oidc: exchange code: %w", err)
 	}
@@ -127,7 +160,7 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 	if !ok || raw == "" {
 		return auth.Identity{}, errors.New("oidc: token response has no id_token")
 	}
-	idt, err := p.verifier.Verify(ctx, raw)
+	idt, err := p.verify(ctx, raw)
 	if err != nil {
 		return auth.Identity{}, fmt.Errorf("oidc: verify id token: %w", err)
 	}
@@ -139,6 +172,23 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 		return auth.Identity{}, fmt.Errorf("oidc: id token claims: %w", err)
 	}
 	return p.identity(idt.Issuer, idt.Subject, c), nil
+}
+
+func (p *Provider) exchange(ctx context.Context, code, codeVerifier string) (_ *oauth2.Token, err error) {
+	ctx, span := instrument.StartChild(ctx, p.tracer, "oidc.exchange")
+	defer func() { instrument.End(span, err, "") }()
+	start := time.Now()
+	tok, err := p.oauth.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier))
+	p.fetch.Done(ctx, start, 0, errorType(err))
+	return tok, err
+}
+
+// verify checks the ID token; the keys it fetches, when not cached, show as
+// a client span below it.
+func (p *Provider) verify(ctx context.Context, raw string) (_ *gooidc.IDToken, err error) {
+	ctx, span := instrument.StartChild(ctx, p.tracer, "oidc.verify")
+	defer func() { instrument.End(span, err, api.CodeUnauthorized) }()
+	return p.verifier.Verify(ctx, raw)
 }
 
 type claims struct {

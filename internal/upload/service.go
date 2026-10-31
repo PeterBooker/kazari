@@ -9,6 +9,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,13 +55,16 @@ type Options struct {
 	TTL             time.Duration
 	MaxOpenPerOwner int
 	Now             func() time.Time
+	Telemetry       instrument.Providers
 }
 
 // Service stages chunked uploads on disk and records them in a Store.
 type Service struct {
-	store Store
-	opts  Options
-	locks keyedMutex
+	store  Store
+	opts   Options
+	locks  keyedMutex
+	tracer trace.Tracer
+	chunks metric.Int64Counter
 }
 
 // New returns a Service. The staging directory is created on first use.
@@ -83,7 +90,12 @@ func New(store Store, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Service{store: store, opts: opts}
+	meter := opts.Telemetry.Meter(scope)
+	s := &Service{store: store, opts: opts, tracer: opts.Telemetry.Tracer(scope),
+		chunks: instrument.Handle(meter.Int64Counter("kazari.upload.chunks",
+			metric.WithUnit("{chunk}"), metric.WithDescription("Chunks appended to uploads.")))}
+	s.observeOpen(meter)
+	return s
 }
 
 // MaxChunkBytes is the largest chunk AppendChunk accepts.
@@ -110,7 +122,9 @@ func (e *OffsetMismatchError) Unwrap() error { return artifact.ErrOffsetMismatch
 
 // Begin starts an upload for owner. MaxOpenPerOwner holds under concurrent
 // Begins: the store checks it in the insert's transaction.
-func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
+func (s *Service) Begin(ctx context.Context, owner string) (u *Upload, err error) {
+	ctx, span := s.span(ctx, "upload.begin", "")
+	defer func() { endBegin(span, u, err) }()
 	return s.begin(ctx, owner, nil)
 }
 
@@ -120,7 +134,9 @@ func (s *Service) Begin(ctx context.Context, owner string) (*Upload, error) {
 // hash. The digest is required, not optional, because the URL will pass
 // through a model's context and logs: bound to the bytes, it lets whoever
 // holds it stage nothing the owner does not already have.
-func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64) (*Upload, string, error) {
+func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64) (u *Upload, token string, err error) {
+	ctx, span := s.span(ctx, "upload.begin_archive", "")
+	defer func() { endBegin(span, u, err) }()
 	sum = strings.ToLower(sum)
 	if raw, err := hex.DecodeString(sum); err != nil || len(raw) != sha256.Size {
 		return nil, "", artifact.Errorf(artifact.ErrInvalidArgument, "archive_sha256 must be the hex SHA-256 of the archive")
@@ -131,8 +147,8 @@ func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int6
 	if size > s.opts.MaxTotalBytes {
 		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %d bytes", s.opts.MaxTotalBytes)
 	}
-	token := randomText(tokenBytes)
-	u, err := s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size})
+	token = randomText(tokenBytes)
+	u, err = s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size})
 	if err != nil {
 		return nil, "", err
 	}
@@ -173,7 +189,9 @@ func (s *Service) Get(ctx context.Context, owner, id string) (*Upload, error) {
 // acknowledged without writing; any other offset is an *OffsetMismatchError.
 // The first chunk of a path sets its content type, but every chunk's must
 // pass the publish's check, so nothing invalid is staged.
-func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offset int64, r io.Reader, contentType string) (StagedFile, error) {
+func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offset int64, r io.Reader, contentType string) (_ StagedFile, err error) {
+	ctx, span := s.span(ctx, "upload.append_chunk", id)
+	defer func() { s.chunk(ctx, err); endSpan(span, err) }()
 	if offset < 0 {
 		return StagedFile{}, artifact.Errorf(artifact.ErrInvalidArgument, "negative offset %d", offset)
 	}
@@ -266,7 +284,9 @@ func (s *Service) write(id string, f StagedFile, chunk []byte) error {
 // the publish runs changes nothing. An empty upload is
 // artifact.ErrInvalidArgument. Call cleanup after the publish succeeds or
 // fails: it closes the files and removes the upload.
-func (s *Service) Files(ctx context.Context, owner, id string) ([]artifact.FileInput, func() error, error) {
+func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.FileInput, _ func() error, err error) {
+	ctx, span := s.span(ctx, "upload.files", id)
+	defer func() { endSpan(span, err) }()
 	unlock := s.locks.lock(id)
 	defer unlock()
 	u, err := s.load(ctx, owner, id, false)
@@ -336,7 +356,9 @@ func (s *Service) openStaged(id string, f StagedFile) (*os.File, error) {
 }
 
 // Abort removes an upload of owner, expired or not.
-func (s *Service) Abort(ctx context.Context, owner, id string) error {
+func (s *Service) Abort(ctx context.Context, owner, id string) (err error) {
+	ctx, span := s.span(ctx, "upload.abort", id)
+	defer func() { endSpan(span, err) }()
 	unlock := s.locks.lock(id)
 	defer unlock()
 	if _, err := s.load(ctx, owner, id, true); err != nil {
@@ -354,7 +376,9 @@ func (s *Service) Archive(ctx context.Context, id, token string) (*Upload, error
 
 // RejectArchive counts a body that missed the digest and returns how many
 // more may be sent; at zero the upload is removed.
-func (s *Service) RejectArchive(ctx context.Context, id, token string) (int, error) {
+func (s *Service) RejectArchive(ctx context.Context, id, token string) (_ int, err error) {
+	ctx, span := s.span(ctx, "upload.reject_archive", id)
+	defer func() { endSpan(span, err) }()
 	unlock := s.locks.lock(id)
 	defer unlock()
 	if _, err := s.loadArchive(ctx, id, token); err != nil {
@@ -375,7 +399,9 @@ func (s *Service) RejectArchive(ctx context.Context, id, token string) (int, err
 // spends the token. Once the token is accepted, any failure removes the
 // upload: the digest already matched, so the same bytes would fail the
 // same way, and the owner has to begin again with a corrected archive.
-func (s *Service) ReceiveArchive(ctx context.Context, id, token string, files []artifact.FileInput) (*Upload, error) {
+func (s *Service) ReceiveArchive(ctx context.Context, id, token string, files []artifact.FileInput) (_ *Upload, err error) {
+	ctx, span := s.span(ctx, "upload.receive_archive", id)
+	defer func() { endSpan(span, err) }()
 	unlock := s.locks.lock(id)
 	defer unlock()
 	u, err := s.loadArchive(ctx, id, token)
@@ -462,7 +488,9 @@ func (s *Service) writeNew(id string, index int, r io.Reader, left int64) (int64
 
 // ExpireStale removes expired uploads and staging directories with no row
 // (left by a crash), returns how many and continues past errors.
-func (s *Service) ExpireStale(ctx context.Context) (int, error) {
+func (s *Service) ExpireStale(ctx context.Context) (n int, err error) {
+	ctx, span := s.span(ctx, "upload.expire_stale", "")
+	defer func() { span.SetAttributes(attribute.Int("kazari.upload.expired_count", n)); endSpan(span, err) }()
 	expired, err := s.store.ListExpired(ctx, s.opts.Now())
 	if err != nil {
 		return 0, fmt.Errorf("upload: expire: %w", err)

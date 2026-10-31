@@ -3,10 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -115,5 +117,29 @@ func TestServeConfigErrors(t *testing.T) {
 	r = runCLI(t, nil, "serve", "--local", "--config", "x")
 	if r.code != 2 || !strings.Contains(r.stderr, "--local") {
 		t.Errorf("--local with --config: %+v", r)
+	}
+}
+
+func TestJournald(t *testing.T) {
+	f, err := os.Create(filepath.Join(t.TempDir(), "stream"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	stream := fmt.Sprintf("%d:%d", st.Dev, st.Ino)
+
+	if !journald(stream, f) {
+		t.Error("stderr is the stream JOURNAL_STREAM names, but journald = false")
+	}
+	if journald(fmt.Sprintf("%d:%d", st.Dev, st.Ino+1), f) {
+		t.Error("journald = true for another inode, as after a redirect")
+	}
+	if journald("", f) || journald(stream, &bytes.Buffer{}) {
+		t.Error("journald = true without JOURNAL_STREAM or without a file")
 	}
 }
