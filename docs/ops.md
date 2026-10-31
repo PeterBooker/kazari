@@ -225,6 +225,10 @@ To check the export, open a page and an API route, then search the backend for t
 
 Every request gets a server span named after its method and route, such as `GET /v1/artifacts/{slug}` or `GET /{path...}` for an artifact's files. The span carries the status code, the route, the surface (`kazari.surface`), the request id and, on the control plane, the credential type and OAuth client. Scheduled jobs get a span named `job <name>`, and startup a `kazari.start` span with the database migration and OIDC discovery under it.
 
+On `mcp.`, each JSON-RPC method gets its own span under the request's, named as the MCP semantic conventions do: `tools/call create_artifact` for a tool call, or the method alone, such as `tools/list` or `resources/read`. A tool span carries the tool, the negotiated protocol version, the sizes of the arguments and the result, and the outcome: a tool that failed is `error.type=tool_error` with Kazari's error code in `kazari.error.code`; one that asked the user for confirmation has a `kazari.mcp.input_request` event. Tool arguments and results themselves are never recorded.
+
+An MCP client can also pass `traceparent` in a request's `params._meta`. The tool span then joins that trace, with a link to the HTTP request's span.
+
 A server error (`5xx`) marks the span as failed, with `error.type` set to Kazari's error code. A panic adds an `exception` event. Requests for `/health`, `/v1/health` and `/metrics` are counted but not traced.
 
 ### Sampling
