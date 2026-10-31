@@ -96,6 +96,23 @@ func TestStartAndRequestSpans(t *testing.T) {
 	}
 }
 
+// The archive route takes no bearer, so it is served outside the mux that
+// reports every other API route.
+func TestArchiveUploadSpanHasRoute(t *testing.T) {
+	a, sink, stop := startTraced(t)
+	resp := do(t, client(a.Addrs().HTTP), http.MethodPut, "http://api.localhost/v1/uploads/unknown/archive?token=unknown", "", "")
+	wantStatus(t, resp, http.StatusNotFound, "archive with an unknown token")
+	stop()
+
+	span, ok := spansByName(sink)["PUT /v1/uploads/{id}/archive"]
+	if !ok {
+		t.Fatalf("no server span for the archive route: %v", names(sink))
+	}
+	if got := stubAttrs(span)["http.route"]; got != "/v1/uploads/{id}/archive" {
+		t.Errorf("http.route = %q, want /v1/uploads/{id}/archive", got)
+	}
+}
+
 func names(sink spanSink) []string {
 	var out []string
 	for _, s := range sink.GetSpans() {

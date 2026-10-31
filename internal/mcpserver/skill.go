@@ -92,11 +92,16 @@ func (t texts) skillText(o Options) string {
 			"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.",
 		"**On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. " +
 			"Never resend a failed edit unchanged.",
-		fmt.Sprintf("**Large content** (any file, or all files together, above %s): `begin_upload`, then `upload_chunk` for each "+
-			"file with `offset: 0` first and the `bytes_received` of the previous chunk after that, then `create_artifact` "+
-			"or `update_artifact` with `upload_id`. Inline `files` in that call are merged with the staged ones and win on a "+
-			"path clash, and the call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you "+
-			"no longer need.", size(o.InlineGuidanceBytes)),
+		fmt.Sprintf("**Large content** (any file, or all files together, above %s): `begin_upload`, stage the files, then "+
+			"`create_artifact` or `update_artifact` with `upload_id`. Without a shell, stage with `upload_chunk` for each "+
+			"file, `offset: 0` first and the `bytes_received` of the previous chunk after that. With a shell, archive the "+
+			"files from inside the page's directory (`zip -r ../site.zip .` or `tar czf ../site.tar.gz .`, so paths start "+
+			"at the page root), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
+			"(`wc -c < site.zip`), and send it with `curl --fail-with-body -T site.zip '<archive_url>'`: the URL needs no "+
+			"credential, accepts only that digest and is spent by the first body that matches; the archive may be at most "+
+			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
+			"call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you no longer need.",
+			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists every version's paths and hashes), `read_file` (text " +
 			"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
@@ -324,6 +329,8 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeQuotaExceeded:  "The owner's storage quota is full. Tell the user: deleting old artifacts or a larger quota from an admin frees space.",
 		api.CodeUploadNotFound: "The upload expired or was used by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
+		api.CodeDigestMismatch: "The body sent to archive_url is not the archive begin_upload was told about: check its size " +
+			"(wc -c) and sha256sum, then send that file; once the attempts are used up, begin a new upload.",
 		api.CodeTooManyUploads: "Discard the open uploads you no longer need with discard_upload (their ids came from " +
 			"begin_upload), then begin a new one; unused uploads also expire on their own.",
 		api.CodeLinkNotFound: "Call list_share_links: it lists the prefixes of the artifact's share links.",

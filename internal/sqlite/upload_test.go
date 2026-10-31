@@ -282,3 +282,63 @@ func TestUploadStoreCreateLimit(t *testing.T) {
 		t.Fatalf("%d concurrent creates succeeded, %d open (%v); want %d", wins, n, err, limit)
 	}
 }
+
+func TestUploadStoreArchive(t *testing.T) {
+	ctx := context.Background()
+	s := uploadTestStore(t, "alice")
+	want := uploadAt("u1", "alice", uploadT0.Add(time.Hour))
+	want.Archive = &upload.Archive{TokenHash: "hash", SHA256: "digest", Bytes: 42}
+	if err := s.Create(ctx, want, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Get (-want +got):\n%s", diff)
+	}
+
+	for i := 1; i <= 2; i++ {
+		if n, err := s.CountArchiveAttempt(ctx, "u1"); err != nil || n != i {
+			t.Fatalf("CountArchiveAttempt = %d, %v; want %d, nil", n, err, i)
+		}
+	}
+	if _, err := s.CountArchiveAttempt(ctx, "nope"); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("unknown upload: err = %v, want ErrUploadNotFound", err)
+	}
+
+	files := []upload.StagedFile{{Path: "a", StagingIndex: 0, Bytes: 1}, {Path: "b", StagingIndex: 1, Bytes: 2}}
+	at := uploadT0.Add(time.Minute)
+	if err := s.ReceiveArchive(ctx, "u1", files, 3, at); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Get(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.Bytes, want.Files = 3, files
+	want.Archive.Attempts, want.Archive.ReceivedAt = 2, at
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Get after receive (-want +got):\n%s", diff)
+	}
+	if err := s.ReceiveArchive(ctx, "u1", nil, 3, at); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("second receive: err = %v, want ErrUploadNotFound", err)
+	}
+
+	plain := uploadAt("u2", "alice", uploadT0.Add(time.Hour))
+	if err := s.Create(ctx, plain, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReceiveArchive(ctx, "u2", nil, 0, at); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("chunked upload: err = %v, want ErrUploadNotFound", err)
+	}
+
+	expired, err := s.ListExpired(ctx, uploadT0.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired) != 2 || expired[0].Archive == nil || !expired[0].Archive.ReceivedAt.Equal(at) || expired[1].Archive != nil {
+		t.Errorf("ListExpired = %+v", expired)
+	}
+}

@@ -105,8 +105,12 @@ func editFileSchema() *jsonschema.Schema {
 	return s
 }
 
-// BeginUploadInput is the (empty) input of begin_upload.
-type BeginUploadInput struct{}
+// BeginUploadInput is the input of begin_upload. Without the archive fields
+// the upload takes chunks; with both it also takes one archive at archive_url.
+type BeginUploadInput struct {
+	ArchiveSHA256 string `json:"archive_sha256,omitempty" jsonschema:"hex SHA-256 of the zip or tar.gz you will PUT to archive_url; with archive_bytes, asks for that URL"`
+	ArchiveBytes  int64  `json:"archive_bytes,omitempty" jsonschema:"size of that archive in bytes"`
+}
 
 // ChunkInput is the input of upload_chunk.
 type ChunkInput struct {
@@ -426,8 +430,19 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			return res, editLine(res), nil
 		})
 
-	register(b, s, p, &mcp.Tool{Name: "begin_upload", Annotations: annotations("Begin chunked upload", false, false, false)},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, _ BeginUploadInput) (api.Upload, string, error) {
+	register(b, s, p, &mcp.Tool{Name: "begin_upload", Annotations: annotations("Begin upload", false, false, false)},
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in BeginUploadInput) (api.Upload, string, error) {
+			if in.ArchiveSHA256 != "" || in.ArchiveBytes != 0 {
+				u, token, err := b.d.Uploads.BeginArchive(ctx, p.Handle, in.ArchiveSHA256, in.ArchiveBytes)
+				if err != nil {
+					return api.Upload{}, "", err
+				}
+				out := present.Upload(u, b.o.MaxChunkBytes, b.o.MaxTotalBytes)
+				out.ArchiveURL = present.ArchiveURL(b.o.APIBaseURL, u.ID, token)
+				return out, fmt.Sprintf("Upload %s open until %s. Send the archive with: curl --fail-with-body -T <archive> '%s' "+
+					"(no credential needed), then call create_artifact or update_artifact with upload_id.",
+					out.UploadID, out.ExpiresAt.Format(time.RFC3339), out.ArchiveURL), nil
+			}
 			u, err := b.d.Uploads.Begin(ctx, p.Handle)
 			if err != nil {
 				return api.Upload{}, "", err

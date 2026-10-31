@@ -2,16 +2,20 @@ package httpapi
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 )
@@ -227,5 +231,123 @@ func TestRemoveStaleSpills(t *testing.T) {
 	}
 	if n, err := RemoveStaleSpills(filepath.Join(dir, "missing"), cutoff); err != nil || n != 0 {
 		t.Fatalf("missing directory: %d, %v", n, err)
+	}
+}
+
+// A header may declare more than the body carries: archive/tar fills a sparse
+// entry's holes itself, and a truncated stream stops early. Either way the
+// declared size is refused before anything is copied.
+func TestReadBundleChargesDeclaredSize(t *testing.T) {
+	const limit = 64 << 10
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	if err := tw.WriteHeader(&tar.Header{Name: "index.html", Typeflag: tar.TypeReg, Mode: 0o644, Size: limit + 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readBundle(bytes.NewReader(buf.Bytes()), t.TempDir(), limit)
+	if !errors.Is(err, artifact.ErrTooLarge) {
+		t.Fatalf("readBundle err = %v, want too_large", err)
+	}
+}
+
+type zipFile struct {
+	name string
+	body string
+	mode os.FileMode // 0 means a regular file
+}
+
+func zipArchive(t *testing.T, files []zipFile) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range files {
+		hdr := &zip.FileHeader{Name: f.name, Method: zip.Deflate}
+		if f.mode != 0 {
+			hdr.SetMode(f.mode)
+		}
+		w, err := zw.CreateHeader(hdr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(f.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func readAllZip(t *testing.T, raw []byte, maxFiles int) (map[string]string, error) {
+	t.Helper()
+	files, err := readZip(bytes.NewReader(raw), int64(len(raw)), maxFiles)
+	if err != nil {
+		return nil, err
+	}
+	got := map[string]string{}
+	for _, f := range files {
+		b, err := io.ReadAll(f.Content)
+		if err != nil {
+			return nil, err
+		}
+		got[f.Path] = string(b)
+	}
+	return got, nil
+}
+
+func TestReadZip(t *testing.T) {
+	raw := zipArchive(t, []zipFile{
+		{name: "./index.html", body: "<h1>hi</h1>"},
+		{name: "assets/", mode: os.ModeDir | 0o755},
+		{name: "assets/app.js", body: "js"},
+		{name: "link", body: "index.html", mode: os.ModeSymlink | 0o777},
+		{name: "../escape", body: "kept for the path check"},
+	})
+	got, err := readAllZip(t, raw, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"index.html": "<h1>hi</h1>", "assets/app.js": "js", "../escape": "kept for the path check"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("readZip (-want +got):\n%s", diff)
+	}
+
+	if _, err := readAllZip(t, raw, 2); !errors.Is(err, artifact.ErrTooManyFiles) {
+		t.Errorf("maxFiles: err = %v, want too_many_files", err)
+	}
+	long := zipArchive(t, []zipFile{{name: strings.Repeat("n", artifact.PathMaxBytes+1), body: "x"}})
+	if _, err := readAllZip(t, long, 100); !errors.Is(err, artifact.ErrInvalidPath) {
+		t.Errorf("long name: err = %v, want invalid_path", err)
+	}
+	if _, err := readAllZip(t, []byte("PK not really a zip"), 100); !errors.Is(err, artifact.ErrInvalidArgument) {
+		t.Errorf("not a zip: err = %v, want invalid_argument", err)
+	}
+}
+
+// A corrupt entry surfaces when it is read, as the sender's fault.
+func TestReadZipCorruptEntry(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "a.txt", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "stored without compression"
+	if _, err := w.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := buf.Bytes()
+	raw[bytes.Index(raw, []byte(body))] ^= 0xff
+	_, err = readAllZip(t, raw, 100)
+	if !errors.Is(err, artifact.ErrInvalidArgument) || !strings.Contains(err.Error(), "a.txt") {
+		t.Fatalf("err = %v, want invalid_argument naming the entry", err)
 	}
 }

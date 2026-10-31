@@ -70,7 +70,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `import_page` | Copy a web page into a new artifact: its stylesheets, fonts and images fetched, its scripts removed ([Importing a page](#import_page)). |
 | `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. |
 | `edit_file` | Change one text file of the latest version with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
-| `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. |
+| `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. With `archive_sha256` and `archive_bytes`, also an `archive_url` for [an archive from a shell](#uploading-an-archive-from-a-shell). |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
 | `discard_upload` | Remove an upload you no longer need. |
 | `get_artifact` | The artifact record and its versions; `include_files` adds file lists. |
@@ -250,6 +250,20 @@ A chunk that ends exactly where the staged file ends is treated as a retry and a
 upload_offset_mismatch: ... (current=<n>: resend this path from offset <n>)
 ```
 
+## Uploading an archive from a shell
+
+An agent with a shell but no Kazari credential sends a whole site in one request instead of chunk by chunk. That is the case in a sandbox whose MCP connection is signed in while its shell is not, and whose files are too large to pass through tool calls:
+
+1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`.
+2. Call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` (`wc -c < site.zip`). The result carries `archive_url`.
+3. Send the archive with `curl --fail-with-body -T site.zip '<archive_url>'`. No credential is needed: the token in the URL stands for one.
+4. Call `create_artifact` or `update_artifact` with `upload_id`, as after chunks.
+
+The URL opens that one upload, accepts only a body with the declared digest and size, and is spent by the first body that matches. A URL that leaks from the conversation therefore grants the right to stage bytes the owner already has, once, and nothing else. A body that does not match fails with `upload_digest_mismatch`, and the message counts the attempts left; after three the upload is removed. A body that matches but is not a zip or gzip-compressed tar Kazari can stage removes the upload too, and the error says so. The archive may be at most `limits.max_version_bytes`; the [REST API](api.md#archive-uploads) documents the request and its errors.
+
+> [!NOTE]
+> The shell must reach `api.<base-domain>`. A sandbox with an egress allow-list needs that host on it; its MCP calls are not affected, so `begin_upload` succeeds while the `curl` fails. The tool description tells the agent to report that and fall back to chunks.
+
 ## Confirmation before a purge
 
 `delete_artifact` with `hard: true` cannot be undone, so the server asks the user first where the client allows it. Soft deletes ask nothing and are reversible with `update_artifact` and `restore: true` until the retention period ends.
@@ -340,6 +354,7 @@ The codes are:
 | `anchor_mismatch` | An anchor's line changed since the file was read, or is past its end. |
 | `too_large`, `too_many_files`, `quota_exceeded` | A file, version, chunk, upload or quota limit was hit. |
 | `upload_offset_mismatch` | Wrong chunk offset; the text carries `current=<n>`. |
+| `upload_digest_mismatch` | The body sent to `archive_url` is not the archive `begin_upload` was told about; the text counts the attempts left. |
 | `upload_not_found` | Unknown, expired, foreign or already consumed upload. |
 | `share_link_not_found` | The artifact has no share link with that prefix. |
 | `too_many_uploads` | Too many open uploads for this user; `discard_upload` frees one. |

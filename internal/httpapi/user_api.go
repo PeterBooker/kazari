@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -58,8 +59,11 @@ type UserOptions struct {
 	// IPRatePerMinute applies per client IP, before authentication. 0 means
 	// DefaultIPRatePerMinute; negative disables it.
 	IPRatePerMinute int
-	// TempDir holds spilled multipart bundles. Default: os.TempDir().
+	// TempDir holds spilled multipart bundles and archives. Default: os.TempDir().
 	TempDir string
+	// APIBaseURL is the REST root an upload's archive URL is built on, e.g.
+	// https://api.<base>/v1.
+	APIBaseURL string
 	// Now clocks the rate limiters. Default: time.Now.
 	Now func() time.Time
 	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
@@ -131,10 +135,21 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("GET /v1/me", h.guard("", false, h.me))
 	mux.Handle("GET /v1/me/keys", h.guard("", false, h.myKeys))
 
-	var handler http.Handler = jsonFallback(mux, &h.base)
-	handler = auth.RequireBearer(d.Auth, auth.Options{Telemetry: o.Telemetry})(handler)
-	handler = h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(handler)
-	return handler
+	var protected http.Handler = jsonFallback(mux, &h.base)
+	protected = auth.RequireBearer(d.Auth, auth.Options{Telemetry: o.Telemetry})(protected)
+	// Only a PUT of an archive passes without a bearer; a pattern with a
+	// method matches that method alone, so any other request for the path
+	// falls through to the protected handler and gets its 401.
+	open := http.NewServeMux()
+	receive := h.serve(h.receiveArchive)
+	open.HandleFunc("PUT /v1/uploads/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+		// jsonFallback reports the route of every request past the bearer
+		// check; this one never reaches it.
+		middleware.SetRoute(r.Context(), r.Pattern)
+		receive.ServeHTTP(w, r)
+	})
+	open.Handle("/", protected)
+	return h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(open)
 }
 
 func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
@@ -645,11 +660,25 @@ func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 	if h.d.Uploads == nil {
 		return invalid("chunked uploads are not enabled")
 	}
-	u, err := h.d.Uploads.Begin(r.Context(), p.Handle)
+	var req api.BeginUploadRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
+		return err
+	}
+	if req.ArchiveSHA256 == "" && req.ArchiveBytes == 0 {
+		u, err := h.d.Uploads.Begin(r.Context(), p.Handle)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusCreated, present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes))
+		return nil
+	}
+	u, token, err := h.d.Uploads.BeginArchive(r.Context(), p.Handle, req.ArchiveSHA256, req.ArchiveBytes)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusCreated, present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes))
+	out := present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes)
+	out.ArchiveURL = present.ArchiveURL(h.o.APIBaseURL, u.ID, token)
+	writeJSON(w, http.StatusCreated, out)
 	return nil
 }
 

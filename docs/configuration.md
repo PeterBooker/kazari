@@ -258,12 +258,12 @@ Sizes, counts and rates per version, user and credential:
 | `metadata_max_pairs`    | integer  | `64`    | Metadata key/value pairs per artifact.                                   |
 | `write_rate_per_minute` | integer  | `60`    | Write and delete requests per minute per credential.                     |
 | `default_user_quota`    | size     | `2GiB`  | Quota given to users created without one.                                |
-| `inline_guidance_bytes` | size     | `2MiB`  | Size above which a model should switch to chunked uploads. Advisory.     |
+| `inline_guidance_bytes` | size     | `2MiB`  | Size above which a model should switch to an upload. Advisory.           |
 | `max_chunk_bytes`       | size     | `4MiB`  | Largest chunk of a chunked upload, after base64 decoding on MCP.         |
-| `upload_ttl`            | duration | `1h`    | How long a chunked upload stays open before the `uploads-expire` job removes it. |
-| `max_open_uploads`      | integer  | `5`     | Open chunked uploads per user.                                           |
+| `upload_ttl`            | duration | `1h`    | How long an upload, and the archive URL of one, stays open before the `uploads-expire` job removes it. |
+| `max_open_uploads`      | integer  | `5`     | Open uploads per user.                                                   |
 
-`max_version_bytes` also bounds a request body and a bundle's decompressed tar stream, each with 1 MiB of headroom, and one chunked upload.
+`max_version_bytes` also bounds a request body and a bundle's decompressed tar stream, each with 1 MiB of headroom, one upload, and the archive sent to an upload's archive URL.
 
 `write_rate_per_minute` allows a burst of the same size. It is one budget across the user API and the MCP write tools. Beyond it, the API answers `429` and MCP returns a `rate_limited` error.
 
