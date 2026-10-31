@@ -161,3 +161,66 @@ func sweepAttrs(span trace.Span, r SweepReport) {
 		)
 	}
 }
+
+type census struct {
+	artifacts map[[2]string]int64
+	versions  Totals
+	blobs     Totals
+}
+
+// observeCensus reports the artifacts by status and visibility, the
+// versions and the blobs from one cached read. Every status and visibility
+// pair is reported, zero included, so a series drops to zero instead of
+// disappearing.
+func (s *Service) observeCensus(m metric.Meter) {
+	gauge := func(name, unit, desc string) metric.Int64ObservableUpDownCounter {
+		return instrument.Handle(m.Int64ObservableUpDownCounter(name, metric.WithUnit(unit), metric.WithDescription(desc)))
+	}
+	count := gauge("kazari.artifact.count", "{artifact}", "Artifacts by status and visibility.")
+	versions := gauge("kazari.artifact.version.count", "{version}", "Versions of every artifact.")
+	versionBytes := gauge("kazari.artifact.version.usage", "By", "Logical size of every version.")
+	blobs := gauge("kazari.blob.count", "{blob}", "Blobs stored.")
+	blobBytes := gauge("kazari.blob.usage", "By", "Size of the blobs stored.")
+
+	visibilities := []Visibility{Public, Unlisted, Members}
+	pairs := map[[2]string]metric.ObserveOption{}
+	for _, st := range Statuses {
+		for _, v := range visibilities {
+			pairs[[2]string{st, string(v)}] = metric.WithAttributes(
+				attribute.String("kazari.artifact.status", st), attribute.String("kazari.artifact.visibility", string(v)))
+		}
+	}
+	cache := instrument.NewCached(instrument.CensusTTL, instrument.CensusTimeout, s.opts.Now, s.census)
+	_ = instrument.Handle(m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		c, err := cache.Get(ctx)
+		if err != nil {
+			return err
+		}
+		for key, opt := range pairs {
+			o.ObserveInt64(count, c.artifacts[key], opt)
+		}
+		o.ObserveInt64(versions, c.versions.Count)
+		o.ObserveInt64(versionBytes, c.versions.Bytes)
+		o.ObserveInt64(blobs, c.blobs.Count)
+		o.ObserveInt64(blobBytes, c.blobs.Bytes)
+		return nil
+	}, count, versions, versionBytes, blobs, blobBytes))
+}
+
+func (s *Service) census(ctx context.Context) (census, error) {
+	counts, err := s.store.CountArtifacts(ctx)
+	if err != nil {
+		return census{}, err
+	}
+	c := census{artifacts: map[[2]string]int64{}}
+	for _, sc := range counts {
+		c.artifacts[[2]string{sc.Status, string(sc.Visibility)}] += sc.Count
+	}
+	if c.versions, err = s.store.VersionTotals(ctx); err != nil {
+		return census{}, err
+	}
+	if c.blobs, err = s.store.BlobTotals(ctx); err != nil {
+		return census{}, err
+	}
+	return c, nil
+}

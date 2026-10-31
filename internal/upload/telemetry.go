@@ -40,3 +40,19 @@ func (s *Service) chunk(ctx context.Context, err error) {
 	}
 	s.chunks.Add(ctx, 1, metric.WithAttributes(semconv.ErrorTypeKey.String(code)))
 }
+
+// observeOpen reports the open uploads, read from the store so the count is
+// right after a restart.
+func (s *Service) observeOpen(m metric.Meter) {
+	count := instrument.Handle(m.Int64ObservableUpDownCounter("kazari.upload.count",
+		metric.WithUnit("{upload}"), metric.WithDescription("Chunked uploads in progress.")))
+	cache := instrument.NewCached(instrument.CensusTTL, instrument.CensusTimeout, s.opts.Now, s.store.CountAll)
+	_ = instrument.Handle(m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		n, err := cache.Get(ctx)
+		if err != nil {
+			return err
+		}
+		o.ObserveInt64(count, n)
+		return nil
+	}, count))
+}

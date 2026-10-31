@@ -230,3 +230,12 @@ func uploadFiles(ctx context.Context, tx *sql.Tx, id string) ([]upload.StagedFil
 	}
 	return files, rows.Err()
 }
+
+func (s *UploadStore) CountAll(ctx context.Context) (n int64, err error) {
+	ctx, end := s.db.op(ctx, "UploadStore.CountAll")
+	defer end(&err)
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM upload`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("sqlite: count uploads: %w", err)
+	}
+	return n, nil
+}

@@ -131,3 +131,13 @@ func TestSelfSignedDefaultsAndRun(t *testing.T) {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 }
+
+func TestSelfSignedNotAfter(t *testing.T) {
+	s, err := NewSelfSigned("art.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.NotAfter(); got.Before(time.Now().Add(300 * 24 * time.Hour)) {
+		t.Errorf("NotAfter = %v, want about a year away", got)
+	}
+}

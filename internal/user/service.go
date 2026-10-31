@@ -90,7 +90,9 @@ func New(store Store, rec audit.Recorder, opts Options) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{store: store, audit: rec, opts: opts, now: now, tracer: opts.Telemetry.Tracer(scope), touched: map[string]time.Time{}}
+	s := &Service{store: store, audit: rec, opts: opts, now: now, tracer: opts.Telemetry.Tracer(scope), touched: map[string]time.Time{}}
+	s.observeUsers(opts.Telemetry.Meter(scope))
+	return s
 }
 
 // CreateUserRequest describes a new user.

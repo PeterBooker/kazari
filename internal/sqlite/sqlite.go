@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 
@@ -47,7 +48,7 @@ func Open(ctx context.Context, path string, o Options) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %s: %w", path, err)
 	}
-	db.SetMaxOpenConns(8)
+	db.SetMaxOpenConns(maxOpenConns)
 	db.SetMaxIdleConns(4)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
@@ -57,7 +58,30 @@ func Open(ctx context.Context, path string, o Options) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
+	observePool(o.Telemetry.Meter(scope), db)
 	return &DB{DB: db, tracer: o.Telemetry.Tracer(scope)}, nil
+}
+
+const maxOpenConns = 8
+
+// observePool reports the connection pool as the database client
+// conventions describe it, from sql.DBStats at each collection.
+func observePool(m metric.Meter, db *sql.DB) {
+	count := instrument.Handle(m.Int64ObservableUpDownCounter("db.client.connection.count",
+		metric.WithUnit("{connection}"), metric.WithDescription("The number of connections that are currently in state described by the state attribute.")))
+	limit := instrument.Handle(m.Int64ObservableUpDownCounter("db.client.connection.max",
+		metric.WithUnit("{connection}"), metric.WithDescription("The maximum number of open connections allowed.")))
+	pool := semconv.DBClientConnectionPoolName("kazari.db")
+	idle := metric.WithAttributes(pool, semconv.DBClientConnectionStateIdle)
+	used := metric.WithAttributes(pool, semconv.DBClientConnectionStateUsed)
+	poolOnly := metric.WithAttributes(pool)
+	_ = instrument.Handle(m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		st := db.Stats()
+		o.ObserveInt64(count, int64(st.Idle), idle)
+		o.ObserveInt64(count, int64(st.InUse), used)
+		o.ObserveInt64(limit, int64(st.MaxOpenConnections), poolOnly)
+		return nil
+	}, count, limit))
 }
 
 // op starts the span of the store method name ("ArtifactStore.Get") under a

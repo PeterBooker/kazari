@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -445,8 +446,22 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		if err != nil {
 			return err
 		}
+		observeExpiry(tel.Meter(scope), a.certs)
 	}
 	return nil
+}
+
+// observeExpiry reports when the served certificate expires, for an alert
+// well before a renewal that keeps failing runs out.
+func observeExpiry(m metric.Meter, src certs.Source) {
+	gauge := instrument.Handle(m.Float64ObservableGauge("kazari.certificate.expiry.timestamp",
+		metric.WithUnit("s"), metric.WithDescription("When the served certificate expires, in seconds since the Unix epoch.")))
+	_ = instrument.Handle(m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		if t := src.NotAfter(); !t.IsZero() {
+			o.ObserveFloat64(gauge, float64(t.UnixNano())/1e9)
+		}
+		return nil
+	}, gauge))
 }
 
 // viewCallback returns the gate's callback on an artifact host, where a

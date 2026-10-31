@@ -106,4 +106,13 @@ type Store interface {
 	LinkIdentity(ctx context.Context, handle string, id Identity) error
 	UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error
 	ListIdentities(ctx context.Context, handle string) ([]Identity, error)
+	// CountUsers counts users by role and whether they are disabled.
+	CountUsers(ctx context.Context) ([]Count, error)
+}
+
+// Count is how many users have a role and disabled state.
+type Count struct {
+	Role     Role
+	Disabled bool
+	Count    int64
 }

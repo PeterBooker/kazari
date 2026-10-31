@@ -76,12 +76,14 @@ type jobState struct {
 	spanName    string
 	okAttrs     metric.MeasurementOption
 	failedAttrs metric.MeasurementOption
+	nameAttr    metric.ObserveOption
 
-	mu      sync.Mutex
-	running bool
-	lastRun *time.Time
-	lastErr string
-	nextRun *time.Time
+	mu          sync.Mutex
+	running     bool
+	lastRun     *time.Time
+	lastSuccess *time.Time
+	lastErr     string
+	nextRun     *time.Time
 }
 
 // New returns a Scheduler for jobs; a later job replaces an earlier one of
@@ -119,8 +121,10 @@ func New(opts Options, jobs ...Job) *Scheduler {
 			spanName:    "job " + j.Name,
 			okAttrs:     metric.WithAttributeSet(attribute.NewSet(name)),
 			failedAttrs: metric.WithAttributeSet(attribute.NewSet(name, semconv.ErrorTypeKey.String(instrument.Other))),
+			nameAttr:    metric.WithAttributeSet(attribute.NewSet(name)),
 		}
 	}
+	s.observeLastSuccess(opts.Telemetry.Meter(scope))
 	return s
 }
 
@@ -223,6 +227,8 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.lastErr = ""
 	if err != nil {
 		st.lastErr = err.Error()
+	} else {
+		st.lastSuccess = &start
 	}
 	st.mu.Unlock()
 
@@ -272,4 +278,23 @@ func copyTime(t *time.Time) *time.Time {
 	}
 	c := *t
 	return &c
+}
+
+// observeLastSuccess reports when each job last succeeded, so an alert can
+// fire when that is older than a few intervals; a job that never succeeded
+// reports nothing.
+func (s *Scheduler) observeLastSuccess(m metric.Meter) {
+	gauge := instrument.Handle(m.Float64ObservableGauge("kazari.job.last_success.timestamp",
+		metric.WithUnit("s"), metric.WithDescription("When each job last succeeded, in seconds since the Unix epoch.")))
+	_ = instrument.Handle(m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		for _, st := range s.jobs {
+			st.mu.Lock()
+			last := st.lastSuccess
+			st.mu.Unlock()
+			if last != nil {
+				o.ObserveFloat64(gauge, float64(last.UnixNano())/1e9, st.nameAttr)
+			}
+		}
+		return nil
+	}, gauge))
 }

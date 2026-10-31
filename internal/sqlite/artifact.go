@@ -846,3 +846,55 @@ func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
 	return artifactErrOrNil("delete blob", err)
 }
+
+// artifactStatus applies the lifecycle's precedence, so each artifact has
+// exactly one status.
+const artifactStatus = `CASE
+	WHEN purged_at IS NOT NULL THEN 'purged'
+	WHEN deleted_at IS NOT NULL THEN 'deleted'
+	WHEN unpublished_at IS NOT NULL THEN 'unpublished'
+	WHEN stale_at IS NOT NULL THEN 'stale'
+	ELSE 'published'
+END`
+
+func (s *ArtifactStore) CountArtifacts(ctx context.Context) (_ []artifact.StatusCount, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.CountArtifacts")
+	defer end(&err)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+artifactStatus+`, visibility, COUNT(*) FROM artifact GROUP BY 1, 2`)
+	if err != nil {
+		return nil, artifactErr("count", err)
+	}
+	defer rows.Close()
+	var out []artifact.StatusCount
+	for rows.Next() {
+		var c artifact.StatusCount
+		if err := rows.Scan(&c.Status, &c.Visibility, &c.Count); err != nil {
+			return nil, artifactErr("count", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, artifactErr("count", err)
+	}
+	return out, nil
+}
+
+func (s *ArtifactStore) VersionTotals(ctx context.Context) (_ artifact.Totals, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.VersionTotals")
+	defer end(&err)
+	return s.totals(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM version`)
+}
+
+func (s *ArtifactStore) BlobTotals(ctx context.Context) (_ artifact.Totals, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.BlobTotals")
+	defer end(&err)
+	return s.totals(ctx, `SELECT COUNT(*), COALESCE(SUM(size), 0) FROM blob`)
+}
+
+func (s *ArtifactStore) totals(ctx context.Context, query string) (artifact.Totals, error) {
+	var t artifact.Totals
+	if err := s.db.QueryRowContext(ctx, query).Scan(&t.Count, &t.Bytes); err != nil {
+		return artifact.Totals{}, artifactErr("totals", err)
+	}
+	return t, nil
+}

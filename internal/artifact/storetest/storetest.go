@@ -52,6 +52,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"Blobs", testBlobs},
 		{"ShareLinks", testShareLinks},
 		{"ShareLinksFollowTheRow", testShareLinksFollowTheRow},
+		{"Census", testCensus},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1270,5 +1271,77 @@ func testShareLinksFollowTheRow(t *testing.T, h *harness) {
 	wantErr(t, "old link on the reused slug", err, artifact.ErrLinkNotFound)
 	if links, err := h.store.ListShareLinks(h.ctx, "demo"); err != nil || len(links) != 0 {
 		t.Fatalf("ListShareLinks on the reused slug = %v, %v; want none", links, err)
+	}
+}
+
+func testCensus(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	empty, err := h.store.CountArtifacts(h.ctx)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("CountArtifacts on an empty store = %v, %v", empty, err)
+	}
+	mk := func(slug string, vis artifact.Visibility, change func(a *artifact.Artifact)) {
+		t.Helper()
+		a := newArtifact(slug, "alice", at(0))
+		a.Visibility = vis
+		h.create(t, a, file("index.html", slug))
+		if change != nil {
+			change(a)
+			h.update(t, a, "alice")
+		}
+	}
+	mk("live", artifact.Public, nil)
+	mk("team", artifact.Members, nil)
+	mk("old", artifact.Public, func(a *artifact.Artifact) { a.StaleAt = ptr(at(time.Hour)) })
+	mk("hidden", artifact.Unlisted, func(a *artifact.Artifact) { a.UnpublishedAt = ptr(at(time.Hour)) })
+	mk("gone", artifact.Public, func(a *artifact.Artifact) {
+		a.StaleAt = ptr(at(time.Hour))
+		a.DeletedAt = ptr(at(2 * time.Hour))
+	})
+	mk("tomb", artifact.Public, nil)
+	if err := h.store.Purge(h.ctx, "tomb", at(3*time.Hour), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.store.CountArtifacts(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, c := range got {
+		counts[c.Status+"/"+string(c.Visibility)] += c.Count
+	}
+	want := map[string]int64{
+		"published/public":     1,
+		"published/members":    1,
+		"stale/public":         1,
+		"unpublished/unlisted": 1,
+		"deleted/public":       1,
+		"purged/public":        1,
+	}
+	if diff := cmp.Diff(want, counts); diff != "" {
+		t.Errorf("CountArtifacts (-want +got):\n%s", diff)
+	}
+
+	versions, err := h.store.VersionTotals(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The tombstone's version went with the purge.
+	if versions.Count != 5 || versions.Bytes != int64(len("live")+len("team")+len("old")+len("hidden")+len("gone")) {
+		t.Errorf("VersionTotals = %+v", versions)
+	}
+	if err := h.store.RecordBlob(h.ctx, hashOf("a"), 10, at(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.RecordBlob(h.ctx, hashOf("b"), 32, at(0)); err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := h.store.BlobTotals(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blobs.Count < 2 || blobs.Bytes < 42 {
+		t.Errorf("BlobTotals = %+v, want at least the two recorded blobs", blobs)
 	}
 }

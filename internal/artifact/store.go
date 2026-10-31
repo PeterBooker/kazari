@@ -107,4 +107,40 @@ type Store interface {
 	// UseShareLink counts one opening of the artifact's link with prefix
 	// and sets its last use to at. ErrLinkNotFound.
 	UseShareLink(ctx context.Context, slug, prefix string, at time.Time) error
+
+	// CountArtifacts counts every artifact, tombstones included, by Status
+	// and visibility.
+	CountArtifacts(ctx context.Context) ([]StatusCount, error)
+
+	// VersionTotals counts every version and sums their logical sizes.
+	VersionTotals(ctx context.Context) (Totals, error)
+
+	// BlobTotals counts the stored blobs and sums their sizes.
+	BlobTotals(ctx context.Context) (Totals, error)
+}
+
+// Statuses of an artifact, one each, in the order the lifecycle checks them:
+// a soft-deleted artifact that was stale counts as deleted.
+const (
+	StatusPurged      = "purged"
+	StatusDeleted     = "deleted"
+	StatusUnpublished = "unpublished"
+	StatusStale       = "stale"
+	StatusPublished   = "published"
+)
+
+// Statuses are every Status value.
+var Statuses = []string{StatusPurged, StatusDeleted, StatusUnpublished, StatusStale, StatusPublished}
+
+// StatusCount is how many artifacts have a status and visibility.
+type StatusCount struct {
+	Status     string
+	Visibility Visibility
+	Count      int64
+}
+
+// Totals is a count and a size in bytes.
+type Totals struct {
+	Count int64
+	Bytes int64
 }

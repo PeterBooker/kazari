@@ -80,9 +80,12 @@ func New(store Store, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Service{store: store, opts: opts, tracer: opts.Telemetry.Tracer(scope),
-		chunks: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.upload.chunks",
+	meter := opts.Telemetry.Meter(scope)
+	s := &Service{store: store, opts: opts, tracer: opts.Telemetry.Tracer(scope),
+		chunks: instrument.Handle(meter.Int64Counter("kazari.upload.chunks",
 			metric.WithUnit("{chunk}"), metric.WithDescription("Chunks appended to uploads.")))}
+	s.observeOpen(meter)
+	return s
 }
 
 // MaxChunkBytes is the largest chunk AppendChunk accepts.

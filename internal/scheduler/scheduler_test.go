@@ -346,3 +346,42 @@ func TestJobSpans(t *testing.T) {
 		t.Errorf("attributes = %v", attrs)
 	}
 }
+
+func TestLastSuccess(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	fail := false
+	opts := testOptions()
+	opts.Telemetry = instrument.Providers{MeterProvider: mp}
+	s := New(opts, Job{Name: "gc", Run: func(context.Context) error {
+		if fail {
+			return errors.New("disk full")
+		}
+		return nil
+	}}, Job{Name: "never", Run: func(context.Context) error { return errors.New("no") }})
+	_ = s.Trigger(context.Background(), "gc")
+	fail = true
+	_ = s.Trigger(context.Background(), "gc")
+	_ = s.Trigger(context.Background(), "never")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.job.last_success.timestamp" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Gauge[float64]).DataPoints {
+				name, _ := dp.Attributes.Value("kazari.job.name")
+				got[name.AsString()] = dp.Value
+			}
+		}
+	}
+	if len(got) != 1 || got["gc"] != float64(fixed.Unix()) {
+		t.Errorf("last success = %v, want gc at %d and nothing for a job that never succeeded", got, fixed.Unix())
+	}
+}

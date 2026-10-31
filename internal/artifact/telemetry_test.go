@@ -89,3 +89,52 @@ func TestArtifactMetrics(t *testing.T) {
 		t.Errorf("actions by surface = %v", surfaces)
 	}
 }
+
+func TestArtifactCensus(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	e := newEnv(t, artifact.Options{Telemetry: instrument.Providers{MeterProvider: mp}})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo", "index.html", "<h1>Hello</h1>")
+	if _, err := e.svc.MarkStale(e.ctx, alice, "old", 0); err == nil {
+		t.Fatal("MarkStale of a missing slug succeeded")
+	}
+	e.create(t, alice, "old", "index.html", "old")
+	if _, err := e.svc.MarkStale(e.ctx, alice, "old", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	totals := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				continue
+			}
+			for _, dp := range sum.DataPoints {
+				if m.Name == "kazari.artifact.count" {
+					st, _ := dp.Attributes.Value("kazari.artifact.status")
+					vis, _ := dp.Attributes.Value("kazari.artifact.visibility")
+					counts[st.AsString()+"/"+vis.AsString()] = dp.Value
+				} else {
+					totals[m.Name] = dp.Value
+				}
+			}
+		}
+	}
+	if len(counts) != 15 {
+		t.Errorf("artifact.count series = %d, want every status and visibility pair: %v", len(counts), counts)
+	}
+	if counts["published/public"] != 1 || counts["stale/public"] != 1 || counts["deleted/members"] != 0 {
+		t.Errorf("artifact.count = %v", counts)
+	}
+	if totals["kazari.artifact.version.count"] != 2 || totals["kazari.blob.count"] != 2 || totals["kazari.blob.usage"] == 0 {
+		t.Errorf("totals = %v", totals)
+	}
+}

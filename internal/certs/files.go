@@ -145,6 +145,9 @@ func (f *Files) statFiles() (fileStamp, error) {
 	}, nil
 }
 
+// NotAfter implements Source.
+func (f *Files) NotAfter() time.Time { return f.cert.Load().Leaf.NotAfter }
+
 // GetClientCertificate is GetCertificate for the client side of TLS. It
 // reloads changed files itself, so a client with no Run loop, such as a
 // telemetry exporter, still presents a rotated pair.

@@ -426,3 +426,25 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user
 	}
 	return ids, nil
 }
+
+func (s *UserStore) CountUsers(ctx context.Context) (_ []user.Count, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.CountUsers")
+	defer end(&err)
+	rows, err := s.db.QueryContext(ctx, `SELECT role, disabled_at IS NOT NULL, COUNT(*) FROM user GROUP BY 1, 2`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	defer rows.Close()
+	var out []user.Count
+	for rows.Next() {
+		var c user.Count
+		if err := rows.Scan(&c.Role, &c.Disabled, &c.Count); err != nil {
+			return nil, fmt.Errorf("sqlite: count users: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	return out, nil
+}

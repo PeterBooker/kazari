@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/caddyserver/certmagic"
 )
@@ -99,6 +100,19 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 // GetCertificate returns the managed certificate matching the handshake.
 func (a *ACME) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return a.magic.GetCertificate(hello)
+}
+
+// NotAfter implements Source.
+func (a *ACME) NotAfter() time.Time {
+	var earliest time.Time
+	for _, d := range a.domains {
+		for _, c := range a.cache.AllMatchingCertificates(d) {
+			if c.Leaf != nil && (earliest.IsZero() || c.Leaf.NotAfter.Before(earliest)) {
+				earliest = c.Leaf.NotAfter
+			}
+		}
+	}
+	return earliest
 }
 
 // Run manages the domains until ctx is done, then stops CertMagic's

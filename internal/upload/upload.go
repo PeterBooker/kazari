@@ -40,4 +40,6 @@ type Store interface {
 	Delete(ctx context.Context, id string) error
 	// ListExpired returns uploads with expires_at <= now.
 	ListExpired(ctx context.Context, now time.Time) ([]Upload, error)
+	// CountAll counts the uploads not yet published, aborted or removed.
+	CountAll(ctx context.Context) (int64, error)
 }

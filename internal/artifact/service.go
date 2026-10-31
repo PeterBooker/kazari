@@ -137,8 +137,11 @@ func New(store Store, blobs blob.Store, rec audit.Recorder, opts Options) *Servi
 	if rec == nil {
 		rec = audit.Nop{}
 	}
-	return &Service{store: store, blobs: blobs, rec: rec, opts: opts.withDefaults(),
-		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(opts.Telemetry.Meter(scope))}
+	meter := opts.Telemetry.Meter(scope)
+	s := &Service{store: store, blobs: blobs, rec: rec, opts: opts.withDefaults(),
+		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter)}
+	s.observeCensus(meter)
+	return s
 }
 
 func (s *Service) now() time.Time { return s.opts.Now().UTC() }
