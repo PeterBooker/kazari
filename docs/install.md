@@ -195,11 +195,13 @@ dns token    ok    cloudflare wrote and removed a TXT record in zone example.com
 ports        ok    :443 is free
 ports        ok    :80 is free
 admin socket ok    /var/lib/kazari/admin.sock (no server listening yet)
+metrics      warn  /metrics is not served on admin.art.example.com without telemetry.metrics.token; set it, or scrape admin.listen on a private address
+telemetry    skip  no OTLP endpoint is set; nothing is exported
 
-all checks passed
+all checks passed, 1 warning(s)
 ```
 
-The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, and a port is in use while Kazari runs. A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
+The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, a port is in use while Kazari runs, and the metrics warning only matters once Prometheus scrapes the instance ([metrics](ops.md#metrics)). A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
 
 ## Creating the first admin user and key
 

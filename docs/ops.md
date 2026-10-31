@@ -1,6 +1,6 @@
 # Operating Kazari
 
-Kazari keeps all its state in one directory and runs its own maintenance jobs. This page covers the data layout, backing up and restoring, upgrading, logs and metrics, the scheduled jobs and the page lifecycle, quotas, disabling users, responding to abuse, the audit log and troubleshooting. It assumes an instance set up as in the [installation guide](install.md).
+Kazari keeps all its state in one directory and runs its own maintenance jobs. This page covers the data layout, backing up and restoring, upgrading, logs, metrics and tracing, the scheduled jobs and the page lifecycle, quotas, disabling users, responding to abuse, the audit log and troubleshooting. It assumes an instance set up as in the [installation guide](install.md).
 
 ## Data layout
 
@@ -140,21 +140,76 @@ Set the result as `KAZARI_TELEMETRY_METRICS_TOKEN` in the dotenv file and restar
 
 ### Available metrics
 
-Kazari exports these metrics:
+Kazari exports the metrics below, under their Prometheus names. Over OTLP they keep the OpenTelemetry names, with dots: `http.server.request.duration`, `kazari.artifact.publishes` and so on. Every label comes from a fixed set, so a client cannot create new series; a value outside the set is `_OTHER`.
 
-| Metric                                   | Type      | Labels                                                                                                                                       |
-| ---------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `http_server_request_duration_seconds`   | histogram | `kazari_surface`, `http_request_method`, `http_response_status_code`, `http_route`, `url_scheme`, `network_protocol_version`, `error_type` |
-| `http_server_active_requests`            | gauge     | `kazari_surface`, `http_request_method`, `url_scheme`                                                                                        |
-| `http_server_response_body_size_bytes`   | histogram | As `http_server_request_duration_seconds`                                                                                                    |
-| `kazari_job_duration_seconds`            | histogram | `kazari_job_name`, `error_type`                                                                                                              |
-| `go_*`                                   | various   | The Go runtime: `go_memory_used_bytes`, `go_goroutine_count`, `go_schedule_duration_seconds` and others                                      |
-| `process_*`                              | various   | CPU, memory and file descriptors of the process                                                                                              |
-| `target_info`                            | gauge     | The service: `service_name`, `service_version`, `service_instance_id`, `host_name`                                                           |
+These describe requests on every surface:
 
-`kazari_surface` is `site` (artifact pages), `api`, `mcp`, `admin`, `apex` (the base domain itself) or `redirect` (the plain-HTTP listener that redirects to HTTPS). `http_route` is the route that matched, such as `/v1/artifacts/{slug}` or `/{path...}` for an artifact's files; it is absent when no route matched. `error_type` is set on failures only: the status code of a `5xx` response, or `_OTHER` for a failed job.
+| Metric                                  | Type      | Labels                                                                                                                              |
+| --------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `http_server_request_duration_seconds`  | histogram | `kazari_surface`, `http_request_method`, `http_response_status_code`, `http_route`, `url_scheme`, `network_protocol_version`, `error_type` |
+| `http_server_active_requests`           | gauge     | `kazari_surface`, `http_request_method`, `url_scheme`                                                                               |
+| `http_server_response_body_size_bytes`  | histogram | As `http_server_request_duration_seconds`; its sum is each surface's bandwidth                                                     |
+| `kazari_api_errors_total`               | counter   | `kazari_surface` (`api`, `admin`), `kazari_error_code`                                                                             |
+| `kazari_auth_requests_total`            | counter   | `kazari_surface`, `kazari_credential_type` (`api_key`, `oauth`, `admin_token`, `local`), `kazari_auth_result` (`ok`, `missing`, `invalid`, `forbidden`) |
+| `kazari_rate_limit_rejected_requests_total` | counter | `kazari_surface`, `kazari_rate_limit_scope` (`ip`, `credential`)                                                                |
 
-A histogram's `_count` counts requests or runs, so no separate counter exists: the request rate is `rate(http_server_request_duration_seconds_count[5m])`.
+These describe MCP and what agents do:
+
+| Metric                                   | Type      | Labels                                                                                                   |
+| ---------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
+| `mcp_server_operation_duration_seconds`  | histogram | `mcp_method_name`, `gen_ai_tool_name`, `gen_ai_operation_name`, `error_type`, `rpc_response_status_code`, `mcp_protocol_version`, `kazari_error_code`, `kazari_credential_type`, `kazari_mcp_input_required` |
+| `kazari_mcp_tool_arguments_size_bytes`   | histogram | `gen_ai_tool_name`: what clients send inline instead of uploading                                        |
+| `kazari_mcp_tool_result_size_bytes`      | histogram | `gen_ai_tool_name`: what a call adds to the model's context                                              |
+| `kazari_artifact_publishes_total`        | counter   | `kazari_publish_kind` (`create`, `update`, `edit`, `import`, `rollback`), `kazari_surface`, `error_type` |
+| `kazari_artifact_publish_size_bytes`     | histogram | `kazari_publish_kind`                                                                                    |
+| `kazari_artifact_actions_total`          | counter   | `kazari_audit_action`, `kazari_surface` (`api`, `mcp`, `admin`, `scheduler`)                             |
+| `kazari_artifact_edits_total`            | counter   | `kazari_edit_kind` (`text`, `anchor`), `kazari_edit_match` (`exact`, `trailing_whitespace`, `indentation`, `anchor`) |
+| `kazari_artifact_edit_retries_total`     | counter   | None: edits applied again after a concurrent publish                                                     |
+| `kazari_artifact_imports_total`          | counter   | `error_type`                                                                                             |
+| `kazari_share_link_operations_total`     | counter   | `kazari_share_link_operation` (`create`, `revoke`, `open`), `error_type`                                 |
+| `kazari_upload_chunks_total`             | counter   | `error_type`                                                                                             |
+| `kazari_fetch_duration_seconds`          | histogram | `kazari_fetch_purpose` (`file`, `import`, `cimd`, `oidc`), `error_type` (a status code, `refused`, `timeout`, `too_large`) |
+| `kazari_fetch_body_size_bytes`           | histogram | `kazari_fetch_purpose`                                                                                   |
+
+These describe sign-in and access:
+
+| Metric                                      | Type    | Labels                                                                                  |
+| ------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `kazari_gate_requests_total`                | counter | `kazari_gate_result` (`public`, `member`, `share_link`, `redirect`, `denied`)           |
+| `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`) |
+| `kazari_oauth_token_requests_total`         | counter | `kazari_oauth_grant_type`, `error_type` (the RFC 6749 error code)                       |
+| `kazari_oauth_client_registrations_total`   | counter | `kazari_oauth_registration_method` (`dcr`, `cimd`), `error_type`                        |
+
+These describe the instance's state, read from the database at most every 30 seconds:
+
+| Metric                                  | Type  | Labels                                                                                                      |
+| --------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------- |
+| `kazari_artifact_count`                 | gauge | `kazari_artifact_status` (`published`, `stale`, `unpublished`, `deleted`, `purged`), `kazari_artifact_visibility` |
+| `kazari_artifact_version_count`         | gauge | None: every version of every artifact                                                                       |
+| `kazari_artifact_version_usage_bytes`   | gauge | None: their logical size, which grows with every edit                                                      |
+| `kazari_blob_count`, `kazari_blob_usage_bytes` | gauge | None: the blobs on disk, stored once however many versions share them                              |
+| `kazari_user_count`                     | gauge | `kazari_user_state` (`active`, `disabled`), `kazari_user_role` (`admin`, `member`)                         |
+| `kazari_upload_count`                   | gauge | None: chunked uploads in progress                                                                           |
+| `db_client_connection_count`            | gauge | `db_client_connection_state` (`idle`, `used`), `db_client_connection_pool_name`                            |
+| `db_client_connection_max`              | gauge | `db_client_connection_pool_name`                                                                            |
+
+These describe the server itself:
+
+| Metric                                         | Type      | Labels                                                                    |
+| ---------------------------------------------- | --------- | ------------------------------------------------------------------------- |
+| `kazari_job_duration_seconds`                  | histogram | `kazari_job_name`, `error_type`                                           |
+| `kazari_job_last_success_timestamp_seconds`    | gauge     | `kazari_job_name`                                                         |
+| `kazari_certificate_expiry_timestamp_seconds`  | gauge     | None: the served certificate; absent in proxy mode                        |
+| `otel_sdk_exporter_span_exported_total`, `otel_sdk_exporter_metric_data_point_exported_total`, `otel_sdk_exporter_log_exported_total` | counter | `otel_component_type`, `server_address`, `error_type`: items exported over OTLP, and failures |
+| `go_*`                                         | various   | The Go runtime: `go_memory_used_bytes`, `go_goroutine_count`, `go_schedule_duration_seconds` and others |
+| `process_*`                                    | various   | CPU, memory and file descriptors of the process                           |
+| `target_info`                                  | gauge     | The service: `service_name`, `service_version`, `service_instance_id`, `host_name` |
+
+`kazari_surface` is `site` (artifact pages), `api`, `mcp`, `admin`, `apex` (the base domain itself) or `redirect` (the plain-HTTP listener that redirects to HTTPS). `http_route` is the route that matched, such as `/v1/artifacts/{slug}` or `/{path...}` for an artifact's files; it is absent when no route matched. `error_type` is set on failures only, and `kazari_error_code` is Kazari's error code, such as `version_conflict` or `quota_exceeded`.
+
+A histogram's `_count` counts requests, calls or runs, so no separate counter exists: the request rate is `rate(http_server_request_duration_seconds_count[5m])`.
+
+To push the same metrics over OTLP as well, set `telemetry.metrics.otlp: true` ([`telemetry.metrics`](configuration.md#telemetrymetrics)). Process metrics stay Prometheus-only; a collector's `hostmetrics` receiver covers them for an OTLP backend.
 
 ### Scraping
 
@@ -183,10 +238,30 @@ To keep the trace ids that link a latency bucket to a trace, start Prometheus wi
 
 ### Alerts
 
-Two alerts are worth setting:
+These alerts catch what usually goes wrong:
 
-- `increase(kazari_job_duration_seconds_count{error_type!=""}[1h]) > 0`, for a failing job.
-- A high rate of `http_server_request_duration_seconds_count{http_response_status_code=~"5.."}`, for server errors.
+```yaml
+groups:
+  - name: kazari
+    rules:
+      - alert: KazariCertificateExpiring
+        expr: kazari_certificate_expiry_timestamp_seconds - time() < 14 * 86400
+      - alert: KazariJobNotSucceeding
+        # three intervals of the slowest job, gc, which runs hourly
+        expr: time() - kazari_job_last_success_timestamp_seconds > 3 * 3600
+      - alert: KazariServerErrors
+        expr: sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) > 0.1
+      - alert: KazariRefusedAuthentications
+        expr: sum(rate(kazari_auth_requests_total{kazari_auth_result="invalid"}[15m])) > 1
+      - alert: KazariToolErrors
+        expr: |
+          sum by (gen_ai_tool_name) (rate(mcp_server_operation_duration_seconds_count{error_type!=""}[1h]))
+            / sum by (gen_ai_tool_name) (rate(mcp_server_operation_duration_seconds_count[1h])) > 0.2
+      - alert: KazariTelemetryExportFailing
+        expr: sum(rate(otel_sdk_exporter_span_exported_total{error_type!=""}[15m])) > 0
+```
+
+`KazariJobNotSucceeding` uses the hourly `gc` job; with other `lifecycle` intervals, use three of the longest. A tool's error ratio is worth reading by `kazari_error_code`: `version_conflict` means agents edit concurrently, `anchor_mismatch` that they edit from stale reads.
 
 ### Upgrading from 0.2
 
@@ -238,6 +313,16 @@ A server error (`5xx`) marks the span as failed, with `error.type` set to Kazari
 By default, Kazari keeps every trace that starts on `api.`, `mcp.`, `admin.` or the admin socket, and one in a hundred on artifact hosts and the base domain. Errors on artifact hosts are still counted in full by the metrics; to keep every failing page view as a trace, sample in the collector instead ([`telemetry.traces`](configuration.md#telemetrytraces)).
 
 A trace is kept or dropped whole: a span's children follow its decision.
+
+### Running a collector
+
+A collector between Kazari and the backend batches the export, can keep every failing request's trace however Kazari samples, and can drop attributes before they leave your network. To start from an example, fetch the configuration for the OpenTelemetry Collector's contrib distribution:
+
+```sh
+curl -fsSLO https://kazari.io/deploy/otel-collector.yaml
+```
+
+It receives OTLP on ports 4317 (gRPC) and 4318 (HTTP), keeps every trace with an error or a span over two seconds plus one in ten of the rest, and prints what it receives until you add your backend's exporter. Its `attributes/drop-paths` processor removes slugs and paths from spans, for a hosted backend.
 
 ### Joining a caller's trace
 

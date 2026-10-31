@@ -32,3 +32,17 @@ ADR 0001's dependency list gains, under `go.opentelemetry.io/`: `otel` with its 
 - Two defaults are Kazari's where neither a key nor a variable decides: per-surface sampling (every control-plane trace, one page view in a hundred) and a 1024-byte cap on attribute values, since the SDK's default is unlimited and values such as `url.path` come from requests.
 - Development-status conventions (MCP, GenAI, `db.client.connection.*`, `otel.sdk.*`, Go runtime) may be renamed by a later semconv release; the pin and the golden files turn that into a reviewed change.
 - Off costs little: with telemetry off and Prometheus on, a request pays the metrics middleware alone.
+
+## Measurements
+
+Taken on 2026-10-31 against 0.2.1, on an AMD Ryzen 9 5950X:
+
+| What | 0.2.1 | 0.3.0 |
+| ---- | ----- | ----- |
+| Binary, linux/amd64, stripped | 34.8 MB | 40.9 MB |
+| `BenchmarkSiteServe`, telemetry off (Prometheus on) | 79.0 µs, 113 allocations | +7.2%, 112 allocations |
+| The same, tracing on, artifact hosts at 1% | | +10.3%, 115 allocations |
+| The same, tracing on, artifact hosts at 100% | | +33%, 156 allocations |
+| `BenchmarkToolCall`, telemetry off | 0.46 ms, 803 allocations | unchanged |
+
+`BenchmarkSiteServe` serves a 5 KiB page through the whole public chain; `BenchmarkToolCall` calls `get_artifact` over MCP. With telemetry off the site path misses the 5% it aimed for: recording to the SDK's histograms costs more than client_golang's, and the gate now counts every page view, public ones included. Telemetry is 3–4% of the CPU profile; SQLite is most of the rest.

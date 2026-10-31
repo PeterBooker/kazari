@@ -40,7 +40,7 @@
   [[sections.pages]]
     title = "Operations"
     path = "/docs/ops"
-    description = "Running Kazari: data layout, backups, upgrades, logs, Prometheus metrics, scheduled jobs, the page lifecycle, quotas, abuse response and the audit log."
+    description = "Running Kazari: data layout, backups, upgrades, logs, metrics, OpenTelemetry tracing, jobs, the page lifecycle, quotas, abuse and the audit log."
 
 [[sections]]
   title = "Reference"

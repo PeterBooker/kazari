@@ -52,4 +52,4 @@ The reference pages hold every detail:
 | [REST API](api.md)                  | The user and admin APIs, wire types, limits and error codes       |
 | [Configuration](configuration.md)   | Every YAML key, `${}` environment references, `.env`, overrides   |
 | [Sign-in and identity](identity.md) | OAuth for MCP clients, OpenID Connect providers, provisioning     |
-| [Operations](ops.md)                | Data layout, backup, upgrades, logs, metrics, jobs, quotas, abuse |
+| [Operations](ops.md)                | Data layout, backup, upgrades, logs, metrics, tracing, jobs, quotas, abuse |

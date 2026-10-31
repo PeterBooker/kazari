@@ -48,6 +48,17 @@ docker compose exec kazari kazari admin keys issue peter --label laptop
 
 `docker compose watch` rebuilds and restarts the container when the source changes, and `docker compose down` stops it; add `-v` to discard the data as well. `deploy/compose.yml` is the Compose file for a real server.
 
+### Watching traces and metrics
+
+The `telemetry` profile adds [grafana/otel-lgtm](https://github.com/grafana/docker-otel-lgtm): an OpenTelemetry Collector with Tempo, Prometheus and Loki behind Grafana. To start it with Kazari exporting all three signals to it, run:
+
+```sh
+export KAZARI_TELEMETRY_OTLP_ENDPOINT=http://lgtm:4318 KAZARI_TELEMETRY_METRICS_OTLP=true KAZARI_TELEMETRY_LOGS_OTLP=true
+docker compose --profile telemetry up --build -d
+```
+
+Grafana answers at <http://localhost:3000/>. Under Explore, Tempo shows each request's trace, Prometheus the metrics and Loki the log lines, which link to their trace. The local preset samples one page view in a hundred, as a server does; to trace every one, also export `KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO=1`.
+
 ## Building, testing and releasing
 
 These commands build a binary, run the same checks as CI and make a local release dry run:
