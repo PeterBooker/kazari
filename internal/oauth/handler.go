@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // Endpoint paths, relative to the issuer.
@@ -41,7 +43,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
 	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
 	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
-	return mux
+	return middleware.Routed(mux)
 }
 
 // cors lets browser-based MCP clients call the JSON endpoints; none use

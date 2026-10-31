@@ -16,6 +16,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -204,6 +205,7 @@ func listQuery(r *http.Request) (artifact.ListQuery, error) {
 func jsonFallback(mux *http.ServeMux, b *base) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, pattern := mux.Handler(r)
+		middleware.SetRoute(r.Context(), pattern)
 		if pattern != "" {
 			mux.ServeHTTP(w, r)
 			return

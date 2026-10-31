@@ -1,7 +1,7 @@
 // Package middleware holds the net/http middleware every server shares.
-// Chain(h, RequestID(), RealIP(proxy), Logger(l), Recover(l)) is the order
-// that lets the access log see the request id, the client IP and the 500
-// Recover writes after a panic.
+// Chain(h, RequestID(), RealIP(proxy), obs.Observe(surface), Logger(l),
+// Recover(l)) is the order that lets the access log and the metrics see the
+// request id, the client IP and the 500 Recover writes after a panic.
 package middleware
 
 import "net/http"
@@ -21,7 +21,12 @@ type responseWriter struct {
 	wroteHeader bool
 }
 
+// wrap reuses a writer an outer middleware already wrapped, so a request is
+// wrapped once however many middlewares need its status.
 func wrap(w http.ResponseWriter) *responseWriter {
+	if rw, ok := w.(*responseWriter); ok {
+		return rw
+	}
 	return &responseWriter{ResponseWriter: w}
 }
 

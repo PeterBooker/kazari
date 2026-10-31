@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
@@ -201,6 +202,10 @@ func (g *Gate) toSignIn(w http.ResponseWriter, r *http.Request, host string) {
 
 // ServeReserved answers a request under Prefix on host, for artifact p.
 func (g *Gate) ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) {
+	switch r.URL.Path {
+	case CallbackPath, SharePath, SignOutPath:
+		middleware.SetRoute(r.Context(), r.URL.Path)
+	}
 	switch r.URL.Path {
 	case CallbackPath:
 		if g.method(w, r, http.MethodGet) {

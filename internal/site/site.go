@@ -21,6 +21,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // Resolver looks up what to serve for a slug. ResolvePublished and
@@ -42,6 +43,9 @@ type Gate interface {
 // ReservedPrefix is left to the Gate on every artifact host; no artifact file
 // can live under it (artifact.ReservedDir).
 const ReservedPrefix = "/" + artifact.ReservedDir + "/"
+
+// fileRoute is http.route for every file of an artifact.
+const fileRoute = "/{path...}"
 
 // Options configures the handler. Only BaseDomain is required.
 type Options struct {
@@ -175,6 +179,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	middleware.SetRoute(r.Context(), fileRoute)
 	files, err := h.resolver.Files(r.Context(), p.VersionID)
 	if err != nil {
 		h.internalError(w, r, fmt.Errorf("load files of %s version %d: %w", slug, p.VersionNumber, err))
