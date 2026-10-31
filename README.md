@@ -142,7 +142,7 @@ go run honnef.co/go/tools/cmd/staticcheck@latest ./...  # lint
 
 ## Documentation
 
-The documentation, with guides for publishing with an agent and from code, is published at <https://kazari.io/docs/>. Its reference pages are the files in `docs/`. The decision records are only here, not on the website:
+The documentation, with guides for publishing with an agent and from code, is published at <https://kazari.io/docs/>. Its reference pages are the files in `docs/`:
 
 | Page                                         | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |
@@ -155,9 +155,6 @@ The documentation, with guides for publishing with an agent and from code, is pu
 | [CLI](docs/cli.md)                           | The `kazari` server and client commands                        |
 | [Identity and sign-in](docs/identity.md)     | OAuth, OpenID Connect providers and user provisioning          |
 | [Developing Kazari](docs/development.md)     | Running from source, tests, releases, the website              |
->>>
-
-| [Decision records](docs/adr/)                | Architecture decision records                                  |
 
 ## Status
 

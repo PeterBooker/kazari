@@ -1,6 +1,6 @@
 # Go modules
 
-Direct requirements are deliberate (`docs/adr/0001-language.md` lists them).
+Direct requirements are deliberate.
 
 ## Check
 
@@ -44,8 +44,6 @@ Read the changelog of every direct requirement that moved. These need a closer l
 - **`github.com/prometheus/client_golang`** serves `/metrics` and the process collector; `TestMetricNames` covers both.
 - **`gopkg.in/yaml.v3`** (`internal/config`, `internal/cli`) is archived upstream; the YAML organisation maintains it as `go.yaml.in/yaml/v3`. Moving is an import path change: propose it, don't make it unasked.
 - **AWS SDK modules** are indirect, through `libdns/route53`; letting `go get -u` raise them is fine.
-
-A direct requirement added or removed updates the list in `docs/adr/0001-language.md`.
 
 ## Verify
 

@@ -84,7 +84,7 @@ To release, push a tag named for the version without a `v`, such as `0.3.0`. The
 
 ## Building the website
 
-The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, except `adr/`, and the files in `deploy/` under `/deploy/`, so a change to either directory is a change to the site. The guides live in `site/content/docs/`, the landing page is `site/layouts/home.html`, and the install script is `site/static/install.sh`.
+The website at <https://kazari.io/> is a [Hugo](https://gohugo.io/) site in `site/`. It mounts the Markdown files in `docs/` as its reference pages, and the files in `deploy/` under `/deploy/`, so a change to either directory is a change to the site. The guides live in `site/content/docs/`, the landing page is `site/layouts/home.html`, and the install script is `site/static/install.sh`.
 
 Building the site needs only the standard edition of Hugo, at the version set as `HUGO_VERSION` in `.github/workflows/pages.yml`: no Node and no theme. Install it, preview the site and build it as CI does:
 

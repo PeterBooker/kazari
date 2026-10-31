@@ -18,7 +18,6 @@ Check the uncommitted changes (`git diff HEAD`), or the revision or range given 
    - Doc set: `docs/*.md`, `deploy/kazari.yaml` and `deploy/kazari.reference.yaml` (comments), `deploy/kazari.env.example`, `deploy/compose.yml` (header), `site/content/docs/*.md`, `site/layouts/home.html`, `README.md`, `site/static/install.sh` (its printed hints).
    - Main homes: CLI in `docs/cli.md`, config in `docs/configuration.md` and `deploy/kazari.reference.yaml`, install paths in `docs/install.md`, DNS, certificates and proxies in `docs/certificates.md`, REST in `docs/api.md`, MCP in `docs/mcp.md`, sign-in in `docs/identity.md`, metrics, jobs and quotas in `docs/ops.md`, limits in `docs/configuration.md`, contributor commands in `docs/development.md`.
    - `examples/kazari/SKILL.md` is generated from `internal/mcpserver/skill.go` and `describe.go`: never edit it by hand. If those or the defaults changed, run `go test ./internal/mcpserver -run TestExampleSkill -update` and include the result.
-   - `docs/adr/` records decisions as they were made: leave it.
 3. Fix each stale or missing statement in the style of the file around it. Change no code.
 4. If anything under `docs/` or `site/` changed, `hugo --source site --gc --minify` must print no WARN or ERROR.
 5. Report each behaviour change with the files you updated, and anything you were unsure of.
