@@ -2,35 +2,63 @@ package middleware
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/httpconv"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/middleware"
 
-// Observer records the HTTP server metrics of every surface.
+// Observer records the HTTP server metrics and spans of every surface.
 type Observer struct {
 	duration  metric.Float64Histogram
 	active    metric.Int64UpDownCounter
 	size      metric.Int64Histogram
+	tracer    trace.Tracer
+	tracing   bool
 	proxyMode bool
 }
+
+// ObserveOptions tune Observe for one surface.
+type ObserveOptions struct {
+	// ControlPlane honours an incoming traceparent and records the user
+	// agent. Neither applies to artifact hosts: their visitors are anonymous,
+	// and a parent they sent would decide sampling.
+	ControlPlane bool
+	// Skip lists paths that are counted but never traced, such as /metrics,
+	// which a scraper requests every few seconds.
+	Skip []string
+	// NoTraces counts requests without tracing any.
+	NoTraces bool
+}
+
+// traceContext reads W3C traceparent and tracestate only: baggage is
+// ignored, and nothing is ever injected outbound.
+var traceContext = propagation.TraceContext{}
+
+const redacted = "REDACTED"
 
 // NewObserver creates the instruments once; in proxy mode it takes the
 // scheme from X-Forwarded-Proto.
 func NewObserver(p instrument.Providers, proxyMode bool) *Observer {
 	m := p.Meter(scope)
 	return &Observer{
+		tracer:  p.Tracer(scope),
+		tracing: p.Tracing(),
 		duration: instrument.Handle(httpconv.NewServerRequestDuration(m,
 			metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10))).Inst(),
 		active: instrument.Handle(httpconv.NewServerActiveRequests(m)).Inst(),
@@ -43,11 +71,18 @@ func NewObserver(p instrument.Providers, proxyMode bool) *Observer {
 var sizeBuckets = []float64{256, 1 << 10, 4 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20, 4 << 20, 16 << 20, 64 << 20}
 
 // Observe returns the middleware that records requests on surface. It goes
-// outside Logger and Recover, so the 500 Recover writes is what it records.
-func (o *Observer) Observe(surface string) func(http.Handler) http.Handler {
+// outside Logger and Recover, so the access log carries its trace id and the
+// 500 Recover writes is what it records.
+func (o *Observer) Observe(surface string, opts ObserveOptions) func(http.Handler) http.Handler {
 	s := &surfaceObserver{
 		Observer: o,
+		opts:     opts,
+		traced:   o.tracing && !opts.NoTraces,
 		surface:  surface,
+		startOpts: []trace.SpanStartOption{
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(instrument.Surface.String(surface)),
+		},
 		requests: map[requestKey]attrs{},
 		actives:  map[activeKey]attrs{},
 	}
@@ -67,7 +102,12 @@ type activeKey struct{ method, scheme string }
 // part of a key comes from a bounded set.
 type surfaceObserver struct {
 	*Observer
+	opts    ObserveOptions
+	traced  bool
 	surface string
+	// startOpts carry only what the sampler reads, so an unsampled request
+	// builds no attributes.
+	startOpts []trace.SpanStartOption
 
 	mu       sync.RWMutex
 	requests map[requestKey]attrs
@@ -95,21 +135,159 @@ func (s *surfaceObserver) serve(next http.Handler, w http.ResponseWriter, r *htt
 	active := s.activeAttrs(activeKey{method, scheme})
 	s.active.Add(ctx, 1, active.add...)
 
+	var span trace.Span
+	if s.traced && !slices.Contains(s.opts.Skip, r.URL.Path) {
+		ctx, span = s.startSpan(ctx, r, method, scheme)
+	}
 	st := &requestState{responseWriter: responseWriter{ResponseWriter: w}, surface: s.surface}
 	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
 	defer func() {
+		status := st.Status()
 		req := s.requestAttrs(requestKey{
 			route:  st.route,
 			method: method,
 			scheme: scheme,
 			proto:  protocolVersion(r),
-			status: st.Status(),
+			status: status,
 		})
+		// The span's context, so a sampled request becomes its bucket's
+		// exemplar.
 		s.duration.Record(ctx, time.Since(start).Seconds(), req.record...)
 		s.size.Record(ctx, st.bytes, req.record...)
 		s.active.Add(ctx, -1, active.add...)
+		if span != nil {
+			endSpan(span, st, method, status)
+		}
 	}()
 	next.ServeHTTP(&st.responseWriter, r)
+}
+
+func (s *surfaceObserver) startSpan(ctx context.Context, r *http.Request, method, scheme string) (context.Context, trace.Span) {
+	if s.opts.ControlPlane {
+		ctx = traceContext.Extract(ctx, propagation.HeaderCarrier(r.Header))
+	}
+	ctx, span := s.tracer.Start(ctx, spanName(method, ""), s.startOpts...)
+	if !span.IsRecording() {
+		return ctx, span
+	}
+	path := r.URL.Path
+	if s.surface == instrument.SurfaceAdmin {
+		path = redactAdminPath(path)
+	}
+	attrs := make([]attribute.KeyValue, 0, 12)
+	attrs = append(attrs,
+		semconv.HTTPRequestMethodKey.String(method),
+		semconv.URLPath(path),
+		semconv.URLScheme(scheme),
+		semconv.NetworkProtocolVersion(protocolVersion(r)),
+		instrument.RequestID.String(RequestIDFrom(ctx)),
+	)
+	if method == instrument.Other {
+		attrs = append(attrs, semconv.HTTPRequestMethodOriginal(r.Method))
+	}
+	if host, port := serverAddress(r.Host, scheme); host != "" {
+		attrs = append(attrs, semconv.ServerAddress(host), semconv.ServerPort(port))
+	}
+	if r.URL.RawQuery != "" {
+		attrs = append(attrs, semconv.URLQuery(redactQuery(r.URL.RawQuery)))
+	}
+	if ua := r.UserAgent(); s.opts.ControlPlane && ua != "" {
+		attrs = append(attrs, semconv.UserAgentOriginal(truncate(ua, maxUserAgent)))
+	}
+	span.SetAttributes(attrs...)
+	return ctx, span
+}
+
+// endSpan follows the HTTP conventions: only a 5xx is a server error. A JSON
+// error's code gives error.type, else the status code does.
+func endSpan(span trace.Span, st *requestState, method string, status int) {
+	defer span.End()
+	if !span.IsRecording() {
+		return
+	}
+	span.SetName(spanName(method, st.route))
+	span.SetAttributes(semconv.HTTPResponseStatusCode(status))
+	if st.route != "" {
+		span.SetAttributes(semconv.HTTPRoute(st.route))
+	}
+	if st.errorCode != "" {
+		span.SetAttributes(instrument.ErrorCode.String(st.errorCode))
+	}
+	if status >= http.StatusInternalServerError {
+		errType := st.errorCode
+		if errType == "" {
+			errType = strconv.Itoa(status)
+		}
+		span.SetAttributes(semconv.ErrorTypeKey.String(errType))
+		span.SetStatus(codes.Error, "")
+	}
+}
+
+// spanName is "{method} {route}", or the method alone without a route; an
+// unknown method is HTTP.
+func spanName(method, route string) string {
+	if method == instrument.Other {
+		method = "HTTP"
+	}
+	if route == "" {
+		return method
+	}
+	return method + " " + route
+}
+
+func serverAddress(host, scheme string) (string, int) {
+	name, port, err := net.SplitHostPort(host)
+	if err != nil {
+		name = host
+	}
+	if p, err := strconv.Atoi(port); err == nil && p > 0 && p <= 65535 {
+		return name, p
+	}
+	if scheme == "https" {
+		return name, 443
+	}
+	return name, 80
+}
+
+// redactQuery keeps the keys and hides every value: share tokens and OAuth
+// codes travel in query strings.
+func redactQuery(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for part := range strings.SplitSeq(raw, "&") {
+		if b.Len() > 0 {
+			b.WriteByte('&')
+		}
+		key, _, hasValue := strings.Cut(part, "=")
+		b.WriteString(key)
+		if hasValue {
+			b.WriteString("=" + redacted)
+		}
+	}
+	return b.String()
+}
+
+// redactAdminPath hides the handles and credential ids in admin paths
+// (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix}, /v1/grants/{id}):
+// who did what stays in the audit log.
+func redactAdminPath(p string) string {
+	rest, ok := strings.CutPrefix(p, "/v1/")
+	if !ok {
+		return p
+	}
+	seg := strings.Split(rest, "/")
+	switch {
+	case len(seg) >= 2 && seg[0] == "users":
+		seg[1] = redacted
+		if len(seg) >= 4 && seg[2] == "keys" {
+			seg[3] = redacted
+		}
+	case len(seg) >= 2 && seg[0] == "grants":
+		seg[1] = redacted
+	default:
+		return p
+	}
+	return "/v1/" + strings.Join(seg, "/")
 }
 
 func (s *surfaceObserver) scheme(r *http.Request) string {
@@ -201,8 +379,9 @@ type stateKey struct{}
 // middleware sees, so the innermost router reports its match here.
 type requestState struct {
 	responseWriter
-	surface string
-	route   string
+	surface   string
+	route     string
+	errorCode string
 }
 
 func stateFrom(ctx context.Context) *requestState {
@@ -216,6 +395,14 @@ func stateFrom(ctx context.Context) *requestState {
 func SetRoute(ctx context.Context, pattern string) {
 	if st := stateFrom(ctx); st != nil {
 		st.route = routeOf(pattern)
+	}
+}
+
+// SetErrorCode records the code of the JSON error a handler answered with,
+// for kazari.error.code and a 5xx's error.type.
+func SetErrorCode(ctx context.Context, code string) {
+	if st := stateFrom(ctx); st != nil {
+		st.errorCode = code
 	}
 }
 

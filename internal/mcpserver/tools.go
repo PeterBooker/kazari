@@ -239,7 +239,7 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 			return nil, zero, b.toolError(ctx, t.Name, err)
 		}
 		if scope == auth.ScopeWrite || scope == auth.ScopeDelete {
-			if d := b.d.Writes.Reserve(ratelimit.CredentialKey(p)); d > 0 {
+			if d := b.d.Writes.Reserve(ctx, ratelimit.CredentialKey(p)); d > 0 {
 				return nil, zero, b.toolError(ctx, t.Name, &api.Error{Code: api.CodeRateLimited,
 					Message: "too many writes; retry in " + ratelimit.RetryAfter(d) + "s"})
 			}

@@ -1,45 +1,53 @@
 package ratelimit
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 func TestLimiterBounded(t *testing.T) {
 	now := time.Unix(0, 0)
-	l := New(1, func() time.Time { return now })
-	if d := l.Reserve("victim"); d != 0 {
+	l := New(1, Options{Now: func() time.Time { return now }})
+	if d := l.Reserve(context.Background(), "victim"); d != 0 {
 		t.Fatalf("first request delayed %v", d)
 	}
 	for i := range MaxEntries + 500 {
-		l.Reserve(fmt.Sprintf("k%d", i))
+		l.Reserve(context.Background(), fmt.Sprintf("k%d", i))
 	}
 	if n := l.Len(); n > MaxEntries {
 		t.Fatalf("entries = %d, want at most %d", n, MaxEntries)
 	}
 	now = now.Add(idle + sweepEvery + time.Second)
-	l.Reserve("fresh")
+	l.Reserve(context.Background(), "fresh")
 	if n := l.Len(); n != 1 {
 		t.Errorf("entries after idle sweep = %d, want 1", n)
 	}
 }
 
 func TestNilLimiterAllows(t *testing.T) {
-	var l *Limiter = New(0, nil)
+	var l *Limiter = New(0, Options{})
 	if l != nil {
 		t.Fatal("New(0) is not nil")
 	}
-	if d := l.Reserve("k"); d != 0 {
+	if d := l.Reserve(context.Background(), "k"); d != 0 {
 		t.Errorf("nil limiter delayed %v", d)
 	}
 }
 
 func TestMiddleware(t *testing.T) {
 	now := time.Unix(0, 0)
-	h := Middleware(New(2, func() time.Time { return now }), IPKey, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Middleware(New(2, Options{Now: func() time.Time { return now }}), IPKey, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	var got []int
@@ -77,5 +85,47 @@ func TestIPKey(t *testing.T) {
 		if got := IPKey(r); got != tt.want {
 			t.Errorf("IPKey(%q) = %q, want %q", tt.remote, got, tt.want)
 		}
+	}
+}
+
+func TestRejectionsCounted(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	defer tp.Shutdown(context.Background())
+
+	now := time.Unix(0, 0)
+	l := New(1, Options{Now: func() time.Time { return now }, Scope: ScopeCredential, Telemetry: instrument.Providers{MeterProvider: mp}})
+	ctx, span := tp.Tracer("test").Start(context.Background(), "POST /v1/artifacts")
+	for range 3 {
+		l.Reserve(ctx, "k")
+	}
+	span.End()
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.rate_limit.rejected_requests" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+				if v, _ := dp.Attributes.Value(instrument.RateLimitScope); v.AsString() != ScopeCredential {
+					t.Errorf("scope = %q", v.AsString())
+				}
+				total += dp.Value
+			}
+		}
+	}
+	if total != 2 {
+		t.Errorf("rejections = %d, want 2", total)
+	}
+	if ev := rec.Ended()[0].Events(); len(ev) != 2 || ev[0].Name != "kazari.rate_limited" {
+		t.Errorf("events = %v, want two kazari.rate_limited", ev)
 	}
 }

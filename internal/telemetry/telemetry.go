@@ -1,8 +1,9 @@
 // Package telemetry builds the OpenTelemetry SDK from Options: the resource,
-// the meter provider with its Prometheus and OTLP readers, the Go runtime
-// metrics and the counts of every OTLP export. Every setting the SDK would
-// otherwise read from an OTEL_* variable is passed explicitly, so the
-// environment never changes what Kazari exports.
+// the tracer and meter providers with their OTLP and Prometheus exporters,
+// the Go runtime metrics and the counts of every OTLP export. An option
+// Kazari sets wins; one it leaves unset is left to the SDK, which reads the
+// standard OTEL_* variables, so Kazari runs like any other OpenTelemetry
+// service under an operator's environment.
 package telemetry
 
 import (
@@ -13,8 +14,8 @@ import (
 	"net/http"
 	"time"
 
-	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
@@ -25,9 +26,6 @@ const (
 	ProtocolGRPC = "grpc"
 )
 
-// exportTimeout bounds one export with its retries, for every signal.
-const exportTimeout = 30 * time.Second
-
 // Options configure the SDK.
 type Options struct {
 	ServiceName    string
@@ -36,13 +34,16 @@ type Options struct {
 	HostName       string
 
 	OTLP    OTLP
+	Traces  Traces
 	Metrics Metrics
+	Logs    Logs
 
 	Logger *slog.Logger     // nil means slog.Default()
 	Now    func() time.Time // nil means time.Now
 
-	// MetricReader replaces the OTLP metric reader whatever the endpoint,
-	// for tests.
+	// SpanExporter and MetricReader replace their signal's OTLP exporter
+	// whatever the endpoint, for tests.
+	SpanExporter sdktrace.SpanExporter
 	MetricReader sdkmetric.Reader
 }
 
@@ -58,24 +59,39 @@ type OTLP struct {
 	KeyFile     string
 }
 
-// Metrics selects the metric readers.
+// Traces configures span export and sampling. With both ratios nil,
+// OTEL_TRACES_SAMPLER decides when it is set.
+type Traces struct {
+	OTLP            bool
+	SampleRatio     *float64
+	SiteSampleRatio *float64
+}
+
+// Metrics selects the metric readers. A zero Interval leaves it to
+// OTEL_METRIC_EXPORT_INTERVAL.
 type Metrics struct {
 	Prometheus bool
 	OTLP       bool
 	Interval   time.Duration
 }
 
+// Logs selects the export of log records.
+type Logs struct {
+	OTLP bool
+}
+
 // Telemetry owns the SDK providers.
 type Telemetry struct {
 	providers instrument.Providers
 	metrics   http.Handler
-	transport *transport
 	log       *limitedLog
 	shutdown  []func(context.Context) error
 }
 
-// New builds the providers. Without an endpoint and with Prometheus off it
-// returns no-op providers.
+// New builds the providers. A signal that goes nowhere has a nil provider:
+// no endpoint means no tracing, and Prometheus off without a push means no
+// metrics. An endpoint is telemetry.otlp.endpoint or the OTLP exporter
+// variables.
 func New(ctx context.Context, o Options) (*Telemetry, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -85,17 +101,18 @@ func New(ctx context.Context, o Options) (*Telemetry, error) {
 	}
 	t := &Telemetry{log: newLimitedLog(o.Logger, o.Now)}
 	installErrorHandler(t.log)
-
-	if o.OTLP.Endpoint != "" && o.Metrics.OTLP {
-		tr, err := newTransport(o.OTLP, o.Logger)
-		if err != nil {
-			return nil, err
-		}
-		t.transport = tr
-		t.shutdown = append(t.shutdown, func(context.Context) error { return tr.close() })
+	for _, w := range Warnings(o) {
+		o.Logger.Warn("telemetry: " + w)
 	}
 
-	if err := t.buildMetrics(ctx, o, newResource(o)); err != nil {
+	// Metrics first: the span exporter counts into the meter provider, and
+	// shutting down in reverse flushes spans before the metrics that count
+	// their export.
+	res := newResource(o)
+	if err := t.buildMetrics(ctx, o, res); err != nil {
+		return nil, errors.Join(err, t.Shutdown(ctx))
+	}
+	if err := t.buildTraces(ctx, o, res); err != nil {
 		return nil, errors.Join(err, t.Shutdown(ctx))
 	}
 	return t, nil
@@ -124,6 +141,15 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (t *Telemetry) noopMetrics() {
-	t.providers.MeterProvider = metricnoop.NewMeterProvider()
+// endpoint builds the signal's endpoint when the signal is on, closing it
+// at Shutdown; nil means the signal exports nothing over OTLP.
+func (t *Telemetry) endpoint(on bool, o Options, signal, path string) (*endpoint, error) {
+	if !on {
+		return nil, nil
+	}
+	e, err := newEndpoint(o.OTLP, signal, path, o.Logger)
+	if e != nil {
+		t.shutdown = append(t.shutdown, func(context.Context) error { return e.close() })
+	}
+	return e, err
 }

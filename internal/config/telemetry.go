@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -17,7 +16,9 @@ import (
 )
 
 // Telemetry configures OpenTelemetry: one OTLP destination shared by every
-// signal, and a switch per signal.
+// signal, and a switch per signal. A key left unset, the empty string, zero
+// or null, leaves the setting to the SDK, which reads the matching OTEL_*
+// variable or takes its own default.
 type Telemetry struct {
 	ServiceName string    `yaml:"service_name"`
 	Environment string    `yaml:"environment"`
@@ -47,9 +48,9 @@ const (
 
 // Traces configures span export and sampling.
 type Traces struct {
-	OTLP            bool    `yaml:"otlp"`
-	SampleRatio     float64 `yaml:"sample_ratio"`
-	SiteSampleRatio float64 `yaml:"site_sample_ratio"`
+	OTLP            bool     `yaml:"otlp"`
+	SampleRatio     *float64 `yaml:"sample_ratio"`
+	SiteSampleRatio *float64 `yaml:"site_sample_ratio"`
 }
 
 // Metrics configures the Prometheus endpoint and the optional OTLP push.
@@ -71,22 +72,9 @@ const MinMetricsInterval = 5 * time.Second
 
 func defaultTelemetry() Telemetry {
 	return Telemetry{
-		ServiceName: "kazari",
-		OTLP: OTLP{
-			Protocol:    ProtocolHTTP,
-			Headers:     Headers{},
-			Compression: "gzip",
-			Timeout:     Duration(10 * second),
-		},
-		Traces: Traces{
-			OTLP:            true,
-			SampleRatio:     1,
-			SiteSampleRatio: 0.01,
-		},
-		Metrics: Metrics{
-			Prometheus: true,
-			Interval:   Duration(60 * second),
-		},
+		OTLP:    OTLP{Headers: Headers{}},
+		Traces:  Traces{OTLP: true},
+		Metrics: Metrics{Prometheus: true},
 	}
 }
 
@@ -130,9 +118,12 @@ func (h Headers) String() string {
 
 func (v *validator) telemetry(c *Config) {
 	t := c.Telemetry
-	v.required("telemetry.service_name", t.ServiceName)
-	v.oneOf("telemetry.otlp.protocol", t.OTLP.Protocol, ProtocolHTTP, ProtocolGRPC)
-	v.oneOf("telemetry.otlp.compression", t.OTLP.Compression, "gzip", "none")
+	if t.OTLP.Protocol != "" {
+		v.oneOf("telemetry.otlp.protocol", t.OTLP.Protocol, ProtocolHTTP, ProtocolGRPC)
+	}
+	if t.OTLP.Compression != "" {
+		v.oneOf("telemetry.otlp.compression", t.OTLP.Compression, "gzip", "none")
+	}
 	if t.OTLP.Endpoint != "" {
 		if err := checkEndpoint(t.OTLP.Endpoint, t.OTLP.Protocol); err != nil {
 			v.add("telemetry.otlp.endpoint", err.Error())
@@ -143,8 +134,8 @@ func (v *validator) telemetry(c *Config) {
 			v.add("telemetry.otlp.headers", fmt.Sprintf("%q is not a valid header name and value", name))
 		}
 	}
-	if t.OTLP.Timeout <= 0 {
-		v.add("telemetry.otlp.timeout", "must be greater than 0")
+	if t.OTLP.Timeout < 0 {
+		v.add("telemetry.otlp.timeout", "must not be negative")
 	}
 	if err := checkTLSFiles(t.OTLP); err != nil {
 		v.errs = append(v.errs, err)
@@ -154,16 +145,16 @@ func (v *validator) telemetry(c *Config) {
 	if tok := t.Metrics.Token; tok != "" && len(tok) < MinAdminTokenLen && !IsLocalhost(c.BaseDomain) {
 		v.add("telemetry.metrics.token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
 	}
-	if t.Metrics.Interval.Std() < MinMetricsInterval {
-		v.add("telemetry.metrics.interval", "must be at least "+MinMetricsInterval.String())
+	if i := t.Metrics.Interval.Std(); i != 0 && i < MinMetricsInterval {
+		v.add("telemetry.metrics.interval", "must be 0 or at least "+MinMetricsInterval.String())
 	}
 	if t.Logs.Level != "" {
 		v.oneOf("telemetry.logs.level", t.Logs.Level, logLevels...)
 	}
 }
 
-func (v *validator) ratio(key string, r float64) {
-	if !(r >= 0 && r <= 1) {
+func (v *validator) ratio(key string, r *float64) {
+	if r != nil && !(*r >= 0 && *r <= 1) {
 		v.add(key, "must be between 0 and 1")
 	}
 }
@@ -204,33 +195,4 @@ func checkTLSFiles(o OTLP) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// Warnings are settings that are valid but probably not what was meant;
-// startup logs them and kazari check prints them.
-func (t Telemetry) Warnings() []string {
-	var out []string
-	if t.OTLP.Endpoint == "" {
-		if t.Metrics.OTLP {
-			out = append(out, "telemetry.metrics.otlp is true but telemetry.otlp.endpoint is empty, so metrics are not pushed")
-		}
-		if t.Logs.OTLP {
-			out = append(out, "telemetry.logs.otlp is true but telemetry.otlp.endpoint is empty, so logs are not exported")
-		}
-		return out
-	}
-	if u, err := url.Parse(t.OTLP.Endpoint); err == nil && u.Scheme == "http" && !nearby(u.Hostname()) {
-		out = append(out, "telemetry.otlp.endpoint sends headers and telemetry to "+u.Hostname()+" unencrypted; use https")
-	}
-	return out
-}
-
-// nearby reports a host that plain HTTP reaches without crossing the
-// internet: loopback, a private address, or a single-label name such as a
-// Compose service.
-func nearby(host string) bool {
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.IsLoopback() || ip.IsPrivate()
-	}
-	return !strings.Contains(host, ".") || IsLocalhost(host)
 }

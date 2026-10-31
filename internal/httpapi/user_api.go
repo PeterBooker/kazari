@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -62,7 +63,8 @@ type UserOptions struct {
 	// Now clocks the rate limiters. Default: time.Now.
 	Now func() time.Time
 	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
-	Skill string
+	Skill     string
+	Telemetry instrument.Providers
 }
 
 func (o UserOptions) withDefaults(d UserDeps) UserOptions {
@@ -101,7 +103,7 @@ type userAPI struct {
 // artifacts:delete.
 func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
-	h := &userAPI{base: newBase(d.Logger, d.Links), d: d, o: o}
+	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o}
 
 	read := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeRead, false, fn) }
 	write := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeWrite, true, fn) }
@@ -130,8 +132,8 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	mux.Handle("GET /v1/me/keys", h.guard("", false, h.myKeys))
 
 	var handler http.Handler = jsonFallback(mux, &h.base)
-	handler = auth.RequireBearer(d.Auth, auth.BearerOptions{})(handler)
-	handler = h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(handler)
+	handler = auth.RequireBearer(d.Auth, auth.Options{Telemetry: o.Telemetry})(handler)
+	handler = h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(handler)
 	return handler
 }
 

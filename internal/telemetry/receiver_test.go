@@ -22,6 +22,7 @@ import (
 	"time"
 
 	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -83,6 +84,21 @@ type grpcReceiver struct {
 	mu      sync.Mutex
 	md      []metadata.MD
 	metrics []*colmetricpb.ExportMetricsServiceRequest
+	traces  []*coltracepb.ExportTraceServiceRequest
+}
+
+type grpcTraces struct {
+	coltracepb.UnimplementedTraceServiceServer
+	g *grpcReceiver
+}
+
+func (s grpcTraces) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	s.g.mu.Lock()
+	defer s.g.mu.Unlock()
+	s.g.md = append(s.g.md, md)
+	s.g.traces = append(s.g.traces, req)
+	return &coltracepb.ExportTraceServiceResponse{}, nil
 }
 
 func (g *grpcReceiver) Export(ctx context.Context, req *colmetricpb.ExportMetricsServiceRequest) (*colmetricpb.ExportMetricsServiceResponse, error) {
@@ -103,6 +119,7 @@ func startGRPC(t *testing.T, g *grpcReceiver, opts ...grpc.ServerOption) string 
 	}
 	srv := grpc.NewServer(opts...)
 	colmetricpb.RegisterMetricsServiceServer(srv, g)
+	coltracepb.RegisterTraceServiceServer(srv, grpcTraces{g: g})
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(srv.Stop)
 	return ln.Addr().String()
@@ -113,6 +130,15 @@ func decodeMetrics(t *testing.T, body []byte) *colmetricpb.ExportMetricsServiceR
 	var req colmetricpb.ExportMetricsServiceRequest
 	if err := proto.Unmarshal(body, &req); err != nil {
 		t.Fatalf("decode metrics request: %v", err)
+	}
+	return &req
+}
+
+func decodeTraces(t *testing.T, body []byte) *coltracepb.ExportTraceServiceRequest {
+	t.Helper()
+	var req coltracepb.ExportTraceServiceRequest
+	if err := proto.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode trace request: %v", err)
 	}
 	return &req
 }

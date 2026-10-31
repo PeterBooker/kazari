@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
@@ -67,10 +68,12 @@ type Scheduler struct {
 	jitter   float64
 	jobs     map[string]*jobState
 	duration metric.Float64Histogram
+	tracer   trace.Tracer
 }
 
 type jobState struct {
 	job         Job
+	spanName    string
 	okAttrs     metric.MeasurementOption
 	failedAttrs metric.MeasurementOption
 
@@ -93,6 +96,7 @@ func New(opts Options, jobs ...Job) *Scheduler {
 			metric.WithDescription("Duration of scheduler job runs."),
 			metric.WithUnit("s"),
 			metric.WithExplicitBucketBoundaries(0.01, 0.04, 0.16, 0.64, 2.56, 10.24, 40.96, 163.84))),
+		tracer: opts.Telemetry.Tracer(scope),
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
@@ -112,6 +116,7 @@ func New(opts Options, jobs ...Job) *Scheduler {
 		name := instrument.JobName.String(j.Name)
 		s.jobs[j.Name] = &jobState{
 			job:         j,
+			spanName:    "job " + j.Name,
 			okAttrs:     metric.WithAttributeSet(attribute.NewSet(name)),
 			failedAttrs: metric.WithAttributeSet(attribute.NewSet(name, semconv.ErrorTypeKey.String(instrument.Other))),
 		}
@@ -195,12 +200,16 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	st.running = true
 	st.mu.Unlock()
 
+	// A root span on schedule; a child of the request that triggered it
+	// otherwise.
+	ctx, span := s.tracer.Start(ctx, st.spanName, trace.WithAttributes(instrument.JobName.String(st.job.Name)))
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	start := s.now()
 	began := time.Now()
 	err := safeRun(runCtx, st.job)
+	instrument.End(span, err, "")
 	attrs := st.okAttrs
 	if err != nil {
 		attrs = st.failedAttrs

@@ -593,7 +593,7 @@ func TestResourcesAndPrompt(t *testing.T) {
 func TestWriteRateLimit(t *testing.T) {
 	e := newEnv(t)
 	now := time.Unix(0, 0)
-	e.deps.Writes = ratelimit.New(1, func() time.Time { return now })
+	e.deps.Writes = ratelimit.New(1, ratelimit.Options{Now: func() time.Time { return now }, Scope: ratelimit.ScopeCredential})
 	p := member
 	p.KeyID = "abcd1234"
 	cs := e.connect(t, p)

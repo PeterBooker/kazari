@@ -76,9 +76,16 @@ type instance struct {
 
 func start(t testing.TB, cfg config.Config) *instance {
 	t.Helper()
+	return startWith(t, cfg, app.Options{})
+}
+
+// startWith runs the app with opts, its clock and logger filled in.
+func startWith(t testing.TB, cfg config.Config, opts app.Options) *instance {
+	t.Helper()
 	clk := &clock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 	ctx, cancel := context.WithCancel(context.Background())
-	a, err := app.New(ctx, cfg, app.Options{Now: clk.Now, Logger: testLogger()})
+	opts.Now, opts.Logger = clk.Now, testLogger()
+	a, err := app.New(ctx, cfg, opts)
 	if err != nil {
 		cancel()
 		t.Fatal(err)

@@ -11,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
@@ -308,5 +311,38 @@ func TestJobDuration(t *testing.T) {
 	want := map[string]uint64{"sweep/": 2, "gc/_OTHER": 1}
 	if !maps.Equal(got, want) {
 		t.Errorf("runs = %v, want %v", got, want)
+	}
+}
+
+func TestJobSpans(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	defer tp.Shutdown(context.Background())
+	s := New(Options{Logger: slog.New(slog.DiscardHandler), Telemetry: instrument.Providers{TracerProvider: tp}},
+		Job{Name: "sweep", Run: func(context.Context) error { return nil }},
+		Job{Name: "gc", Run: func(context.Context) error { return errors.New("disk full") }},
+	)
+	_ = s.Trigger(context.Background(), "sweep")
+	ctx, parent := tp.Tracer("test").Start(context.Background(), "POST /v1/jobs/{name}/run")
+	_ = s.Trigger(ctx, "gc")
+	parent.End()
+
+	byName := map[string]sdktrace.ReadOnlySpan{}
+	for _, sp := range rec.Ended() {
+		byName[sp.Name()] = sp
+	}
+	if sp := byName["job sweep"]; sp == nil || sp.Parent().IsValid() || sp.Status().Code == codes.Error {
+		t.Errorf("job sweep = %v, want a successful root span", sp)
+	}
+	gc := byName["job gc"]
+	if gc == nil || gc.Parent().SpanID() != parent.SpanContext().SpanID() || gc.Status().Code != codes.Error {
+		t.Fatalf("job gc = %v, want a failed child of the request", gc)
+	}
+	attrs := map[string]string{}
+	for _, kv := range gc.Attributes() {
+		attrs[string(kv.Key)] = kv.Value.String()
+	}
+	if attrs["kazari.job.name"] != "gc" || attrs["error.type"] != "internal" {
+		t.Errorf("attributes = %v", attrs)
 	}
 }

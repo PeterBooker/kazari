@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/grpc"
@@ -27,9 +26,6 @@ var testNow = time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 
 func newTelemetry(t *testing.T, o Options) *Telemetry {
 	t.Helper()
-	if o.ServiceName == "" {
-		o.ServiceName = "kazari"
-	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -57,11 +53,8 @@ func TestOff(t *testing.T) {
 	if tel.MetricsHandler() != nil {
 		t.Error("MetricsHandler is set with Prometheus off")
 	}
-	if _, ok := tel.Providers().MeterProvider.(metricnoop.MeterProvider); !ok {
-		t.Errorf("MeterProvider = %T, want the no-op", tel.Providers().MeterProvider)
-	}
-	if tel.transport != nil {
-		t.Error("transport built without an endpoint")
+	if p := tel.Providers(); p.MeterProvider != nil || p.TracerProvider != nil {
+		t.Errorf("Providers = %+v, want none", p)
 	}
 }
 
@@ -84,9 +77,6 @@ func TestPrometheusOnly(t *testing.T) {
 	}
 	if strings.Contains(body, "otel_scope_") {
 		t.Error("scrape has otel_scope_ labels")
-	}
-	if tel.transport != nil {
-		t.Error("transport built without an endpoint")
 	}
 }
 
@@ -179,10 +169,10 @@ func TestOTLPMutualTLSRotation(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	certFile, keyFile := pki.writeClient(t, "kazari-1", base)
 
-	tr, err := newTransport(OTLP{
+	tr, err := newEndpoint(OTLP{
 		Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second,
 		CAFile: pki.caFile, CertFile: certFile, KeyFile: keyFile,
-	}, slog.New(slog.DiscardHandler))
+	}, signalMetrics, "/v1/metrics", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +205,7 @@ func TestOTLPUntrustedServer(t *testing.T) {
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
 	defer srv.Close()
-	tr, err := newTransport(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second}, slog.New(slog.DiscardHandler))
+	tr, err := newEndpoint(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second}, signalMetrics, "/v1/metrics", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,8 +225,8 @@ func TestOTLPNoRedirects(t *testing.T) {
 	defer target.Close()
 	srv := httptest.NewServer(http.RedirectHandler(target.URL+"/v1/metrics", http.StatusTemporaryRedirect))
 	defer srv.Close()
-	tr, err := newTransport(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second,
-		Headers: map[string]string{"Authorization": "Bearer t0k"}}, slog.New(slog.DiscardHandler))
+	tr, err := newEndpoint(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second,
+		Headers: map[string]string{"Authorization": "Bearer t0k"}}, signalMetrics, "/v1/metrics", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,12 +245,12 @@ func TestSignalURL(t *testing.T) {
 		"https://otlp.example.com/otlp":  "https://otlp.example.com/otlp/v1/metrics",
 		"https://otlp.example.com/otlp/": "https://otlp.example.com/otlp/v1/metrics",
 	} {
-		tr, err := newTransport(OTLP{Endpoint: endpoint, Protocol: ProtocolHTTP}, slog.New(slog.DiscardHandler))
+		u, _, err := otlpEndpoint(OTLP{Endpoint: endpoint}, signalMetrics, "/v1/metrics")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := tr.signalURL("/v1/metrics"); got != want {
-			t.Errorf("signalURL(%s) = %s, want %s", endpoint, got, want)
+		if u.String() != want {
+			t.Errorf("endpoint %s = %s, want %s", endpoint, u, want)
 		}
 	}
 }
@@ -285,7 +275,7 @@ func TestExportCounts(t *testing.T) {
 			defer srv.Close()
 			var logs bytes.Buffer
 			log := newLimitedLog(slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return testNow })
-			tr, err := newTransport(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second}, slog.New(slog.DiscardHandler))
+			tr, err := newEndpoint(OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP, Timeout: 5 * time.Second}, signalMetrics, "/v1/metrics", slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}

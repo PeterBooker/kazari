@@ -347,6 +347,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	}, nil
 }
 
+// Recognize implements auth.Recognizer for API keys.
+func (s *Service) Recognize(token string) (string, bool) {
+	_, _, ok := ParseKey(token)
+	return auth.SourceAPIKey, ok
+}
+
 // KeyStatus reports on the key with prefix, for credentials derived from it
 // (an OAuth grant lives only while its key is active). ErrKeyNotFound.
 func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, error) {

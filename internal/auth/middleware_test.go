@@ -96,27 +96,27 @@ func TestRequireBearer(t *testing.T) {
 	metaChallenge := `Bearer error="invalid_token", resource_metadata="` + metaURL + `"`
 	tests := []struct {
 		name  string
-		opts  auth.BearerOptions
+		opts  auth.Options
 		authz string
 		want  result
 	}{
-		{"missing header", auth.BearerOptions{}, "",
+		{"missing header", auth.Options{}, "",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},
-		{"missing header with resource metadata", auth.BearerOptions{ResourceMetadataURL: metaURL}, "",
+		{"missing header with resource metadata", auth.Options{ResourceMetadataURL: metaURL}, "",
 			result{status: 401, challenge: metaChallenge, code: "unauthorized"}},
-		{"other scheme", auth.BearerOptions{}, "Basic YWxpY2U6cGF6eg==",
+		{"other scheme", auth.Options{}, "Basic YWxpY2U6cGF6eg==",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},
-		{"empty bearer", auth.BearerOptions{}, "Bearer    ",
+		{"empty bearer", auth.Options{}, "Bearer    ",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},
-		{"invalid token", auth.BearerOptions{}, "Bearer nope",
+		{"invalid token", auth.Options{}, "Bearer nope",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},
-		{"invalid token with resource metadata", auth.BearerOptions{ResourceMetadataURL: metaURL}, "Bearer nope",
+		{"invalid token with resource metadata", auth.Options{ResourceMetadataURL: metaURL}, "Bearer nope",
 			result{status: 401, challenge: metaChallenge, code: "unauthorized"}},
-		{"authenticator error", auth.BearerOptions{}, "Bearer broken",
+		{"authenticator error", auth.Options{}, "Bearer broken",
 			result{status: 401, challenge: plainChallenge, code: "unauthorized"}},
-		{"valid token", auth.BearerOptions{}, "Bearer alice-token",
+		{"valid token", auth.Options{}, "Bearer alice-token",
 			result{status: 200, principal: &alicePrincipal}},
-		{"scheme is case-insensitive", auth.BearerOptions{ResourceMetadataURL: metaURL}, "bearer  alice-token ",
+		{"scheme is case-insensitive", auth.Options{ResourceMetadataURL: metaURL}, "bearer  alice-token ",
 			result{status: 200, principal: &alicePrincipal}},
 	}
 	for _, tt := range tests {
@@ -181,7 +181,7 @@ func TestRequireScope(t *testing.T) {
 		})
 	}
 
-	chained := auth.RequireBearer(tokens, auth.BearerOptions{})(auth.RequireScope(auth.ScopeRead)(echo))
+	chained := auth.RequireBearer(tokens, auth.Options{})(auth.RequireScope(auth.ScopeRead)(echo))
 	if got := serve(t, chained, "Bearer alice-token", nil); got.status != 200 {
 		t.Errorf("bearer + scope: status %d", got.status)
 	}
@@ -223,7 +223,7 @@ func TestRequireAdmin(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := serve(t, auth.RequireAdmin(tt.token, tt.fallback)(echo), tt.authz, nil)
+			got := serve(t, auth.RequireAdmin(tt.token, tt.fallback, auth.Options{})(echo), tt.authz, nil)
 			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(result{})); diff != "" {
 				t.Errorf("(-want +got):\n%s", diff)
 			}

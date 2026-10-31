@@ -11,9 +11,7 @@ import (
 	"github.com/prometheus/otlptranslator"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/exemplar"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/otelconv"
@@ -23,22 +21,8 @@ import (
 
 const scope = "github.com/PeterBooker/kazari/internal/telemetry"
 
-// cardinalityLimit is a safety net, not a budget: every attribute is
-// bounded, so an otel_metric_overflow series means one escaped its bound.
-const cardinalityLimit = 2000
-
 func (t *Telemetry) buildMetrics(ctx context.Context, o Options, res *resource.Resource) error {
-	opts := []sdkmetric.Option{
-		sdkmetric.WithResource(res),
-		sdkmetric.WithExemplarFilter(exemplar.TraceBasedFilter),
-		sdkmetric.WithCardinalityLimit(cardinalityLimit),
-		// The runtime instrumentation's pre-semconv names, which
-		// OTEL_GO_X_DEPRECATED_RUNTIME_METRICS would turn on.
-		sdkmetric.WithView(
-			dropView("process.runtime.go.*"),
-			dropView("runtime.uptime"),
-		),
-	}
+	opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
 	readers := 0
 	if o.Metrics.Prometheus {
 		reader, handler, err := newPrometheus()
@@ -50,26 +34,34 @@ func (t *Telemetry) buildMetrics(ctx context.Context, o Options, res *resource.R
 		t.metrics = handler
 	}
 
-	var exp *metricExporter
+	var (
+		exp *metricExporter
+		ep  *endpoint
+	)
 	reader := o.MetricReader
-	if reader == nil && t.transport != nil {
-		e, err := t.transport.metricExporter(ctx)
+	if reader == nil {
+		var err error
+		if ep, err = t.endpoint(o.Metrics.OTLP, o, signalMetrics, "/v1/metrics"); err != nil {
+			return err
+		}
+	}
+	if ep != nil {
+		e, err := ep.metricExporter(ctx)
 		if err != nil {
 			return err
 		}
 		exp = &metricExporter{Exporter: e}
-		reader = sdkmetric.NewPeriodicReader(exp,
-			sdkmetric.WithInterval(o.Metrics.Interval),
-			sdkmetric.WithTimeout(exportTimeout),
-			sdkmetric.WithProducer(runtime.NewProducer()),
-		)
+		readerOpts := []sdkmetric.PeriodicReaderOption{sdkmetric.WithProducer(runtime.NewProducer())}
+		if o.Metrics.Interval > 0 {
+			readerOpts = append(readerOpts, sdkmetric.WithInterval(o.Metrics.Interval))
+		}
+		reader = sdkmetric.NewPeriodicReader(exp, readerOpts...)
 	}
 	if reader != nil {
 		opts = append(opts, sdkmetric.WithReader(reader))
 		readers++
 	}
 	if readers == 0 {
-		t.noopMetrics()
 		return nil
 	}
 
@@ -78,20 +70,13 @@ func (t *Telemetry) buildMetrics(ctx context.Context, o Options, res *resource.R
 	t.shutdown = append(t.shutdown, mp.Shutdown)
 	if exp != nil {
 		count := instrument.Handle(otelconv.NewSDKExporterMetricDataPointExported(mp.Meter(scope)))
-		exp.stats.Store(newExportStats("metrics", count.AddSet, t.transport,
-			t.transport.componentType(semconv.OTelComponentTypeOtlpHTTPMetricExporter, semconv.OTelComponentTypeOtlpGRPCMetricExporter), t.log))
+		exp.stats.Store(newExportStats("metrics", count.AddSet, ep,
+			ep.componentType(semconv.OTelComponentTypeOtlpHTTPMetricExporter, semconv.OTelComponentTypeOtlpGRPCMetricExporter), t.log))
 	}
 	if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
 		return fmt.Errorf("telemetry: runtime metrics: %w", err)
 	}
 	return nil
-}
-
-func dropView(name string) sdkmetric.View {
-	return sdkmetric.NewView(
-		sdkmetric.Instrument{Name: name, Scope: instrumentation.Scope{Name: runtime.ScopeName}},
-		sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}},
-	)
 }
 
 // newPrometheus serves OpenTelemetry names translated the Prometheus way

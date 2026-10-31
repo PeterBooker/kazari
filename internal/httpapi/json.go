@@ -13,9 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -47,16 +50,21 @@ func invalid(format string, args ...any) error {
 // apiFunc returns its failure for the wrapper to write.
 type apiFunc func(w http.ResponseWriter, r *http.Request, p auth.Principal) error
 
+const scope = "github.com/PeterBooker/kazari/internal/httpapi"
+
 type base struct {
-	log   *slog.Logger
-	links present.Links
+	log    *slog.Logger
+	links  present.Links
+	errors metric.Int64Counter
 }
 
-func newBase(log *slog.Logger, links present.Links) base {
+func newBase(log *slog.Logger, links present.Links, p instrument.Providers) base {
 	if log == nil {
 		log = slog.Default()
 	}
-	return base{log: log, links: links}
+	return base{log: log, links: links, errors: instrument.Handle(p.Meter(scope).Int64Counter("kazari.api.errors",
+		metric.WithDescription("Error responses of the REST and admin APIs by error code."),
+		metric.WithUnit("{error}")))}
 }
 
 func (b *base) serve(fn apiFunc) http.Handler {
@@ -78,6 +86,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // with its cause; its body only ever carries a generic message.
 func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, body, retry := errorResponse(err)
+	ctx := r.Context()
+	middleware.SetErrorCode(ctx, body.Code)
+	b.errors.Add(ctx, 1, metric.WithAttributes(
+		instrument.Surface.String(instrument.OneOf(middleware.SurfaceFrom(ctx), instrument.SurfaceAPI, instrument.SurfaceAdmin)),
+		instrument.ErrorCode.String(instrument.OneOf(body.Code, api.ErrorCodes...)),
+	))
 	if status >= http.StatusInternalServerError {
 		b.log.ErrorContext(r.Context(), "httpapi: request failed",
 			"method", r.Method, "path", r.URL.Path, "status", status, "err", err)

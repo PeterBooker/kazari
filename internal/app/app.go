@@ -17,6 +17,8 @@ import (
 	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
@@ -28,6 +30,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
@@ -57,10 +60,13 @@ type Options struct {
 	Now    func() time.Time // nil means time.Now
 	Logger *slog.Logger     // nil means slog.Default()
 
-	// MetricReader replaces the OTLP metric reader whatever the endpoint,
-	// for tests.
+	// SpanExporter and MetricReader replace their signal's OTLP exporter
+	// whatever the endpoint, for tests.
+	SpanExporter sdktrace.SpanExporter
 	MetricReader sdkmetric.Reader
 }
+
+const scope = "github.com/PeterBooker/kazari/internal/app"
 
 // Addrs are the bound listener addresses, empty for one not configured.
 type Addrs struct {
@@ -78,6 +84,7 @@ type App struct {
 
 	db         *sqlite.DB
 	tel        *telemetry.Telemetry
+	tracer     trace.Tracer
 	obs        *middleware.Observer
 	sched      *scheduler.Scheduler
 	users      *user.Service
@@ -120,22 +127,33 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-	for _, w := range cfg.Telemetry.Warnings() {
-		log.Warn("config: " + w)
-	}
-	a := &App{cfg: cfg, log: log, tel: tel, started: make(chan struct{})}
-	if a.db, err = sqlite.Open(ctx, cfg.DBPath()); err != nil {
-		a.flushTelemetry()
-		return nil, fmt.Errorf("app: %w", err)
-	}
-	if err := a.build(ctx, now); err != nil {
-		a.Close()
+	a := &App{cfg: cfg, log: log, tel: tel, tracer: tel.Providers().Tracer(scope), started: make(chan struct{})}
+	if err := a.start(ctx, now); err != nil {
+		if a.db == nil {
+			a.flushTelemetry()
+		} else {
+			a.Close()
+		}
 		return nil, err
 	}
 	return a, nil
 }
 
-func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now func() time.Time) telemetry.Options {
+// start is traced as kazari.start, to show why a start was slow.
+func (a *App) start(ctx context.Context, now func() time.Time) (err error) {
+	ctx, span := a.tracer.Start(ctx, "kazari.start")
+	defer func() { instrument.End(span, err, "") }()
+	migrateCtx, migrate := instrument.StartChild(ctx, a.tracer, "sqlite.migrate")
+	a.db, err = sqlite.Open(migrateCtx, a.cfg.DBPath())
+	instrument.End(migrate, err, "")
+	if err != nil {
+		return fmt.Errorf("app: %w", err)
+	}
+	return a.build(ctx, now)
+}
+
+// TelemetryOptions maps the telemetry section onto the SDK's options.
+func TelemetryOptions(cfg config.Config) telemetry.Options {
 	t := cfg.Telemetry
 	return telemetry.Options{
 		ServiceName:    t.ServiceName,
@@ -151,15 +169,25 @@ func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now fun
 			CertFile:    t.OTLP.CertFile,
 			KeyFile:     t.OTLP.KeyFile,
 		},
+		Traces: telemetry.Traces{
+			OTLP:            t.Traces.OTLP,
+			SampleRatio:     t.Traces.SampleRatio,
+			SiteSampleRatio: t.Traces.SiteSampleRatio,
+		},
 		Metrics: telemetry.Metrics{
 			Prometheus: t.Metrics.Prometheus,
 			OTLP:       t.Metrics.OTLP,
 			Interval:   t.Metrics.Interval.Std(),
 		},
-		Logger:       log,
-		Now:          now,
-		MetricReader: opts.MetricReader,
+		Logs: telemetry.Logs{OTLP: t.Logs.OTLP},
 	}
+}
+
+func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now func() time.Time) telemetry.Options {
+	o := TelemetryOptions(cfg)
+	o.Logger, o.Now = log, now
+	o.SpanExporter, o.MetricReader = opts.SpanExporter, opts.MetricReader
+	return o
 }
 
 func (a *App) build(ctx context.Context, now func() time.Time) error {
@@ -231,12 +259,14 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	mcpURL := cfg.ExternalURL("mcp")
 	var idp oauth.IdentityProvider
 	if o := cfg.Auth.OIDC; o != nil {
-		p, err := oidc.New(ctx, oidc.Config{
+		discoverCtx, discover := instrument.StartChild(ctx, a.tracer, "oidc.discover")
+		p, err := oidc.New(discoverCtx, oidc.Config{
 			Issuer:       o.Issuer,
 			ClientID:     o.ClientID,
 			ClientSecret: o.ClientSecret,
 			RedirectURL:  mcpURL + strings.TrimPrefix(oauth.PathCallback, "/"),
 		})
+		instrument.End(discover, err, "")
 		if err != nil {
 			return fmt.Errorf("app: %w", err)
 		}
@@ -253,11 +283,12 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	})
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
-	a.obs = middleware.NewObserver(a.tel.Providers(), cfg.Listen.ProxyMode)
+	tel := a.tel.Providers()
+	a.obs = middleware.NewObserver(tel, cfg.Listen.ProxyMode)
 	// One write budget per credential across the user API and MCP.
-	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, now)
+	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential, Telemetry: tel})
 
-	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: a.tel.Providers()},
+	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: tel},
 		scheduler.Job{Name: "sweep", Every: cfg.Lifecycle.SweepInterval.Std(), Run: func(ctx context.Context) error {
 			rep, err := arts.Sweep(ctx)
 			if rep != (artifact.SweepReport{}) {
@@ -313,6 +344,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
 		Fetch:               cfg.Fetch.Enabled,
 		Now:                 now,
+		Telemetry:           tel,
 	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
@@ -324,6 +356,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Now:           now,
 		TempDir:       tempDir(cfg),
 		Skill:         mcpserver.Skill(links, mcpOpts),
+		Telemetry:     tel,
 	})
 	adminDeps := httpapi.AdminDeps{
 		Artifacts: arts,
@@ -338,9 +371,9 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Logger:    log,
 	}
 	if cfg.AdminSocketPath() != "" {
-		a.adminLocal = a.surface("admin", true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now}))
+		a.adminLocal = a.surface(instrument.SurfaceAdmin, true, httpapi.NewAdminAPI(adminDeps, httpapi.AdminOptions{Local: true, Now: now, Telemetry: tel}))
 	}
-	adminOpts := httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now}
+	adminOpts := httpapi.AdminOptions{AdminToken: cfg.Auth.AdminToken, Now: now, Telemetry: tel}
 	if cfg.Admin.Listen == "" && !config.IsLocalhost(cfg.BaseDomain) {
 		// On the public listener the gauges and exemplar trace ids are for
 		// the operator's scraper alone.
@@ -372,26 +405,30 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		return err
 	}
 
-	a.admin = a.surface("admin", true, adminH)
+	a.admin = a.surface(instrument.SurfaceAdmin, true, adminH)
 	publicAdmin := a.admin
 	if cfg.Admin.Listen != "" {
-		publicAdmin = a.surface("admin", true, http.NotFoundHandler())
+		publicAdmin = a.surface(instrument.SurfaceAdmin, true, http.NotFoundHandler())
 	}
 	// One per-IP budget for OAuth and MCP, applied before authentication
 	// like the user API's.
-	mcpLimit := ratelimit.Middleware(ratelimit.New(ratelimit.DefaultIPPerMinute, now), ratelimit.IPKey, nil)
+	mcpIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
+	mcpLimit := ratelimit.Middleware(mcpIPs, ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
-		api:   a.surface("api", true, apiH),
-		mcp:   a.surface("mcp", true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		api:   a.surface(instrument.SurfaceAPI, true, apiH),
+		mcp:   a.surface(instrument.SurfaceMCP, true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
 		admin: publicAdmin,
-		apex:  a.surface("apex", true, apexH),
-		site:  a.surface("site", false, siteH),
+		apex:  a.surface(instrument.SurfaceApex, true, apexH),
+		site:  a.surface(instrument.SurfaceSite, false, siteH),
 	})
 
 	a.mode = "proxy"
 	if !cfg.Listen.ProxyMode {
 		a.mode = cfg.TLS.Mode
-		if a.certs, err = certSource(cfg, log); err != nil {
+		_, span := instrument.StartChild(ctx, a.tracer, "certs.init")
+		a.certs, err = certSource(cfg, log)
+		instrument.End(span, err, "")
+		if err != nil {
 			return err
 		}
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
@@ -32,11 +33,19 @@ func (a *App) routes(h hosts) http.Handler {
 	return normalizeHost(mux)
 }
 
+// untracedPaths are counted but never traced: probes and scrapes arrive every
+// few seconds and say nothing about what an agent did.
+var untracedPaths = []string{"/health", "/v1/health", "/metrics"}
+
 func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
+	observe := middleware.ObserveOptions{
+		ControlPlane: name == instrument.SurfaceAPI || name == instrument.SurfaceMCP || name == instrument.SurfaceAdmin,
+		Skip:         untracedPaths,
+	}
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
 		middleware.RealIP(a.cfg.Listen.ProxyMode),
-		a.obs.Observe(name),
+		a.obs.Observe(name, observe),
 		middleware.Logger(a.log),
 		middleware.Recover(a.log),
 	}

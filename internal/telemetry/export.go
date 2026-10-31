@@ -105,8 +105,8 @@ type exportStats struct {
 	log    *limitedLog
 }
 
-func newExportStats(signal string, add func(context.Context, int64, attribute.Set), t *transport, typ attribute.KeyValue, log *limitedLog) *exportStats {
-	base := append([]attribute.KeyValue{typ, semconv.OTelComponentName(typ.Value.AsString() + "/0")}, t.server...)
+func newExportStats(signal string, add func(context.Context, int64, attribute.Set), e *endpoint, typ attribute.KeyValue, log *limitedLog) *exportStats {
+	base := append([]attribute.KeyValue{typ, semconv.OTelComponentName(typ.Value.AsString() + "/0")}, e.server...)
 	return &exportStats{signal: signal, add: add, base: base, ok: attribute.NewSet(base...), log: log}
 }
 

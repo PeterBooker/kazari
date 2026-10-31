@@ -3,6 +3,7 @@
 package ratelimit
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/netip"
@@ -10,12 +11,31 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
+
+const scope = "github.com/PeterBooker/kazari/internal/ratelimit"
+
+// Scopes, what a limiter's keys stand for: the values of
+// kazari.rate_limit.scope.
+const (
+	ScopeIP         = "ip"
+	ScopeCredential = "credential"
+)
+
+// Options configure a Limiter. The zero value is valid.
+type Options struct {
+	Now       func() time.Time // nil means time.Now
+	Scope     string           // ScopeIP or ScopeCredential
+	Telemetry instrument.Providers
+}
 
 const DefaultIPPerMinute = 120
 
@@ -34,6 +54,8 @@ const (
 type Limiter struct {
 	perMinute int
 	now       func() time.Time
+	scope     string
+	rejected  metric.Int64Counter
 
 	mu        sync.Mutex
 	entries   map[string]*entry
@@ -45,21 +67,43 @@ type entry struct {
 	seen time.Time
 }
 
-// New returns nil, which allows everything, when perMinute <= 0. A nil now
-// means time.Now.
-func New(perMinute int, now func() time.Time) *Limiter {
+// New returns nil, which allows everything, when perMinute <= 0.
+func New(perMinute int, o Options) *Limiter {
 	if perMinute <= 0 {
 		return nil
 	}
-	if now == nil {
-		now = time.Now
+	if o.Now == nil {
+		o.Now = time.Now
 	}
-	return &Limiter{perMinute: perMinute, now: now, entries: map[string]*entry{}}
+	return &Limiter{
+		perMinute: perMinute,
+		now:       o.Now,
+		scope:     instrument.OneOf(o.Scope, ScopeIP, ScopeCredential),
+		rejected: instrument.Handle(o.Telemetry.Meter(scope).Int64Counter("kazari.rate_limit.rejected_requests",
+			metric.WithDescription("Requests refused by a rate limit."),
+			metric.WithUnit("{request}"))),
+		entries: map[string]*entry{},
+	}
 }
 
 // Reserve takes a token for key and returns 0, or returns how long until the
-// request could proceed.
-func (l *Limiter) Reserve(key string) time.Duration {
+// request could proceed. A refusal is counted against the surface in ctx and
+// marked on its span.
+func (l *Limiter) Reserve(ctx context.Context, key string) time.Duration {
+	d := l.reserve(key)
+	if d > 0 {
+		attrs := metric.WithAttributes(
+			instrument.Surface.String(middleware.SurfaceFrom(ctx)),
+			instrument.RateLimitScope.String(l.scope),
+		)
+		l.rejected.Add(ctx, 1, attrs)
+		trace.SpanFromContext(ctx).AddEvent("kazari.rate_limited",
+			trace.WithAttributes(instrument.RateLimitScope.String(l.scope)))
+	}
+	return d
+}
+
+func (l *Limiter) reserve(key string) time.Duration {
 	if l == nil {
 		return 0
 	}
@@ -122,7 +166,7 @@ func Middleware(l *Limiter, key func(*http.Request) string, reject func(http.Res
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if d := l.Reserve(key(r)); d > 0 {
+			if d := l.Reserve(r.Context(), key(r)); d > 0 {
 				reject(w, r, d)
 				return
 			}
@@ -132,7 +176,8 @@ func Middleware(l *Limiter, key func(*http.Request) string, reject func(http.Res
 }
 
 // WriteTooMany answers 429 with Retry-After and the API's JSON error.
-func WriteTooMany(w http.ResponseWriter, _ *http.Request, retryAfter time.Duration) {
+func WriteTooMany(w http.ResponseWriter, r *http.Request, retryAfter time.Duration) {
+	middleware.SetErrorCode(r.Context(), api.CodeRateLimited)
 	w.Header().Set("Retry-After", RetryAfter(retryAfter))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)

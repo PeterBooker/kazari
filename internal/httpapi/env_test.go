@@ -108,7 +108,7 @@ func newEnv(t *testing.T, c config) *env {
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: art, Uploads: uploads, Users: users, Auth: users, Links: links,
-		Writes: ratelimit.New(c.writeRate, now), Fetch: fc,
+		Writes: ratelimit.New(c.writeRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential}), Fetch: fc,
 	}, c.user))
 	t.Cleanup(userSrv.Close)
 	admSrv := httptest.NewServer(httpapi.NewAdminAPI(httpapi.AdminDeps{

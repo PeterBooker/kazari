@@ -17,13 +17,14 @@ import (
 	"time"
 )
 
+func ptr[T any](v T) *T { return &v }
+
 func TestTelemetryDefaults(t *testing.T) {
 	got := Default().Telemetry
 	want := Telemetry{
-		ServiceName: "kazari",
-		OTLP:        OTLP{Protocol: "http/protobuf", Headers: Headers{}, Compression: "gzip", Timeout: Duration(10 * time.Second)},
-		Traces:      Traces{OTLP: true, SampleRatio: 1, SiteSampleRatio: 0.01},
-		Metrics:     Metrics{Prometheus: true, Interval: Duration(time.Minute)},
+		OTLP:    OTLP{Headers: Headers{}},
+		Traces:  Traces{OTLP: true},
+		Metrics: Metrics{Prometheus: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Default().Telemetry = %+v, want %+v", got, want)
@@ -61,7 +62,6 @@ telemetry:
 		t.Fatalf("LoadWith: %v", err)
 	}
 	want := Telemetry{
-		ServiceName: "kazari",
 		Environment: "production",
 		OTLP: OTLP{
 			Endpoint:    "https://otlp.example.com/otlp",
@@ -70,7 +70,7 @@ telemetry:
 			Compression: "none",
 			Timeout:     Duration(5 * time.Second),
 		},
-		Traces:  Traces{OTLP: true, SampleRatio: 0.5, SiteSampleRatio: 0},
+		Traces:  Traces{OTLP: true, SampleRatio: ptr(0.5), SiteSampleRatio: ptr(0.0)},
 		Metrics: Metrics{Prometheus: true, Token: testAdminToken, OTLP: true, Interval: Duration(30 * time.Second)},
 		Logs:    LogExport{OTLP: true, Level: "warn"},
 	}
@@ -113,8 +113,11 @@ func TestTelemetryEnv(t *testing.T) {
 			if !reflect.DeepEqual(c.Telemetry.OTLP.Headers, tt.want) {
 				t.Errorf("Headers = %#v, want %#v", c.Telemetry.OTLP.Headers, tt.want)
 			}
-			if c.Telemetry.Traces.SiteSampleRatio != 0.25 {
-				t.Errorf("SiteSampleRatio = %v, want 0.25", c.Telemetry.Traces.SiteSampleRatio)
+			if r := c.Telemetry.Traces.SiteSampleRatio; r == nil || *r != 0.25 {
+				t.Errorf("SiteSampleRatio = %v, want 0.25", r)
+			}
+			if c.Telemetry.Traces.SampleRatio != nil {
+				t.Errorf("SampleRatio = %v, want unset", *c.Telemetry.Traces.SampleRatio)
 			}
 			if c.Telemetry.Metrics.Token != testAdminToken {
 				t.Errorf("Token = %q", c.Telemetry.Metrics.Token)
@@ -210,7 +213,6 @@ func TestValidateTelemetry(t *testing.T) {
 		mutate func(*Telemetry)
 		want   string
 	}{
-		{"service name", func(t *Telemetry) { t.ServiceName = "" }, "telemetry.service_name: required"},
 		{"protocol", func(t *Telemetry) { t.OTLP.Protocol = "http/json" }, "telemetry.otlp.protocol: must be one of http/protobuf, grpc"},
 		{"compression", func(t *Telemetry) { t.OTLP.Compression = "zstd" }, "telemetry.otlp.compression: must be one of gzip, none"},
 		{"relative endpoint", func(t *Telemetry) { t.OTLP.Endpoint = "otlp.example.com:4318" }, "telemetry.otlp.endpoint: must be an absolute http or https URL"},
@@ -224,16 +226,16 @@ func TestValidateTelemetry(t *testing.T) {
 		}, "telemetry.otlp.endpoint: must not have a path with protocol grpc"},
 		{"header name", func(t *Telemetry) { t.OTLP.Headers = Headers{"bad name": "x"} }, "telemetry.otlp.headers:"},
 		{"header value", func(t *Telemetry) { t.OTLP.Headers = Headers{"x-a": "line\r\nInjected: 1"} }, "telemetry.otlp.headers:"},
-		{"timeout", func(t *Telemetry) { t.OTLP.Timeout = 0 }, "telemetry.otlp.timeout: must be greater than 0"},
+		{"timeout", func(t *Telemetry) { t.OTLP.Timeout = -1 }, "telemetry.otlp.timeout: must not be negative"},
 		{"ca missing", func(t *Telemetry) { t.OTLP.CAFile = filepath.Join(dir, "none.pem") }, "telemetry.otlp.ca_file:"},
 		{"ca junk", func(t *Telemetry) { t.OTLP.CAFile = junk }, "telemetry.otlp.ca_file: no PEM certificate found"},
 		{"cert alone", func(t *Telemetry) { t.OTLP.CertFile = certFile }, "telemetry.otlp.cert_file: cert_file and key_file must be set together"},
 		{"key alone", func(t *Telemetry) { t.OTLP.KeyFile = keyFile }, "telemetry.otlp.cert_file: cert_file and key_file must be set together"},
 		{"cert junk", func(t *Telemetry) { t.OTLP.CertFile, t.OTLP.KeyFile = junk, keyFile }, "telemetry.otlp.cert_file:"},
-		{"sample ratio", func(t *Telemetry) { t.Traces.SampleRatio = 1.5 }, "telemetry.traces.sample_ratio: must be between 0 and 1"},
-		{"site sample ratio", func(t *Telemetry) { t.Traces.SiteSampleRatio = -0.1 }, "telemetry.traces.site_sample_ratio: must be between 0 and 1"},
+		{"sample ratio", func(t *Telemetry) { t.Traces.SampleRatio = ptr(1.5) }, "telemetry.traces.sample_ratio: must be between 0 and 1"},
+		{"site sample ratio", func(t *Telemetry) { t.Traces.SiteSampleRatio = ptr(-0.1) }, "telemetry.traces.site_sample_ratio: must be between 0 and 1"},
 		{"metrics token", func(t *Telemetry) { t.Metrics.Token = "short" }, "telemetry.metrics.token: must be at least 32 characters"},
-		{"metrics interval", func(t *Telemetry) { t.Metrics.Interval = Duration(time.Second) }, "telemetry.metrics.interval: must be at least 5s"},
+		{"metrics interval", func(t *Telemetry) { t.Metrics.Interval = Duration(time.Second) }, "telemetry.metrics.interval: must be 0 or at least 5s"},
 		{"logs level", func(t *Telemetry) { t.Logs.Level = "trace" }, "telemetry.logs.level: must be one of debug, info, warn, error"},
 	}
 	for _, tt := range tests {
@@ -259,7 +261,13 @@ func TestValidateTelemetry(t *testing.T) {
 		},
 		"short token on localhost": func(c *Config) { c.BaseDomain = "localhost"; c.Telemetry.Metrics.Token = "dev" },
 		"logs level":               func(c *Config) { c.Telemetry.Logs.Level = "debug" },
-		"ratio bounds":             func(c *Config) { c.Telemetry.Traces.SampleRatio, c.Telemetry.Traces.SiteSampleRatio = 0, 1 },
+		"ratio bounds": func(c *Config) {
+			c.Telemetry.Traces.SampleRatio, c.Telemetry.Traces.SiteSampleRatio = ptr(0.0), ptr(1.0)
+		},
+		"explicit settings": func(c *Config) {
+			c.Telemetry.OTLP.Protocol, c.Telemetry.OTLP.Compression = "grpc", "none"
+			c.Telemetry.OTLP.Timeout, c.Telemetry.Metrics.Interval = Duration(time.Second), Duration(5*time.Second)
+		},
 	}
 	for name, mutate := range ok {
 		t.Run(name, func(t *testing.T) {
@@ -303,38 +311,4 @@ func writeKeyPair(t *testing.T, dir string) (certFile, keyFile string) {
 		t.Fatal(err)
 	}
 	return certFile, keyFile
-}
-
-func TestTelemetryWarnings(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*Telemetry)
-		want   []string
-	}{
-		{"defaults", func(*Telemetry) {}, nil},
-		{"metrics without endpoint", func(t *Telemetry) { t.Metrics.OTLP = true }, []string{"telemetry.metrics.otlp is true"}},
-		{"logs without endpoint", func(t *Telemetry) { t.Logs.OTLP = true }, []string{"telemetry.logs.otlp is true"}},
-		{"public plaintext", func(t *Telemetry) { t.OTLP.Endpoint = "http://otlp.example.com:4318" }, []string{"otlp.example.com unencrypted"}},
-		{"public plaintext ipv6", func(t *Telemetry) { t.OTLP.Endpoint = "http://[2001:db8::1]:4318" }, []string{"2001:db8::1 unencrypted"}},
-		{"https", func(t *Telemetry) { t.OTLP.Endpoint = "https://otlp.example.com" }, nil},
-		{"compose service", func(t *Telemetry) { t.OTLP.Endpoint = "http://otel-collector:4318" }, nil},
-		{"loopback", func(t *Telemetry) { t.OTLP.Endpoint = "http://127.0.0.1:4318" }, nil},
-		{"private", func(t *Telemetry) { t.OTLP.Endpoint = "http://10.1.2.3:4318" }, nil},
-		{"localhost", func(t *Telemetry) { t.OTLP.Endpoint = "http://localhost:4318" }, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tel := Default().Telemetry
-			tt.mutate(&tel)
-			got := tel.Warnings()
-			if len(got) != len(tt.want) {
-				t.Fatalf("Warnings() = %q, want %d", got, len(tt.want))
-			}
-			for i, w := range tt.want {
-				if !strings.Contains(got[i], w) {
-					t.Errorf("warning %q does not contain %q", got[i], w)
-				}
-			}
-		})
-	}
 }

@@ -33,7 +33,18 @@ const (
 	CodeAnchorMismatch   = "anchor_mismatch"
 	CodeLinkNotFound     = "share_link_not_found"
 	CodeFetchFailed      = "fetch_failed"
+	CodeJobRunning       = "job_running"
 )
+
+// ErrorCodes is every code above, the bounded set metrics count errors by.
+var ErrorCodes = []string{
+	CodeNotFound, CodeVersionNotFound, CodeFileNotFound, CodeUploadNotFound, CodeSlugTaken,
+	CodeVersionConflict, CodeTooLarge, CodeTooManyFiles, CodeTooManyUploads, CodeQuotaExceeded,
+	CodeInvalidSlug, CodeInvalidPath, CodeInvalidMetadata, CodeInvalidArgument, CodeForbidden,
+	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeRateLimited, CodeHandleTaken,
+	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
+	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning,
+}
 
 // Error is the body of every error response.
 type Error struct {

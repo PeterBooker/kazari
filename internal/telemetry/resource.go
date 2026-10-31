@@ -16,15 +16,21 @@ import (
 // the id of a host stays the same across restarts and releases.
 var instanceNamespace = [16]byte{0x6b, 0x61, 0x7a, 0x61, 0x72, 0x69, 0x4f, 0x8e, 0xa1, 0x5d, 0x2c, 0x7f, 0x9b, 0x30, 0xe4, 0x51}
 
-// newResource never detects: resource.Default and the environment detector
-// read OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME.
+// defaultServiceName is service.name when neither telemetry.service_name nor
+// the environment sets one.
+const defaultServiceName = "kazari"
+
+// newResource layers, lowest first, what Kazari knows of the process, the
+// environment's OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME, and
+// Kazari's own keys. The providers merge the environment again; with the
+// keys already on top, that changes nothing.
 func newResource(o Options) *resource.Resource {
 	host := o.HostName
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	attrs := []attribute.KeyValue{
-		semconv.ServiceName(o.ServiceName),
+	env := resource.Environment()
+	defaults := []attribute.KeyValue{
 		semconv.ServiceVersion(o.ServiceVersion),
 		semconv.ServiceInstanceID(instanceID(host)),
 		semconv.HostName(host),
@@ -34,10 +40,19 @@ func newResource(o Options) *resource.Resource {
 		semconv.TelemetrySDKLanguageGo,
 		semconv.TelemetrySDKVersion(sdk.Version()),
 	}
-	if o.Environment != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironmentName(o.Environment))
+	if _, ok := env.Set().Value(semconv.ServiceNameKey); !ok {
+		defaults = append(defaults, semconv.ServiceName(defaultServiceName))
 	}
-	return resource.NewWithAttributes(semconv.SchemaURL, attrs...)
+	var keys []attribute.KeyValue
+	if o.ServiceName != "" {
+		keys = append(keys, semconv.ServiceName(o.ServiceName))
+	}
+	if o.Environment != "" {
+		keys = append(keys, semconv.DeploymentEnvironmentName(o.Environment))
+	}
+	res, _ := resource.Merge(resource.NewWithAttributes(semconv.SchemaURL, defaults...), env)
+	res, _ = resource.Merge(res, resource.NewWithAttributes(semconv.SchemaURL, keys...))
+	return res
 }
 
 // instanceID is a name-based UUID, which the semantic conventions recommend

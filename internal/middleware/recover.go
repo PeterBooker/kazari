@@ -5,6 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const internalErrorBody = `{"error":{"code":"internal","message":"internal error"}}` + "\n"
@@ -31,9 +34,14 @@ func Recover(l *slog.Logger) func(http.Handler) http.Handler {
 					slog.String("path", r.URL.Path),
 					slog.String("request_id", RequestIDFrom(r.Context())),
 				)
+				trace.SpanFromContext(r.Context()).AddEvent(semconv.ExceptionEventName, trace.WithAttributes(
+					semconv.ExceptionType(fmt.Sprintf("%T", v)),
+					semconv.ExceptionMessage(fmt.Sprint(v)),
+				))
 				if rw.wroteHeader {
 					return
 				}
+				SetErrorCode(r.Context(), "internal")
 				h := rw.Header()
 				for _, k := range []string{"Content-Length", "Content-Encoding", "ETag", "Last-Modified"} {
 					h.Del(k)

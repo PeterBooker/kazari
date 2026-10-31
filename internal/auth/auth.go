@@ -41,6 +41,9 @@ type Principal struct {
 	Source     string // SourceAPIKey | SourceOAuth | SourceAdminToken
 	KeyID      string // key prefix or token id, for audit and rate limiting
 	QuotaBytes int64  // owner quota, 0 = unlimited
+	// ClientID is the OAuth client a token was issued to; it names the
+	// agent software, not the person.
+	ClientID string
 }
 
 // HasScope reports whether p holds scope; admins hold every scope.
@@ -67,6 +70,31 @@ type Identity struct {
 	Email         string
 	EmailVerified bool
 	Name          string
+}
+
+// Recognizer is an Authenticator that can tell its own credentials by their
+// form, so a refused token can still be counted by credential type.
+type Recognizer interface {
+	// Recognize returns the Source a token of this form would have.
+	Recognize(token string) (source string, ok bool)
+}
+
+// CredentialType returns the Source a's authenticators would give token, or
+// "" when none recognises its form.
+func CredentialType(a Authenticator, token string) string {
+	switch v := a.(type) {
+	case chain:
+		for _, inner := range v {
+			if t := CredentialType(inner, token); t != "" {
+				return t
+			}
+		}
+	case Recognizer:
+		if source, ok := v.Recognize(token); ok {
+			return source
+		}
+	}
+	return ""
 }
 
 type chain []Authenticator

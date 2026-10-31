@@ -30,6 +30,7 @@ func TestMetricNames(t *testing.T) {
 	} {
 		get(t, hc, url)
 	}
+	do(t, hc, http.MethodGet, "http://admin.localhost/v1/nothing", adminToken, "")
 	if err := in.app.Scheduler().Trigger(context.Background(), "sweep"); err != nil {
 		t.Fatal(err)
 	}

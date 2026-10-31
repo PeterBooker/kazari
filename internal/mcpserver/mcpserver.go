@@ -19,6 +19,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/upload"
@@ -84,7 +86,8 @@ type Options struct {
 	Fetch bool
 	// Now is the clock that decides whether a share link is active
 	// (default time.Now).
-	Now func() time.Time
+	Now       func() time.Time
+	Telemetry instrument.Providers
 }
 
 func (o Options) withDefaults(d Deps) Options {
@@ -203,7 +206,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 		DisableLocalhostProtection: true,
 		MaxRequestBodyBytes:        b.bodyLimit(),
 	})
-	authed := auth.RequireBearer(d.Auth, auth.BearerOptions{ResourceMetadataURL: b.o.ResourceMetadataURL})(stream)
+	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(stream)
 	return b.checkOrigin(checkProtocolVersion(authed))
 }
 
@@ -225,7 +228,7 @@ func (b *builder) checkOrigin(next http.Handler) http.Handler {
 		if origin != "" {
 			o := normalizeOrigin(origin)
 			if o != normalizeOrigin("https://"+r.Host) && !slices.Contains(allowed, o) {
-				writeError(w, http.StatusForbidden, api.CodeForbidden, "origin "+origin+" is not allowed")
+				writeError(w, r, http.StatusForbidden, api.CodeForbidden, "origin "+origin+" is not allowed")
 				return
 			}
 		}
@@ -241,7 +244,7 @@ func checkProtocolVersion(next http.Handler) http.Handler {
 	supported := mcp.SupportedProtocolVersions()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v := r.Header.Get("MCP-Protocol-Version"); v != "" && !slices.Contains(supported, v) {
-			writeError(w, http.StatusBadRequest, api.CodeInvalidArgument,
+			writeError(w, r, http.StatusBadRequest, api.CodeInvalidArgument,
 				"unsupported MCP-Protocol-Version "+v+"; supported: "+strings.Join(supported, ", "))
 			return
 		}
@@ -266,7 +269,8 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 	return minLevel{min: h.min, Handler: h.Handler.WithGroup(name)}
 }
 
-func writeError(w http.ResponseWriter, status int, code, msg string) {
+func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
+	middleware.SetErrorCode(r.Context(), code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(api.ErrorResponse{Error: api.Error{Code: code, Message: msg}})

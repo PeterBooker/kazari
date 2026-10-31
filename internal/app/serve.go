@@ -18,6 +18,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/certs"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
@@ -163,7 +164,7 @@ func (a *App) listen() (servers []server, err error) {
 		}
 		if a.cfg.Listen.HTTP != "" {
 			redirect := middleware.Chain(redirectHandler(a.cfg),
-				middleware.RequestID(), middleware.RealIP(false), a.obs.Observe("redirect"), middleware.Logger(a.log), middleware.Recover(a.log))
+				middleware.RequestID(), middleware.RealIP(false), a.obs.Observe(instrument.SurfaceRedirect, middleware.ObserveOptions{NoTraces: true}), middleware.Logger(a.log), middleware.Recover(a.log))
 			if addrs.HTTP, err = bind("http", a.cfg.Listen.HTTP, redirect, nil); err != nil {
 				return servers, err
 			}

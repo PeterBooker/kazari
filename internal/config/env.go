@@ -104,6 +104,12 @@ func setFromString(v reflect.Value, raw string) error {
 		return u.UnmarshalText([]byte(raw))
 	}
 	switch v.Kind() {
+	case reflect.Pointer:
+		elem := reflect.New(v.Type().Elem())
+		if err := setFromString(elem.Elem(), raw); err != nil {
+			return err
+		}
+		v.Set(elem)
 	case reflect.String:
 		v.SetString(raw)
 	case reflect.Bool:

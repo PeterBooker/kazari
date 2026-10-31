@@ -74,7 +74,7 @@ func collect(t *testing.T, r *sdkmetric.ManualReader, name string) []point {
 
 func TestObserveRecords(t *testing.T) {
 	obs, reader := newTestObserver(t, false)
-	h := obs.Observe("api")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := obs.Observe("api", ObserveOptions{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("hello"))
 	}))
@@ -122,7 +122,7 @@ func TestObserveRoute(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			obs, reader := newTestObserver(t, false)
-			obs.Observe("admin")(Routed(outer)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, nil))
+			obs.Observe("admin", ObserveOptions{})(Routed(outer)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, nil))
 			got := collect(t, reader, "http.server.request.duration")
 			if len(got) != 1 {
 				t.Fatalf("points = %+v", got)
@@ -155,7 +155,7 @@ func TestRouteOf(t *testing.T) {
 
 func TestObserveMethodBounded(t *testing.T) {
 	obs, reader := newTestObserver(t, false)
-	h := obs.Observe("site")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := obs.Observe("site", ObserveOptions{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}))
 	for i := range 100 {
@@ -181,7 +181,7 @@ func TestObservePanicIs500(t *testing.T) {
 	obs, reader := newTestObserver(t, false)
 	l, _ := newJSONLogger()
 	h := Chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }),
-		obs.Observe("api"), Logger(l), Recover(l))
+		obs.Observe("api", ObserveOptions{}), Logger(l), Recover(l))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusInternalServerError {
@@ -198,7 +198,7 @@ func TestObservePanicIs500(t *testing.T) {
 
 func TestObserveAbortStillCounted(t *testing.T) {
 	obs, reader := newTestObserver(t, false)
-	h := obs.Observe("site")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
+	h := obs.Observe("site", ObserveOptions{})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
 	func() {
 		defer func() {
 			if v := recover(); v != http.ErrAbortHandler {
@@ -237,7 +237,7 @@ func TestObserveScheme(t *testing.T) {
 			if tt.forwarded != "" {
 				r.Header.Set("X-Forwarded-Proto", tt.forwarded)
 			}
-			obs.Observe("site")(http.NotFoundHandler()).ServeHTTP(httptest.NewRecorder(), r)
+			obs.Observe("site", ObserveOptions{})(http.NotFoundHandler()).ServeHTTP(httptest.NewRecorder(), r)
 			if got := collect(t, reader, "http.server.request.duration")[0].attrs["url.scheme"]; got != tt.want {
 				t.Errorf("url.scheme = %q, want %q", got, tt.want)
 			}
@@ -253,7 +253,7 @@ func TestObserveWrapsOnce(t *testing.T) {
 	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inner = w
 		observed = &stateFrom(r.Context()).responseWriter
-	}), obs.Observe("api"), Logger(l), Recover(l))
+	}), obs.Observe("api", ObserveOptions{}), Logger(l), Recover(l))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if inner != http.ResponseWriter(observed) {
 		t.Errorf("handler got %T %p, want Observe's writer %p", inner, inner, observed)
@@ -263,7 +263,7 @@ func TestObserveWrapsOnce(t *testing.T) {
 func TestSurfaceFrom(t *testing.T) {
 	obs, _ := newTestObserver(t, false)
 	var got string
-	obs.Observe("mcp")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	obs.Observe("mcp", ObserveOptions{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = SurfaceFrom(r.Context())
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if got != "mcp" {

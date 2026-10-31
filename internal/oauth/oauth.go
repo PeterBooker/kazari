@@ -405,7 +405,17 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		Source:     auth.SourceOAuth,
 		KeyID:      fmt.Sprintf("oauth:%d", t.FamilyID),
 		QuotaBytes: u.QuotaBytes,
+		ClientID:   t.ClientID,
 	}, nil
+}
+
+// Recognize implements auth.Recognizer for access and refresh tokens.
+func (s *Service) Recognize(token string) (string, bool) {
+	if len(token) != tokenLen {
+		return "", false
+	}
+	_, err := base64.RawURLEncoding.DecodeString(token)
+	return auth.SourceOAuth, err == nil
 }
 
 // approvingKey passes prefix "" (an identity-provider sign-in). live is false

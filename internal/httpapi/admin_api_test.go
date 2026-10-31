@@ -9,10 +9,15 @@ import (
 	"testing"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 )
 
@@ -321,5 +326,43 @@ func TestAdminMetricsToken(t *testing.T) {
 	absent := httptestServer(t, httpapi.NewAdminAPI(httpapi.AdminDeps{}, httpapi.AdminOptions{MetricsToken: token}))
 	if resp := get(absent, token); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("without Metrics: status %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAPIErrorsCounted(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	tel := instrument.Providers{MeterProvider: mp}
+	h := middleware.NewObserver(tel, false).Observe(instrument.SurfaceAdmin, middleware.ObserveOptions{})(
+		httpapi.NewAdminAPI(httpapi.AdminDeps{}, httpapi.AdminOptions{AdminToken: adminToken, Telemetry: tel}))
+	base := httptestServer(t, h)
+	r, _ := http.NewRequest(http.MethodGet, base+"/v1/nothing", nil)
+	r.Header.Set("Authorization", "Bearer "+adminToken)
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.api.errors" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+				surface, _ := dp.Attributes.Value(instrument.Surface)
+				code, _ := dp.Attributes.Value(instrument.ErrorCode)
+				found = dp.Value == 1 && surface.AsString() == "admin" && code.AsString() == api.CodeNotFound
+			}
+		}
+	}
+	if !found {
+		t.Errorf("kazari.api.errors lacks admin/not_found: %+v", rm.ScopeMetrics)
 	}
 }

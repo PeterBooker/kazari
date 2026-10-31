@@ -367,7 +367,7 @@ func TestFullFlow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := auth.Principal{Handle: tt.wantHandle, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID}
+			want := auth.Principal{Handle: tt.wantHandle, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID, ClientID: clientID}
 			if diff := cmp.Diff(want, p2); diff != "" {
 				t.Errorf("principal (-want +got):\n%s", diff)
 			}
@@ -926,7 +926,7 @@ func TestCleanup(t *testing.T) {
 // adminHostStatus guards the request as internal/app does when no admin
 // token is configured.
 func adminHostStatus(a auth.Authenticator, token string) int {
-	h := auth.RequireAdmin("", a)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := auth.RequireAdmin("", a, auth.Options{})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/v1/users", nil)
@@ -966,7 +966,7 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := auth.Principal{Handle: "boss", Scopes: auth.MemberScopes, Source: auth.SourceOAuth, KeyID: p.KeyID}
+	want := auth.Principal{Handle: "boss", Scopes: auth.MemberScopes, Source: auth.SourceOAuth, KeyID: p.KeyID, ClientID: clientID}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("principal of a stored admin-scoped token (-want +got):\n%s", diff)
 	}

@@ -13,13 +13,12 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/user"
 )
-
-const codeJobRunning = "job_running"
 
 // GrantStore lists and revokes OAuth grants. RevokeGrant returns an error
 // matching ErrGrantNotFound for an unknown id.
@@ -60,6 +59,7 @@ type AdminOptions struct {
 	// MetricsToken is the bearer token /metrics requires; empty leaves it
 	// open.
 	MetricsToken string
+	Telemetry    instrument.Providers
 }
 
 type adminAPI struct {
@@ -71,7 +71,7 @@ type adminAPI struct {
 // admin-role key (or open, with AdminOptions.Local), /health open and
 // /metrics behind AdminOptions.MetricsToken.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
-	h := &adminAPI{base: newBase(d.Logger, d.Links), d: d}
+	h := &adminAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d}
 	if o.IPRatePerMinute == 0 {
 		o.IPRatePerMinute = DefaultIPRatePerMinute
 	}
@@ -116,11 +116,12 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 		top.Handle("GET /metrics", metrics)
 	}
 	if o.Local {
-		top.Handle("/v1/", auth.AsLocalAdmin()(jsonFallback(v1, &h.base)))
+		top.Handle("/v1/", auth.AsLocalAdmin(auth.Options{Telemetry: o.Telemetry})(jsonFallback(v1, &h.base)))
 		return jsonFallback(top, &h.base)
 	}
-	guarded := auth.RequireAdmin(o.AdminToken, d.Auth)(jsonFallback(v1, &h.base))
-	top.Handle("/v1/", h.limit(ratelimit.New(o.IPRatePerMinute, o.Now), ratelimit.IPKey)(guarded))
+	guarded := auth.RequireAdmin(o.AdminToken, d.Auth, auth.Options{Telemetry: o.Telemetry})(jsonFallback(v1, &h.base))
+	ipLimit := ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry})
+	top.Handle("/v1/", h.limit(ipLimit, ratelimit.IPKey)(guarded))
 	return jsonFallback(top, &h.base)
 }
 
@@ -379,7 +380,7 @@ func (h *adminAPI) runJob(w http.ResponseWriter, r *http.Request, _ auth.Princip
 	case errors.Is(err, scheduler.ErrUnknownJob):
 		return &statusError{status: http.StatusNotFound, code: api.CodeNotFound, msg: "no job named " + strconv.Quote(name)}
 	case errors.Is(err, scheduler.ErrRunning):
-		return &statusError{status: http.StatusConflict, code: codeJobRunning, msg: "job " + strconv.Quote(name) + " is already running"}
+		return &statusError{status: http.StatusConflict, code: api.CodeJobRunning, msg: "job " + strconv.Quote(name) + " is already running"}
 	case err != nil:
 		return err
 	}
