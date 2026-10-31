@@ -22,3 +22,9 @@ tls:
 # On this host, kazari admin commands use the socket in data_dir and need
 # no token. To administer from elsewhere, set KAZARI_AUTH_ADMIN_TOKEN in the
 # dotenv file (at least 32 characters: openssl rand -hex 32).
+
+# To send traces to an OpenTelemetry collector or vendor (its token, if any,
+# goes in the dotenv file as KAZARI_TELEMETRY_OTLP_HEADERS):
+# telemetry:
+#   otlp:
+#     endpoint: http://otel-collector:4318

@@ -118,6 +118,12 @@ func setFromString(v reflect.Value, raw string) error {
 			return fmt.Errorf("invalid integer %q", raw)
 		}
 		v.SetInt(n)
+	case reflect.Float64:
+		f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err != nil {
+			return fmt.Errorf("invalid number %q", raw)
+		}
+		v.SetFloat(f)
 	case reflect.Slice:
 		if v.Type().Elem().Kind() != reflect.String {
 			return fmt.Errorf("unsupported list type %s", v.Type())

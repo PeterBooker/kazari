@@ -109,3 +109,34 @@ admin:
 log:
   level: info                        # debug | info | warn | error
   format: text                       # text | json
+
+# OpenTelemetry: traces, metrics and logs, exported over OTLP to one
+# collector or vendor. Nothing is exported until otlp.endpoint is set; then
+# spans are, and metrics and logs follow their own otlp switch. The
+# environment variables OTEL_* are ignored: these keys are the only settings.
+telemetry:
+  service_name: kazari               # resource service.name; service.version is the build version
+  environment: ""                    # deployment.environment.name, e.g. production; "" leaves it out
+  otlp:
+    endpoint: ""                     # collector or vendor base URL; "" exports nothing over OTLP
+    protocol: http/protobuf          # http/protobuf (usually port 4318) | grpc (usually port 4317)
+    # Sent with every export, e.g. authorization: "Bearer ${KAZARI_OTLP_TOKEN}".
+    # KAZARI_TELEMETRY_OTLP_HEADERS takes name=value,name=value instead.
+    headers: {}
+    compression: gzip                # gzip | none
+    timeout: 10s                     # one export attempt; failed exports are retried for up to 30s
+    ca_file: ""                      # PEM roots for an https endpoint; "" uses the system roots
+    cert_file: ""                    # client certificate and key for mutual TLS; both or neither
+    key_file: ""
+  traces:
+    otlp: true                       # export spans when otlp.endpoint is set
+    sample_ratio: 1.0                # new traces on api., mcp., admin. and the admin socket
+    site_sample_ratio: 0.01          # new traces on artifact hosts and the apex
+  metrics:
+    prometheus: true                 # /metrics on the admin host
+    token: ""                        # bearer token for /metrics on the public listener; "" = not served there
+    otlp: false                      # also push to otlp.endpoint
+    interval: 60s                    # push interval
+  logs:
+    otlp: false                      # also export log records to otlp.endpoint; stderr is unchanged
+    level: ""                        # lowest level exported over OTLP; "" follows log.level

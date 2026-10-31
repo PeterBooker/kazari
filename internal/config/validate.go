@@ -88,11 +88,15 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	v.oneOf("log.level", c.Log.Level, "debug", "info", "warn", "error")
+	v.oneOf("log.level", c.Log.Level, logLevels...)
 	v.oneOf("log.format", c.Log.Format, "text", "json")
+
+	v.telemetry(c)
 
 	return errors.Join(v.errs...)
 }
+
+var logLevels = []string{"debug", "info", "warn", "error"}
 
 // MinAdminTokenLen is the shortest auth.admin_token accepted, except under a
 // localhost base domain, which only the local machine can reach.
