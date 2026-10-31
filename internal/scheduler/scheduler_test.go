@@ -5,10 +5,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 var fixed = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -267,5 +273,40 @@ func TestJitterBounds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestJobDuration(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+	s := New(Options{Logger: slog.New(slog.DiscardHandler), Telemetry: instrument.Providers{MeterProvider: mp}},
+		Job{Name: "sweep", Run: func(context.Context) error { return nil }},
+		Job{Name: "gc", Run: func(context.Context) error { return errors.New("disk full") }},
+	)
+	for _, name := range []string{"sweep", "sweep", "gc"} {
+		_ = s.Trigger(context.Background(), name)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]uint64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "kazari.job.duration" || m.Unit != "s" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+				name, _ := dp.Attributes.Value("kazari.job.name")
+				errType, _ := dp.Attributes.Value("error.type")
+				got[name.AsString()+"/"+errType.AsString()] = dp.Count
+			}
+		}
+	}
+	want := map[string]uint64{"sweep/": 2, "gc/_OTHER": 1}
+	if !maps.Equal(got, want) {
+		t.Errorf("runs = %v, want %v", got, want)
 	}
 }

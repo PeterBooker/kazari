@@ -12,7 +12,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
+
+const scope = "github.com/PeterBooker/kazari/internal/scheduler"
 
 var ErrUnknownJob = errors.New("scheduler: unknown job")
 
@@ -38,7 +46,8 @@ type Options struct {
 	// Jitter is the fraction of Every by which intervals vary, and the cap
 	// of the random delay before the first run. Zero means 0.1, negative
 	// disables it, and it is capped at 0.5.
-	Jitter float64
+	Jitter    float64
+	Telemetry instrument.Providers
 }
 
 // JobStatus is a snapshot of one job's state.
@@ -53,14 +62,17 @@ type JobStatus struct {
 
 // Scheduler runs a fixed set of jobs, at most one run at a time per job.
 type Scheduler struct {
-	logger *slog.Logger
-	now    func() time.Time
-	jitter float64
-	jobs   map[string]*jobState
+	logger   *slog.Logger
+	now      func() time.Time
+	jitter   float64
+	jobs     map[string]*jobState
+	duration metric.Float64Histogram
 }
 
 type jobState struct {
-	job Job
+	job         Job
+	okAttrs     metric.MeasurementOption
+	failedAttrs metric.MeasurementOption
 
 	mu      sync.Mutex
 	running bool
@@ -77,6 +89,10 @@ func New(opts Options, jobs ...Job) *Scheduler {
 		now:    opts.Now,
 		jitter: opts.Jitter,
 		jobs:   make(map[string]*jobState, len(jobs)),
+		duration: instrument.Handle(opts.Telemetry.Meter(scope).Float64Histogram("kazari.job.duration",
+			metric.WithDescription("Duration of scheduler job runs."),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(0.01, 0.04, 0.16, 0.64, 2.56, 10.24, 40.96, 163.84))),
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
@@ -93,7 +109,12 @@ func New(opts Options, jobs ...Job) *Scheduler {
 		s.jitter = maxJitter
 	}
 	for _, j := range jobs {
-		s.jobs[j.Name] = &jobState{job: j}
+		name := instrument.JobName.String(j.Name)
+		s.jobs[j.Name] = &jobState{
+			job:         j,
+			okAttrs:     metric.WithAttributeSet(attribute.NewSet(name)),
+			failedAttrs: metric.WithAttributeSet(attribute.NewSet(name, semconv.ErrorTypeKey.String(instrument.Other))),
+		}
 	}
 	return s
 }
@@ -178,7 +199,13 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	defer cancel()
 
 	start := s.now()
+	began := time.Now()
 	err := safeRun(runCtx, st.job)
+	attrs := st.okAttrs
+	if err != nil {
+		attrs = st.failedAttrs
+	}
+	s.duration.Record(ctx, time.Since(began).Seconds(), attrs)
 
 	st.mu.Lock()
 	st.running = false
