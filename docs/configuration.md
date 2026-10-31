@@ -453,6 +453,15 @@ The metrics endpoint and the optional push of metrics over OTLP:
 | `otlp`       | bool     | `false` | Also push metrics to the endpoint.                                                                      |
 | `interval`   | duration | `0s`    | How often metrics are pushed, at least `5s`. Unset: `OTEL_METRIC_EXPORT_INTERVAL`, else `60s`.         |
 
+### `telemetry.logs`
+
+The optional copy of the log that goes to the endpoint ([exporting logs](ops.md#exporting-logs-over-otlp)):
+
+| Key     | Type   | Default | Meaning                                                                          |
+| ------- | ------ | ------- | -------------------------------------------------------------------------------- |
+| `otlp`  | bool   | `false` | Also export each log record to the endpoint. stderr is unchanged.               |
+| `level` | string | `""`    | The lowest level exported: `debug`, `info`, `warn` or `error`. `""` follows `log.level`. |
+
 ## Validation rules
 
 Kazari checks all of these together at startup. The error lists every failure as `key: problem`, and the server exits with status 2:
@@ -475,6 +484,7 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `telemetry.otlp.endpoint`, when set, is an absolute `http` or `https` URL with no credentials, query or fragment, and with no path under `grpc`. Credentials belong in `telemetry.otlp.headers`, because the endpoint appears in `kazari check`, `kazari admin settings` and error messages.
 - `telemetry.otlp.headers` are valid header names and values, `telemetry.otlp.timeout` is not negative, and `ca_file`, `cert_file` and `key_file` can be read, with `cert_file` and `key_file` set together.
 - `telemetry.traces.sample_ratio` and `site_sample_ratio`, when set, are between 0 and 1.
+- `telemetry.logs.level`, when set, is one of the `log.level` values.
 - `telemetry.metrics.token`, when set, is at least 32 characters, with the same `localhost` exception as `auth.admin_token`, and `telemetry.metrics.interval` is `0s` or at least `5s`.
 - An `OTEL_EXPORTER_OTLP_*_ENDPOINT` that Kazari uses must be an `http` or `https` URL; otherwise the server does not start.
 

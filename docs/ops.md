@@ -95,6 +95,22 @@ Each line carries `method`, `host`, `path`, `status`, `bytes`, `duration_ms`, `r
 
 The request id comes from an incoming `X-Request-ID` header of 8 to 128 safe characters, or Kazari generates one. Either way, it is echoed in the `X-Request-ID` response header. Quote it when reporting a problem.
 
+### Trace ids
+
+When tracing is on ([tracing](#tracing)), every line logged while a sampled request or job runs ends with its `trace_id` and `span_id`, so a log line leads to its trace and a trace to its lines:
+
+```text
+time=2026-11-04T09:12:03Z level=INFO msg=request method=POST host=mcp.art.example.com path=/ status=200 ... trace_id=4bf92f3577b34da6a3ce929d0e0e4736 span_id=00f067aa0ba902b7
+```
+
+Lines of requests that were not sampled carry neither.
+
+### Exporting logs over OTLP
+
+To send a copy of the log to the OpenTelemetry endpoint as well, set `telemetry.logs.otlp: true`. Records at `log.level` and above are exported, or at `telemetry.logs.level` when it is set; stderr is unchanged. Each record carries its trace and span ids as fields, so the backend links it to its trace.
+
+Exported records leave out the keys that name a person or a credential: `ip`, `email`, `subject`, `handle`, `actor` and `family`. The journal keeps them. User agents are still exported in the access log's `user_agent`; drop the attribute in your collector if it should not reach a hosted backend.
+
 ### Finding errors
 
 To find server errors, or the certificate messages, filter the journal:
@@ -186,6 +202,46 @@ Kazari 0.3 renamed every metric, and `https://admin.<base>/metrics` now needs th
 | `go_*` from the Prometheus client                      | `go_*` with semantic-convention names, such as `go_memory_used_bytes` and `go_goroutine_count`           |
 
 The old `job` label collided with Prometheus's own target label, which stored it as `exported_job`; `kazari_job_name` does not.
+
+## Tracing
+
+Kazari traces each request and background job with OpenTelemetry and exports the spans over OTLP to a collector or tracing vendor, such as Grafana Tempo, Honeycomb or Datadog. A trace shows what an agent's request did, where the time went and why it failed.
+
+### Turning tracing on
+
+Tracing starts as soon as an endpoint is set. To send spans to a collector on the same Docker network, set:
+
+```yaml
+telemetry:
+  otlp:
+    endpoint: http://otel-collector:4318
+```
+
+A vendor usually needs an API token as a header and an `https` endpoint ([`telemetry.otlp`](configuration.md#telemetryotlp)). The standard variables work too: with `telemetry.otlp.endpoint` unset, Kazari exports to `OTEL_EXPORTER_OTLP_ENDPOINT`, as any OpenTelemetry service does.
+
+To check the export, open a page and an API route, then search the backend for the service `kazari`. Spans leave in batches every few seconds.
+
+### What is traced
+
+Every request gets a server span named after its method and route, such as `GET /v1/artifacts/{slug}` or `GET /{path...}` for an artifact's files. The span carries the status code, the route, the surface (`kazari.surface`), the request id and, on the control plane, the credential type and OAuth client. Scheduled jobs get a span named `job <name>`, and startup a `kazari.start` span with the database migration and OIDC discovery under it.
+
+A server error (`5xx`) marks the span as failed, with `error.type` set to Kazari's error code. A panic adds an `exception` event. Requests for `/health`, `/v1/health` and `/metrics` are counted but not traced.
+
+### Sampling
+
+By default, Kazari keeps every trace that starts on `api.`, `mcp.`, `admin.` or the admin socket, and one in a hundred on artifact hosts and the base domain. Errors on artifact hosts are still counted in full by the metrics; to keep every failing page view as a trace, sample in the collector instead ([`telemetry.traces`](configuration.md#telemetrytraces)).
+
+A trace is kept or dropped whole: a span's children follow its decision.
+
+### Joining a caller's trace
+
+On `api.`, `mcp.` and `admin.`, a request with a W3C `traceparent` header continues the caller's trace, so an agent runtime or proxy that traces its own requests sees Kazari's spans under them. Artifact hosts and the base domain ignore the header: their visitors are anonymous, and a parent they sent would decide sampling. Kazari never sends `traceparent` to the sites it fetches.
+
+### What spans never contain
+
+Spans never contain who made a request: no handle, email, OIDC subject, client IP or credential id (API key prefix, OAuth grant id). On the admin API, the handle and key prefix in `url.path` read `REDACTED`. Query strings keep their keys and hide every value, because share tokens and OAuth codes travel there. Request and response bodies, file contents and credentials are never recorded. The audit log and the access log keep who did what, on the server.
+
+Spans do contain slugs, versions, file paths, OAuth client ids and control-plane user agents. Traces often go to a hosted vendor, so treat them as you would the access log.
 
 ## Scheduled jobs
 
