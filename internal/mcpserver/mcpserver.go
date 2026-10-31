@@ -5,6 +5,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -138,6 +139,7 @@ type builder struct {
 	editSchema *jsonschema.Schema
 	preview    string
 	previewUI  map[string]any
+	obs        *observer
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -158,7 +160,19 @@ func newBuilder(d Deps, o Options) *builder {
 		editSchema: editFileSchema(),
 		preview:    preview,
 		previewUI:  ui,
+		obs:        newObserver(o.Telemetry, toolNames(text, o)),
 	}
+}
+
+// toolNames are the tools a server registers, the bounded set of
+// gen_ai.tool.name.
+func toolNames(t texts, o Options) []string {
+	names := slices.Collect(maps.Keys(t.tools))
+	if !o.Fetch {
+		names = slices.DeleteFunc(names, func(n string) bool { return n == "import_page" })
+	}
+	slices.Sort(names)
+	return names
 }
 
 // NewServer builds an MCP server whose handlers act as p.
@@ -179,6 +193,9 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 			SchemaCache:  b.schema,
 		},
 	)
+	if b.obs.enabled {
+		s.AddReceivingMiddleware(b.obs.middleware(p))
+	}
 	b.addTools(s, p)
 	b.addResources(s, p)
 	b.addPrompt(s)
@@ -205,7 +222,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 		DisableLocalhostProtection: true,
 		MaxRequestBodyBytes:        b.bodyLimit(),
 	})
-	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(stream)
+	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(withProtocolVersion(stream))
 	return b.checkOrigin(checkProtocolVersion(authed))
 }
 

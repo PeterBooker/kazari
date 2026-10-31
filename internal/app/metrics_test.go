@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 var updateMetrics = flag.Bool("update-metrics", false, "rewrite testdata/metrics*.txt from a scrape")
@@ -31,6 +34,8 @@ func TestMetricNames(t *testing.T) {
 		get(t, hc, url)
 	}
 	do(t, hc, http.MethodGet, "http://admin.localhost/v1/nothing", adminToken, "")
+	key := issueKey(t, hc)
+	mcpCall(t, hc, key, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_artifacts","arguments":{}}}`)
 	if err := in.app.Scheduler().Trigger(context.Background(), "sweep"); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +72,45 @@ func TestMetricNames(t *testing.T) {
 				t.Log("run go test ./internal/app -run TestMetricNames -update-metrics if the change is intended")
 			}
 		})
+	}
+}
+
+// issueKey creates a member and returns an API key for them.
+func issueKey(t *testing.T, hc *http.Client) string {
+	t.Helper()
+	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	if _, err := admin.CreateUser(context.Background(), api.CreateUserRequest{Handle: "metrics"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := admin.IssueKey(context.Background(), "metrics", api.IssueKeyRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issued.Key
+}
+
+// mcpCall posts one JSON-RPC request in the 2025-11-25 protocol, which
+// needs no per-request headers.
+func mcpCall(t *testing.T, hc *http.Client, key, body string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://mcp.localhost/", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mcp: status %d", resp.StatusCode)
 	}
 }
 

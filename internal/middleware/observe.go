@@ -147,7 +147,7 @@ func (s *surfaceObserver) serve(next http.Handler, w http.ResponseWriter, r *htt
 			route:  st.route,
 			method: method,
 			scheme: scheme,
-			proto:  protocolVersion(r),
+			proto:  ProtocolVersion(r),
 			status: status,
 		})
 		// The span's context, so a sampled request becomes its bucket's
@@ -179,7 +179,7 @@ func (s *surfaceObserver) startSpan(ctx context.Context, r *http.Request, method
 		semconv.HTTPRequestMethodKey.String(method),
 		semconv.URLPath(path),
 		semconv.URLScheme(scheme),
-		semconv.NetworkProtocolVersion(protocolVersion(r)),
+		semconv.NetworkProtocolVersion(ProtocolVersion(r)),
 		instrument.RequestID.String(RequestIDFrom(ctx)),
 	)
 	if method == instrument.Other {
@@ -357,7 +357,8 @@ func knownMethod(m string) string {
 	}
 }
 
-func protocolVersion(r *http.Request) string {
+// ProtocolVersion is network.protocol.version of r: 1.0, 1.1, 2 or 3.
+func ProtocolVersion(r *http.Request) string {
 	switch {
 	case r.ProtoMajor == 1 && r.ProtoMinor == 1:
 		return "1.1"
