@@ -91,6 +91,8 @@ Each line carries `method`, `host`, `path`, `status`, `bytes`, `duration_ms`, `r
 
 `5xx` responses log at `ERROR`, the rest at `INFO`. API `5xx` errors also log their cause on a separate line (`httpapi: request failed`); the client only ever sees `internal error`.
 
+A successful request for `/health`, `/v1/health` or `/metrics` logs at `DEBUG` instead, so health checks and scrapes every few seconds do not bury the other requests. A failed one logs as usual, and on artifact hosts these paths are pages like any other.
+
 ### Request ids
 
 The request id comes from an incoming `X-Request-ID` header of 8 to 128 safe characters, or Kazari generates one. Either way, it is echoed in the `X-Request-ID` response header. Quote it when reporting a problem.
@@ -111,13 +113,29 @@ To send a copy of the log to the OpenTelemetry endpoint as well, set `telemetry.
 
 Exported records leave out the keys that name a person or a credential: `ip`, `email`, `subject`, `handle`, `actor` and `family`. The journal keeps them. User agents are still exported in the access log's `user_agent`; drop the attribute in your collector if it should not reach a hosted backend.
 
+### Messages from libraries
+
+The OpenTelemetry SDK and gRPC, which export telemetry over OTLP, log through the same handler in the same format, marked `logger=otel` or `logger=grpc`. Their errors log at `WARN`, like Kazari's own telemetry problems. Their warnings, such as each failed attempt to reach a gRPC collector, log at `DEBUG`.
+
 ### Finding errors
 
-To find server errors, or the certificate messages, filter the journal:
+Under systemd, each line starts with its syslog priority, which the journal records and removes, so `journalctl -p` filters by level. To list the errors, every `5xx` response among them, then the warnings as well, run:
 
 ```sh
-journalctl -u kazari -o cat | grep 'status=5'
+journalctl -u kazari -p err
+journalctl -u kazari -p warning
+```
+
+To find the certificate messages, filter by text:
+
+```sh
 journalctl -u kazari -o cat | grep -i certificate
+```
+
+Kazari adds the priority only when stderr is the journal stream that systemd names in `JOURNAL_STREAM`. Elsewhere, such as under Docker, filter on the level instead:
+
+```sh
+docker compose logs kazari | grep -E 'level=(WARN|ERROR)'
 ```
 
 ## Metrics
@@ -294,7 +312,7 @@ telemetry:
 
 A vendor usually needs an API token as a header and an `https` endpoint ([`telemetry.otlp`](configuration.md#telemetryotlp)). The standard variables work too: with `telemetry.otlp.endpoint` unset, Kazari exports to `OTEL_EXPORTER_OTLP_ENDPOINT`, as any OpenTelemetry service does.
 
-To check the export, open a page and an API route, then search the backend for the service `kazari`. Spans leave in batches every few seconds.
+To check the export, look for the line `telemetry: exporting over OTLP` at start, which names each signal's endpoint and protocol. Then open a page and an API route, and search the backend for the service `kazari`. Spans leave in batches every few seconds.
 
 ### What is traced
 
