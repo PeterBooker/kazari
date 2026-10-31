@@ -390,29 +390,33 @@ Log level and format:
 
 ### `telemetry`
 
-OpenTelemetry: the Prometheus metrics endpoint and the export of telemetry over OTLP to a collector or vendor. Kazari ignores the `OTEL_*` environment variables; these keys are the only settings.
+OpenTelemetry: the Prometheus metrics endpoint, and the export of traces, metrics and logs over OTLP to a collector or vendor.
 
-| Key            | Type   | Default  | Meaning                                                              |
-| -------------- | ------ | -------- | -------------------------------------------------------------------- |
-| `service_name` | string | `kazari` | The resource's `service.name`; `service.version` is the release.    |
-| `environment`  | string | `""`     | The resource's `deployment.environment.name`, such as `production`. |
+A key set here wins over the matching `OTEL_*` variable. A key left unset (`""`, `0s`, an empty map or no value) falls back to that variable, then to the OpenTelemetry SDK's default, so Kazari also follows an environment that an operator or a platform sets for every service. The SDK also reads the variables Kazari has no key for, such as `OTEL_RESOURCE_ATTRIBUTES` and the span and batch limits.
+
+| Key            | Type   | Default | Meaning                                                                                   |
+| -------------- | ------ | ------- | ----------------------------------------------------------------------------------------- |
+| `service_name` | string | `""`    | The resource's `service.name`. Unset: `OTEL_SERVICE_NAME`, else `kazari`.                 |
+| `environment`  | string | `""`    | The resource's `deployment.environment.name`, such as `production`. Unset: `OTEL_RESOURCE_ATTRIBUTES`. |
+
+`service.version` is always the release. Kazari logs a warning at startup for a signal switched on with no endpoint, and for an endpoint that sends telemetry in plain text to a host outside the private network.
 
 ### `telemetry.otlp`
 
 The one OTLP destination every exported signal shares:
 
-| Key           | Type     | Default         | Meaning                                                                                       |
-| ------------- | -------- | --------------- | --------------------------------------------------------------------------------------------- |
-| `endpoint`    | string   | `""`            | The collector's or vendor's base URL, such as `http://otel-collector:4318`. `""` exports nothing. |
-| `protocol`    | string   | `http/protobuf` | `http/protobuf`, usually on port 4318, or `grpc`, usually on port 4317.                      |
-| `headers`     | map      | `{}`            | Headers sent with every export, such as a vendor's API token. A secret.                       |
-| `compression` | string   | `gzip`          | `gzip` or `none`.                                                                             |
-| `timeout`     | duration | `10s`           | The longest one export attempt may take. Failed exports are retried for up to 30 seconds.     |
-| `ca_file`     | string   | `""`            | PEM roots that verify an `https` endpoint; `""` uses the system roots.                        |
-| `cert_file`   | string   | `""`            | Client certificate for mutual TLS, reread when it changes. Set with `key_file`.              |
-| `key_file`    | string   | `""`            | The client certificate's key.                                                                 |
+| Key           | Type     | Default | Meaning                                                                                       |
+| ------------- | -------- | ------- | --------------------------------------------------------------------------------------------- |
+| `endpoint`    | string   | `""`    | The collector's or vendor's base URL, such as `http://otel-collector:4318`. Unset: `OTEL_EXPORTER_OTLP_ENDPOINT`; with neither, nothing is exported. |
+| `protocol`    | string   | `""`    | `http/protobuf`, usually on port 4318, or `grpc`, usually on port 4317. Unset: `OTEL_EXPORTER_OTLP_PROTOCOL`, else `http/protobuf`. |
+| `headers`     | map      | `{}`    | Headers sent with every export, such as a vendor's API token. A secret. Unset: `OTEL_EXPORTER_OTLP_HEADERS`. |
+| `compression` | string   | `""`    | `gzip` or `none`. Unset: `OTEL_EXPORTER_OTLP_COMPRESSION`, else `none`.                       |
+| `timeout`     | duration | `0s`    | The longest one export attempt may take. Unset: `OTEL_EXPORTER_OTLP_TIMEOUT`, else `10s`. Failed exports are retried for up to 30 seconds. |
+| `ca_file`     | string   | `""`    | PEM roots that verify an `https` endpoint. Unset: `OTEL_EXPORTER_OTLP_CERTIFICATE`, else the system roots. |
+| `cert_file`   | string   | `""`    | Client certificate for mutual TLS, reread when it changes. Set with `key_file`. Unset: `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`. |
+| `key_file`    | string   | `""`    | The client certificate's key. Unset: `OTEL_EXPORTER_OTLP_CLIENT_KEY`.                        |
 
-With `http/protobuf`, Kazari appends the signal's path to the endpoint's, so `https://otlp.example.com/otlp` receives metrics at `https://otlp.example.com/otlp/v1/metrics`. With `grpc`, the endpoint has no path; `http` connects in plain text and `https` with TLS.
+With `http/protobuf`, Kazari appends the signal's path to the endpoint's, so `https://otlp.example.com/otlp` receives traces at `https://otlp.example.com/otlp/v1/traces`. With `grpc`, the endpoint has no path; `http` connects in plain text and `https` with TLS. The per-signal variables, such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, apply as the OpenTelemetry specification describes: a signal's own endpoint is used as it is.
 
 To keep a vendor's token out of the file, reference it from the dotenv file:
 
@@ -426,6 +430,18 @@ telemetry:
 
 As an environment variable, `KAZARI_TELEMETRY_OTLP_HEADERS` takes the form `name=value,name=value`, with the values percent-encoded: `authorization=Bearer%20<token>`.
 
+### `telemetry.traces`
+
+Which requests are traced and whether spans are exported:
+
+| Key                 | Type   | Default | Meaning                                                                                              |
+| ------------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------- |
+| `otlp`              | bool   | `true`  | Export spans whenever an endpoint is set.                                                            |
+| `sample_ratio`      | number | unset   | Share of new traces kept on `api.`, `mcp.`, `admin.` and the admin socket, from 0 to 1.             |
+| `site_sample_ratio` | number | unset   | Share of new traces kept on artifact hosts and the base domain, from 0 to 1.                        |
+
+With both ratios unset, `OTEL_TRACES_SAMPLER` decides when it is set; otherwise Kazari keeps every control-plane trace and one page view in a hundred (`1.0` and `0.01`). Setting either ratio uses Kazari's sampler, with the default for the other. A request that arrives on the control plane with a `traceparent` header follows the caller's decision, so a trace is kept or dropped whole.
+
 ### `telemetry.metrics`
 
 The metrics endpoint and the optional push of metrics over OTLP:
@@ -434,8 +450,8 @@ The metrics endpoint and the optional push of metrics over OTLP:
 | ------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------- |
 | `prometheus` | bool     | `true`  | Serve `/metrics` on the admin host ([metrics](ops.md#metrics)).                                         |
 | `token`      | string   | `""`    | The bearer token `/metrics` needs on the public listener; while it is empty, `/metrics` is not served there. A secret. |
-| `otlp`       | bool     | `false` | Also push metrics to `telemetry.otlp.endpoint`.                                                         |
-| `interval`   | duration | `60s`   | How often metrics are pushed; at least `5s`.                                                            |
+| `otlp`       | bool     | `false` | Also push metrics to the endpoint.                                                                      |
+| `interval`   | duration | `0s`    | How often metrics are pushed, at least `5s`. Unset: `OTEL_METRIC_EXPORT_INTERVAL`, else `60s`.         |
 
 ## Validation rules
 
@@ -455,10 +471,12 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost`: a development instance that only its own machine can reach.
 - With `auth.oidc`, `issuer` is an `https` URL, and `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.
-- `telemetry.otlp.protocol` is `http/protobuf` or `grpc`, and `telemetry.otlp.compression` is `gzip` or `none`.
+- `telemetry.otlp.protocol`, when set, is `http/protobuf` or `grpc`, and `telemetry.otlp.compression` is `gzip` or `none`.
 - `telemetry.otlp.endpoint`, when set, is an absolute `http` or `https` URL with no credentials, query or fragment, and with no path under `grpc`. Credentials belong in `telemetry.otlp.headers`, because the endpoint appears in `kazari check`, `kazari admin settings` and error messages.
-- `telemetry.otlp.headers` are valid header names and values, `telemetry.otlp.timeout` is greater than 0, and `ca_file`, `cert_file` and `key_file` can be read, with `cert_file` and `key_file` set together.
-- `telemetry.metrics.token`, when set, is at least 32 characters, with the same `localhost` exception as `auth.admin_token`, and `telemetry.metrics.interval` is at least `5s`.
+- `telemetry.otlp.headers` are valid header names and values, `telemetry.otlp.timeout` is not negative, and `ca_file`, `cert_file` and `key_file` can be read, with `cert_file` and `key_file` set together.
+- `telemetry.traces.sample_ratio` and `site_sample_ratio`, when set, are between 0 and 1.
+- `telemetry.metrics.token`, when set, is at least 32 characters, with the same `localhost` exception as `auth.admin_token`, and `telemetry.metrics.interval` is `0s` or at least `5s`.
+- An `OTEL_EXPORTER_OTLP_*_ENDPOINT` that Kazari uses must be an `http` or `https` URL; otherwise the server does not start.
 
 Because every number in `limits` must be greater than 0, `write_rate_per_minute` cannot be set to 0 to turn off rate limiting, and `default_user_quota` cannot be 0. To give one user an unlimited quota, set it through the admin API instead:
 
