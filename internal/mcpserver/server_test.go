@@ -53,7 +53,7 @@ type env struct {
 	opts mcpserver.Options
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t testing.TB) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -96,7 +96,7 @@ func newEnv(t *testing.T) *env {
 	}
 }
 
-func (e *env) connect(t *testing.T, p auth.Principal) *mcp.ClientSession {
+func (e *env) connect(t testing.TB, p auth.Principal) *mcp.ClientSession {
 	t.Helper()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := mcpserver.NewServer(e.deps, e.opts, p).Connect(e.ctx, st, nil)
