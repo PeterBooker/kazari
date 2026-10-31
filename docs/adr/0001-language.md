@@ -1,6 +1,6 @@
 # ADR 0001: Go as the implementation language
 
-Status: accepted (2026-10-24). Dependency list amended: the configuration file is YAML, not TOML, and CertMagic's zap logger is bridged to `log/slog`.
+Status: accepted (2026-10-24). Dependency list amended: the configuration file is YAML, not TOML, and CertMagic's zap logger is bridged to `log/slog`; OpenTelemetry is added by [ADR 0005](0005-opentelemetry.md).
 
 ## Context
 
