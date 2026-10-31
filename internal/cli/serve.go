@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -70,7 +71,7 @@ func (c *ServeCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	logger := cfg.Logger(r.stderr)
+	logger := cfg.Logger(r.stderr, journald(r.env("JOURNAL_STREAM"), r.stderr))
 	slog.SetDefault(logger)
 	telemetry.CaptureLibraryLogs(logger)
 	ctx, stop := signal.NotifyContext(r.ctx, os.Interrupt, syscall.SIGTERM)
@@ -80,6 +81,22 @@ func (c *ServeCmd) Run(r *runner) error {
 		return err
 	}
 	return a.Run(ctx)
+}
+
+// journald reports whether w is the journal stream systemd connected, which
+// it names in JOURNAL_STREAM as device:inode; a redirect to a file or pipe
+// keeps the variable but not the stream.
+func journald(stream string, w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok || stream == "" {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && stream == fmt.Sprintf("%d:%d", st.Dev, st.Ino)
 }
 
 // CheckCmd validates the configuration and runs the preflight checks.

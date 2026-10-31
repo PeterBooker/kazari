@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -811,7 +812,7 @@ func TestLogger(t *testing.T) {
 			t.Errorf("SlogLevel(%s) = %v, want %v", tt.level, got, tt.want)
 		}
 		var buf bytes.Buffer
-		l := c.Logger(&buf)
+		l := c.Logger(&buf, false)
 		l.Debug("hidden-unless-debug")
 		l.Error("shown")
 		out := buf.String()
@@ -821,6 +822,34 @@ func TestLogger(t *testing.T) {
 		if strings.HasPrefix(out, "{") != (tt.format == "json") {
 			t.Errorf("format %s: output %q", tt.format, out)
 		}
+	}
+}
+
+func TestLoggerJournal(t *testing.T) {
+	c := valid()
+	c.Log.Level, c.Log.Format = "debug", "json"
+	var buf bytes.Buffer
+	l := c.Logger(&buf, true).With("component", "test")
+	l.Debug("d")
+	l.Info("i")
+	l.WithGroup("g").Warn("w", "k", "v")
+	l.Error("e")
+
+	var got []string
+	for line := range strings.Lines(buf.String()) {
+		prefix, rest, _ := strings.Cut(line, "{")
+		var rec struct{ Msg, Component string }
+		if err := json.Unmarshal([]byte("{"+rest), &rec); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		got = append(got, prefix+rec.Msg+" "+rec.Component)
+	}
+	want := []string{"<7>d test", "<6>i test", "<4>w test", "<3>e test"}
+	if !slices.Equal(got, want) {
+		t.Errorf("lines = %q, want %q", got, want)
+	}
+	if !strings.Contains(buf.String(), `"g":{"k":"v"}`) {
+		t.Errorf("group lost: %s", buf.String())
 	}
 }
 

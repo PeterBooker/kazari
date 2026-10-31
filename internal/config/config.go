@@ -464,13 +464,21 @@ func ParseLevel(level string) slog.Level {
 	}
 }
 
-// Logger returns a logger writing to w in log.format at log.level.
-func (c Config) Logger(w io.Writer) *slog.Logger {
+// Logger returns a logger writing to w in log.format at log.level. With
+// journal, w is the journal stream systemd connected, and each line starts
+// with its syslog priority.
+func (c Config) Logger(w io.Writer, journal bool) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: c.SlogLevel()}
-	if c.Log.Format == "json" {
-		return slog.New(slog.NewJSONHandler(w, opts))
+	handler := func(w io.Writer) slog.Handler {
+		if c.Log.Format == "json" {
+			return slog.NewJSONHandler(w, opts)
+		}
+		return slog.NewTextHandler(w, opts)
 	}
-	return slog.New(slog.NewTextHandler(w, opts))
+	if journal {
+		return slog.New(newPriorityHandler(w, handler))
+	}
+	return slog.New(handler(w))
 }
 
 // Redacted returns the configuration as a JSON-friendly map keyed like the
