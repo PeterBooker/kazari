@@ -36,6 +36,11 @@ func TestMetricNames(t *testing.T) {
 	do(t, hc, http.MethodGet, "http://admin.localhost/v1/nothing", adminToken, "")
 	key := issueKey(t, hc)
 	mcpCall(t, hc, key, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_artifacts","arguments":{}}}`)
+	user := cli.NewClient("http://api.localhost", key, hc)
+	if _, err := user.CreateBundle(context.Background(), api.CreateManifest{Slug: "demo"}, bundle(t, map[string]string{"index.html": indexHTML})); err != nil {
+		t.Fatal(err)
+	}
+	get(t, hc, "http://demo.localhost/")
 	if err := in.app.Scheduler().Trigger(context.Background(), "sweep"); err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,7 +12,7 @@ import (
 
 // AuditStore implements audit.Recorder and audit.Reader.
 type AuditStore struct {
-	db *sql.DB
+	db *DB
 }
 
 var (
@@ -23,11 +22,13 @@ var (
 
 // NewAuditStore returns an audit store backed by db.
 func NewAuditStore(db *DB) *AuditStore {
-	return &AuditStore{db: db.DB}
+	return &AuditStore{db: db}
 }
 
 // Record stamps a zero e.At with the current time and ignores e.ID.
-func (s *AuditStore) Record(ctx context.Context, e audit.Event) error {
+func (s *AuditStore) Record(ctx context.Context, e audit.Event) (err error) {
+	ctx, end := s.db.op(ctx, "AuditStore.Record")
+	defer end(&err)
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
@@ -38,7 +39,7 @@ func (s *AuditStore) Record(ctx context.Context, e audit.Event) error {
 			return fmt.Errorf("sqlite: record audit %s: %w", e.Action, err)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_event (at, actor, action, slug, details)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_event (at, actor, action, slug, details)
 		VALUES (?, ?, ?, ?, ?)`, toNanos(e.At), e.Actor, e.Action, e.Slug, string(details))
 	if err != nil {
 		return fmt.Errorf("sqlite: record audit %s: %w", e.Action, err)
@@ -52,7 +53,9 @@ const (
 )
 
 // List treats Since as inclusive; Slug and Actor match exactly.
-func (s *AuditStore) List(ctx context.Context, q audit.Query) ([]audit.Event, error) {
+func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ []audit.Event, err error) {
+	ctx, end := s.db.op(ctx, "AuditStore.List")
+	defer end(&err)
 	var (
 		where []string
 		args  []any

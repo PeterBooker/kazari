@@ -50,7 +50,7 @@ type ObserveOptions struct {
 // ignored, and nothing is ever injected outbound.
 var traceContext = propagation.TraceContext{}
 
-const redacted = "REDACTED"
+const redacted = instrument.Redacted
 
 // NewObserver creates the instruments once; in proxy mode it takes the
 // scheme from X-Forwarded-Proto.
@@ -140,7 +140,7 @@ func (s *surfaceObserver) serve(next http.Handler, w http.ResponseWriter, r *htt
 		ctx, span = s.startSpan(ctx, r, method, scheme)
 	}
 	st := &requestState{responseWriter: responseWriter{ResponseWriter: w}, surface: s.surface}
-	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
+	r = r.WithContext(context.WithValue(ctx, instrument.SurfaceKey{}, st))
 	defer func() {
 		status := st.Status()
 		req := s.requestAttrs(requestKey{
@@ -189,7 +189,7 @@ func (s *surfaceObserver) startSpan(ctx context.Context, r *http.Request, method
 		attrs = append(attrs, semconv.ServerAddress(host), semconv.ServerPort(port))
 	}
 	if r.URL.RawQuery != "" {
-		attrs = append(attrs, semconv.URLQuery(redactQuery(r.URL.RawQuery)))
+		attrs = append(attrs, semconv.URLQuery(instrument.RedactQuery(r.URL.RawQuery)))
 	}
 	if ua := r.UserAgent(); s.opts.ControlPlane && ua != "" {
 		attrs = append(attrs, semconv.UserAgentOriginal(truncate(ua, maxUserAgent)))
@@ -247,24 +247,6 @@ func serverAddress(host, scheme string) (string, int) {
 		return name, 443
 	}
 	return name, 80
-}
-
-// redactQuery keeps the keys and hides every value: share tokens and OAuth
-// codes travel in query strings.
-func redactQuery(raw string) string {
-	var b strings.Builder
-	b.Grow(len(raw))
-	for part := range strings.SplitSeq(raw, "&") {
-		if b.Len() > 0 {
-			b.WriteByte('&')
-		}
-		key, _, hasValue := strings.Cut(part, "=")
-		b.WriteString(key)
-		if hasValue {
-			b.WriteString("=" + redacted)
-		}
-	}
-	return b.String()
 }
 
 // redactAdminPath hides the handles and credential ids in admin paths
@@ -373,8 +355,6 @@ func ProtocolVersion(r *http.Request) string {
 	}
 }
 
-type stateKey struct{}
-
 // requestState is the per-request state Observe shares with the handlers
 // inside it. The mux sets r.Pattern on a copy of the request that no outer
 // middleware sees, so the innermost router reports its match here.
@@ -386,7 +366,7 @@ type requestState struct {
 }
 
 func stateFrom(ctx context.Context) *requestState {
-	st, _ := ctx.Value(stateKey{}).(*requestState)
+	st, _ := ctx.Value(instrument.SurfaceKey{}).(*requestState)
 	return st
 }
 
@@ -416,13 +396,8 @@ func Routed(mux *http.ServeMux) http.Handler {
 	})
 }
 
-// SurfaceFrom returns the surface Observe serves the request on, or "".
-func SurfaceFrom(ctx context.Context) string {
-	if st := stateFrom(ctx); st != nil {
-		return st.surface
-	}
-	return ""
-}
+// Surface implements the value instrument.SurfaceFrom reads.
+func (st *requestState) Surface() string { return st.surface }
 
 // routeOf strips the method and host from a ServeMux pattern
 // ("GET api.example.com/v1/artifacts/{slug}" is /v1/artifacts/{slug}).

@@ -82,7 +82,7 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	default:
 		return nil, &artifact.Error{Code: api.CodeRateLimited, Message: fmt.Sprintf("%d imports are already running; retry in a few seconds", maxConcurrent)}
 	}
-	ctx, cancel := context.WithTimeout(ctx, t.client.Budget())
+	ctx, cancel := context.WithTimeout(fetch.WithPurpose(ctx, fetch.PurposeImport), t.client.Budget())
 	defer cancel()
 	data, res, err := t.client.Get(ctx, rawURL, min(t.opts.MaxFileBytes, maxTextBytes))
 	if err != nil {

@@ -264,12 +264,12 @@ func TestSurfaceFrom(t *testing.T) {
 	obs, _ := newTestObserver(t, false)
 	var got string
 	obs.Observe("mcp", ObserveOptions{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = SurfaceFrom(r.Context())
+		got = instrument.SurfaceFrom(r.Context())
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if got != "mcp" {
 		t.Errorf("SurfaceFrom = %q, want mcp", got)
 	}
-	if s := SurfaceFrom(context.Background()); s != "" {
+	if s := instrument.SurfaceFrom(context.Background()); s != "" {
 		t.Errorf("SurfaceFrom(empty) = %q", s)
 	}
 	SetRoute(context.Background(), "/ignored") // no state: must not panic

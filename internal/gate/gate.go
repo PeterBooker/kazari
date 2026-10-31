@@ -19,6 +19,10 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"errors"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -80,7 +84,8 @@ type Options struct {
 	// Now is the clock (default time.Now); cookie lifetimes count from it.
 	Now func() time.Time
 	// Logger receives errors; nil uses slog.Default().
-	Logger *slog.Logger
+	Logger    *slog.Logger
+	Telemetry instrument.Providers
 }
 
 // Gate implements site.Gate.
@@ -89,7 +94,24 @@ type Gate struct {
 	links    Links
 	opts     Options
 	log      *slog.Logger
+	requests metric.Int64Counter
+	// results are the counter's attribute sets, built once: every page view
+	// passes the gate.
+	results map[string]metric.AddOption
 }
+
+// Results of the gate, the values of kazari.gate.result.
+const (
+	resultPublic    = "public"
+	resultMember    = "member"
+	resultShareLink = "share_link"
+	resultRedirect  = "redirect"
+	resultDenied    = "denied"
+)
+
+const resultKey = attribute.Key("kazari.gate.result")
+
+const scope = "github.com/PeterBooker/kazari/internal/gate"
 
 //go:embed page.html
 var pageHTML string
@@ -105,7 +127,13 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Gate{sessions: sessions, links: links, opts: opts, log: log}
+	results := map[string]metric.AddOption{}
+	for _, r := range []string{resultPublic, resultMember, resultShareLink, resultRedirect, resultDenied} {
+		results[r] = metric.WithAttributes(resultKey.String(r))
+	}
+	return &Gate{sessions: sessions, links: links, opts: opts, log: log, results: results,
+		requests: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.gate.requests",
+			metric.WithUnit("{request}"), metric.WithDescription("Requests for artifact pages by what the gate decided.")))}
 }
 
 // Allow reports whether r may be served p on host, the artifact host's
@@ -116,21 +144,25 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 // fetch, a frame, a client such as curl) gets 401.
 func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) bool {
 	if !p.Visibility.Gated() {
+		g.decided(r.Context(), resultPublic)
 		return true
 	}
-	ok, err := g.admitted(r, p, host)
+	via, err := g.admitted(r, p, host)
 	if err != nil {
 		g.log.ErrorContext(r.Context(), "gate: check access", "host", host, "err", err)
 		g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
 		return false
 	}
-	if ok {
+	if via != "" {
+		g.decided(r.Context(), via)
 		return true
 	}
 	if navigation(r) {
+		g.decided(r.Context(), resultRedirect)
 		g.toSignIn(w, r, host)
 		return false
 	}
+	g.decided(r.Context(), resultDenied)
 	hdr := w.Header()
 	setNoStore(hdr)
 	hdr.Set("Content-Type", "text/plain; charset=utf-8")
@@ -145,24 +177,35 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	return false
 }
 
-// admitted reports whether the request's view cookie opens host.
-func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (bool, error) {
+// decided counts the gate's decision and puts it on the request's span.
+func (g *Gate) decided(ctx context.Context, result string) {
+	g.requests.Add(ctx, 1, g.results[result])
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		span.SetAttributes(resultKey.String(result))
+	}
+}
+
+// admitted returns how the request's view cookie opens host, resultMember
+// or resultShareLink, or "" when it does not.
+func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (string, error) {
 	ck, err := r.Cookie(g.name(viewCookie))
 	if err != nil || ck.Value == "" {
-		return false, nil
+		return "", nil
 	}
+	via, notFound := resultMember, oauth.ErrNotFound
 	if artifact.IsLinkToken(ck.Value) {
-		_, err := g.links.CheckShareLink(r.Context(), p.Slug, ck.Value)
-		if errors.Is(err, artifact.ErrLinkNotFound) {
-			return false, nil
-		}
-		return err == nil, err
+		via, notFound = resultShareLink, artifact.ErrLinkNotFound
+		_, err = g.links.CheckShareLink(r.Context(), p.Slug, ck.Value)
+	} else {
+		_, err = g.sessions.Viewer(r.Context(), host, ck.Value)
 	}
-	_, err = g.sessions.Viewer(r.Context(), host, ck.Value)
-	if errors.Is(err, oauth.ErrNotFound) {
-		return false, nil
+	switch {
+	case errors.Is(err, notFound):
+		return "", nil
+	case err != nil:
+		return "", err
 	}
-	return err == nil, err
+	return via, nil
 }
 
 // navigation reports whether r loads a page into a browser tab, where a

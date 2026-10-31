@@ -18,14 +18,14 @@ import (
 
 // ArtifactStore implements artifact.Store.
 type ArtifactStore struct {
-	db *sql.DB
+	db *DB
 }
 
 var _ artifact.Store = (*ArtifactStore)(nil)
 
 // NewArtifactStore returns an artifact.Store backed by db.
 func NewArtifactStore(db *DB) *ArtifactStore {
-	return &ArtifactStore{db: db.DB}
+	return &ArtifactStore{db: db}
 }
 
 // Documented on artifact.ListQuery.
@@ -203,7 +203,9 @@ func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, size, quo
 	return nil
 }
 
-func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) error {
+func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Create")
+	defer end(&err)
 	meta, err := encodeArtifactMetadata(a.Metadata)
 	if err != nil {
 		return err
@@ -260,7 +262,9 @@ func artifactErr(op string, err error) error {
 	return fmt.Errorf("sqlite: artifact %s: %w", op, err)
 }
 
-func (s *ArtifactStore) Get(ctx context.Context, slug string) (*artifact.Artifact, error) {
+func (s *ArtifactStore) Get(ctx context.Context, slug string) (_ *artifact.Artifact, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Get")
+	defer end(&err)
 	_, a, err := scanArtifact(s.db.QueryRowContext(ctx, artifactSelect+` WHERE a.slug = ?`, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
@@ -271,7 +275,9 @@ func (s *ArtifactStore) Get(ctx context.Context, slug string) (*artifact.Artifac
 	return a, nil
 }
 
-func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int) (*artifact.Version, error) {
+func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int) (_ *artifact.Version, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.GetVersion")
+	defer end(&err)
 	aid, err := lookupArtifactID(ctx, s.db, slug)
 	if err != nil {
 		return nil, artifactErr("get version", err)
@@ -317,7 +323,9 @@ func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.
 	return files, rows.Err()
 }
 
-func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) ([]artifact.Version, error) {
+func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []artifact.Version, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListVersions")
+	defer end(&err)
 	aid, err := lookupArtifactID(ctx, s.db, slug)
 	if err != nil {
 		return nil, artifactErr("list versions", err)
@@ -356,9 +364,11 @@ func readArtifactTx(ctx context.Context, tx *sql.Tx, slug string) (int64, *artif
 }
 
 func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact.Version, expected int, quota int64,
-	fn func(a *artifact.Artifact) error) error {
+	fn func(a *artifact.Artifact) error) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.AddVersion")
+	defer end(&err)
 	var number int
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, a, err := readArtifactTx(ctx, tx, slug)
 		if err != nil {
 			return err
@@ -409,8 +419,10 @@ func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact
 	return nil
 }
 
-func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *artifact.Artifact) error) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *artifact.Artifact) error) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Update")
+	defer end(&err)
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, a, err := readArtifactTx(ctx, tx, slug)
 		if err != nil {
 			return err
@@ -457,9 +469,11 @@ func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *
 	return artifactErrOrNil("update", err)
 }
 
-func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (bool, error) {
+func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (_ bool, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Involved")
+	defer end(&err)
 	var ok bool
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM artifact_actor aa
 		   JOIN artifact a ON a.id = aa.artifact_id
 		   JOIN user u ON u.id = aa.user_id
@@ -501,7 +515,9 @@ func decodeArtifactCursor(s string) (artifactCursor, error) {
 
 // List shows a viewer without All what it owns, created or updated, plus
 // public and members artifacts that are neither unpublished nor deleted.
-func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (artifact.ListPage, error) {
+func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artifact.ListPage, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.List")
+	defer end(&err)
 	var (
 		where = []string{"a.purged_at IS NULL"}
 		args  []any
@@ -633,7 +649,9 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 	return &p, nil
 }
 
-func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (*artifact.Published, error) {
+func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *artifact.Published, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ResolvePublished")
+	defer end(&err)
 	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
 		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
 		WHERE a.slug = ?`, slug))
@@ -648,7 +666,9 @@ func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (*art
 
 // ResolveVersion resolves a tombstone with VersionID 0 and PurgedAt set, so
 // the caller can answer 410.
-func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (*artifact.Published, error) {
+func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (_ *artifact.Published, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ResolveVersion")
+	defer end(&err)
 	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
 		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
 		WHERE a.slug = ?`, number, slug))
@@ -664,7 +684,9 @@ func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number 
 	return p, nil
 }
 
-func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (map[string]artifact.File, error) {
+func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ map[string]artifact.File, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Files")
+	defer end(&err)
 	files, err := s.files(ctx, versionID)
 	if err != nil {
 		return nil, artifactErr("files", err)
@@ -676,9 +698,11 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (map[string]
 	return m, nil
 }
 
-func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (int64, error) {
+func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (_ int64, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Usage")
+	defer end(&err)
 	var n int64
-	err := s.db.QueryRowContext(ctx, artifactUsage, ownerHandle).Scan(&n)
+	err = s.db.QueryRowContext(ctx, artifactUsage, ownerHandle).Scan(&n)
 	if err != nil {
 		return 0, artifactErr("usage", err)
 	}
@@ -705,24 +729,32 @@ func (s *ArtifactStore) listWhere(ctx context.Context, op, cond, order string, a
 	return out, nil
 }
 
-func (s *ArtifactStore) ListExpired(ctx context.Context, now time.Time) ([]artifact.Artifact, error) {
+func (s *ArtifactStore) ListExpired(ctx context.Context, now time.Time) (_ []artifact.Artifact, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListExpired")
+	defer end(&err)
 	return s.listWhere(ctx, "list expired",
 		"a.expires_at <= ? AND a.deleted_at IS NULL AND a.purged_at IS NULL", "a.expires_at", toNanos(now))
 }
 
-func (s *ArtifactStore) ListRetentionDue(ctx context.Context, before time.Time) ([]artifact.Artifact, error) {
+func (s *ArtifactStore) ListRetentionDue(ctx context.Context, before time.Time) (_ []artifact.Artifact, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListRetentionDue")
+	defer end(&err)
 	return s.listWhere(ctx, "list retention due",
 		"a.deleted_at <= ? AND a.purged_at IS NULL", "a.deleted_at", toNanos(before))
 }
 
-func (s *ArtifactStore) ListTombstonesDue(ctx context.Context, before time.Time) ([]artifact.Artifact, error) {
+func (s *ArtifactStore) ListTombstonesDue(ctx context.Context, before time.Time) (_ []artifact.Artifact, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListTombstonesDue")
+	defer end(&err)
 	return s.listWhere(ctx, "list tombstones due", "a.purged_at <= ?", "a.purged_at", toNanos(before))
 }
 
 // Purge also sets deleted_at if unset, so a hard delete leaves the same
 // tombstone as the sweep. Purging again keeps the original purged_at.
-func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn func(a *artifact.Artifact) error) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn func(a *artifact.Artifact) error) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.Purge")
+	defer end(&err)
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, a, err := readArtifactTx(ctx, tx, slug)
 		if err != nil {
 			return err
@@ -750,8 +782,10 @@ func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn
 }
 
 // DeleteTombstone returns ErrInvalidArgument unless the artifact is purged.
-func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteTombstone")
+	defer end(&err)
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var purged sql.NullInt64
 		err := tx.QueryRowContext(ctx, `SELECT purged_at FROM artifact WHERE slug = ?`, slug).Scan(&purged)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -770,12 +804,16 @@ func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) error 
 }
 
 // RecordBlob only moves created_at forward.
-func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
+func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlob")
+	defer end(&err)
+	_, err = s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
 	return artifactErrOrNil("record blob", err)
 }
 
-func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) ([]string, error) {
+func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) (_ []string, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.UnreferencedBlobs")
+	defer end(&err)
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -802,7 +840,9 @@ func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time,
 	return out, nil
 }
 
-func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
+func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlob")
+	defer end(&err)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
 	return artifactErrOrNil("delete blob", err)
 }

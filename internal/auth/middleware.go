@@ -52,7 +52,7 @@ func newRecorder(p instrument.Providers) recorder {
 func (rec recorder) record(ctx context.Context, source, result string, p *Principal) {
 	source = instrument.OneOf(source, SourceAPIKey, SourceOAuth, SourceAdminToken, SourceLocal)
 	rec.requests.Add(ctx, 1, metric.WithAttributes(
-		instrument.Surface.String(middleware.SurfaceFrom(ctx)),
+		instrument.Surface.String(instrument.SurfaceFrom(ctx)),
 		instrument.CredentialType.String(source),
 		instrument.AuthResult.String(result),
 	))

@@ -133,7 +133,7 @@ type envOptions struct {
 func newEnv(t *testing.T, eo envOptions) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

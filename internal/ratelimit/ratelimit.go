@@ -93,7 +93,7 @@ func (l *Limiter) Reserve(ctx context.Context, key string) time.Duration {
 	d := l.reserve(key)
 	if d > 0 {
 		attrs := metric.WithAttributes(
-			instrument.Surface.String(middleware.SurfaceFrom(ctx)),
+			instrument.Surface.String(instrument.SurfaceFrom(ctx)),
 			instrument.RateLimitScope.String(l.scope),
 		)
 		l.rejected.Add(ctx, 1, attrs)

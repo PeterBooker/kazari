@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/attribute"
 	"io"
 	"strconv"
 	"time"
@@ -19,7 +20,9 @@ const (
 // Get returns an artifact and its versions (newest first, without files).
 // Unpublished and soft-deleted artifacts are returned to the actors
 // checkReadable allows; tombstones are ErrGone.
-func (s *Service) Get(ctx context.Context, actor Actor, slug string) (*Artifact, []Version, error) {
+func (s *Service) Get(ctx context.Context, actor Actor, slug string) (_ *Artifact, _ []Version, err error) {
+	ctx, span := s.span(ctx, "artifact.get", slug)
+	defer func() { endSpan(span, err) }()
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
 		return nil, nil, err
@@ -54,7 +57,9 @@ func (s *Service) checkReadable(ctx context.Context, actor Actor, a *Artifact) e
 
 // List returns one page of artifacts visible to actor. Only admins may set
 // q.All.
-func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (ListPage, error) {
+func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (_ ListPage, err error) {
+	ctx, span := s.span(ctx, "artifact.list", "")
+	defer func() { endSpan(span, err) }()
 	q.Viewer = actor.Handle
 	q.All = q.All && actor.Admin
 	switch q.Mine {
@@ -85,7 +90,13 @@ func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (ListPage,
 }
 
 // Publish serves an existing version, for rollback or roll-forward.
-func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version int) (*Artifact, error) {
+func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version int) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.publish", slug)
+	defer func() {
+		s.published(ctx, publishRollback, nil, err)
+		span.SetAttributes(versionKey.Int(version))
+		endSpan(span, err)
+	}()
 	return s.modify(ctx, actor, slug, false, audit.ArtifactPublish, func(a *Artifact) (map[string]string, error) {
 		// Only a purge removes versions, all at once, so 1..LatestVersion
 		// has no gaps.
@@ -99,7 +110,9 @@ func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version
 
 // MarkStale starts the grace period after which Sweep soft-deletes the
 // artifact. grace <= 0 uses Options.DefaultGrace. The page keeps serving.
-func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace time.Duration) (*Artifact, error) {
+func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace time.Duration) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.mark_stale", slug)
+	defer func() { endSpan(span, err) }()
 	if grace <= 0 {
 		grace = s.opts.DefaultGrace
 	}
@@ -112,7 +125,9 @@ func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace
 }
 
 // UnmarkStale cancels a pending expiry.
-func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
+func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.unmark_stale", slug)
+	defer func() { endSpan(span, err) }()
 	return s.modify(ctx, actor, slug, false, audit.ArtifactUnstale, func(a *Artifact) (map[string]string, error) {
 		a.StaleAt, a.ExpiresAt = nil, nil
 		return nil, nil
@@ -122,7 +137,9 @@ func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (*A
 // SetVisibility sets "public", "unlisted" or "members", which also
 // re-publishes, or "unpublished", which stops serving and keeps the stored
 // visibility.
-func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v string) (*Artifact, error) {
+func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v string) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.set_visibility", slug)
+	defer func() { endSpan(span, err) }()
 	switch v {
 	case string(Public), string(Unlisted), string(Members), Unpublished:
 	default:
@@ -147,7 +164,9 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 // asks that owner. Soft-deleted artifacts can be transferred too, so content
 // can be handed over before the purge. An unknown handle is
 // ErrInvalidArgument.
-func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner string) (*Artifact, error) {
+func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner string) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.transfer", slug)
+	defer func() { endSpan(span, err) }()
 	if newOwner == "" {
 		return nil, Errorf(ErrInvalidArgument, "a new owner is required")
 	}
@@ -163,7 +182,9 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 
 // Delete soft-deletes the artifact, restorable until retention ends, or
 // with hard purges it now, leaving the blobs for CollectGarbage.
-func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) error {
+func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) (err error) {
+	ctx, span := s.span(ctx, "artifact.delete", slug)
+	defer func() { endSpan(span, err) }()
 	if hard {
 		involved, err := s.involved(ctx, actor, slug)
 		if err != nil {
@@ -178,7 +199,7 @@ func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard boo
 		s.record(ctx, actor, audit.ArtifactPurge, slug, nil)
 		return nil
 	}
-	_, err := s.modify(ctx, actor, slug, true, audit.ArtifactDelete, func(a *Artifact) (map[string]string, error) {
+	_, err = s.modify(ctx, actor, slug, true, audit.ArtifactDelete, func(a *Artifact) (map[string]string, error) {
 		if a.DeletedAt != nil {
 			return nil, errUnchanged
 		}
@@ -195,7 +216,9 @@ func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard boo
 // OpenFile opens a file of a version, 0 meaning the published one. It works
 // on unpublished and soft-deleted artifacts for the actors checkReadable
 // allows, so content can be recovered before the purge.
-func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, version int) (File, io.ReadSeekCloser, error) {
+func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, version int) (_ File, _ io.ReadSeekCloser, err error) {
+	ctx, span := s.span(ctx, "artifact.open_file", slug)
+	defer func() { endSpan(span, err) }()
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
 		return File{}, nil, err
@@ -257,7 +280,9 @@ func (s *Service) Files(ctx context.Context, versionID int64) (map[string]File, 
 
 // Sweep soft-deletes expired artifacts, purges those past retention and
 // frees old tombstones, carrying on past failures to return the first.
-func (s *Service) Sweep(ctx context.Context) (SweepReport, error) {
+func (s *Service) Sweep(ctx context.Context) (report SweepReport, err error) {
+	ctx, span := s.span(ctx, "artifact.sweep", "")
+	defer func() { sweepAttrs(span, report); endSpan(span, err) }()
 	var (
 		rep      SweepReport
 		firstErr error
@@ -336,9 +361,10 @@ func (s *Service) Sweep(ctx context.Context) (SweepReport, error) {
 // CollectGarbage deletes unreferenced blobs last recorded before the
 // BlobGrace window and returns how many. The file goes before the row, so a
 // crash leaves a row the next run retries.
-func (s *Service) CollectGarbage(ctx context.Context) (int, error) {
+func (s *Service) CollectGarbage(ctx context.Context) (n int, err error) {
+	ctx, span := s.span(ctx, "artifact.collect_garbage", "")
+	defer func() { span.SetAttributes(attribute.Int("kazari.gc.blobs_deleted_count", n)); endSpan(span, err) }()
 	before := s.now().Add(-s.opts.BlobGrace)
-	var n int
 	for {
 		deleted, more, err := s.collectBatch(ctx, before)
 		n += deleted

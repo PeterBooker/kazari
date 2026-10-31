@@ -202,7 +202,8 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 
 	// A root span on schedule; a child of the request that triggered it
 	// otherwise.
-	ctx, span := s.tracer.Start(ctx, st.spanName, trace.WithAttributes(instrument.JobName.String(st.job.Name)))
+	ctx, span := s.tracer.Start(instrument.WithSurface(ctx, instrument.SurfaceScheduler), st.spanName,
+		trace.WithAttributes(instrument.JobName.String(st.job.Name)))
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

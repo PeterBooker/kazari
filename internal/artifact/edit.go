@@ -80,7 +80,15 @@ const editAttempts = 3
 
 // Edit applies req.Edits to a file of the latest version and publishes the
 // result as a new version, returning an outcome per edit.
-func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (*Artifact, *Version, []EditOutcome, error) {
+func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (_ *Artifact, v *Version, out []EditOutcome, err error) {
+	ctx, span := s.span(ctx, "artifact.edit", req.Slug)
+	defer func() {
+		s.published(ctx, publishEdit, v, err)
+		s.edited(ctx, out)
+		versionAttrs(span, v)
+		editAttrs(span, out)
+		endSpan(span, err)
+	}()
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, nil, err
 	}
@@ -91,6 +99,7 @@ func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (*Arti
 	for attempt := 1; ; attempt++ {
 		a, v, out, err := s.editOnce(ctx, actor, req, clean)
 		if CodeOf(err) == ErrVersionConflict.Code && req.ExpectedVersion == 0 && attempt < editAttempts {
+			s.m.editRetries.Add(ctx, 1)
 			continue // a publish raced the read: re-apply to the newer content
 		}
 		return a, v, out, err
@@ -123,7 +132,7 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	if edited == data {
 		return nil, nil, nil, Errorf(ErrInvalidArgument, "the edits leave %q unchanged", clean)
 	}
-	got, v, err := s.Update(ctx, actor, UpdateRequest{
+	got, v, err := s.update(ctx, actor, UpdateRequest{
 		Slug:            a.Slug,
 		Label:           req.Label,
 		ExpectedVersion: a.LatestVersion, // the version the edits were applied to

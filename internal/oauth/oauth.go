@@ -17,6 +17,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -265,6 +267,10 @@ type Options struct {
 	Scopes []string
 	Now    func() time.Time
 	Logger *slog.Logger
+	// Fetch records the fetches of client ID metadata documents; nil records
+	// nothing.
+	Fetch     *fetch.Observer
+	Telemetry instrument.Providers
 	// HTTPClient fetches client ID metadata documents. The default times out
 	// after 10 s and dials public addresses only.
 	HTTPClient *http.Client
@@ -305,6 +311,8 @@ type Service struct {
 	log    *slog.Logger
 	client *http.Client
 	pages  *pages
+	tracer trace.Tracer
+	m      metrics
 }
 
 var _ auth.Authenticator = (*Service)(nil)
@@ -349,7 +357,7 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 		opts.Logger = slog.Default()
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: cimdTimeout, Transport: fetch.Transport()}
+		opts.HTTPClient = &http.Client{Timeout: cimdTimeout, Transport: opts.Fetch.Transport(fetch.Transport())}
 	}
 	var origin string
 	if u, err := url.Parse(opts.Issuer); err == nil && u.Host != "" {
@@ -358,6 +366,7 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	return &Service{
 		store: store, users: users, keys: keys, idp: idp, audit: rec, opts: opts, origin: origin,
 		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(),
+		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(opts.Telemetry.Meter(scope)),
 	}
 }
 
@@ -469,9 +478,11 @@ func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 
 // Cleanup deletes expired requests, codes, tokens and sign-ins, and clients
 // that completed no grant within ClientTTL, returning the count.
-func (s *Service) Cleanup(ctx context.Context) (int, error) {
+func (s *Service) Cleanup(ctx context.Context) (n int, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "oauth.cleanup")
+	defer func() { instrument.End(span, err, "") }()
 	now := s.now()
-	n, err := s.store.DeleteExpired(ctx, now)
+	n, err = s.store.DeleteExpired(ctx, now)
 	if err != nil {
 		return n, err
 	}

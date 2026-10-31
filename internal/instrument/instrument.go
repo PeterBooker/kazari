@@ -7,6 +7,7 @@ package instrument
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -114,10 +115,53 @@ const (
 
 // Surfaces, the values of kazari.surface.
 const (
-	SurfaceSite     = "site"
-	SurfaceAPI      = "api"
-	SurfaceMCP      = "mcp"
-	SurfaceAdmin    = "admin"
-	SurfaceApex     = "apex"
-	SurfaceRedirect = "redirect"
+	SurfaceSite      = "site"
+	SurfaceAPI       = "api"
+	SurfaceMCP       = "mcp"
+	SurfaceAdmin     = "admin"
+	SurfaceApex      = "apex"
+	SurfaceRedirect  = "redirect"
+	SurfaceScheduler = "scheduler"
 )
+
+// SurfaceKey is the context key of the surface work arrived on. Its value is
+// a string, or the HTTP middleware's per-request state, which reports the
+// surface itself so a request carries one context value, not two.
+type SurfaceKey struct{}
+
+// WithSurface marks work outside an HTTP request, such as a scheduled job.
+func WithSurface(ctx context.Context, surface string) context.Context {
+	return context.WithValue(ctx, SurfaceKey{}, surface)
+}
+
+// SurfaceFrom returns the surface of the work in ctx, or "".
+func SurfaceFrom(ctx context.Context) string {
+	switch v := ctx.Value(SurfaceKey{}).(type) {
+	case string:
+		return v
+	case interface{ Surface() string }:
+		return v.Surface()
+	}
+	return ""
+}
+
+// Redacted stands in for a value telemetry must not carry.
+const Redacted = "REDACTED"
+
+// RedactQuery keeps a query string's keys and hides every value: share
+// tokens, OAuth codes and presigned signatures travel in query strings.
+func RedactQuery(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for part := range strings.SplitSeq(raw, "&") {
+		if b.Len() > 0 {
+			b.WriteByte('&')
+		}
+		key, _, hasValue := strings.Cut(part, "=")
+		b.WriteString(key)
+		if hasValue {
+			b.WriteString("=" + Redacted)
+		}
+	}
+	return b.String()
+}

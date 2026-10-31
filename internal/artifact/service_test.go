@@ -57,12 +57,12 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"))
+	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1306,7 +1306,7 @@ func (failingRecorder) Record(context.Context, audit.Event) error { return error
 func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1314,7 +1314,7 @@ func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO user (handle, role, quota_bytes, created_at) VALUES ('alice', 'member', 0, 0)`); err != nil {
 		t.Fatal(err)
 	}
-	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"))
+	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

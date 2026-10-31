@@ -40,6 +40,7 @@ type Options struct {
 	UserAgent string
 	// Transport replaces the public-only transport, for tests.
 	Transport http.RoundTripper
+	Observer  *Observer
 }
 
 // Client fetches URLs under Options.
@@ -68,7 +69,7 @@ func New(opts Options) *Client {
 	}
 	return &Client{opts: opts, hc: &http.Client{
 		Timeout:   opts.Timeout,
-		Transport: tr,
+		Transport: opts.Observer.Transport(tr),
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) > maxRedirects {
 				return fmt.Errorf("more than %d redirects", maxRedirects)
@@ -89,19 +90,30 @@ type Result struct {
 
 // Get returns the body of u, which must be at most limit bytes.
 func (c *Client) Get(ctx context.Context, u string, limit int64) ([]byte, Result, error) {
-	resp, res, err := c.get(ctx, u)
+	start := time.Now()
+	resp, res, errType, err := c.get(ctx, u)
 	if err != nil {
+		if errType != "" {
+			c.done(ctx, start, 0, errType)
+		}
 		return nil, Result{}, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
+		c.done(ctx, start, 0, ErrorType(err))
 		return nil, Result{}, failed(u, err)
 	}
 	if int64(len(data)) > limit {
+		c.done(ctx, start, 0, ErrTooLarge)
 		return nil, Result{}, tooLarge(u, limit)
 	}
+	c.done(ctx, start, int64(len(data)), "")
 	return data, res, nil
+}
+
+func (c *Client) done(ctx context.Context, start time.Time, size int64, errType string) {
+	c.opts.Observer.Done(ctx, start, size, errType)
 }
 
 // File is a downloaded body in a temporary file, positioned at its start.
@@ -137,8 +149,12 @@ func (f *File) Replace(data []byte) error {
 
 // Download writes the body of u, at most limit bytes, to a file under Dir.
 func (c *Client) Download(ctx context.Context, u string, limit int64) (*File, error) {
-	resp, res, err := c.get(ctx, u)
+	start := time.Now()
+	resp, res, errType, err := c.get(ctx, u)
 	if err != nil {
+		if errType != "" {
+			c.done(ctx, start, 0, errType)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -151,11 +167,14 @@ func (c *Client) Download(ctx context.Context, u string, limit int64) (*File, er
 	switch {
 	case err != nil:
 		out.Close()
+		c.done(ctx, start, 0, ErrorType(err))
 		return nil, failed(u, err)
 	case n > limit:
 		out.Close()
+		c.done(ctx, start, 0, ErrTooLarge)
 		return nil, tooLarge(u, limit)
 	}
+	c.done(ctx, start, n, "")
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		out.Close()
 		return nil, fmt.Errorf("fetch: spill: %w", err)
@@ -182,7 +201,7 @@ func (c *Client) Downloads(ctx context.Context, maxFile, maxTotal int64) *Downlo
 	if c == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.opts.Budget)
+	ctx, cancel := context.WithTimeout(WithPurpose(ctx, PurposeFile), c.opts.Budget)
 	return &Downloads{c: c, ctx: ctx, cancel: cancel, maxFile: maxFile, left: maxTotal}
 }
 
@@ -219,35 +238,38 @@ func (d *Downloads) Close() {
 	d.files = nil
 }
 
-func (c *Client) get(ctx context.Context, u string) (*http.Response, Result, error) {
+// get returns, with a failed request, its error.type for the metrics; a URL
+// refused before any request has none.
+func (c *Client) get(ctx context.Context, u string) (*http.Response, Result, string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(u))
 	if err != nil {
-		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url is not valid: %v", err)
+		return nil, Result{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "url is not valid: %v", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
-		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q must be an http or https URL", parsed.Redacted())
+		return nil, Result{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "url %q must be an http or https URL", parsed.Redacted())
 	}
 	// Go would send them as Basic auth, and they would end up in the audit log.
 	if parsed.User != nil {
-		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q must not carry credentials", parsed.Redacted())
+		return nil, Result{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "url %q must not carry credentials", parsed.Redacted())
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return nil, Result{}, artifact.Errorf(artifact.ErrInvalidArgument, "url %q: %v", u, err)
+		return nil, Result{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "url %q: %v", u, err)
 	}
 	req.Header.Set("User-Agent", c.opts.UserAgent)
 	req.Header.Set("Accept", "*/*")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, Result{}, failed(u, err)
+		return nil, Result{}, ErrorType(err), failed(u, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, Result{}, artifact.Errorf(artifact.ErrFetchFailed, "%s answered %d %s", u, resp.StatusCode, http.StatusText(resp.StatusCode))
+		return nil, Result{}, StatusErrorType(resp.StatusCode),
+			artifact.Errorf(artifact.ErrFetchFailed, "%s answered %d %s", u, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	final := *resp.Request.URL
 	final.User = nil
-	return resp, Result{URL: &final, ContentType: resp.Header.Get("Content-Type")}, nil
+	return resp, Result{URL: &final, ContentType: resp.Header.Get("Content-Type")}, "", nil
 }
 
 var errNonPublic = errors.New("not a public address")

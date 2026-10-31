@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/app"
 )
@@ -178,5 +179,50 @@ func TestLogsCarryTraceIDs(t *testing.T) {
 	}
 	if !found {
 		t.Error("the access log was not exported")
+	}
+}
+
+func TestCreateArtifactSpanTree(t *testing.T) {
+	a, sink, stop := startTraced(t)
+	hc := client(a.Addrs().HTTP)
+	key := issueKey(t, hc)
+	mcpCall(t, hc, key, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_artifact","arguments":`+
+		`{"slug":"q3-report","name":"Q3","description":"Report","files":[{"path":"index.html","content":"<h1>Q3</h1>"}]}}}`)
+	stop()
+
+	spans := sink.GetSpans()
+	byID := map[trace.SpanID]tracetest.SpanStub{}
+	for _, s := range spans {
+		byID[s.SpanContext.SpanID()] = s
+	}
+	parentName := func(s tracetest.SpanStub) string { return byID[s.Parent.SpanID()].Name }
+	named := spansByName(sink)
+	for child, parent := range map[string]string{
+		"tools/call create_artifact": "POST /",
+		"artifact.create":            "tools/call create_artifact",
+		"ArtifactStore.Create":       "artifact.create",
+		"blob.put":                   "artifact.create",
+	} {
+		s, ok := named[child]
+		if !ok {
+			t.Errorf("no %s span in %v", child, names(sink))
+			continue
+		}
+		if got := parentName(s); got != parent {
+			t.Errorf("%s is under %q, want %q", child, got, parent)
+		}
+	}
+	if got := stubAttrs(named["artifact.create"]); got["kazari.artifact.slug"] != "q3-report" || got["kazari.artifact.version"] != "1" {
+		t.Errorf("artifact.create attributes = %v", got)
+	}
+	if got := stubAttrs(named["POST /"]); got["kazari.surface"] != "mcp" || got["kazari.credential.type"] != "api_key" {
+		t.Errorf("server span attributes = %v", got)
+	}
+	for _, s := range spans {
+		for _, kv := range s.Attributes {
+			if v := kv.Value.String(); v == "metrics" || strings.Contains(v, "<h1>Q3</h1>") {
+				t.Errorf("span %s carries %s = %q", s.Name, kv.Key, v)
+			}
+		}
 	}
 }

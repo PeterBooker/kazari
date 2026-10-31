@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/fetch"
 )
 
 const (
@@ -137,6 +139,13 @@ func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error)
 		return nil, fmt.Errorf("%w: %q is not registered", errInvalidClient, id)
 	}
 	fetched, err := s.fetchClient(ctx, id)
+	if c == nil {
+		out := &outcome{}
+		if err != nil {
+			out.code = "invalid_client_metadata"
+		}
+		s.m.registrations.Add(ctx, 1, out.attrs(registrationMethodKey.String("cimd")))
+	}
 	if err != nil {
 		s.log.WarnContext(ctx, "oauth: client metadata fetch failed", "client_id", id, "err", err)
 		return nil, fmt.Errorf("%w: %v", errInvalidClient, err)
@@ -155,8 +164,9 @@ func (s *Service) fetchClient(ctx context.Context, id string) (*Client, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("client_id is not a valid https URL")
 	}
-	ctx, cancel := context.WithTimeout(ctx, cimdTimeout)
+	ctx, cancel := context.WithTimeout(fetch.WithPurpose(ctx, fetch.PurposeCIMD), cimdTimeout)
 	defer cancel()
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, id, nil)
 	if err != nil {
 		return nil, err
@@ -167,10 +177,12 @@ func (s *Service) fetchClient(ctx context.Context, id string) (*Client, error) {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
+		s.opts.Fetch.Done(ctx, start, 0, fetch.ErrorType(err))
 		return nil, fmt.Errorf("fetch metadata document: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		s.opts.Fetch.Done(ctx, start, 0, fetch.StatusErrorType(resp.StatusCode))
 		return nil, fmt.Errorf("fetch metadata document: status %s", resp.Status)
 	}
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
@@ -179,11 +191,14 @@ func (s *Service) fetchClient(ctx context.Context, id string) (*Client, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, cimdMaxBytes+1))
 	if err != nil {
+		s.opts.Fetch.Done(ctx, start, 0, fetch.ErrorType(err))
 		return nil, fmt.Errorf("read metadata document: %w", err)
 	}
 	if len(body) > cimdMaxBytes {
+		s.opts.Fetch.Done(ctx, start, 0, fetch.ErrTooLarge)
 		return nil, fmt.Errorf("metadata document is larger than %d bytes", cimdMaxBytes)
 	}
+	s.opts.Fetch.Done(ctx, start, int64(len(body)), "")
 	var m clientMetadata
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("decode metadata document: %w", err)

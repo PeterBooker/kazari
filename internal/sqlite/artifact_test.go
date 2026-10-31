@@ -13,7 +13,7 @@ import (
 
 func openArtifactTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
-	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"))
+	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

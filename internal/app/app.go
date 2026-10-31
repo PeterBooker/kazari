@@ -147,7 +147,7 @@ func (a *App) start(ctx context.Context, now func() time.Time) (err error) {
 	ctx, span := a.tracer.Start(ctx, "kazari.start")
 	defer func() { instrument.End(span, err, "") }()
 	migrateCtx, migrate := instrument.StartChild(ctx, a.tracer, "sqlite.migrate")
-	a.db, err = sqlite.Open(migrateCtx, a.cfg.DBPath())
+	a.db, err = sqlite.Open(migrateCtx, a.cfg.DBPath(), sqlite.Options{Telemetry: a.tel.Providers()})
 	instrument.End(migrate, err, "")
 	if err != nil {
 		return fmt.Errorf("app: %w", err)
@@ -198,15 +198,17 @@ func telemetryOptions(cfg config.Config, opts Options, log *slog.Logger, now fun
 }
 
 func (a *App) build(ctx context.Context, now func() time.Time) error {
+	tel := a.tel.Providers()
+	fetchObs := fetch.NewObserver(tel)
 	cfg, log := a.cfg, a.log
 
-	blobs, err := blob.NewFS(cfg.BlobDir())
+	blobs, err := blob.NewFS(cfg.BlobDir(), blob.Options{Telemetry: tel})
 	if err != nil {
 		return fmt.Errorf("app: %w", err)
 	}
 	auditStore := sqlite.NewAuditStore(a.db)
 
-	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), Now: now}
+	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), Now: now, Telemetry: tel}
 	if o := cfg.Auth.OIDC; o != nil {
 		userOpts.AllowedDomains = o.AllowedDomains
 		userOpts.AutoProvision = o.AutoProvision
@@ -236,6 +238,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Quotas:            users,
 		Now:               now,
 		Logger:            log,
+		Telemetry:         tel,
 	}
 	if cfg.Fetch.Enabled {
 		fetcher = fetch.New(fetch.Options{
@@ -243,6 +246,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			Budget:    cfg.Fetch.Budget.Std(),
 			Dir:       tempDir(cfg),
 			UserAgent: "Kazari/" + buildinfo.Get().Version + " (+https://kazari.io)",
+			Observer:  fetchObs,
 		})
 		artOpts.Pages = snapshot.New(fetcher, snapshot.Options{
 			CSP:           cfg.Serve.CSP,
@@ -254,6 +258,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	arts := artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artOpts)
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
+		Telemetry:       tel,
 		Dir:             cfg.UploadDir(),
 		MaxChunkBytes:   int64(cfg.Limits.MaxChunkBytes),
 		MaxTotalBytes:   int64(cfg.Limits.MaxVersionBytes),
@@ -266,14 +271,14 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	mcpURL := cfg.ExternalURL("mcp")
 	var idp oauth.IdentityProvider
 	if o := cfg.Auth.OIDC; o != nil {
-		discoverCtx, discover := instrument.StartChild(ctx, a.tracer, "oidc.discover")
-		p, err := oidc.New(discoverCtx, oidc.Config{
+		p, err := oidc.New(ctx, oidc.Config{
 			Issuer:       o.Issuer,
 			ClientID:     o.ClientID,
 			ClientSecret: o.ClientSecret,
 			RedirectURL:  mcpURL + strings.TrimPrefix(oauth.PathCallback, "/"),
+			Telemetry:    tel,
+			Fetch:        fetchObs,
 		})
-		instrument.End(discover, err, "")
 		if err != nil {
 			return fmt.Errorf("app: %w", err)
 		}
@@ -287,10 +292,11 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Logger:          log,
 		InsecureCookies: cfg.ExternalScheme == "http",
 		ViewCallback:    viewCallback(cfg),
+		Fetch:           fetchObs,
+		Telemetry:       tel,
 	})
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
-	tel := a.tel.Providers()
 	a.obs = middleware.NewObserver(tel, cfg.Listen.ProxyMode)
 	// One write budget per credential across the user API and MCP.
 	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential, Telemetry: tel})
@@ -405,6 +411,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			InsecureCookies: cfg.ExternalScheme == "http",
 			Now:             now,
 			Logger:          log,
+			Telemetry:       tel,
 		}),
 	})
 	apexH, err := apexHandler(cfg)

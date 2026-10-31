@@ -89,7 +89,7 @@ func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	ctx := r.Context()
 	middleware.SetErrorCode(ctx, body.Code)
 	b.errors.Add(ctx, 1, metric.WithAttributes(
-		instrument.Surface.String(instrument.OneOf(middleware.SurfaceFrom(ctx), instrument.SurfaceAPI, instrument.SurfaceAdmin)),
+		instrument.Surface.String(instrument.OneOf(instrument.SurfaceFrom(ctx), instrument.SurfaceAPI, instrument.SurfaceAdmin)),
 		instrument.ErrorCode.String(instrument.OneOf(body.Code, api.ErrorCodes...)),
 	))
 	if status >= http.StatusInternalServerError {

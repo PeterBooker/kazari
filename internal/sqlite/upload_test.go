@@ -18,7 +18,7 @@ import (
 func uploadTestStore(t *testing.T, handles ...string) *UploadStore {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"))
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

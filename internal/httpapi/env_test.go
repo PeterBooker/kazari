@@ -66,12 +66,12 @@ func newEnv(t *testing.T, c config) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"))
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"))
+	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

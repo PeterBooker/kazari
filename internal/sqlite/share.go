@@ -10,8 +10,10 @@ import (
 )
 
 // CreateShareLink implements artifact.Store.
-func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *artifact.ShareLink, hash string) error {
-	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *artifact.ShareLink, hash string) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.CreateShareLink")
+	defer end(&err)
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		aid, err := lookupArtifactID(ctx, tx, slug)
 		if err != nil {
 			return err
@@ -46,7 +48,9 @@ func scanShareLink(row artifactRowScanner) (*artifact.ShareLink, error) {
 }
 
 // ListShareLinks implements artifact.Store.
-func (s *ArtifactStore) ListShareLinks(ctx context.Context, slug string) ([]artifact.ShareLink, error) {
+func (s *ArtifactStore) ListShareLinks(ctx context.Context, slug string) (_ []artifact.ShareLink, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListShareLinks")
+	defer end(&err)
 	rows, err := s.db.QueryContext(ctx, shareLinkSelect+` WHERE a.slug = ? ORDER BY l.created_at DESC, l.id DESC`, slug)
 	if err != nil {
 		return nil, artifactErr("list share links", err)
@@ -67,7 +71,9 @@ func (s *ArtifactStore) ListShareLinks(ctx context.Context, slug string) ([]arti
 }
 
 // RevokeShareLink implements artifact.Store.
-func (s *ArtifactStore) RevokeShareLink(ctx context.Context, slug, prefix string, at time.Time) error {
+func (s *ArtifactStore) RevokeShareLink(ctx context.Context, slug, prefix string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.RevokeShareLink")
+	defer end(&err)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE share_link SET revoked_at = COALESCE(revoked_at, ?)
 		 WHERE prefix = ? AND artifact_id = (SELECT id FROM artifact WHERE slug = ?)`, toNanos(at), prefix, slug)
@@ -78,7 +84,9 @@ func (s *ArtifactStore) RevokeShareLink(ctx context.Context, slug, prefix string
 }
 
 // ShareLink implements artifact.Store.
-func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (*artifact.ShareLink, error) {
+func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (_ *artifact.ShareLink, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ShareLink")
+	defer end(&err)
 	l, err := scanShareLink(s.db.QueryRowContext(ctx, shareLinkSelect+` WHERE l.token_hash = ? AND a.slug = ?`, hash, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrLinkNotFound
@@ -90,7 +98,9 @@ func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (*arti
 }
 
 // UseShareLink implements artifact.Store.
-func (s *ArtifactStore) UseShareLink(ctx context.Context, slug, prefix string, at time.Time) error {
+func (s *ArtifactStore) UseShareLink(ctx context.Context, slug, prefix string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.UseShareLink")
+	defer end(&err)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE share_link SET uses = uses + 1, last_used_at = ?
 		 WHERE prefix = ? AND artifact_id = (SELECT id FROM artifact WHERE slug = ?)`, toNanos(at), prefix, slug)
