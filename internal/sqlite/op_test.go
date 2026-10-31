@@ -19,7 +19,7 @@ import (
 
 // TestEveryStoreMethodTraced keeps new store methods from going untraced:
 // each exported method of a *...Store starts with
-// ctx, end := s.db.op(ctx, "<Store>.<Method>") and defer end(&err).
+// ctx, end := s.db.op(ctx, "<Store>.<Method>") and defer func() { end(err) }().
 func TestEveryStoreMethodTraced(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -51,7 +51,7 @@ func TestEveryStoreMethodTraced(t *testing.T) {
 			methods++
 			want := store.Name + "." + fn.Name.Name
 			if !startsWithOp(fn, want) {
-				t.Errorf("%s: %s must begin with ctx, end := s.db.op(ctx, %q) and defer end(&err)", fset.Position(fn.Pos()), want, want)
+				t.Errorf("%s: %s must begin with ctx, end := s.db.op(ctx, %q) and defer func() { end(err) }()", fset.Position(fn.Pos()), want, want)
 			}
 		}
 	}
@@ -88,8 +88,20 @@ func startsWithOp(fn *ast.FuncDecl, name string) bool {
 	if !ok {
 		return false
 	}
-	endCall, ok := def.Call.Fun.(*ast.Ident)
-	return ok && endCall.Name == "end"
+	deferred, ok := def.Call.Fun.(*ast.FuncLit)
+	if !ok || len(deferred.Body.List) != 1 {
+		return false
+	}
+	stmt, ok := deferred.Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	endCall, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := endCall.Fun.(*ast.Ident)
+	return ok && ident.Name == "end"
 }
 
 func TestStoreSpans(t *testing.T) {

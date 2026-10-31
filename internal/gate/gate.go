@@ -95,9 +95,10 @@ type Gate struct {
 	opts     Options
 	log      *slog.Logger
 	requests metric.Int64Counter
-	// results are the counter's attribute sets, built once: every page view
-	// passes the gate.
-	results map[string]metric.AddOption
+	// results are the counter's attribute sets as the option slices Add
+	// takes, built once: every page view passes the gate, and a slice built
+	// per call would be allocated each time.
+	results map[string][]metric.AddOption
 }
 
 // Results of the gate, the values of kazari.gate.result.
@@ -127,9 +128,9 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	results := map[string]metric.AddOption{}
+	results := map[string][]metric.AddOption{}
 	for _, r := range []string{resultPublic, resultMember, resultShareLink, resultRedirect, resultDenied} {
-		results[r] = metric.WithAttributes(resultKey.String(r))
+		results[r] = []metric.AddOption{metric.WithAttributes(resultKey.String(r))}
 	}
 	return &Gate{sessions: sessions, links: links, opts: opts, log: log, results: results,
 		requests: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.gate.requests",
@@ -179,7 +180,7 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 
 // decided counts the gate's decision and puts it on the request's span.
 func (g *Gate) decided(ctx context.Context, result string) {
-	g.requests.Add(ctx, 1, g.results[result])
+	g.requests.Add(ctx, 1, g.results[result]...)
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.SetAttributes(resultKey.String(result))
 	}

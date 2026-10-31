@@ -28,7 +28,7 @@ func NewAuditStore(db *DB) *AuditStore {
 // Record stamps a zero e.At with the current time and ignores e.ID.
 func (s *AuditStore) Record(ctx context.Context, e audit.Event) (err error) {
 	ctx, end := s.db.op(ctx, "AuditStore.Record")
-	defer end(&err)
+	defer func() { end(err) }()
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
@@ -55,7 +55,7 @@ const (
 // List treats Since as inclusive; Slug and Actor match exactly.
 func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ []audit.Event, err error) {
 	ctx, end := s.db.op(ctx, "AuditStore.List")
-	defer end(&err)
+	defer func() { end(err) }()
 	var (
 		where []string
 		args  []any

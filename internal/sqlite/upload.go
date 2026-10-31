@@ -27,7 +27,7 @@ func NewUploadStore(db *DB) *UploadStore {
 // transaction, so concurrent creates cannot both take the last slot.
 func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int) (err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.Create")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var ownerID int64
 		err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE handle = ?`, u.Owner).Scan(&ownerID)
@@ -63,7 +63,7 @@ func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int)
 // Get sorts files by path.
 func (s *UploadStore) Get(ctx context.Context, id string) (_ *upload.Upload, err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.Get")
-	defer end(&err)
+	defer func() { end(err) }()
 	var u *upload.Upload
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx,
@@ -90,7 +90,7 @@ func (s *UploadStore) Get(ctx context.Context, id string) (_ *upload.Upload, err
 // UpsertFile returns artifact.ErrUploadNotFound for an unknown id.
 func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.StagedFile, totalBytes int64) (err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.UpsertFile")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE upload SET bytes = ? WHERE id = ?`, totalBytes, id)
 		if err != nil {
@@ -122,7 +122,7 @@ func (s *UploadStore) UpsertFile(ctx context.Context, id string, f upload.Staged
 // Delete returns artifact.ErrUploadNotFound for an unknown id.
 func (s *UploadStore) Delete(ctx context.Context, id string) (err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.Delete")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM upload_file WHERE upload_id = ?`, id); err != nil {
 			return err
@@ -149,7 +149,7 @@ func (s *UploadStore) Delete(ctx context.Context, id string) (err error) {
 // ListExpired returns the oldest expiry first, each upload with its files.
 func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []upload.Upload, err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.ListExpired")
-	defer end(&err)
+	defer func() { end(err) }()
 	var out []upload.Upload
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
@@ -188,7 +188,7 @@ func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []uploa
 // CountOpen counts the uploads owned by the handle, expired or not.
 func (s *UploadStore) CountOpen(ctx context.Context, owner string) (_ int, err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.CountOpen")
-	defer end(&err)
+	defer func() { end(err) }()
 	var n int
 	err = s.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM upload u JOIN user usr ON usr.id = u.owner_id
@@ -233,7 +233,7 @@ func uploadFiles(ctx context.Context, tx *sql.Tx, id string) ([]upload.StagedFil
 
 func (s *UploadStore) CountAll(ctx context.Context) (n int64, err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.CountAll")
-	defer end(&err)
+	defer func() { end(err) }()
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM upload`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("sqlite: count uploads: %w", err)
 	}

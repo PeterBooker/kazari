@@ -80,7 +80,7 @@ func userLookupID(ctx context.Context, tx *sql.Tx, handle string) (int64, error)
 
 func (s *UserStore) CreateUser(ctx context.Context, u *user.User) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateUser")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user
 		(handle, email, display_name, role, quota_bytes, disabled_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -97,7 +97,7 @@ func (s *UserStore) CreateUser(ctx context.Context, u *user.User) (err error) {
 
 func (s *UserStore) GetUser(ctx context.Context, handle string) (_ *user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.GetUser")
-	defer end(&err)
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM user WHERE handle = ?`, handle)
 	if err := userScan(row, &u); err != nil {
@@ -111,7 +111,7 @@ func (s *UserStore) GetUser(ctx context.Context, handle string) (_ *user.User, e
 
 func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (_ *user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.GetUserByEmail")
-	defer end(&err)
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM user WHERE lower(email) = lower(?)`, email)
@@ -126,7 +126,7 @@ func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (_ *user.U
 
 func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListUsers")
-	defer end(&err)
+	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM user ORDER BY handle`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list users: %w", err)
@@ -148,7 +148,7 @@ func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
 
 func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.UpdateUser")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `UPDATE user
 		SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
 		WHERE handle = ?`,
@@ -180,7 +180,7 @@ func userSplitScopes(s string) []string { return strings.Fields(s) }
 
 func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateKey")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, k.UserHandle)
 		if err != nil {
@@ -228,7 +228,7 @@ func userScanKey(s userRowScanner, k *user.APIKey, extra ...any) error {
 
 func (s *UserStore) GetKey(ctx context.Context, prefix string) (_ *user.APIKey, _ *user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.GetKey")
-	defer end(&err)
+	defer func() { end(err) }()
 	var (
 		k        user.APIKey
 		u        user.User
@@ -259,7 +259,7 @@ func (s *UserStore) GetKey(ctx context.Context, prefix string) (_ *user.APIKey, 
 
 func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKey, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListKeys")
-	defer end(&err)
+	defer func() { end(err) }()
 	var keys []user.APIKey
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
@@ -291,7 +291,7 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKe
 
 func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.RevokeKey")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `UPDATE api_key
 		SET revoked_at = coalesce(revoked_at, ?)
 		WHERE prefix = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
@@ -307,7 +307,7 @@ func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at tim
 
 func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.RevokeAllKeys")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
@@ -326,7 +326,7 @@ func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Ti
 
 func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.TouchKey")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE api_key SET last_used_at = ? WHERE prefix = ?`, toNanos(at), prefix)
 	if err == nil {
@@ -340,7 +340,7 @@ func (s *UserStore) TouchKey(ctx context.Context, prefix string, at time.Time) (
 
 func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (_ *user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.GetIdentity")
-	defer end(&err)
+	defer func() { end(err) }()
 	var u user.User
 	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+`
 		FROM user_identity JOIN user ON user.id = user_identity.user_id
@@ -356,7 +356,7 @@ func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (_ 
 
 func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Identity) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.LinkIdentity")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
@@ -380,7 +380,7 @@ func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Ide
 
 func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.UnlinkIdentity")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM user_identity
 		WHERE issuer = ? AND subject = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
 		issuer, subject, handle)
@@ -395,7 +395,7 @@ func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject 
 
 func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user.Identity, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListIdentities")
-	defer end(&err)
+	defer func() { end(err) }()
 	var ids []user.Identity
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
@@ -429,7 +429,7 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user
 
 func (s *UserStore) CountUsers(ctx context.Context) (_ []user.Count, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CountUsers")
-	defer end(&err)
+	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT role, disabled_at IS NOT NULL, COUNT(*) FROM user GROUP BY 1, 2`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: count users: %w", err)

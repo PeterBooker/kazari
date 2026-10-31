@@ -16,7 +16,7 @@ import (
 // CreateSignIn implements oauth.Store.
 func (s *OAuthStore) CreateSignIn(ctx context.Context, r *oauth.SignInRequest) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateSignIn")
-	defer end(&err)
+	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO signin_request
 		(id, binding, nonce, upstream_verifier, host, path, nonce_hash, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -30,7 +30,7 @@ func (s *OAuthStore) CreateSignIn(ctx context.Context, r *oauth.SignInRequest) (
 // GetSignIn implements oauth.Store.
 func (s *OAuthStore) GetSignIn(ctx context.Context, id string) (_ *oauth.SignInRequest, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetSignIn")
-	defer end(&err)
+	defer func() { end(err) }()
 	r := oauth.SignInRequest{ID: id}
 	var expires int64
 	err = s.db.QueryRowContext(ctx, `SELECT binding, nonce, upstream_verifier, host, path, nonce_hash, expires_at
@@ -49,7 +49,7 @@ func (s *OAuthStore) GetSignIn(ctx context.Context, id string) (_ *oauth.SignInR
 // DeleteSignIn implements oauth.Store.
 func (s *OAuthStore) DeleteSignIn(ctx context.Context, id string) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteSignIn")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM signin_request WHERE id = ?`, id)
 	if err == nil {
 		err = oauthAffected(res)
@@ -75,7 +75,7 @@ func oauthAffected(res sql.Result) error {
 // CreateSession implements oauth.Store.
 func (s *OAuthStore) CreateSession(ctx context.Context, sess *oauth.Session) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateSession")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := oauthUserID(ctx, tx, sess.UserHandle)
 		if err != nil {
@@ -119,14 +119,14 @@ func (s *OAuthStore) getSession(ctx context.Context, where string, arg any) (*oa
 // GetSession implements oauth.Store.
 func (s *OAuthStore) GetSession(ctx context.Context, hash string) (_ *oauth.Session, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetSession")
-	defer end(&err)
+	defer func() { end(err) }()
 	return s.getSession(ctx, "s.token_hash = ?", hash)
 }
 
 // GetSessionByID implements oauth.Store.
 func (s *OAuthStore) GetSessionByID(ctx context.Context, id int64) (_ *oauth.Session, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetSessionByID")
-	defer end(&err)
+	defer func() { end(err) }()
 	return s.getSession(ctx, "s.id = ?", id)
 }
 
@@ -134,7 +134,7 @@ func (s *OAuthStore) GetSessionByID(ctx context.Context, id int64) (_ *oauth.Ses
 // cascade.
 func (s *OAuthStore) DeleteSession(ctx context.Context, id int64) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteSession")
-	defer end(&err)
+	defer func() { end(err) }()
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM signin_session WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete session: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *OAuthStore) DeleteSession(ctx context.Context, id int64) (err error) {
 // CreateViewCode implements oauth.Store.
 func (s *OAuthStore) CreateViewCode(ctx context.Context, c *oauth.ViewCode) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateViewCode")
-	defer end(&err)
+	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO signin_code (code_hash, session_id, host, path, nonce_hash, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)`, c.Hash, c.SessionID, c.Host, c.Path, c.NonceHash, toNanos(c.ExpiresAt))
 	if err != nil {
@@ -156,7 +156,7 @@ func (s *OAuthStore) CreateViewCode(ctx context.Context, c *oauth.ViewCode) (err
 // ConsumeViewCode implements oauth.Store.
 func (s *OAuthStore) ConsumeViewCode(ctx context.Context, hash string, at time.Time) (_ *oauth.ViewCode, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.ConsumeViewCode")
-	defer end(&err)
+	defer func() { end(err) }()
 	var c *oauth.ViewCode
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
@@ -199,7 +199,7 @@ func (s *OAuthStore) ConsumeViewCode(ctx context.Context, hash string, at time.T
 // CreateViewSession implements oauth.Store.
 func (s *OAuthStore) CreateViewSession(ctx context.Context, v *oauth.ViewSession) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateViewSession")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO view_session (token_hash, session_id, host, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?)`, v.Hash, v.SessionID, v.Host, toNanos(v.CreatedAt), toNanos(v.ExpiresAt))
 	if err == nil {
@@ -214,7 +214,7 @@ func (s *OAuthStore) CreateViewSession(ctx context.Context, v *oauth.ViewSession
 // GetViewSession implements oauth.Store.
 func (s *OAuthStore) GetViewSession(ctx context.Context, hash string) (_ *oauth.ViewSession, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetViewSession")
-	defer end(&err)
+	defer func() { end(err) }()
 	var (
 		v                oauth.ViewSession
 		created, expires int64

@@ -88,18 +88,20 @@ func observePool(m metric.Meter, db *sql.DB) {
 // recording parent, and returns the function that ends it with the method's
 // error. It is not a database client span, which describes one statement:
 // a store method runs several in one transaction, and the method is where a
-// request's time goes.
-func (db *DB) op(ctx context.Context, name string) (context.Context, func(*error)) {
+// request's time goes. Callers defer a closure that passes err by value:
+// passing &err to the returned function would move err to the heap in
+// every call, sampled or not.
+func (db *DB) op(ctx context.Context, name string) (context.Context, func(error)) {
 	if !trace.SpanFromContext(ctx).IsRecording() {
 		return ctx, endNothing
 	}
 	store, method, _ := strings.Cut(name, ".")
 	ctx, span := db.tracer.Start(ctx, name,
 		trace.WithAttributes(semconv.CodeFunctionName(scope+".(*"+store+")."+method)))
-	return ctx, func(err *error) { instrument.End(span, *err, errorCode(*err)) }
+	return ctx, func(err error) { instrument.End(span, err, errorCode(err)) }
 }
 
-func endNothing(*error) {}
+func endNothing(error) {}
 
 // errorCode names the expected outcomes a store reports, such as a missing
 // row, so only real faults count as internal.

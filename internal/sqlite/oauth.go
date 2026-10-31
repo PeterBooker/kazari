@@ -47,7 +47,7 @@ func oauthUserID(ctx context.Context, q interface {
 
 func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.UpsertClient")
-	defer end(&err)
+	defer func() { end(err) }()
 	uris, err := json.Marshal(c.RedirectURIs)
 	if err != nil {
 		return fmt.Errorf("sqlite: upsert client %q: %w", c.ID, err)
@@ -65,7 +65,7 @@ func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) (err err
 
 func (s *OAuthStore) GetClient(ctx context.Context, id string) (_ *oauth.Client, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetClient")
-	defer end(&err)
+	defer func() { end(err) }()
 	var (
 		c                = oauth.Client{ID: id}
 		uris             string
@@ -93,7 +93,7 @@ func (s *OAuthStore) GetClient(ctx context.Context, id string) (_ *oauth.Client,
 // are short-lived, and a grant may be about to complete.
 func (s *OAuthStore) DeleteUnusedClients(ctx context.Context, before time.Time) (_ int, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteUnusedClients")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM oauth_client
 		WHERE granted_at IS NULL AND created_at < ?
 		  AND NOT EXISTS (SELECT 1 FROM oauth_request r WHERE r.client_id = oauth_client.id)
@@ -111,7 +111,7 @@ func (s *OAuthStore) DeleteUnusedClients(ctx context.Context, before time.Time) 
 // CreateRequest binds a non-empty UserHandle at once.
 func (s *OAuthStore) CreateRequest(ctx context.Context, r *oauth.Request) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateRequest")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var uid sql.NullInt64
 		if r.UserHandle != "" {
@@ -137,7 +137,7 @@ func (s *OAuthStore) CreateRequest(ctx context.Context, r *oauth.Request) (err e
 
 func (s *OAuthStore) GetRequest(ctx context.Context, id string) (_ *oauth.Request, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetRequest")
-	defer end(&err)
+	defer func() { end(err) }()
 	var (
 		r       = oauth.Request{ID: id}
 		scopes  string
@@ -164,7 +164,7 @@ func (s *OAuthStore) GetRequest(ctx context.Context, id string) (_ *oauth.Reques
 // BindRequest returns user.ErrNotFound for an unknown handle.
 func (s *OAuthStore) BindRequest(ctx context.Context, id, handle string) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.BindRequest")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := oauthUserID(ctx, tx, handle)
 		if err != nil {
@@ -191,7 +191,7 @@ func (s *OAuthStore) BindRequest(ctx context.Context, id, handle string) (err er
 
 func (s *OAuthStore) DeleteRequest(ctx context.Context, id string) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteRequest")
-	defer end(&err)
+	defer func() { end(err) }()
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_request WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete oauth request: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *OAuthStore) DeleteRequest(ctx context.Context, id string) (err error) {
 
 func (s *OAuthStore) CreateCode(ctx context.Context, c *oauth.Code) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateCode")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := oauthUserID(ctx, tx, c.UserHandle)
 		if err != nil {
@@ -221,7 +221,7 @@ func (s *OAuthStore) CreateCode(ctx context.Context, c *oauth.Code) (err error) 
 
 func (s *OAuthStore) ConsumeCode(ctx context.Context, hash string, at time.Time) (_ *oauth.Code, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.ConsumeCode")
-	defer end(&err)
+	defer func() { end(err) }()
 	var c *oauth.Code
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
@@ -253,7 +253,7 @@ func (s *OAuthStore) ConsumeCode(ctx context.Context, hash string, at time.Time)
 
 func (s *OAuthStore) LinkCodeFamily(ctx context.Context, hash string, familyID int64) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.LinkCodeFamily")
-	defer end(&err)
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx, `UPDATE oauth_code SET family_id = ? WHERE code_hash = ?`, familyID, hash)
 	if err != nil {
 		return fmt.Errorf("sqlite: link oauth code: %w", err)
@@ -331,7 +331,7 @@ func oauthInsertPair(ctx context.Context, tx *sql.Tx, family int64, access, refr
 
 func (s *OAuthStore) CreateTokens(ctx context.Context, access, refresh *oauth.Token) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateTokens")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if err := oauthInsertPair(ctx, tx, 0, access, refresh); err != nil {
 			return err
@@ -371,7 +371,7 @@ func oauthScanToken(s interface{ Scan(dest ...any) error }, t *oauth.Token) erro
 
 func (s *OAuthStore) GetToken(ctx context.Context, hash string) (_ *oauth.Token, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetToken")
-	defer end(&err)
+	defer func() { end(err) }()
 	var t oauth.Token
 	row := s.db.QueryRowContext(ctx, `SELECT `+oauthTokenColumns+`
 		FROM oauth_token t JOIN user u ON u.id = t.user_id WHERE t.token_hash = ?`, hash)
@@ -386,7 +386,7 @@ func (s *OAuthStore) GetToken(ctx context.Context, hash string) (_ *oauth.Token,
 
 func (s *OAuthStore) Rotate(ctx context.Context, oldID int64, at time.Time, access, refresh *oauth.Token) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.Rotate")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var family int64
 		err := tx.QueryRowContext(ctx, `SELECT family_id FROM oauth_token
@@ -421,7 +421,7 @@ func (s *OAuthStore) Rotate(ctx context.Context, oldID int64, at time.Time, acce
 
 func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeFamily")
-	defer end(&err)
+	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE oauth_token SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`, toNanos(at), familyID)
 	if err != nil {
@@ -432,7 +432,7 @@ func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.T
 
 func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Time) (_ []oauth.Token, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.ListGrants")
-	defer end(&err)
+	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+oauthTokenColumns+`
 		FROM oauth_token t JOIN user u ON u.id = t.user_id
 		WHERE u.handle = ? AND t.kind = 'refresh' AND t.revoked_at IS NULL AND t.expires_at > ?
@@ -457,7 +457,7 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 
 func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeGrant")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		var family int64
 		err := tx.QueryRowContext(ctx,
@@ -480,7 +480,7 @@ func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) (e
 
 func (s *OAuthStore) RevokeAllForUser(ctx context.Context, handle string, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeAllForUser")
-	defer end(&err)
+	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE oauth_token SET revoked_at = ?
 			WHERE revoked_at IS NULL AND user_id = (SELECT id FROM user WHERE handle = ?)`, toNanos(at), handle); err != nil {
@@ -497,7 +497,7 @@ func (s *OAuthStore) RevokeAllForUser(ctx context.Context, handle string, at tim
 
 func (s *OAuthStore) DeleteExpired(ctx context.Context, now time.Time) (_ int, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteExpired")
-	defer end(&err)
+	defer func() { end(err) }()
 	var total int64
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		// Codes and view sessions before their sessions, so a row that
