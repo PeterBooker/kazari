@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -221,19 +223,31 @@ const protocolVersion = "2025-11-25"
 
 func rpc(t *testing.T, url, body string) {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	rpcAs(t, url, protocolVersion, nil, body)
+}
+
+// rpcAs sends body under version with headers, and fails if the request
+// takes more than a few seconds: a request the server holds open hangs.
+func rpcAs(t *testing.T, url, version string, headers map[string]string, body string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	req.Header.Set("MCP-Protocol-Version", version)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	out, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", resp.StatusCode)
+		t.Fatalf("status %d: %s", resp.StatusCode, out)
 	}
 }
 
@@ -265,6 +279,54 @@ func TestObserveParents(t *testing.T) {
 	if _, found := find(points(t, reader, "mcp.server.operation.duration"),
 		map[string]string{"mcp.method.name": "tools/call", "mcp.protocol.version": protocolVersion}); !found {
 		t.Error("no tools/call point with the negotiated protocol version")
+	}
+}
+
+// TestObserveNoListChanged pins the fix for the six-minute MCP traces: a
+// client of protocol version 2026-07-28 that handles list_changed
+// notifications opens a subscriptions/listen stream when the server
+// advertises them, and holds it for the life of its session. Kazari
+// advertises none, so no stream is opened, a listen request that asks for
+// them is answered at once, and both methods are named.
+func TestObserveNoListChanged(t *testing.T) {
+	e := newEnv(t)
+	reader, rec := observe(t, e)
+	cs := e.connectWith(t, member, &mcp.ClientOptions{
+		ToolListChangedHandler:     func(context.Context, *mcp.ToolListChangedRequest) {},
+		PromptListChangedHandler:   func(context.Context, *mcp.PromptListChangedRequest) {},
+		ResourceListChangedHandler: func(context.Context, *mcp.ResourceListChangedRequest) {},
+	})
+	caps := cs.InitializeResult().Capabilities
+	if caps.Tools == nil || caps.Tools.ListChanged || caps.Prompts == nil || caps.Prompts.ListChanged ||
+		caps.Resources == nil || caps.Resources.ListChanged {
+		t.Fatalf("capabilities = tools %+v, prompts %+v, resources %+v; want all three without list_changed",
+			caps.Tools, caps.Prompts, caps.Resources)
+	}
+	// A stream the server holds open never ends, so look at started spans.
+	var started []string
+	for _, s := range rec.Started() {
+		started = append(started, s.Name())
+	}
+	if slices.Contains(started, "subscriptions/listen") || slices.Contains(started, "_OTHER") {
+		t.Errorf("the client opened a stream; spans started %v", started)
+	}
+	if !slices.Contains(started, "server/discover") {
+		t.Errorf("no server/discover span; spans started %v", started)
+	}
+
+	srv := tracedHTTP(t, e)
+	rpcAs(t, srv.URL, "2026-07-28", map[string]string{"Mcp-Method": "subscriptions/listen"},
+		`{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":`+
+			`{"toolsListChanged":true,"promptsListChanged":true,"resourcesListChanged":true},`+
+			`"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",`+
+			`"io.modelcontextprotocol/clientInfo":{"name":"test","version":"v0"},`+
+			`"io.modelcontextprotocol/clientCapabilities":{}}}}`)
+	if listen := spanNamed(rec, "subscriptions/listen"); listen == nil || listen.Status().Code != codes.Unset {
+		t.Fatalf("subscriptions/listen span = %v; spans ended %v", listen, spanNames(rec))
+	}
+	if _, found := find(points(t, reader, "mcp.server.operation.duration"),
+		map[string]string{"mcp.method.name": "subscriptions/listen", "mcp.protocol.version": "2026-07-28"}); !found {
+		t.Error("no subscriptions/listen point")
 	}
 }
 

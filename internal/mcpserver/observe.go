@@ -28,10 +28,12 @@ import (
 
 const scope = "github.com/PeterBooker/kazari/internal/mcpserver"
 
-// methods are the JSON-RPC methods counted by name: the specification's and
-// the Skills extension's. Any other is _OTHER.
+// methods are the JSON-RPC methods counted by name: the specification's,
+// including the stateless connection of 2026-07-28 (server/discover and
+// subscriptions/listen), and the Skills extension's. Any other is _OTHER.
 var methods = []string{
 	"initialize", "ping", "notifications/initialized", "notifications/cancelled", "notifications/progress",
+	"server/discover", "subscriptions/listen",
 	"tools/list", "tools/call", "resources/list", "resources/templates/list", "resources/read",
 	"resources/subscribe", "resources/unsubscribe", "prompts/list", "prompts/get",
 	"completion/complete", "logging/setLevel", "notifications/roots/list_changed",

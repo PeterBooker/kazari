@@ -181,7 +181,16 @@ func NewServer(d Deps, o Options, p auth.Principal) *mcp.Server {
 }
 
 func (b *builder) server(p auth.Principal) *mcp.Server {
-	caps := &mcp.ServerCapabilities{}
+	// A server is built per request and never changes what it offers, so
+	// no list_changed notification is advertised: left nil, the SDK would
+	// advertise all three, and a client that wants them (Claude Code, since
+	// protocol version 2026-07-28) holds a subscriptions/listen stream open
+	// for the life of its session, waiting for nothing.
+	caps := &mcp.ServerCapabilities{
+		Tools:     &mcp.ToolCapabilities{},
+		Prompts:   &mcp.PromptCapabilities{},
+		Resources: &mcp.ResourceCapabilities{},
+	}
 	caps.AddExtension(skillsExtension, nil)
 	caps.AddExtension(appsExtension, map[string]any{"mimeTypes": []string{appMIME}})
 	s := mcp.NewServer(
