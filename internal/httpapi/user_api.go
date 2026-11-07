@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
@@ -632,19 +631,28 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 }
 
 // writeAnchored streams because the anchored text can be several times the
-// size of the file.
-func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.Reader) error {
-	data, err := io.ReadAll(rc) // stored files are at most limits.max_file_bytes
+// size of the file, and from the blob because a client that stops reading
+// keeps the handler running: the file must not be in memory for that long.
+func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.ReadSeeker) error {
+	text, err := artifact.AnchorableText(rc)
 	if err != nil {
 		return err
 	}
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+	if !text {
 		return invalid("%s is not UTF-8 text, so it has no line anchors", f.Path)
+	}
+	if _, err := rc.Seek(0, io.SeekStart); err != nil {
+		return err
 	}
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/plain; charset=utf-8")
 	setUntrustedHeaders(hdr)
-	_ = artifact.WriteAnchored(w, string(data)) // a failed write is the client going away
+	// Any other failed write is the client going away.
+	if err := artifact.StreamAnchored(w, rc); errors.Is(err, artifact.ErrFileRead) {
+		// The status has gone out; ending normally would pass off part of the
+		// file as all of it.
+		panic(http.ErrAbortHandler)
+	}
 	return nil
 }
 

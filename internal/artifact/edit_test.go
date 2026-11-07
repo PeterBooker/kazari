@@ -2,8 +2,10 @@ package artifact_test
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -316,7 +318,15 @@ func TestApplyEditsReview(t *testing.T) {
 }
 
 func TestWriteAnchored(t *testing.T) {
-	for _, in := range []string{"", "a", "a\n", "a\n\nb", "a\r\nb\r\n"} {
+	inputs := []string{"", "a", "a\n", "a\n\nb", "a\r\nb\r\n", "\n", "\n\n"}
+	// Lines around the size of StreamAnchored's read buffer, which take the
+	// path through Seek.
+	for _, n := range []int{4095, 4096, 4097, 8192, 20000} {
+		long := strings.Repeat("x", n)
+		inputs = append(inputs, long, long+"\n", "a\n"+long+"\nb", long+"\r\n"+long+"\n\nb\n", strings.Repeat(long+"\n", 3))
+	}
+	inputs = append(inputs, strings.Repeat("é", 5000)+"\nb")
+	for _, in := range inputs {
 		var b strings.Builder
 		if err := artifact.WriteAnchored(&b, in); err != nil {
 			t.Fatal(err)
@@ -337,6 +347,104 @@ func TestWriteAnchored(t *testing.T) {
 		}
 	}
 }
+
+func TestAnchorableText(t *testing.T) {
+	cut := strings.Repeat("x", 4095) + "é" // a rune across the reader's buffer
+	for _, tc := range []struct {
+		name, in string
+		want     bool
+	}{
+		{"empty", "", true},
+		{"text", "a\r\nb\n", true},
+		{"rune across buffers", cut, true},
+		{"nul", "a\x00b", false},
+		{"nul past the buffer", cut + "\x00", false},
+		{"invalid", "a\xffb", false},
+		{"encoded replacement rune", "\uFFFD", true},
+		{"cut rune at the end", cut[:len(cut)-1], false},
+		{"surrogate", "\xed\xa0\x80", false},
+	} {
+		// iotest.OneByteReader lands reads anywhere in a rune.
+		for _, r := range []io.Reader{strings.NewReader(tc.in), iotest.OneByteReader(strings.NewReader(tc.in))} {
+			if got, err := artifact.AnchorableText(r); err != nil || got != tc.want {
+				t.Errorf("%s: AnchorableText = %v, %v, want %v", tc.name, got, err, tc.want)
+			}
+		}
+	}
+	boom := errors.New("boom")
+	if _, err := artifact.AnchorableText(iotest.ErrReader(boom)); !errors.Is(err, boom) {
+		t.Errorf("failed read: err = %v", err)
+	}
+}
+
+// failingSeeker fails its Read once more than limit bytes have been read, and
+// its Seek when told to, however often it was rewound.
+type failingSeeker struct {
+	*strings.Reader
+	limit    int
+	read     int
+	seekFail bool
+}
+
+func (f *failingSeeker) Read(p []byte) (int, error) {
+	if f.read >= f.limit {
+		return 0, errors.New("boom")
+	}
+	n, err := f.Reader.Read(p[:min(len(p), f.limit-f.read)])
+	f.read += n
+	return n, err
+}
+
+func (f *failingSeeker) Seek(off int64, whence int) (int64, error) {
+	if f.seekFail {
+		return 0, errors.New("boom")
+	}
+	return f.Reader.Seek(off, whence)
+}
+
+func TestStreamAnchoredFailures(t *testing.T) {
+	long := strings.Repeat("x", 10000) + "\n"
+	text := strings.Repeat(long, 3)
+
+	t.Run("read fails on a short line", func(t *testing.T) {
+		src := &failingSeeker{Reader: strings.NewReader("a\nb\nc\n"), limit: 2}
+		if err := artifact.StreamAnchored(io.Discard, src); !errors.Is(err, artifact.ErrFileRead) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("read fails while hashing a long line", func(t *testing.T) {
+		src := &failingSeeker{Reader: strings.NewReader(text), limit: 5000}
+		if err := artifact.StreamAnchored(io.Discard, src); !errors.Is(err, artifact.ErrFileRead) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("read fails while copying a long line", func(t *testing.T) {
+		src := &failingSeeker{Reader: strings.NewReader(text), limit: 10500}
+		if err := artifact.StreamAnchored(io.Discard, src); !errors.Is(err, artifact.ErrFileRead) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("seek fails", func(t *testing.T) {
+		src := &failingSeeker{Reader: strings.NewReader(text), limit: len(text) * 3, seekFail: true}
+		if err := artifact.StreamAnchored(io.Discard, src); !errors.Is(err, artifact.ErrFileRead) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("write fails", func(t *testing.T) {
+		boom := errors.New("gone")
+		src := strings.NewReader(strings.Repeat("line\n", 100000))
+		if err := artifact.StreamAnchored(failWriter{boom}, src); !errors.Is(err, boom) || errors.Is(err, artifact.ErrFileRead) {
+			t.Errorf("err = %v", err)
+		}
+		if src.Len() == 0 {
+			t.Errorf("read the whole file after the client went away")
+		}
+	})
+}
+
+type failWriter struct{ err error }
+
+func (f failWriter) Write([]byte) (int, error) { return 0, f.err }
 
 func TestAnchorLines(t *testing.T) {
 	got := artifact.AnchorLines("a\n\nb\n")
