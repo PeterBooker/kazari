@@ -308,9 +308,9 @@ edit 1: removed at line 20 (anchor)
 kazari get <slug> [--files]
 ```
 
-Shows the record and its versions, with the published one marked `*`. `--files` adds each version's file list.
+Shows the record and its versions, with the published one marked `*`. `--files` adds file lists for the newest versions, up to 5,000 files, and says where it stopped; older ones are on the API's [next page](api.md#get-an-artifact-get-artifactsslug).
 
-To see every version's files:
+To see the newest versions' files:
 
 ```sh
 kazari get q3-report --files

@@ -173,7 +173,7 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "artifact",
 		Title:       "Artifact record",
-		Description: "An artifact's record and versions with their file lists, as JSON (the get_artifact result with include_files).",
+		Description: "An artifact's record and versions with the first page of file lists, as JSON (the get_artifact result with include_files).",
 		MIMEType:    artifactResourceMIME,
 		URITemplate: artifactTemplate,
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (res *mcp.ReadResourceResult, err error) {
@@ -186,7 +186,7 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 		if !ok || slug == "" || strings.Contains(slug, "/") {
 			return nil, mcp.ResourceNotFoundError(uri)
 		}
-		d, err := b.detail(ctx, actor, slug, true)
+		d, err := b.detail(ctx, actor, slug, true, 0)
 		if err != nil {
 			return nil, b.resourceError(ctx, uri, err)
 		}

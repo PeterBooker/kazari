@@ -324,6 +324,19 @@ func TestRunHTTPError(t *testing.T) {
 	}
 }
 
+func TestRunGetStopsAtTheFilePage(t *testing.T) {
+	detail := api.ArtifactDetail{Artifact: demo, NextFilesBefore: 3, Versions: []api.Version{
+		{Number: 3, Files: []api.File{{Path: "index.html"}}},
+		{Number: 2},
+	}}
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{"GET /v1/artifacts/demo": replyWith(200, detail)})
+	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "get", "demo", "--files")
+	if r.code != 0 || !strings.Contains(r.stdout, "version 3 files:") || strings.Contains(r.stdout, "version 2 files:") ||
+		!strings.Contains(r.stdout, "files_before=3") {
+		t.Errorf("get: %+v", r)
+	}
+}
+
 func TestRunGet(t *testing.T) {
 	staleAt := t0.Add(48 * time.Hour)
 	art := demo

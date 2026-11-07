@@ -427,7 +427,7 @@ Each period is a `lifecycle` setting in the [configuration](configuration.md#lif
 
 Each user has a quota, `quota_bytes`. A new user gets `limits.default_user_quota`, 2 GiB by default, and `0` means unlimited.
 
-Usage is the sum of the sizes of every version of every artifact the user owns, counted logically. A 5 MiB site with ten versions uses 50 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
+Usage is the sum of the sizes of every version of every artifact the user owns, counted logically, plus 4 KiB for each file of each version, whatever its size, because every version keeps a database row per file. A 5 MiB site of 20 files with ten versions uses 50.8 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
 
 Kazari checks the owner's quota whenever a version is added, whoever adds it. Under the `shared` write policy, a version that another member adds to someone else's artifact counts against the owner's quota too, and a version that would exceed it gets `403 quota_exceeded`. An admin transfer moves the artifact's usage to the new owner.
 

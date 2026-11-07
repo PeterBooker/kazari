@@ -102,7 +102,7 @@ func (t texts) skillText(o Options) string {
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
 			"call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you no longer need.",
 			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
-		"**Inspect:** `get_artifact` (`include_files` lists every version's paths and hashes), `read_file` (text " +
+		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
 			"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
 			"`deleted`, `cursor`).",

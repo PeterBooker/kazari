@@ -3,12 +3,16 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
@@ -115,6 +119,70 @@ func TestCreateMultipart(t *testing.T) {
 	if len(d.Versions[0].Files) != 0 {
 		t.Errorf("files listed without files=true: %+v", d.Versions[0].Files)
 	}
+}
+
+// One read may not assemble versions times files: the lists come in pages, and
+// the newest page holds the latest version.
+func TestGetArtifactPagesFileLists(t *testing.T) {
+	const maxListed = 5000
+	e := newEnv(t, config{})
+	reader := e.member("reader", []string{"artifacts:read"})
+	alice := artifact.Actor{Handle: "alice"}
+	var rows []artifact.FileInput
+	for i := range 2000 {
+		rows = append(rows, artifact.FileInput{Path: fmt.Sprintf("f%d", i), Content: strings.NewReader("")})
+	}
+	if _, _, err := e.art.Create(e.ctx, alice, artifact.CreateRequest{Slug: "wide", Files: rows}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, _, err := e.art.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "wide",
+			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader("x")}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	listed := map[int]int{}
+	url := e.u("/v1/artifacts/wide?files=true")
+	for pages := 0; ; pages++ {
+		if pages == 3 {
+			t.Fatal("no end after 3 pages")
+		}
+		var page struct {
+			Versions []struct {
+				Number int        `json:"number"`
+				Files  []api.File `json:"files"`
+			} `json:"versions"`
+			Next int `json:"next_files_before"`
+		}
+		e.call(http.MethodGet, url, reader, nil, http.StatusOK, &page)
+		if len(page.Versions) != 3 {
+			t.Fatalf("versions = %d, want the 3 records on every page", len(page.Versions))
+		}
+		if pages == 0 && len(page.Versions[0].Files) == 0 {
+			t.Error("first page has no files for the latest version")
+		}
+		total := 0
+		for _, v := range page.Versions {
+			if len(v.Files) > 0 {
+				listed[v.Number]++
+			}
+			total += len(v.Files)
+		}
+		if total > maxListed {
+			t.Fatalf("one response listed %d files, want at most %d", total, maxListed)
+		}
+		if page.Next == 0 {
+			break
+		}
+		url = e.u("/v1/artifacts/wide?files=true&files_before=" + strconv.Itoa(page.Next))
+	}
+	if diff := cmp.Diff(map[int]int{1: 1, 2: 1, 3: 1}, listed); diff != "" {
+		t.Errorf("times each version was listed (-want +got):\n%s", diff)
+	}
+
+	resp := e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/wide?files=true&files_before=-1"), token: reader})
+	e.apiErr(resp, http.StatusUnprocessableEntity, api.CodeInvalidArgument)
 }
 
 func TestCreateErrors(t *testing.T) {

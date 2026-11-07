@@ -106,6 +106,9 @@ type File struct {
 type ArtifactDetail struct {
 	Artifact Artifact  `json:"artifact"`
 	Versions []Version `json:"versions"`
+	// NextFilesBefore, with file lists, is the files_before of the next page
+	// of them: versions below it have no Files yet. Absent on the last page.
+	NextFilesBefore int `json:"next_files_before,omitempty"`
 }
 
 // PublishResult is returned by create, update and publish.
