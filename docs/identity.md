@@ -221,7 +221,7 @@ Every sign-in session lasts 12 hours, and every view session it opened ends with
 
 ### Signing out
 
-To sign out, open `/.kazari/signout` on a members page the browser has open, for example `https://<slug>.<base>/.kazari/signout`. That ends its sign-in on every host.
+To sign out, open `/.kazari/signout` on a members page the browser has open, for example `https://<slug>.<base>/.kazari/signout`. That ends every sign-in of this browser on every host, including one finished in a second tab. Other browsers stay signed in.
 
 ### Share links
 

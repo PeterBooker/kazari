@@ -127,6 +127,7 @@ type SignInRequest struct {
 type Session struct {
 	ID         int64
 	Hash       string
+	Browser    string // hash of the browser's sign-in cookie; "" links no sessions
 	UserHandle string
 	KeyPrefix  string // the API key that signed in; "" after an identity-provider sign-in
 	CreatedAt  time.Time
@@ -226,8 +227,9 @@ type Store interface {
 	GetSession(ctx context.Context, hash string) (*Session, error)
 	// GetSessionByID returns a session by id, expired or not. ErrNotFound.
 	GetSessionByID(ctx context.Context, id int64) (*Session, error)
-	// DeleteSession removes a session with its codes and view sessions; a
-	// missing one is not an error.
+	// DeleteSession removes a session and every session with the same
+	// non-empty Browser, with their codes and view sessions; a missing one
+	// is not an error.
 	DeleteSession(ctx context.Context, id int64) error
 
 	// CreateViewCode stores a code for an existing session.

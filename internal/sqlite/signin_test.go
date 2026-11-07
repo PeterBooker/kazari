@@ -43,7 +43,7 @@ func TestOAuthStoreSignIn(t *testing.T) {
 func TestOAuthStoreSessions(t *testing.T) {
 	ctx := context.Background()
 	s := oauthTestStores(t)
-	sess := &oauth.Session{Hash: "sh", UserHandle: "alice", KeyPrefix: "abcdefgh", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(12 * time.Hour)}
+	sess := &oauth.Session{Hash: "sh", Browser: "bh", UserHandle: "alice", KeyPrefix: "abcdefgh", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(12 * time.Hour)}
 	if err := s.CreateSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +142,54 @@ func TestOAuthStoreRevokeAllEndsSessions(t *testing.T) {
 	}
 	if _, err := s.GetViewSession(ctx, "v-bob"); err != nil {
 		t.Fatalf("bob's view session: %v", err)
+	}
+}
+
+// DeleteSession takes the session's browser with it, and nothing else:
+// sessions with no browser are not one browser.
+func TestOAuthStoreDeleteSessionEndsItsBrowser(t *testing.T) {
+	ctx := context.Background()
+	s := oauthTestStores(t)
+	ids := map[string]int64{}
+	for _, c := range []struct{ hash, browser string }{
+		{"one", "b1"}, {"two", "b1"}, {"elsewhere", "b2"}, {"old", ""}, {"older", ""},
+	} {
+		sess := &oauth.Session{Hash: c.hash, Browser: c.browser, UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+		if err := s.CreateSession(ctx, sess); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CreateViewSession(ctx, &oauth.ViewSession{Hash: "v-" + c.hash, SessionID: sess.ID, Host: "demo",
+			CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		ids[c.hash] = sess.ID
+	}
+	check := func(gone, kept []string) {
+		t.Helper()
+		for _, h := range gone {
+			if _, err := s.GetSession(ctx, h); !errors.Is(err, oauth.ErrNotFound) {
+				t.Errorf("session %s = %v, want gone", h, err)
+			}
+			if _, err := s.GetViewSession(ctx, "v-"+h); !errors.Is(err, oauth.ErrNotFound) {
+				t.Errorf("view session %s = %v, want gone", h, err)
+			}
+		}
+		for _, h := range kept {
+			if _, err := s.GetSession(ctx, h); err != nil {
+				t.Errorf("session %s: %v", h, err)
+			}
+		}
+	}
+	if err := s.DeleteSession(ctx, ids["two"]); err != nil {
+		t.Fatal(err)
+	}
+	check([]string{"one", "two"}, []string{"elsewhere", "old", "older"})
+	if err := s.DeleteSession(ctx, ids["old"]); err != nil {
+		t.Fatal(err)
+	}
+	check([]string{"old"}, []string{"elsewhere", "older"})
+	if err := s.DeleteSession(ctx, ids["old"]); err != nil {
+		t.Fatalf("DeleteSession of a missing session = %v", err)
 	}
 }
 
