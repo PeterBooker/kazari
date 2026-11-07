@@ -25,6 +25,9 @@ const (
 	InsecureCookieName = "kazari_oauth"
 )
 
+// maxStateLen bounds the client state stored with a request before sign-in.
+const maxStateLen = 1 << 10
+
 // pkceValue matches an S256 challenge or a code verifier (RFC 7636).
 var pkceValue = regexp.MustCompile(`^[A-Za-z0-9._~-]{43,128}$`)
 
@@ -43,6 +46,12 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 				"The application that sent you here is not registered with this server.", err.Error())
 			return
 		}
+		if errors.Is(err, ErrClientLimit) {
+			s.log.WarnContext(ctx, "oauth: client limit reached", "limit", s.opts.MaxUnusedClients)
+			s.message(w, http.StatusServiceUnavailable, "Try again later",
+				"This server cannot accept new applications right now.", "")
+			return
+		}
 		s.log.ErrorContext(ctx, "oauth: authorize", "err", err)
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
 		return
@@ -51,7 +60,9 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 	if redirectURI == "" && len(c.RedirectURIs) == 1 {
 		redirectURI = c.RedirectURIs[0]
 	}
-	if redirectURI == "" || !matchRedirectURI(c.RedirectURIs, redirectURI) {
+	// The length is checked here too because a loopback match ignores the port
+	// and the requested string is what gets stored.
+	if redirectURI == "" || len(redirectURI) > maxRedirectURILen || !matchRedirectURI(c.RedirectURIs, redirectURI) {
 		s.message(w, http.StatusBadRequest, "Invalid redirect address",
 			"The application asked to return you to an address it has not registered.", redirectURI)
 		return
@@ -74,6 +85,10 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(challenge) != 43 || !pkceValue.MatchString(challenge) {
 		fail("invalid_request", "code_challenge is not an S256 challenge")
+		return
+	}
+	if len(q.Get("state")) > maxStateLen {
+		fail("invalid_request", "state is too long")
 		return
 	}
 	scopes, ok := s.parseScopes(q.Get("scope"))

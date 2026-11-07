@@ -46,6 +46,9 @@ const (
 var (
 	ErrNotFound = errors.New("oauth: not found")
 	ErrCodeUsed = errors.New("oauth: authorization code already used")
+	// ErrClientLimit means a new client was refused because
+	// Options.MaxUnusedClients clients are without a grant.
+	ErrClientLimit = errors.New("oauth: too many clients without a grant")
 )
 
 // Client is a registered (DCR) or fetched (CIMD) public client.
@@ -160,6 +163,10 @@ type Store interface {
 	// UpsertClient inserts c or replaces its name, redirect URIs and fetch
 	// time, never GrantedAt.
 	UpsertClient(ctx context.Context, c *Client) error
+	// AddClient is UpsertClient for a client that anyone can create: when
+	// maxUnused clients have no grant it stores nothing and returns
+	// ErrClientLimit, atomically, so concurrent calls cannot pass the limit.
+	AddClient(ctx context.Context, c *Client, maxUnused int) error
 	// GetClient returns ErrNotFound for an unknown id.
 	GetClient(ctx context.Context, id string) (*Client, error)
 	// DeleteUnusedClients removes clients created before the given time
@@ -262,6 +269,9 @@ type Options struct {
 	// Zero means the Default*TTL. ClientTTL is how long a registered or
 	// fetched client that completes no grant is kept.
 	AccessTTL, RefreshTTL, RequestTTL, CodeTTL, ClientTTL time.Duration
+	// MaxUnusedClients is how many clients without a grant may exist before
+	// new ones are refused (default DefaultMaxUnusedClients).
+	MaxUnusedClients int
 	// Scopes offered to clients (default auth.MemberScopes). auth.ScopeAdmin
 	// is dropped so a client an admin approves cannot open the admin host.
 	Scopes []string
@@ -295,8 +305,14 @@ const (
 	DefaultCodeTTL     = 5 * time.Minute
 	DefaultSessionTTL  = 12 * time.Hour
 	DefaultViewCodeTTL = time.Minute
-	DefaultClientTTL   = 7 * 24 * time.Hour
+	DefaultClientTTL   = 24 * time.Hour
 )
+
+// DefaultMaxUnusedClients with maxRedirectURIs of maxRedirectURILen bounds
+// what anonymous callers can keep in the database to about 400 MiB of redirect
+// URIs, or 2.4 GiB at worst, because their stored JSON escapes & < > to six
+// bytes.
+const DefaultMaxUnusedClients = 10_000
 
 // Service is the authorization server.
 type Service struct {
@@ -339,6 +355,9 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	}
 	if opts.ClientTTL <= 0 {
 		opts.ClientTTL = DefaultClientTTL
+	}
+	if opts.MaxUnusedClients <= 0 {
+		opts.MaxUnusedClients = DefaultMaxUnusedClients
 	}
 	if opts.SessionTTL <= 0 {
 		opts.SessionTTL = DefaultSessionTTL

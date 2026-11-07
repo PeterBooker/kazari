@@ -32,7 +32,7 @@ MCP client ──1──▶ mcp.<base>/            401 + resource_metadata
 
 1. An MCP request without a token gets `401` with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata="https://mcp.<base>/.well-known/oauth-protected-resource"`.
 2. The client reads the protected-resource metadata, then `https://mcp.<base>/.well-known/oauth-authorization-server`. The issuer is `https://mcp.<base>`.
-3. The browser goes to `/oauth/authorize` with PKCE (S256 only). Kazari checks the client, the redirect URI, the scopes and the `resource`, and stores the request. It sets a short-lived cookie and redirects to the IdP with its own `state`, `nonce` and PKCE pair.
+3. The browser goes to `/oauth/authorize` with PKCE (S256 only). Kazari checks the client, the redirect URI, the scopes and the `resource`, refuses a `state` over 1 KiB, and stores the request. It sets a short-lived cookie and redirects to the IdP with its own `state`, `nonce` and PKCE pair.
 4. The person signs in at the IdP, which returns to **`https://mcp.<base>/oauth/callback`**. This is the redirect URI to register at the IdP.
 5. Kazari redeems the code and verifies the ID token: signature against the IdP's keys, issuer, audience, expiry and nonce. It then maps the person to a Kazari user by the [provisioning policy](#provisioning-policy).
 6. A consent page names the client, the account and the scopes. **Approve** issues a single-use code that lasts five minutes; **Deny** returns `access_denied` to the client.
@@ -258,11 +258,13 @@ With an `Authorization: Bearer kzk_...` header instead, the agent uses the API k
 Kazari accepts only public clients: no client secret, `token_endpoint_auth_method: none`. It accepts both ways an MCP client identifies itself:
 
 - **Dynamic Client Registration** (RFC 7591): `POST https://mcp.<base>/oauth/register` with `redirect_uris`, and optionally `client_name`, returns a `client_id` starting `dcr_`.
-- **Client ID Metadata Documents**: Kazari fetches a `client_id` that is an `https` URL, with a 10 s timeout, a 64 KiB cap, no redirects, JSON only and public addresses only. The document must contain the same `client_id`, and Kazari caches it for an hour. The server metadata advertises `client_id_metadata_document_supported: true`.
+- **Client ID Metadata Documents**: Kazari fetches a `client_id` that is an `https` URL, with a 10 s timeout, a 64 KiB cap, no redirects, JSON only and public addresses only. The document must contain the same `client_id`, and Kazari caches it for an hour. A `client_id` longer than 2 KiB is refused. The server metadata advertises `client_id_metadata_document_supported: true`.
+
+Registering needs no credential, so Kazari limits what it keeps. A client that completes no grant is deleted a day after it registers, and at most 10,000 such clients exist at a time. At that limit a new client is refused until the [hourly cleanup](ops.md#scheduled-jobs) frees room: registration answers `503` with `temporarily_unavailable`, the authorize page for a new metadata document answers `503`, and Kazari logs `oauth: client limit reached`. Clients with a grant are not counted and keep working.
 
 #### Redirect URIs
 
-Redirect URIs must be `https`, or `http` on `localhost`, `127.0.0.1` or `::1`. They must match a registered URI exactly, except that for loopback URIs the port is ignored (RFC 8252), since native clients pick a free port each time.
+Redirect URIs must be `https`, or `http` on `localhost`, `127.0.0.1` or `::1`, and at most 2 KiB long, both when registered and when requested. They must match a registered URI exactly, except that for loopback URIs the port is ignored (RFC 8252), since native clients pick a free port each time.
 
 ## Tokens, lifetimes and rotation
 

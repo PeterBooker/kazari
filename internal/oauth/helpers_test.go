@@ -125,9 +125,10 @@ type env struct {
 }
 
 type envOptions struct {
-	noIDP      bool
-	httpClient *http.Client
-	logger     *slog.Logger
+	noIDP            bool
+	httpClient       *http.Client
+	logger           *slog.Logger
+	maxUnusedClients int
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -158,13 +159,14 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	e.srv = httptest.NewUnstartedServer(nil)
 	base := "http://" + e.srv.Listener.Addr().String()
 	e.svc = oauth.New(e.store, e.users, e.users, idp, e.rec, oauth.Options{
-		Issuer:          base,
-		Resource:        base + "/",
-		Now:             e.clock.Now,
-		HTTPClient:      eo.httpClient,
-		Logger:          eo.logger,
-		InsecureCookies: true,
-		ViewCallback:    viewCallback,
+		Issuer:           base,
+		Resource:         base + "/",
+		MaxUnusedClients: eo.maxUnusedClients,
+		Now:              e.clock.Now,
+		HTTPClient:       eo.httpClient,
+		Logger:           eo.logger,
+		InsecureCookies:  true,
+		ViewCallback:     viewCallback,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()

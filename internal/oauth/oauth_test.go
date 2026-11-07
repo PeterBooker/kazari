@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -89,6 +90,8 @@ func TestRegister(t *testing.T) {
 		{"custom scheme", `{"redirect_uris":["myapp://cb"]}`, 400, "invalid_redirect_uri"},
 		{"fragment", `{"redirect_uris":["https://app.example/cb#x"]}`, 400, "invalid_redirect_uri"},
 		{"relative", `{"redirect_uris":["/cb"]}`, 400, "invalid_redirect_uri"},
+		{"longest redirect URI", `{"redirect_uris":["https://app.example/` + strings.Repeat("a", 2048-len("https://app.example/")) + `"]}`, 201, ""},
+		{"redirect URI too long", `{"redirect_uris":["https://app.example/` + strings.Repeat("a", 2049-len("https://app.example/")) + `"]}`, 400, "invalid_redirect_uri"},
 		{"confidential client", `{"redirect_uris":["https://app.example/cb"],"token_endpoint_auth_method":"client_secret_basic"}`, 400, "invalid_client_metadata"},
 		{"other grants beside authorization_code", `{"redirect_uris":["https://app.example/cb"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"]}`, 201, ""},
 		{"implicit grant", `{"redirect_uris":["https://app.example/cb"],"grant_types":["implicit"]}`, 400, "invalid_client_metadata"},
@@ -217,6 +220,7 @@ func TestAuthorizeErrorsRenderPage(t *testing.T) {
 		{"unknown scope", with("scope", "artifacts:read nope"), "invalid_scope"},
 		{"admin scope", with("scope", "artifacts:read admin"), "invalid_scope"},
 		{"other resource", with("resource", "https://elsewhere.example/"), "invalid_target"},
+		{"state too long", with("state", strings.Repeat("s", 1025)), "invalid_request"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -233,6 +237,68 @@ func TestAuthorizeErrorsRenderPage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuthorizeLongestState(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	const redirect = "https://app.example/cb"
+	q := authorizeParams(e.register(redirect), redirect, "", newPKCE("v"))
+	q.Set("state", strings.Repeat("s", 1024))
+	resp, body := e.get("/oauth/authorize?" + q.Encode())
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302: %s", resp.StatusCode, body)
+	}
+}
+
+// The port of a loopback redirect URI is not matched, so its length has to be
+// checked on the request itself: the requested string is what gets stored.
+func TestAuthorizeRedirectURILength(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	clientID := e.register("http://127.0.0.1/cb")
+	uri := func(n int) string {
+		const host, path = "http://127.0.0.1:", "/cb"
+		return host + strings.Repeat("1", n-len(host)-len(path)) + path
+	}
+	p := newPKCE("v")
+
+	for _, n := range []int{2049, 40_000} {
+		t.Run(fmt.Sprintf("refused at %d bytes", n), func(t *testing.T) {
+			resp, body := e.get("/oauth/authorize?" + authorizeParams(clientID, uri(n), "", p).Encode())
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+			if loc := resp.Header.Get("Location"); loc != "" {
+				t.Errorf("redirected to %s", loc)
+			}
+			if ck := resp.Header.Get("Set-Cookie"); ck != "" {
+				t.Errorf("a request was stored: Set-Cookie %s", ck)
+			}
+			checkPageHeaders(t, resp)
+			if !strings.Contains(body, "Invalid redirect address") {
+				t.Errorf("body is not the invalid redirect page: %s", body)
+			}
+		})
+	}
+
+	// Every value a request can supply at its longest; the scope parameter
+	// has no limit of its own because only known scopes are kept, once each.
+	t.Run("longest", func(t *testing.T) {
+		q := authorizeParams(clientID, uri(2048), "", p)
+		q.Set("state", strings.Repeat("s", 1024))
+		q.Set("scope", strings.Repeat("artifacts:read ", 1000))
+		resp, body := e.get("/oauth/authorize?" + q.Encode())
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("status = %d, want 302: %s", resp.StatusCode, body)
+		}
+		req, err := e.store.GetRequest(context.Background(), e.requestCookie())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(req.RedirectURI) != 2048 || len(req.ClientState) != 1024 || len(req.Scopes) != 1 {
+			t.Errorf("stored redirect URI of %d bytes, state of %d, %d scopes; want 2048, 1024, 1",
+				len(req.RedirectURI), len(req.ClientState), len(req.Scopes))
+		}
+	})
 }
 
 func TestAuthorizeAccepts(t *testing.T) {
@@ -887,6 +953,59 @@ func TestGrants(t *testing.T) {
 	}
 }
 
+func TestUnusedClientRemovedAfterADay(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{})
+	unused := e.register("https://idle.example/cb")
+	e.clock.Advance(25 * time.Hour)
+	if _, err := e.svc.Cleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.GetClient(ctx, unused); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("GetClient(unused) after 25h: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRegisterAtClientLimit(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{maxUnusedClients: 2})
+	register := func() (*http.Response, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, e.url("/oauth/register"), strings.NewReader(`{"redirect_uris":["https://app.example/cb"]}`))
+		req.Header.Set("Content-Type", "application/json")
+		return e.do(req)
+	}
+
+	// A client with a grant does not count.
+	e.flow("")
+	for range 2 {
+		if resp, body := register(); resp.StatusCode != http.StatusCreated {
+			t.Fatalf("under the limit: status %d: %s", resp.StatusCode, body)
+		}
+	}
+	resp, body := register()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("at the limit: status = %d, want 503: %s", resp.StatusCode, body)
+	}
+	var got struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error != "temporarily_unavailable" {
+		t.Errorf("error = %q, want temporarily_unavailable", got.Error)
+	}
+
+	e.clock.Advance(25 * time.Hour)
+	if _, err := e.svc.Cleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if resp, body := register(); resp.StatusCode != http.StatusCreated {
+		t.Errorf("after cleanup: status %d: %s", resp.StatusCode, body)
+	}
+}
+
 func TestCleanup(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
@@ -911,7 +1030,7 @@ func TestCleanup(t *testing.T) {
 	}
 	e.clock.Advance(31 * 24 * time.Hour)
 	// two refresh tokens, the second access token and the client that
-	// never completed a grant (7 days)
+	// never completed a grant (1 day)
 	if n, err := e.svc.Cleanup(ctx); err != nil || n != 4 {
 		t.Errorf("Cleanup after 31 days = %d, %v; want 4", n, err)
 	}

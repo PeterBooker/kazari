@@ -146,7 +146,12 @@ func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request) {
 		RedirectURIs: slices.Compact(m.RedirectURIs),
 		CreatedAt:    now,
 	}
-	if err := s.store.UpsertClient(r.Context(), c); err != nil {
+	if err := s.store.AddClient(r.Context(), c, s.opts.MaxUnusedClients); err != nil {
+		if errors.Is(err, ErrClientLimit) {
+			s.log.WarnContext(r.Context(), "oauth: client limit reached", "limit", s.opts.MaxUnusedClients)
+			writeOAuthError(w, r, http.StatusServiceUnavailable, "temporarily_unavailable", "too many clients are waiting for a first sign-in")
+			return
+		}
 		s.log.ErrorContext(r.Context(), "oauth: register client", "err", err)
 		writeOAuthError(w, r, http.StatusInternalServerError, "server_error", "could not store the client")
 		return

@@ -23,8 +23,10 @@ const (
 )
 
 const (
-	maxRedirectURIs  = 20
-	maxClientNameLen = 200
+	maxRedirectURIs   = 20
+	maxRedirectURILen = 2 << 10
+	maxClientNameLen  = 200
+	maxClientIDLen    = 2 << 10
 )
 
 // errInvalidClient means an unknown client id or an unusable metadata
@@ -66,6 +68,9 @@ func (m *clientMetadata) validate() (code, desc string) {
 		return "invalid_redirect_uri", "too many redirect_uris"
 	}
 	for _, u := range m.RedirectURIs {
+		if len(u) > maxRedirectURILen {
+			return "invalid_redirect_uri", "a redirect URI is too long"
+		}
 		if err := validRedirectURI(u); err != nil {
 			return "invalid_redirect_uri", err.Error()
 		}
@@ -121,7 +126,8 @@ func isMetadataURL(id string) bool {
 }
 
 // resolveClient fetches and caches the metadata document of a URL client id.
-// Errors other than the store's wrap errInvalidClient with the reason.
+// Errors other than the store's, which include ErrClientLimit for a new
+// client, wrap errInvalidClient with the reason.
 func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: client_id is required", errInvalidClient)
@@ -152,14 +158,20 @@ func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error)
 	}
 	if c != nil {
 		fetched.CreatedAt = c.CreatedAt
+		err = s.store.UpsertClient(ctx, fetched)
+	} else {
+		err = s.store.AddClient(ctx, fetched, s.opts.MaxUnusedClients)
 	}
-	if err := s.store.UpsertClient(ctx, fetched); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	return fetched, nil
 }
 
 func (s *Service) fetchClient(ctx context.Context, id string) (*Client, error) {
+	if len(id) > maxClientIDLen {
+		return nil, errors.New("client_id is too long")
+	}
 	u, err := url.Parse(id)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("client_id is not a valid https URL")

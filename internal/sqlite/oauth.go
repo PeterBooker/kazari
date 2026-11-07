@@ -63,6 +63,34 @@ func (s *OAuthStore) UpsertClient(ctx context.Context, c *oauth.Client) (err err
 	return nil
 }
 
+// AddClient's insert reads the count inside its own write transaction, so
+// the limit holds under concurrent calls.
+func (s *OAuthStore) AddClient(ctx context.Context, c *oauth.Client, maxUnused int) (err error) {
+	ctx, end := s.db.op(ctx, "OAuthStore.AddClient")
+	defer func() { end(err) }()
+	uris, err := json.Marshal(c.RedirectURIs)
+	if err != nil {
+		return fmt.Errorf("sqlite: add client %q: %w", c.ID, err)
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO oauth_client (id, name, redirect_uris, created_at, fetched_at)
+		SELECT ?, ?, ?, ?, ?
+		WHERE (SELECT count(*) FROM oauth_client WHERE granted_at IS NULL) < ?
+		ON CONFLICT (id) DO UPDATE SET name = excluded.name, redirect_uris = excluded.redirect_uris,
+			fetched_at = excluded.fetched_at`,
+		c.ID, c.Name, string(uris), toNanos(c.CreatedAt), nullNanos(c.FetchedAt), maxUnused)
+	if err != nil {
+		return fmt.Errorf("sqlite: add client %q: %w", c.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: add client %q: %w", c.ID, err)
+	}
+	if n == 0 {
+		return oauth.ErrClientLimit
+	}
+	return nil
+}
+
 func (s *OAuthStore) GetClient(ctx context.Context, id string) (_ *oauth.Client, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetClient")
 	defer func() { end(err) }()
