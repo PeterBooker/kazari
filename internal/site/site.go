@@ -180,6 +180,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// who has access. Set here it covers the gate's answers and error
 		// responses, which get no artifact and so no setCommonHeaders.
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		// Sibling artifact hosts are same-site, so a viewer's Lax cookie
+		// rides along when another artifact's page requests this host.
+		// same-origin stops the browser handing it the response. Every
+		// answer from here on, the gate's and any error, has to carry it:
+		// the page can see which ones the browser refuses, and any
+		// difference would tell it whether the visitor has access.
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 
 	host := slug
@@ -375,13 +382,6 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 		hdr.Set("Cache-Control", h.immutable)
 	default:
 		hdr.Set("Cache-Control", cacheLatest)
-	}
-	if gated {
-		// Sibling artifact hosts are same-site, so a viewer's Lax cookie
-		// rides along when another artifact's page loads this one's
-		// script, JSON or image; same-origin stops the browser handing
-		// such a no-cors response to that page.
-		hdr.Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 }
 

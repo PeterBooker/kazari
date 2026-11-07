@@ -104,6 +104,9 @@ func TestGatedEndToEnd(t *testing.T) {
 	if strings.Contains(anon.body, "team v") {
 		t.Fatal("the 401 carries the page")
 	}
+	if got := anon.header.Get("Cross-Origin-Resource-Policy"); got != "same-origin" {
+		t.Fatalf("the 401 has Cross-Origin-Resource-Policy %q", got)
+	}
 
 	b := newBrowser(t, addr)
 	signIn := b.follow(b.get("http://team.localhost/index.html?x=1"), "navigation without access")
@@ -149,6 +152,12 @@ func TestGatedEndToEnd(t *testing.T) {
 		if got := r.header.Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
 			t.Errorf("%s: Cross-Origin-Opener-Policy = %q, want same-origin", name, got)
 		}
+	}
+	// A page the artifact does not have answers with the policy of one it has.
+	miss := b.get("http://team.localhost/nope.bin")
+	wantStatus(t, miss, http.StatusNotFound, "signed-in miss")
+	if got := miss.header.Get("Cross-Origin-Resource-Policy"); got != "same-origin" {
+		t.Fatalf("the 404 has Cross-Origin-Resource-Policy %q", got)
 	}
 	// A replayed callback is refused.
 	wantStatus(t, b.get(callback), http.StatusBadRequest, "replayed callback")
