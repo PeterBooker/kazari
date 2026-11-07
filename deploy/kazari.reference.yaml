@@ -12,6 +12,8 @@
 # Any key can also be overridden directly by an environment variable named
 # KAZARI_ plus the key's path upper-cased with dots as underscores, e.g.
 # listen.proxy_mode -> KAZARI_LISTEN_PROXY_MODE. Lists are comma-separated.
+# A dotenv file nobody named, the .env in the working directory, fills ${NAME}
+# references only and overrides no key of this file.
 # A secret also reads KAZARI_<KEY>_FILE, the path of a file holding it.
 # Sizes take B, KiB, MiB, GiB, TiB, KB, MB, GB or TB; durations are Go
 # durations ("15m", "336h") and may start with whole days ("14d").

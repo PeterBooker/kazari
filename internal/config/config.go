@@ -253,13 +253,20 @@ const DefaultEnvFile = ".env"
 
 // Load is LoadWith over the process environment and a dotenv file: envFile,
 // which must exist, or else DefaultEnvFile if it exists. The process
-// environment wins over the dotenv file.
+// environment wins over the dotenv file. Beside a config file, a
+// DefaultEnvFile nobody named feeds ${NAME} references only: a KAZARI_*
+// override from it could send a secret in the file to another destination.
 func Load(path, envFile string) (Config, error) {
 	dotenv, err := loadDotenv(envFile)
 	if err != nil {
 		return Config{}, err
 	}
-	return LoadWith(path, EnvLookup(dotenv))
+	refs := EnvLookup(dotenv)
+	overrides := refs
+	if path != "" && envFile == "" {
+		overrides = os.LookupEnv
+	}
+	return validated(load(Default(), path, refs, overrides))
 }
 
 func loadDotenv(envFile string) (map[string]string, error) {
@@ -294,7 +301,10 @@ func LoadWith(path string, lookup func(key string) (string, bool)) (Config, erro
 
 // LoadWithBase is LoadWith starting from base instead of Default.
 func LoadWithBase(base Config, path string, lookup func(key string) (string, bool)) (Config, error) {
-	cfg, err := load(base, path, lookup)
+	return validated(load(base, path, lookup, lookup))
+}
+
+func validated(cfg Config, err error) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
@@ -327,14 +337,16 @@ func Peek(path string, lookup func(key string) (string, bool)) (Config, error) {
 	return cfg, nil
 }
 
-func load(base Config, path string, lookup func(key string) (string, bool)) (Config, error) {
+// load resolves ${NAME} references through refs and KAZARI_* overrides
+// through overrides.
+func load(base Config, path string, refs, overrides func(key string) (string, bool)) (Config, error) {
 	cfg := base
 	if path != "" {
-		if err := decodeFile(path, &cfg, lookup); err != nil {
+		if err := decodeFile(path, &cfg, refs); err != nil {
 			return Config{}, err
 		}
 	}
-	if err := applyEnv(&cfg, lookup); err != nil {
+	if err := applyEnv(&cfg, overrides); err != nil {
 		return Config{}, fmt.Errorf("config: environment: %w", err)
 	}
 	return cfg, nil

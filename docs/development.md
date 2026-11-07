@@ -25,7 +25,7 @@ KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari pu
 
 Open `http://demo.localhost:8080/` to see the page. To start again from nothing, delete `./.data`.
 
-The CLI reads `./.env` as well, so `KAZARI_URL` and `KAZARI_TOKEN` can live there instead of on the command line. Keep `.env` out of version control. The `kazari-dev` MCP server in `.mcp.json` connects Claude Code to this server with a key exported as `KAZARI_DEV_TOKEN`.
+`serve --local` reads `./.env` for its `KAZARI_*` overrides. The client commands do not, but `KAZARI_URL` and `KAZARI_TOKEN` can live in a file you name with `KAZARI_ENV_FILE` instead of on the command line ([the rule](cli.md#environment-variables-and-env)). Keep `.env` out of version control. The `kazari-dev` MCP server in `.mcp.json` connects Claude Code to this server with a key exported as `KAZARI_DEV_TOKEN`.
 
 > [!NOTE]
 > Most browsers and systemd-resolved resolve `*.localhost`. If a tool on your system does not, add the hosts you need to `/etc/hosts`: `127.0.0.1 api.localhost admin.localhost mcp.localhost demo.localhost`.

@@ -39,7 +39,7 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 ## Configuration
 
 - YAML: `deploy/kazari.yaml` is the short file an instance starts from (the required keys), `deploy/kazari.reference.yaml` every key with its default. Found by `serve --config PATH`, else `$KAZARI_CONFIG`, else `/etc/kazari/kazari.yaml`, else environment only; `serve --local` uses the preset `config.Local()` instead.
-- No secrets in the file: `${NAME}` and `${NAME:-default}` read the environment. A dotenv file (`--env-file`, `$KAZARI_ENV_FILE`, else `./.env`) loads first; real environment variables win. `deploy/kazari.env.example` lists the secrets. A secret key also reads `KAZARI_<KEY>_FILE`.
+- No secrets in the file: `${NAME}` and `${NAME:-default}` read the environment. A dotenv file (`--env-file`, `$KAZARI_ENV_FILE`, else `./.env`) loads first; real environment variables win. Beside a config file an unnamed `./.env` fills `${NAME}` only, not `KAZARI_*` overrides; the client commands read only `$KAZARI_ENV_FILE`, never `./.env`. `deploy/kazari.env.example` lists the secrets. A secret key also reads `KAZARI_<KEY>_FILE`.
 - Every key is overridable as `KAZARI_<SECTION>_<KEY>` (lists comma-separated).
 - `deploy/compose.yml` is the production Compose file (published image, `kazari.yaml` and `.env` beside it); the root `compose.yml` is the development one.
 
