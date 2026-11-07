@@ -1,17 +1,27 @@
 package certs
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/digitalocean"
 	"github.com/libdns/duckdns"
 	"github.com/libdns/gandi"
 	"github.com/libdns/hetzner"
+	"github.com/libdns/libdns"
 	"github.com/libdns/namecheap"
 	"github.com/libdns/ovh"
 	"github.com/libdns/route53"
+	"go.uber.org/zap"
 )
 
 func TestNewDNSProvider(t *testing.T) {
@@ -74,7 +84,11 @@ func TestNewDNSProvider(t *testing.T) {
 			}
 		}},
 		{name: "duckdns", cfg: DNSConfig{Provider: "duckdns", APIToken: "duck"}, check: func(t *testing.T, p any) {
-			if d, ok := p.(*duckdns.Provider); !ok || d.APIToken != "duck" {
+			r, ok := p.(redactErrors)
+			if !ok {
+				t.Fatalf("got %T", p)
+			}
+			if d, ok := r.DNSProvider.(*duckdns.Provider); !ok || d.APIToken != "duck" || r.secret != "duck" {
 				t.Errorf("got %#v", p)
 			}
 		}},
@@ -100,5 +114,94 @@ func TestNewDNSProvider(t *testing.T) {
 			}
 			tt.check(t, p)
 		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// stubDuckDNS answers every request of the duckdns client, which calls
+// http.DefaultClient against a fixed host, so no test reaches the network.
+func stubDuckDNS(t *testing.T, f roundTripFunc) {
+	t.Helper()
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = f
+	t.Cleanup(func() { http.DefaultClient.Transport = old })
+}
+
+func TestDuckDNSErrorsOmitToken(t *testing.T) {
+	const (
+		plain   = "dummy-token-000000000000000000000000" // 36 characters, as the client requires
+		escaped = "dummy+token/00000000000000000000000/" // differs from its query-escaped form
+		short   = "dummy-token-of-the-wrong-length"
+	)
+	koReply := func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("KO"))}, nil
+	}
+	refused := func(*http.Request) (*http.Response, error) { return nil, errors.New("stub: connection refused") }
+	tests := []struct {
+		name, token, reason string
+		reply               roundTripFunc
+	}{
+		{"KO reply", plain, "got (KO)", koReply},
+		{"transport error", plain, "stub: connection refused", refused},
+		{"escaped token, KO reply", escaped, "got (KO)", koReply},
+		{"escaped token, transport error", escaped, "stub: connection refused", refused},
+		{"wrong length", short, "36 characters", koReply},
+	}
+	rec := libdns.TXT{Name: "_acme-challenge", Text: "value", TTL: time.Minute}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubDuckDNS(t, tt.reply)
+			p, err := NewDNSProvider(DNSConfig{Provider: "duckdns", APIToken: tt.token})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			_, appendErr := p.AppendRecords(ctx, "kz.duckdns.org.", []libdns.Record{rec})
+			_, deleteErr := p.DeleteRecords(ctx, "kz.duckdns.org.", []libdns.Record{rec})
+			checkErr := CheckDNSProvider(ctx, p, "kz.duckdns.org.", "kz.duckdns.org")
+
+			h := &recordHandler{}
+			certEvents(slog.New(h))(ctx, "cert_failed", map[string]any{"identifier": "kz.duckdns.org", "error": appendErr})
+			newZapLogger(slog.New(h)).Error("could not get certificate from issuer", zap.Error(fmt.Errorf("solving: %w", appendErr)))
+
+			texts := map[string]string{"append": fmt.Sprint(appendErr), "delete": fmt.Sprint(deleteErr), "check": fmt.Sprint(checkErr)}
+			for _, r := range h.all() {
+				r.Attrs(func(a slog.Attr) bool {
+					texts[r.Message+" "+a.Key] = a.Value.String()
+					return true
+				})
+			}
+			for where, text := range texts {
+				if strings.Contains(text, tt.token) || strings.Contains(text, url.QueryEscape(tt.token)) {
+					t.Errorf("%s carries the token: %s", where, text)
+				}
+			}
+			if appendErr == nil || !strings.Contains(appendErr.Error(), tt.reason) {
+				t.Errorf("append error = %v, want the reason %q", appendErr, tt.reason)
+			}
+			if deleteErr == nil || !strings.Contains(deleteErr.Error(), tt.reason) {
+				t.Errorf("delete error = %v, want the reason %q", deleteErr, tt.reason)
+			}
+			var raw *url.Error
+			if errors.As(appendErr, &raw) {
+				t.Errorf("the original error is reachable: %v", raw)
+			}
+		})
+	}
+}
+
+// CertMagic stops retrying on context.Canceled, so the error must still match it.
+func TestDuckDNSErrorKeepsCancellation(t *testing.T) {
+	stubDuckDNS(t, func(*http.Request) (*http.Response, error) { return nil, context.Canceled })
+	p, err := NewDNSProvider(DNSConfig{Provider: "duckdns", APIToken: "dummy-token-000000000000000000000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := libdns.TXT{Name: "_acme-challenge", Text: "value", TTL: time.Minute}
+	if _, err := p.AppendRecords(context.Background(), "kz.duckdns.org.", []libdns.Record{rec}); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }

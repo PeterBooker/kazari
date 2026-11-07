@@ -1,8 +1,10 @@
 package certs
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/caddyserver/certmagic"
@@ -11,9 +13,12 @@ import (
 	"github.com/libdns/duckdns"
 	"github.com/libdns/gandi"
 	"github.com/libdns/hetzner"
+	"github.com/libdns/libdns"
 	"github.com/libdns/namecheap"
 	"github.com/libdns/ovh"
 	"github.com/libdns/route53"
+
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 // DNSProviders are the names NewDNSProvider accepts.
@@ -106,7 +111,45 @@ func NewDNSProvider(c DNSConfig) (certmagic.DNSProvider, error) {
 		if err := need(); err != nil {
 			return nil, err
 		}
-		return &duckdns.Provider{APIToken: c.APIToken}, nil
+		return redactErrors{&duckdns.Provider{APIToken: c.APIToken}, c.APIToken}, nil
 	}
 	return nil, fmt.Errorf("certs: unknown dns provider %q (supported: %s)", c.Provider, strings.Join(DNSProviders, ", "))
 }
+
+// redactErrors keeps a provider's credential out of the errors it returns,
+// which reach the log, the OTLP export and kazari check. It is for a provider
+// that writes the credential into them: duckdns sends its token in the query
+// string and quotes the whole URL when a request fails.
+type redactErrors struct {
+	certmagic.DNSProvider
+	secret string
+}
+
+func (r redactErrors) AppendRecords(ctx context.Context, zone string, recs []libdns.Record) ([]libdns.Record, error) {
+	out, err := r.DNSProvider.AppendRecords(ctx, zone, recs)
+	return out, r.clean(err)
+}
+
+func (r redactErrors) DeleteRecords(ctx context.Context, zone string, recs []libdns.Record) ([]libdns.Record, error) {
+	out, err := r.DNSProvider.DeleteRecords(ctx, zone, recs)
+	return out, r.clean(err)
+}
+
+func (r redactErrors) clean(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.NewReplacer(r.secret, instrument.Redacted, url.QueryEscape(r.secret), instrument.Redacted).Replace(err.Error())
+	return &redactedError{msg: msg, err: err}
+}
+
+// redactedError has Is and no Unwrap: CertMagic stops retrying on
+// context.Canceled, but nothing may reach the original error's text.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+
+func (e *redactedError) Is(target error) bool { return errors.Is(e.err, target) }
