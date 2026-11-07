@@ -234,6 +234,9 @@ type Store interface {
 	// GetViewSession returns a view session by hash, expired or not, with
 	// its session's user and key prefix. ErrNotFound.
 	GetViewSession(ctx context.Context, hash string) (*ViewSession, error)
+	// DeleteViewSession removes one view session and leaves its session; a
+	// missing view session is not an error.
+	DeleteViewSession(ctx context.Context, hash string) error
 }
 
 // IdentityProvider sends a browser to sign in and turns the callback into

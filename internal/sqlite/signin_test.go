@@ -103,6 +103,22 @@ func TestOAuthStoreSessions(t *testing.T) {
 	if err := s.CreateViewCode(ctx, &oauth.ViewCode{Hash: "ch2", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh", ExpiresAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}
+	// Deleting a view session leaves its session; a second delete is fine.
+	if err := s.CreateViewSession(ctx, &oauth.ViewSession{Hash: "vh2", SessionID: sess.ID, Host: "other",
+		CreatedAt: oauthT0, ExpiresAt: sess.ExpiresAt}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.DeleteViewSession(ctx, "vh2"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.GetViewSession(ctx, "vh2"); !errors.Is(err, oauth.ErrNotFound) {
+		t.Fatalf("view session after DeleteViewSession = %v", err)
+	}
+	if _, err := s.GetViewSession(ctx, "vh"); err != nil {
+		t.Fatalf("other view session after DeleteViewSession = %v", err)
+	}
 	if err := s.DeleteSession(ctx, sess.ID); err != nil {
 		t.Fatal(err)
 	}

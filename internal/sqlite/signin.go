@@ -211,6 +211,16 @@ func (s *OAuthStore) CreateViewSession(ctx context.Context, v *oauth.ViewSession
 	return nil
 }
 
+// DeleteViewSession implements oauth.Store.
+func (s *OAuthStore) DeleteViewSession(ctx context.Context, hash string) (err error) {
+	ctx, end := s.db.op(ctx, "OAuthStore.DeleteViewSession")
+	defer func() { end(err) }()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM view_session WHERE token_hash = ?`, hash); err != nil {
+		return fmt.Errorf("sqlite: delete view session: %w", err)
+	}
+	return nil
+}
+
 // GetViewSession implements oauth.Store.
 func (s *OAuthStore) GetViewSession(ctx context.Context, hash string) (_ *oauth.ViewSession, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.GetViewSession")

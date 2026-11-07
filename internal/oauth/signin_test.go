@@ -108,11 +108,62 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 		t.Fatalf("Viewer(other) = %q, %v", got, err)
 	}
 
-	// Signing out on one host ends the browser's sign-in everywhere.
-	if err := e.svc.SignOut(ctx, "other", v2.Token); err != nil {
+	// A host ends its own view session and no more: not with another
+	// host's token, and not the sign-in or the other host's view session.
+	if err := e.svc.EndView(ctx, "demo", v2.Token); err != nil {
 		t.Fatal(err)
 	}
-	for host, tok := range map[string]string{"demo": v.Token, "other": v2.Token} {
+	if got, err := e.svc.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
+		t.Fatalf("Viewer(other) after EndView on demo with its token = %q, %v", got, err)
+	}
+	if err := e.svc.EndView(ctx, "other", v2.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Viewer(ctx, "other", v2.Token); !errors.Is(err, oauth.ErrNotFound) {
+		t.Fatalf("Viewer(other) after EndView = %v", err)
+	}
+	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
+		t.Fatalf("Viewer(demo) after EndView on other = %q, %v", got, err)
+	}
+	resp, _ = e.get(signInQuery("other", "/"))
+	v3, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	if err != nil {
+		t.Fatalf("the sign-in did not survive EndView: %v", err)
+	}
+	if err := e.svc.EndView(ctx, "demo", "unknown"); err != nil {
+		t.Fatalf("EndView of an unknown token = %v", err)
+	}
+
+	// The page changes nothing; its form, from this server, ends the
+	// sign-in everywhere. From an artifact host it is refused.
+	resp, body = e.get(oauth.PathSignOut)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `action="/oauth/signout"`) || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("sign-out page: status %d, %q", resp.StatusCode, body)
+	}
+	post := func(header http.Header) int {
+		req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignOut), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header = header
+		resp, _ := e.do(req)
+		return resp.StatusCode
+	}
+	for name, header := range map[string]http.Header{
+		"sibling origin":    {"Origin": {"https://demo.art.test"}, "Sec-Fetch-Site": {"same-site"}},
+		"sandboxed sibling": {"Origin": {"null"}, "Sec-Fetch-Site": {"same-site"}},
+	} {
+		if got := post(header); got != http.StatusForbidden {
+			t.Fatalf("%s: status %d", name, got)
+		}
+		if _, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil {
+			t.Fatalf("%s ended the sign-in: %v", name, err)
+		}
+	}
+	if got := post(http.Header{"Origin": {"null"}, "Sec-Fetch-Site": {"same-origin"}}); got != http.StatusOK {
+		t.Fatalf("sign-out: status %d", got)
+	}
+	for host, tok := range map[string]string{"demo": v.Token, "other": v3.Token} {
 		if _, err := e.svc.Viewer(ctx, host, tok); !errors.Is(err, oauth.ErrNotFound) {
 			t.Errorf("Viewer(%s) after sign-out = %v", host, err)
 		}
@@ -121,8 +172,11 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 	if loc := location(t, resp); loc.Host != "idp.example" {
 		t.Fatalf("after sign-out the sign-in went to %s, want the identity provider", loc)
 	}
-	if err := e.svc.SignOut(ctx, "demo", "unknown"); err != nil {
-		t.Fatalf("SignOut of an unknown token = %v", err)
+	if _, body = e.get(oauth.PathSignOut); !strings.Contains(body, "Not signed in") || strings.Contains(body, "<form") {
+		t.Fatalf("sign-out page after sign-out: %q", body)
+	}
+	if got := post(http.Header{"Origin": {e.url("")}}); got != http.StatusOK {
+		t.Fatalf("second sign-out: status %d", got)
 	}
 }
 

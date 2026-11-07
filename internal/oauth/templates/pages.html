@@ -61,6 +61,16 @@
 </form>
 {{template "foot"}}{{end}}
 
+{{define "signout"}}{{template "head" "Sign out"}}
+<h1>Sign out</h1>
+<p>Sign out of this Kazari instance in this browser? Every page you have open here will ask you to sign in again.</p>
+<form method="post" action="/oauth/signout">
+<div class="actions">
+<button type="submit" class="primary">Sign out</button>
+</div>
+</form>
+{{template "foot"}}{{end}}
+
 {{define "signin"}}{{template "head" "Sign in"}}
 <h1>Sign in to view this page</h1>
 <p><strong>{{.Site}}</strong> is only open to members of this Kazari instance.</p>
