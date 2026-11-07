@@ -566,7 +566,7 @@ func (s *Service) provision(ctx context.Context, email, name string, role Role) 
 		})
 		return u, nil
 	}
-	return nil, fmt.Errorf("user: provision %s: no free handle after %d attempts: %w",
+	return nil, fmt.Errorf("user: provision %q: no free handle after %d attempts: %w",
 		email, maxHandleAttempts, ErrHandleTaken)
 }
 

@@ -425,7 +425,7 @@ func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.T
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE oauth_token SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`, toNanos(at), familyID)
 	if err != nil {
-		return fmt.Errorf("sqlite: revoke oauth family %d: %w", familyID, err)
+		return fmt.Errorf("sqlite: revoke oauth family: %w", err)
 	}
 	return nil
 }
@@ -473,7 +473,7 @@ func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) (e
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("sqlite: revoke oauth grant %d: %w", id, err)
+		return fmt.Errorf("sqlite: revoke oauth grant: %w", err)
 	}
 	return nil
 }

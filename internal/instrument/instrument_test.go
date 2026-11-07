@@ -78,6 +78,23 @@ func TestRedactQuery(t *testing.T) {
 	}
 }
 
+func TestRedactAdminPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/v1/users/peter":                  "/v1/users/REDACTED",
+		"/v1/users/peter/keys":             "/v1/users/REDACTED/keys",
+		"/v1/users/peter/keys/ab12cd34":    "/v1/users/REDACTED/keys/REDACTED",
+		"/v1/users/peter/identities":       "/v1/users/REDACTED/identities",
+		"/v1/grants/42":                    "/v1/grants/REDACTED",
+		"/v1/users":                        "/v1/users",
+		"/v1/artifacts/q3-report/transfer": "/v1/artifacts/q3-report/transfer",
+		"/metrics":                         "/metrics",
+	} {
+		if got := RedactAdminPath(in); got != want {
+			t.Errorf("RedactAdminPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestCached(t *testing.T) {
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	loads := 0

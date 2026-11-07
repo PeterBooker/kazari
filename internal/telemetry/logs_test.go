@@ -5,14 +5,19 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	collogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 func jsonLogger(buf *bytes.Buffer) *slog.Logger {
@@ -103,6 +108,81 @@ func TestLogExport(t *testing.T) {
 	}
 	if records[0].attrs["status"] != "200" {
 		t.Errorf("record attributes = %v", records[0].attrs)
+	}
+}
+
+// An exported record must not carry an identity inside the value of another
+// key: stderr keeps what the export hides.
+func TestLogExportHidesIdentityInValues(t *testing.T) {
+	const (
+		handle = "alice-handle"
+		prefix = "ab12cd34"
+		email  = "alice@example.com"
+	)
+	recv := &httpReceiver{}
+	srv := httptest.NewServer(recv)
+	defer srv.Close()
+	var buf bytes.Buffer
+	tel := newTelemetry(t, Options{
+		OTLP: OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP},
+		Logs: Logs{OTLP: true, Level: slog.LevelInfo},
+	})
+	l := tel.Logger(jsonLogger(&buf))
+	admin := middleware.Logger(l)(http.NotFoundHandler())
+	for _, p := range []string{
+		"/v1/users/" + handle + "/keys/" + prefix,
+		"/v1/grants/4242",
+		"/v1/artifacts/q3-report/transfer",
+	} {
+		admin.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, p, nil))
+	}
+	cause := errors.New("database is locked")
+	l.Error("httpapi: request failed", "path", "/v1/users/"+handle, "err",
+		fmt.Errorf("sqlite: revoke key %q of %q: %w", prefix, handle, cause))
+	l.Info("oauth: identity not admitted", "err", fmt.Errorf("provision %q: %w", email, cause))
+	l.Warn("oauth: refresh token replay, revoking family", "client_id", "cli", "user", handle)
+	l.With("path", "/v1/users/"+handle, "err", fmt.Errorf("get %q: %w", handle, cause), "user", handle).Info("preset")
+	l.Error("job failed", "err", fmt.Errorf("sqlite: list users: %w", cause))
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kept := range []string{handle, prefix, email, "4242"} {
+		if !strings.Contains(buf.String(), kept) {
+			t.Errorf("stderr lacks %q, which only the export hides", kept)
+		}
+	}
+	r, ok := byPath(recv.requests(), "/v1/logs")
+	if !ok {
+		t.Fatalf("no log export: %v", paths(recv.requests()))
+	}
+	req := decodeLogs(t, r.body)
+	for _, rec := range logRecords(req) {
+		for _, secret := range []string{handle, prefix, email, "4242"} {
+			for k, v := range rec.attrs {
+				if strings.Contains(v, secret) {
+					t.Errorf("record %q exports %q in %s=%q", rec.body, secret, k, v)
+				}
+			}
+		}
+	}
+	records := logRecords(req)
+	for _, want := range []struct {
+		i          int
+		key, value string
+	}{
+		{0, "path", "/v1/users/REDACTED/keys/REDACTED"},
+		{1, "path", "/v1/grants/REDACTED"},
+		{2, "path", "/v1/artifacts/q3-report/transfer"},
+		{3, "exception.message", `sqlite: revoke key "REDACTED" of "REDACTED": database is locked`},
+		{7, "exception.message", "sqlite: list users: database is locked"},
+	} {
+		if len(records) <= want.i {
+			t.Fatalf("exported records = %v", records)
+		}
+		if got := records[want.i].attrs[want.key]; got != want.value {
+			t.Errorf("record %d %s = %q, want %q", want.i, want.key, got, want.value)
+		}
 	}
 }
 

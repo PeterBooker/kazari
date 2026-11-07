@@ -313,7 +313,7 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, handl
 			return nil, err
 		}
 		if !live {
-			return nil, fmt.Errorf("oauth: key %s is not active", keyPrefix)
+			return nil, fmt.Errorf("oauth: key %q is not active", keyPrefix)
 		}
 		if keyExpires != nil && keyExpires.Before(expires) {
 			expires = *keyExpires

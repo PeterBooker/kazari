@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -362,6 +363,33 @@ func TestUserStoreIdentities(t *testing.T) {
 	}
 	if _, err := s.GetIdentity(ctx, first.Issuer, first.Subject); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("GetIdentity after unlink = %v, want ErrNotFound", err)
+	}
+}
+
+// The log export hides quoted text, so a store error quotes what names a user
+// or a credential, and leaves out what it cannot quote.
+func TestStoreErrorsQuoteIdentities(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	o := NewOAuthStore(s.db)
+	if err := s.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const quoted = `"https://idp.example" "sub-1234"`
+	_, get := s.GetIdentity(ctx, "https://idp.example", "sub-1234")
+	for _, err := range []error{
+		get,
+		s.LinkIdentity(ctx, "ann", user.Identity{Issuer: "https://idp.example", Subject: "sub-1234", LastLoginAt: userT0}),
+		s.UnlinkIdentity(ctx, "ann", "https://idp.example", "sub-1234"),
+	} {
+		if err == nil || !strings.Contains(err.Error(), quoted) {
+			t.Errorf("err = %v, want %s", err, quoted)
+		}
+	}
+	for _, err := range []error{o.RevokeGrant(ctx, 4242, userT0), o.RevokeFamily(ctx, 4242, userT0)} {
+		if err == nil || strings.Contains(err.Error(), "4242") {
+			t.Errorf("err = %v, want one without the id", err)
+		}
 	}
 }
 
