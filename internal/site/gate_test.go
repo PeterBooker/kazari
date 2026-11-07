@@ -109,6 +109,57 @@ func TestGatedAsksTheGate(t *testing.T) {
 	checkHeaders(t, rec, map[string]string{"Cross-Origin-Resource-Policy": ""})
 }
 
+// A sibling page's no-cors request carries the visitor's view cookie, and
+// whether the browser hands it the response is visible to the page. So every
+// answer on a gated host carries the same policy: a difference between any
+// two of them would tell that page whether the visitor has access.
+func TestGatedResponsesCarryCORP(t *testing.T) {
+	const corp = "Cross-Origin-Resource-Policy"
+	fx := newFixture(t)
+	fx.addMembers(t)
+	g := &fakeGate{}
+	h := fx.handler(Options{Gate: g})
+
+	for _, allow := range []bool{false, true} {
+		g.allow = allow
+		for _, tc := range []struct {
+			method, host, path string
+			status             int // when admitted; the gate answers 401 otherwise
+		}{
+			{http.MethodGet, "team--v1.art.test", "/index.html", http.StatusOK},
+			{http.MethodGet, "team--v1.art.test", "/nope.bin", http.StatusNotFound}, // no 404.html
+			{http.MethodGet, "team--v1.art.test", "/a%5cb", http.StatusNotFound},    // a path cleanPath refuses
+			{http.MethodHead, "team--v1.art.test", "/nope.bin", http.StatusNotFound},
+			{http.MethodGet, "team--v2.art.test", "/nope.bin", http.StatusNotFound}, // its own 404.html
+			{http.MethodGet, "team.art.test", "/nope.bin", http.StatusNotFound},
+		} {
+			want := tc.status
+			if !allow {
+				want = http.StatusUnauthorized
+			}
+			rec := do(t, h, tc.method, tc.host, tc.path, nil)
+			if rec.Code != want {
+				t.Errorf("allow=%v %s %s%s: status %d, want %d", allow, tc.method, tc.host, tc.path, rec.Code, want)
+			}
+			if got := rec.Header().Get(corp); got != "same-origin" {
+				t.Errorf("allow=%v %s %s%s: %s = %q", allow, tc.method, tc.host, tc.path, corp, got)
+			}
+		}
+	}
+
+	// The gate's reserved paths, and the 404 of an instance with no gate.
+	rec := do(t, h, http.MethodGet, "team.art.test", "/.kazari/signout", nil)
+	checkHeaders(t, rec, map[string]string{corp: "same-origin"})
+	rec = do(t, fx.handler(Options{}), http.MethodGet, "team.art.test", "/", nil)
+	checkHeaders(t, rec, map[string]string{corp: "same-origin"})
+
+	// Nothing on a public host depends on the cookie, and its pages stay
+	// embeddable from anywhere.
+	for _, path := range []string{"/", "/nope.bin", "/a%5cb", "/.kazari/signout"} {
+		checkHeaders(t, do(t, h, http.MethodGet, "demo.art.test", path, nil), map[string]string{corp: ""})
+	}
+}
+
 func TestReservedPaths(t *testing.T) {
 	fx := newFixture(t)
 	fx.addMembers(t)
