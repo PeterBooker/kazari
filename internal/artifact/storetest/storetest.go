@@ -39,6 +39,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"UpdateErrors", testUpdateErrors},
 		{"UpdateCurrentRow", testUpdateCurrentRow},
 		{"Quota", testQuota},
+		{"QuotaChargesFiles", testQuotaChargesFiles},
 		{"Involved", testInvolved},
 		{"ListFilters", testListFilters},
 		{"ListPagination", testListPagination},
@@ -557,34 +558,36 @@ func testUpdateCurrentRow(t *testing.T, h *harness) {
 }
 
 func testQuota(t *testing.T, h *harness) {
+	// Ten bytes in two files, each also charged artifact.FileChargeBytes.
+	const quota = 10 + 2*artifact.FileChargeBytes
 	h.mkUser("alice")
 	h.mkUser("bob")
 	a := newArtifact("one", "alice", at(0))
-	if err := h.store.Create(h.ctx, a, newVersion("alice", at(0), file("a", "12345")), 10); err != nil {
+	if err := h.store.Create(h.ctx, a, newVersion("alice", at(0), file("a", "12345")), quota); err != nil {
 		t.Fatal(err)
 	}
-	err := h.store.Create(h.ctx, newArtifact("two", "alice", at(0)), newVersion("alice", at(0), file("b", "123456")), 10)
+	err := h.store.Create(h.ctx, newArtifact("two", "alice", at(0)), newVersion("alice", at(0), file("b", "123456")), quota)
 	wantErr(t, "Create over quota", err, artifact.ErrQuotaExceeded)
 	_, err = h.store.Get(h.ctx, "two")
 	wantErr(t, "Get after refused Create", err, artifact.ErrNotFound)
-	err = h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("b", "123456")), 0, 10, set(a))
+	err = h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("b", "123456")), 0, quota, set(a))
 	wantErr(t, "AddVersion over quota", err, artifact.ErrQuotaExceeded)
 	if got := h.get(t, "one"); got.LatestVersion != 1 {
 		t.Fatalf("refused AddVersion wrote version %d", got.LatestVersion)
 	}
-	if err := h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("c", "12345")), 0, 10, set(a)); err != nil {
+	if err := h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("c", "12345")), 0, quota, set(a)); err != nil {
 		t.Fatalf("AddVersion to the quota: %v", err)
 	}
 	h.create(t, newArtifact("big", "alice", at(0)), file("d", strings.Repeat("d", 100)))
 
-	// Two 4-byte creates fit in 10.
+	// Two 4-byte creates fit in the quota.
 	const n = 6
 	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
 			slug := fmt.Sprintf("bob-%d", i)
-			errs[i] = h.store.Create(h.ctx, newArtifact(slug, "bob", at(0)), newVersion("bob", at(0), file("f", fmt.Sprintf("bob%d", i))), 10)
+			errs[i] = h.store.Create(h.ctx, newArtifact(slug, "bob", at(0)), newVersion("bob", at(0), file("f", fmt.Sprintf("bob%d", i))), quota)
 		})
 	}
 	wg.Wait()
@@ -598,9 +601,23 @@ func testQuota(t *testing.T, h *harness) {
 			t.Errorf("concurrent Create: %v", err)
 		}
 	}
-	if used, err := h.store.Usage(h.ctx, "bob"); err != nil || wins != 2 || used != 8 {
-		t.Fatalf("%d concurrent creates succeeded with usage %d (%v), want 2 and 8", wins, used, err)
+	if used, err := h.store.Usage(h.ctx, "bob"); err != nil || wins != 2 || used != 8+2*artifact.FileChargeBytes {
+		t.Fatalf("%d concurrent creates succeeded with usage %d (%v), want 2 and %d", wins, used, err, 8+2*artifact.FileChargeBytes)
 	}
+}
+
+// The store has the last word on the quota, and rows count whatever their size.
+func testQuotaChargesFiles(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	empty := []artifact.File{file("a", ""), file("b", "")}
+	err := h.store.Create(h.ctx, newArtifact("one", "alice", at(0)), newVersion("alice", at(0), empty...), 2*artifact.FileChargeBytes-1)
+	wantErr(t, "Create of empty files over quota", err, artifact.ErrQuotaExceeded)
+	a := newArtifact("one", "alice", at(0))
+	if err := h.store.Create(h.ctx, a, newVersion("alice", at(0), empty...), 2*artifact.FileChargeBytes); err != nil {
+		t.Fatalf("Create to the quota: %v", err)
+	}
+	err = h.store.AddVersion(h.ctx, "one", newVersion("alice", at(time.Hour), file("a", "")), 0, 3*artifact.FileChargeBytes-1, set(a))
+	wantErr(t, "AddVersion of an empty file over quota", err, artifact.ErrQuotaExceeded)
 }
 
 func testInvolved(t *testing.T, h *harness) {
@@ -942,7 +959,8 @@ func testUsage(t *testing.T, h *harness) {
 	h.create(t, newArtifact("two", "alice", at(0)), file("b", "1234567"))
 	h.create(t, newArtifact("three", "bob", at(0)), file("c", "1"))
 
-	for handle, want := range map[string]int64{"alice": 15, "bob": 1, "nobody": 0} {
+	const charge = artifact.FileChargeBytes
+	for handle, want := range map[string]int64{"alice": 15 + 3*charge, "bob": 1 + charge, "nobody": 0} {
 		got, err := h.store.Usage(h.ctx, handle)
 		if err != nil {
 			t.Fatal(err)
@@ -958,8 +976,8 @@ func testUsage(t *testing.T, h *harness) {
 	if err := h.store.Purge(h.ctx, "two", at(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := h.store.Usage(h.ctx, "alice"); got != 8 {
-		t.Errorf("Usage(alice) after purge = %d, want 8", got)
+	if got, _ := h.store.Usage(h.ctx, "alice"); got != 8+2*charge {
+		t.Errorf("Usage(alice) after purge = %d, want %d", got, 8+2*charge)
 	}
 }
 

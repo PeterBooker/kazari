@@ -297,11 +297,13 @@ The response holds the page and a cursor for the next one:
 
 ### Get an artifact: `GET /artifacts/{slug}`
 
-Returns the artifact record and its versions, newest first. Add `?files=true` to include each version's file list:
+Returns the artifact record and its versions, newest first. Add `?files=true` to include file lists:
 
 ```json
 { "artifact": { ... }, "versions": [ { "number": 3, "url": "https://q3-report--v3.art.example.com/", ... } ] }
 ```
+
+File lists come in pages, newest version first. A page holds whole versions up to 5,000 files, and always at least one version. When more remain, `next_files_before` holds a version number: send it back as `?files=true&files_before=<number>` for the versions below it. The newest page always has the latest version, and `next_files_before` is absent on the last page. Every page has all the version records; only the versions of the page have `files`.
 
 An unpublished or soft-deleted artifact is returned, with `unpublished_at` or `deleted_at` set, only to admins, its owner and the users who created or updated it: the people who also see it in their listings, and the only ones who can change, republish or restore it. Anyone else gets `404 not_found`. A purged artifact is `410 gone`.
 
@@ -701,7 +703,7 @@ To install it, save it with [`kazari skill`](cli.md#skill) as `~/.claude/skills/
   "source": "api_key", "quota_bytes": 2147483648, "used_bytes": 184320 }
 ```
 
-`source` is `api_key` or `oauth`. A `quota_bytes` of 0 means unlimited.
+`source` is `api_key` or `oauth`. A `quota_bytes` of 0 means unlimited. `used_bytes` also charges 4 KiB per stored file row, so it is more than the sum of the artifacts' `size_bytes`; see [quotas](ops.md#quotas).
 
 `GET /me/keys` lists the caller's API keys with their `prefix`, `label`, `scopes`, `last_used_at`, `expires_at`, `revoked_at` and `created_at`, never the secret. OAuth callers get `[]`.
 

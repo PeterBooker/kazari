@@ -182,22 +182,24 @@ func markArtifactActor(ctx context.Context, tx *sql.Tx, aid int64, handle string
 	return err
 }
 
-const artifactUsage = `SELECT COALESCE(SUM(v.size_bytes), 0) FROM version v
+// artifactUsage takes artifact.FileChargeBytes and the owner's handle.
+const artifactUsage = `SELECT COALESCE(SUM(v.size_bytes +
+		? * (SELECT COUNT(*) FROM version_file f WHERE f.version_id = v.id)), 0) FROM version v
 	JOIN artifact a ON a.id = v.artifact_id
 	JOIN user u ON u.id = a.owner_id
 	WHERE u.handle = ?`
 
 // checkArtifactQuota runs inside the write transaction, which is immediate,
 // so concurrent publishes are checked one after the other.
-func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, size, quota int64) error {
+func checkArtifactQuota(ctx context.Context, tx *sql.Tx, owner string, v *artifact.Version, quota int64) error {
 	if quota <= 0 {
 		return nil
 	}
 	var used int64
-	if err := tx.QueryRowContext(ctx, artifactUsage, owner).Scan(&used); err != nil {
+	if err := tx.QueryRowContext(ctx, artifactUsage, artifact.FileChargeBytes, owner).Scan(&used); err != nil {
 		return err
 	}
-	if used+size > quota {
+	if used+v.SizeBytes+int64(len(v.Files))*artifact.FileChargeBytes > quota {
 		return artifact.Errorf(artifact.ErrQuotaExceeded, "the new version would exceed the owner's quota")
 	}
 	return nil
@@ -215,7 +217,7 @@ func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *art
 		if err != nil {
 			return err
 		}
-		if err := checkArtifactQuota(ctx, tx, a.OwnerHandle, v.SizeBytes, quota); err != nil {
+		if err := checkArtifactQuota(ctx, tx, a.OwnerHandle, v, quota); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx,
@@ -381,7 +383,7 @@ func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact
 		if expected != 0 && latest != expected {
 			return artifact.Errorf(artifact.ErrVersionConflict, "latest version is %d, expected %d", latest, expected)
 		}
-		if err := checkArtifactQuota(ctx, tx, owner, v.SizeBytes, quota); err != nil {
+		if err := checkArtifactQuota(ctx, tx, owner, v, quota); err != nil {
 			return err
 		}
 		meta, err := encodeArtifactMetadata(a.Metadata)
@@ -702,7 +704,7 @@ func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (_ int64,
 	ctx, end := s.db.op(ctx, "ArtifactStore.Usage")
 	defer func() { end(err) }()
 	var n int64
-	err = s.db.QueryRowContext(ctx, artifactUsage, ownerHandle).Scan(&n)
+	err = s.db.QueryRowContext(ctx, artifactUsage, artifact.FileChargeBytes, ownerHandle).Scan(&n)
 	if err != nil {
 		return 0, artifactErr("usage", err)
 	}

@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"go.opentelemetry.io/otel/attribute"
 	"io"
+	"maps"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/audit"
@@ -276,6 +279,36 @@ func (s *Service) ResolveVersion(ctx context.Context, slug string, n int) (*Publ
 // Files returns a version's file map keyed by path.
 func (s *Service) Files(ctx context.Context, versionID int64) (map[string]File, error) {
 	return s.store.Files(ctx, versionID)
+}
+
+// ListFiles sets Files on vs, which Get returns newest first, from the first
+// version numbered below before (the newest when 0) until the next version
+// would take the page past MaxListedFiles; a page always lists one version.
+// It returns the before of the next page, 0 on the last. Unbounded, a listing
+// would cost versions times files in one read.
+func (s *Service) ListFiles(ctx context.Context, vs []Version, before int) (int, error) {
+	if before < 0 {
+		return 0, Errorf(ErrInvalidArgument, "files_before must not be negative")
+	}
+	listed, last := 0, 0
+	for i := range vs {
+		if before != 0 && vs[i].Number >= before {
+			continue
+		}
+		m, err := s.store.Files(ctx, vs[i].ID)
+		if err != nil {
+			return 0, err
+		}
+		if last != 0 && listed+len(m) > MaxListedFiles {
+			return last, nil
+		}
+		files := slices.Collect(maps.Values(m))
+		slices.SortFunc(files, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
+		vs[i].Files = files
+		listed += len(m)
+		last = vs[i].Number
+	}
+	return 0, nil
 }
 
 // Sweep soft-deletes expired artifacts, purges those past retention and

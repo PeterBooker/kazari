@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"time"
 
@@ -130,7 +128,8 @@ type DiscardUploadInput struct {
 // GetInput is the input of get_artifact.
 type GetInput struct {
 	Slug         string `json:"slug" jsonschema:"artifact to fetch"`
-	IncludeFiles bool   `json:"include_files,omitempty" jsonschema:"include each version's file list"`
+	IncludeFiles bool   `json:"include_files,omitempty" jsonschema:"include file lists, newest version first, one page at a time"`
+	FilesBefore  int    `json:"files_before,omitempty" jsonschema:"with include_files, the next_files_before of the previous page"`
 }
 
 // ReadFileInput is the input of read_file.
@@ -476,7 +475,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "get_artifact", Annotations: annotations("Get artifact", true, false, true)},
 		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in GetInput) (api.ArtifactDetail, string, error) {
-			d, err := b.detail(ctx, actor, in.Slug, in.IncludeFiles)
+			d, err := b.detail(ctx, actor, in.Slug, in.IncludeFiles, in.FilesBefore)
 			if err != nil {
 				return api.ArtifactDetail{}, "", err
 			}
@@ -709,23 +708,20 @@ func artifactLine(a api.Artifact) string {
 	return line + "."
 }
 
-func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string, withFiles bool) (api.ArtifactDetail, error) {
+func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string, withFiles bool, filesBefore int) (api.ArtifactDetail, error) {
 	a, vs, err := b.d.Artifacts.Get(ctx, actor, slug)
 	if err != nil {
 		return api.ArtifactDetail{}, err
 	}
+	next := 0
 	if withFiles {
-		for i := range vs {
-			m, err := b.d.Artifacts.Files(ctx, vs[i].ID)
-			if err != nil {
-				return api.ArtifactDetail{}, fmt.Errorf("mcpserver: files of %s v%d: %w", slug, vs[i].Number, err)
-			}
-			files := slices.Collect(maps.Values(m))
-			slices.SortFunc(files, func(x, y artifact.File) int { return strings.Compare(x.Path, y.Path) })
-			vs[i].Files = files
+		if next, err = b.d.Artifacts.ListFiles(ctx, vs, filesBefore); err != nil {
+			return api.ArtifactDetail{}, err
 		}
 	}
-	return b.d.Links.Detail(a, vs), nil
+	d := b.d.Links.Detail(a, vs)
+	d.NextFilesBefore = next
+	return d, nil
 }
 
 // files merges the inline files with uploadID's staged ones, inline winning on a

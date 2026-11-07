@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -110,6 +111,48 @@ func (e *env) connect(t testing.TB, p auth.Principal) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { cs.Close() })
 	return cs
+}
+
+// get_artifact stops listing at a bound and names where the next page starts,
+// so a response never grows with versions times files.
+func TestGetArtifactPagesFileLists(t *testing.T) {
+	const maxListed = 5000
+	e := newEnv(t)
+	cs := e.connect(t, readOnly)
+	alice := artifact.Actor{Handle: "alice"}
+	var rows []artifact.FileInput
+	for i := range 2000 {
+		rows = append(rows, artifact.FileInput{Path: fmt.Sprintf("f%d", i), Content: strings.NewReader("")})
+	}
+	if _, _, err := e.deps.Artifacts.Create(e.ctx, alice, artifact.CreateRequest{Slug: "wide", Files: rows}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, _, err := e.deps.Artifacts.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "wide",
+			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader("x")}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type page struct {
+		Versions []api.Version `json:"versions"`
+		Next     int           `json:"next_files_before"`
+	}
+	first, _ := ok[page](t, cs, "get_artifact", map[string]any{"slug": "wide", "include_files": true})
+	total := 0
+	for _, v := range first.Versions {
+		total += len(v.Files)
+	}
+	if total > maxListed {
+		t.Fatalf("one result listed %d files, want at most %d", total, maxListed)
+	}
+	if len(first.Versions[0].Files) != 2000 || first.Next != 2 {
+		t.Fatalf("first page: latest has %d files, next %d, want 2000 and 2", len(first.Versions[0].Files), first.Next)
+	}
+	rest, _ := ok[page](t, cs, "get_artifact", map[string]any{"slug": "wide", "include_files": true, "files_before": first.Next})
+	if got := len(rest.Versions[2].Files); got != 2000 || rest.Next != 0 {
+		t.Fatalf("last page: version 1 has %d files, next %d, want 2000 and 0", got, rest.Next)
+	}
 }
 
 func call(t *testing.T, cs *mcp.ClientSession, name string, args any) *mcp.CallToolResult {

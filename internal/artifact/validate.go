@@ -27,6 +27,13 @@ const (
 	NameMaxBytes        = 256
 	DescriptionMaxBytes = 4096
 	LabelMaxBytes       = 256
+
+	// FileChargeBytes is what one file of one version adds to its owner's
+	// usage on top of its content, about the database page its row and index
+	// entry take. Without it empty files and carried rows would cost nothing.
+	FileChargeBytes = 4096
+	// MaxListedFiles bounds one page of ListFiles.
+	MaxListedFiles = 5000
 )
 
 var (

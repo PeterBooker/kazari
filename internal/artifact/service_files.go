@@ -69,7 +69,7 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 		return nil, 0, Errorf(ErrTooLarge, "version exceeds %d bytes", s.opts.MaxVersionBytes)
 	}
 	if quotaLeft != nil {
-		*quotaLeft -= carried
+		*quotaLeft -= carried + int64(count)*FileChargeBytes
 		if *quotaLeft < 0 {
 			return nil, 0, Errorf(ErrQuotaExceeded, "the new version would exceed the owner's quota")
 		}

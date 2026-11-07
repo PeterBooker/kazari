@@ -104,7 +104,7 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 func TestQuotaHoldsAcrossConcurrentPublishes(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	e.user(t, "alice")
-	alice := artifact.Actor{Handle: "alice", QuotaBytes: 100}
+	alice := artifact.Actor{Handle: "alice", QuotaBytes: 100 + 2*artifact.FileChargeBytes}
 	body := strings.Repeat("x", 60)
 
 	br := &blockingReader{data: strings.NewReader(body), reached: make(chan struct{}), release: make(chan struct{})}

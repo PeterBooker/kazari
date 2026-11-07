@@ -73,7 +73,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. With `archive_sha256` and `archive_bytes`, also an `archive_url` for [an archive from a shell](#uploading-an-archive-from-a-shell). |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
 | `discard_upload` | Remove an upload you no longer need. |
-| `get_artifact` | The artifact record and its versions; `include_files` adds file lists. |
+| `get_artifact` | The artifact record and its versions; `include_files` adds file lists, newest version first, up to 5,000 files a result. `next_files_before`, when present, goes back as `files_before` for the next page. |
 | `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read a window of a large text file. |
 | `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata`, `stale` and `deleted`. |
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
@@ -278,7 +278,7 @@ The server offers four resources:
 
 | URI | Content |
 | --- | ------- |
-| `kazari://artifacts/{slug}` | `application/json`: the artifact record and versions with file lists. |
+| `kazari://artifacts/{slug}` | `application/json`: the artifact record and versions with the first page of file lists. |
 | `kazari://artifacts/{slug}/files/{+path}` | One file of the published version, with its own content type. |
 | `skill://kazari/SKILL.md` | `text/markdown`: the instance's [skill](#skill). |
 | `ui://kazari/preview.html` | `text/html;profile=mcp-app`: the [preview app](#preview-app). |

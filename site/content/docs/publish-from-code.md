@@ -185,7 +185,7 @@ By default, Kazari enforces these limits:
 
 - **A version**: up to 50 MiB and 2,000 files.
 - **A single file**: up to 25 MiB.
-- **Storage**: 2 GiB per user, counted across every version of every artifact they own.
+- **Storage**: 2 GiB per user, counted across every version of every artifact they own, with 4 KiB on top for each file of each version.
 - **Writes**: 60 a minute per key on the user API.
 
 Your instance can set other values. `kazari me` shows your quota and use, and errors name the limit that was hit.

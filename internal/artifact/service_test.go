@@ -308,7 +308,8 @@ func TestSizeLimits(t *testing.T) {
 func TestQuota(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	e.user(t, "alice")
-	alice := artifact.Actor{Handle: "alice", QuotaBytes: 20}
+	// Two versions of one file fit; a third file does not.
+	alice := artifact.Actor{Handle: "alice", QuotaBytes: 20 + 2*artifact.FileChargeBytes}
 
 	e.create(t, alice, "one", "a.txt", strings.Repeat("a", 15))
 	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "two", Files: files("b.txt", strings.Repeat("b", 6))})
@@ -317,12 +318,42 @@ func TestQuota(t *testing.T) {
 	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "one", Files: files("a.txt", "abc")}); err != nil {
 		t.Fatalf("update within quota: %v", err)
 	}
-	// 3 carried + 1 new byte would make usage 22.
+	// 3 carried + 1 new byte would make usage 22, plus the two new rows.
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "one", Files: files("b.txt", "b")})
 	wantErr(t, "update over quota", err, artifact.ErrQuotaExceeded)
 
 	unlimited := artifact.Actor{Handle: "alice"}
 	e.create(t, unlimited, "three", "c.txt", strings.Repeat("c", 100))
+}
+
+// Empty files add no bytes, but every version stores a database row for each,
+// so the quota has to count the rows.
+func TestQuotaChargesFileRows(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	e.user(t, "alice")
+	alice := artifact.Actor{Handle: "alice", QuotaBytes: 1 << 20}
+
+	var rows []artifact.FileInput
+	for i := range 200 {
+		rows = append(rows, artifact.FileInput{Path: fmt.Sprintf("f%d.txt", i), Content: strings.NewReader("")})
+	}
+	if _, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "rows", Files: rows}); err != nil {
+		t.Fatalf("create within quota: %v", err)
+	}
+	used, err := e.svc.Usage(e.ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != 200*4096 {
+		t.Errorf("Usage = %d, want %d for 200 empty files", used, 200*4096)
+	}
+
+	// The 200 carried rows do not fit a second time.
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "rows", Files: files("v.txt", "")})
+	wantErr(t, "version of carried rows over quota", err, artifact.ErrQuotaExceeded)
+	if a, _, err := e.svc.Get(e.ctx, alice, "rows"); err != nil || a.LatestVersion != 1 {
+		t.Fatalf("rows after refused version: %+v, %v", a, err)
+	}
 }
 
 // quotas is a QuotaSource over a map; a handle not in it is unlimited.
@@ -331,7 +362,7 @@ type quotas map[string]int64
 func (q quotas) QuotaBytes(_ context.Context, handle string) (int64, error) { return q[handle], nil }
 
 func TestQuotaChargesOwner(t *testing.T) {
-	e := newEnv(t, artifact.Options{Quotas: quotas{"alice": 20}})
+	e := newEnv(t, artifact.Options{Quotas: quotas{"alice": 20 + 2*artifact.FileChargeBytes}})
 	alice := e.user(t, "alice")
 	bob := e.user(t, "bob")
 	e.create(t, alice, "one", "a.txt", strings.Repeat("a", 15))
@@ -343,7 +374,7 @@ func TestQuotaChargesOwner(t *testing.T) {
 	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "one", Files: files("a.txt", "abc")}); err != nil {
 		t.Fatalf("bob's version within alice's quota: %v", err)
 	}
-	for handle, want := range map[string]int64{"alice": 18, "bob": 0} {
+	for handle, want := range map[string]int64{"alice": 18 + 2*artifact.FileChargeBytes, "bob": 0} {
 		used, err := e.svc.Usage(e.ctx, handle)
 		if err != nil || used != want {
 			t.Errorf("Usage(%s) = %d, %v, want %d", handle, used, err, want)

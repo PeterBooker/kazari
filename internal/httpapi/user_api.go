@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
-	"maps"
 	"mime"
 	"net/http"
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -310,25 +308,20 @@ func (h *userAPI) getArtifact(w http.ResponseWriter, r *http.Request, p auth.Pri
 	if err != nil {
 		return err
 	}
+	next := 0
 	if withFiles {
-		for i := range versions {
-			m, err := h.d.Artifacts.Files(r.Context(), versions[i].ID)
-			if err != nil {
-				return err
-			}
-			versions[i].Files = sortedFiles(m)
+		before, err := queryInt(r, "files_before")
+		if err != nil {
+			return err
+		}
+		if next, err = h.d.Artifacts.ListFiles(r.Context(), versions, before); err != nil {
+			return err
 		}
 	}
-	writeJSON(w, http.StatusOK, h.links.Detail(a, versions))
+	d := h.links.Detail(a, versions)
+	d.NextFilesBefore = next
+	writeJSON(w, http.StatusOK, d)
 	return nil
-}
-
-func sortedFiles(m map[string]artifact.File) []artifact.File {
-	out := make([]artifact.File, 0, len(m))
-	for _, p := range slices.Sorted(maps.Keys(m)) {
-		out = append(out, m[p])
-	}
-	return out
 }
 
 func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {

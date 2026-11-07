@@ -242,10 +242,11 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"When every file is staged, call create_artifact or update_artifact with upload_id.",
 		}, "\n\n"),
 
-		"get_artifact": "Get an artifact's record (url, owner, visibility, metadata, published_version, latest_version, " +
-			"size, stale/expiry and deletion state) and its versions, newest first, each with its pinned URL. " +
-			"include_files adds every version's file list (path, size, sha256 hash, content_type). Use latest_version " +
-			"as expected_version for update_artifact.",
+		"get_artifact": fmt.Sprintf("Get an artifact's record (url, owner, visibility, metadata, published_version, latest_version, "+
+			"size, stale/expiry and deletion state) and its versions, newest first, each with its pinned URL. "+
+			"include_files adds file lists (path, size, sha256 hash, content_type), newest version first and up to "+
+			"%d files in one result; next_files_before, when present, is the files_before that gets the next page. "+
+			"Use latest_version as expected_version for update_artifact.", artifact.MaxListedFiles),
 
 		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. Text files up "+
 			"to %s come back inline as text; other files up to %s come back as a base64 blob resource; anything larger "+

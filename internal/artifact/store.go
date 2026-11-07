@@ -12,7 +12,7 @@ type Store interface {
 	// Create inserts a with its first version (setting v.ID, v.Number = 1),
 	// the blob rows and the owner's actor row. ErrSlugTaken also covers
 	// tombstones. ErrQuotaExceeded, with nothing written, when quota > 0 and
-	// the owner's usage plus v.SizeBytes would exceed it.
+	// the owner's usage plus v's would exceed it (see Usage).
 	Create(ctx context.Context, a *Artifact, v *Version, quota int64) error
 
 	// Get returns tombstones too, or ErrNotFound.
@@ -57,7 +57,8 @@ type Store interface {
 
 	Files(ctx context.Context, versionID int64) (map[string]File, error)
 
-	// Usage sums every version of the handle's artifacts.
+	// Usage sums every version of the handle's artifacts: its size plus
+	// FileChargeBytes for each of its files.
 	Usage(ctx context.Context, ownerHandle string) (int64, error)
 
 	// The sweep's queries, oldest first; each excludes later states.

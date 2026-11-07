@@ -275,6 +275,10 @@ func (c *GetCmd) Run(r *runner) error {
 		return nil
 	}
 	for _, v := range d.Versions {
+		if d.NextFilesBefore != 0 && v.Number < d.NextFilesBefore {
+			fmt.Fprintf(r.stdout, "\nversions below %d not listed; ask the API with files_before=%d\n", d.NextFilesBefore, d.NextFilesBefore)
+			break
+		}
 		fmt.Fprintf(r.stdout, "\nversion %d files:\n", v.Number)
 		tw := newTable(r.stdout)
 		fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
