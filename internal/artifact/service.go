@@ -528,8 +528,12 @@ func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDel
 	if err != nil {
 		return nil, err
 	}
+	by := actor.Handle
+	if actor.Operator {
+		by = ""
+	}
 	var details map[string]string
-	err = s.store.Update(ctx, slug, actor.Handle, func(a *Artifact) error {
+	err = s.store.Update(ctx, slug, by, func(a *Artifact) error {
 		if err := s.checkWritable(actor, a, involved, allowDeleted); err != nil {
 			return err
 		}

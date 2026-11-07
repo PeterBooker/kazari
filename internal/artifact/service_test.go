@@ -20,7 +20,9 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 )
 
@@ -1327,6 +1329,63 @@ func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "audit down") {
 		t.Fatalf("audit failure not logged: %q", logs.String())
+	}
+}
+
+// The admin token and socket act under a handle that a user created before
+// it was reserved can hold: their writes must not make that user involved.
+func TestOperatorWritesLeaveNoInvolvement(t *testing.T) {
+	for _, source := range []string{auth.SourceAdminToken, auth.SourceLocal} {
+		t.Run(source, func(t *testing.T) {
+			e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteShared})
+			alice := e.user(t, "alice")
+			e.user(t, "bob")
+			legacy := e.user(t, "admin")
+			operator := present.Actor(auth.Principal{Handle: "admin", Admin: true, Scopes: auth.AllScopes, Source: source})
+
+			e.create(t, alice, "hidden")
+			if _, err := e.svc.SetVisibility(e.ctx, operator, "hidden", artifact.Unpublished); err != nil {
+				t.Fatal(err)
+			}
+			e.create(t, alice, "moved")
+			if err := e.svc.Delete(e.ctx, alice, "moved", false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.svc.Transfer(e.ctx, operator, "moved", "bob"); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, slug := range []string{"hidden", "moved"} {
+				if ok, err := e.store.Involved(e.ctx, slug, "admin"); err != nil || ok {
+					t.Errorf("Involved(%s, admin) = %v, %v, want false", slug, ok, err)
+				}
+				if _, _, err := e.svc.Get(e.ctx, legacy, slug); !errors.Is(err, artifact.ErrNotFound) {
+					t.Errorf("read %s: err = %v, want not found", slug, err)
+				}
+			}
+			if _, err := e.svc.SetVisibility(e.ctx, legacy, "hidden", "public"); !errors.Is(err, artifact.ErrNotFound) {
+				t.Errorf("republish: err = %v, want not found", err)
+			}
+			req := artifact.UpdateRequest{Slug: "moved", Restore: true}
+			if _, _, err := e.svc.Update(e.ctx, legacy, req); !errors.Is(err, artifact.ErrNotFound) {
+				t.Errorf("restore: err = %v, want not found", err)
+			}
+
+			// Those who own the artifacts keep it, and the log still names
+			// the operator.
+			if _, _, err := e.svc.Get(e.ctx, alice, "hidden"); err != nil {
+				t.Errorf("owner read: %v", err)
+			}
+			var found bool
+			for _, ev := range e.rec.Events {
+				if ev.Action == audit.ArtifactVisibility && ev.Slug == "hidden" && ev.Actor == "admin" && ev.Details["credential"] == source {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no operator event for the hide in %+v", e.rec.Events)
+			}
+		})
 	}
 }
 

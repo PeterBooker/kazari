@@ -50,6 +50,25 @@ func TestError(t *testing.T) {
 	}
 }
 
+func TestActorOperator(t *testing.T) {
+	tests := []struct {
+		source string
+		want   bool
+	}{
+		{auth.SourceAdminToken, true},
+		{auth.SourceLocal, true},
+		{auth.SourceAPIKey, false},
+		{auth.SourceOAuth, false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		// An admin-role key acts as its user, under any handle.
+		if got := Actor(auth.Principal{Handle: "admin", Admin: true, Source: tt.source}).Operator; got != tt.want {
+			t.Errorf("Actor(source %q).Operator = %v, want %v", tt.source, got, tt.want)
+		}
+	}
+}
+
 func TestActorCredential(t *testing.T) {
 	tests := []struct {
 		p    auth.Principal
