@@ -94,6 +94,9 @@ type Actor struct {
 	// Credential is "api_key:<prefix>", "oauth:<id>" or "admin_token", for
 	// the audit trail; empty for System.
 	Credential string
+	// Operator is the admin token or socket: Handle is only a name in the
+	// audit trail, whatever a user row may hold.
+	Operator bool
 }
 
 // System is the actor used by scheduler jobs.

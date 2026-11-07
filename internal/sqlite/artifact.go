@@ -165,7 +165,9 @@ func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number in
 const artifactUpsertBlob = `INSERT INTO blob (hash, size, created_at) VALUES (?, ?, ?)
 	ON CONFLICT (hash) DO UPDATE SET created_at = MAX(blob.created_at, excluded.created_at)`
 
-// markArtifactActor records nothing for an unknown handle (e.g. the scheduler).
+// markArtifactActor records nothing for an unknown handle. Admin and
+// scheduler match no user: 0009 renamed those that held them, and the
+// artifact service passes no handle for the operator or the sweep anyway.
 func markArtifactActor(ctx context.Context, tx *sql.Tx, aid int64, handle string, created bool, at time.Time) error {
 	c, u := 0, 1
 	if created {
