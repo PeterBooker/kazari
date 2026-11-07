@@ -57,6 +57,11 @@ type Store interface {
 
 	Files(ctx context.Context, versionID int64) (map[string]File, error)
 
+	// FileOrigin looks up the version's file at path, then the artifact's
+	// earliest version with the same content at that path. ErrNotFound when
+	// the version has no such file.
+	FileOrigin(ctx context.Context, versionID int64, path string) (*FileOrigin, error)
+
 	// Usage sums every version of the handle's artifacts.
 	Usage(ctx context.Context, ownerHandle string) (int64, error)
 

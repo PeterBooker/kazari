@@ -46,6 +46,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"ListMembers", testListMembers},
 		{"Resolve", testResolve},
 		{"Files", testFiles},
+		{"FileOrigin", testFileOrigin},
 		{"Usage", testUsage},
 		{"LifecycleQueries", testLifecycleQueries},
 		{"PurgeAndDeleteTombstone", testPurgeAndDeleteTombstone},
@@ -929,6 +930,49 @@ func testFiles(t *testing.T, h *harness) {
 	if len(empty) != 0 {
 		t.Fatalf("Files of unknown version = %v", empty)
 	}
+}
+
+func testFileOrigin(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	a := newArtifact("demo", "alice", at(0))
+	v1 := h.create(t, a, file("sw.js", "one"), file("index.html", "page"))
+	carried := newVersion("bob", at(time.Hour), file("sw.js", "one"), file("index.html", "page two"))
+	if err := h.addVersion(a, carried, 0); err != nil {
+		t.Fatal(err)
+	}
+	replaced := newVersion("bob", at(2*time.Hour), file("sw.js", "two"))
+	if err := h.addVersion(a, replaced, 0); err != nil {
+		t.Fatal(err)
+	}
+	byNobody := newVersion("scheduler", at(3*time.Hour), file("sw.js", "three"))
+	if err := h.addVersion(a, byNobody, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name    string
+		version int64
+		want    string
+	}{
+		{"first upload", v1.ID, "alice"},
+		{"carried on", carried.ID, "alice"},
+		{"replaced", replaced.ID, "bob"},
+		{"no such user", byNobody.ID, "scheduler"},
+	} {
+		got, err := h.store.FileOrigin(h.ctx, tt.version, "sw.js")
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got.Author != tt.want || got.Owner != "alice" || got.Disabled {
+			t.Errorf("%s: %+v, want author %s", tt.name, got, tt.want)
+		}
+		if got.Admin != (tt.want == "scheduler") {
+			t.Errorf("%s: Admin = %t", tt.name, got.Admin)
+		}
+	}
+	_, err := h.store.FileOrigin(h.ctx, v1.ID, "missing.js")
+	wantErr(t, "missing file", err, artifact.ErrNotFound)
 }
 
 func testUsage(t *testing.T, h *harness) {

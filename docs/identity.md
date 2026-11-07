@@ -208,7 +208,7 @@ browser ──1──▶ team.<base>/report       no view cookie: 302, sets a no
         ──5──▶ team. redeems the code with its nonce cookie, sets __Host-kazari_view, 302 /report
 ```
 
-1. A page navigation to a `members` artifact without a valid view cookie is redirected to the MCP host. Anything else, such as a script, an image, a `fetch`, a frame or `curl`, gets `401` with a short explanation instead, since a sign-in page is no use to it.
+1. A page navigation to a `members` artifact without a valid view cookie is redirected to the MCP host. Anything else, such as a script, an image, a `fetch`, a frame or `curl`, gets `401` with a short explanation instead, since a sign-in page is no use to it. A service worker's script request is the exception: it gets a script that removes the worker ([Service workers](ops.md#service-workers)).
 2. The MCP host keeps its own sign-in session, `__Host-kazari_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, path `/`). If the browser has a live one, it is sent straight back with a code, and the person sees nothing.
 3. Otherwise the person signs in at the IdP, which returns to the same `https://mcp.<base>/oauth/callback` that MCP clients use, so nothing changes in the IdP's configuration. Without an IdP, a page asks for an API key with `artifacts:read`, and that session ends with the key.
 4. The code is single use and lives one minute. It works only on the host it was issued for, and only in the browser holding the matching nonce cookie, so a code started by someone else cannot sign a visitor in as them.

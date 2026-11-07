@@ -178,6 +178,13 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	return false
 }
 
+// Admits reports whether r's view cookie opens host. Unlike Allow it answers
+// nothing and counts nothing.
+func (g *Gate) Admits(r *http.Request, p *artifact.Published, host string) (bool, error) {
+	via, err := g.admitted(r, p, host)
+	return via != "", err
+}
+
 // decided counts the gate's decision and puts it on the request's span.
 func (g *Gate) decided(ctx context.Context, result string) {
 	g.requests.Add(ctx, 1, g.results[result]...)

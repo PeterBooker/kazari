@@ -32,6 +32,9 @@ type Resolver interface {
 	ResolvePublished(ctx context.Context, slug string) (*artifact.Published, error)
 	ResolveVersion(ctx context.Context, slug string, n int) (*artifact.Published, error)
 	Files(ctx context.Context, versionID int64) (map[string]artifact.File, error)
+	// WorkerControlled reports whether whoever uploaded the version's file
+	// at path may still change the artifact.
+	WorkerControlled(ctx context.Context, versionID int64, path string) (bool, error)
 }
 
 // Gate guards artifacts with visibility members. gate.Gate implements it.
@@ -39,6 +42,8 @@ type Gate interface {
 	// Allow reports whether r may be served p on host, the request host's
 	// label (<slug> or <slug>--v<N>). On false it has answered the request.
 	Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) bool
+	// Admits reports whether r carries access to p on host, and answers nothing.
+	Admits(r *http.Request, p *artifact.Published, host string) (bool, error)
 	ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string)
 }
 
@@ -103,6 +108,13 @@ const (
 
 const indexFile = "index.html"
 
+// evictionScript replaces a service worker and then removes itself: the one
+// answer a browser acts on, since a failed update check leaves the worker in
+// place. It has no fetch handler, so it sees nothing on the way out.
+const evictionScript = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.registration.unregister()));
+`
+
 type handler struct {
 	resolver  Resolver
 	blobs     blob.Store
@@ -148,7 +160,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	slug, version, ok := ParseHost(r.Host, h.opts.BaseDomain)
 	if !ok || slices.Contains(h.opts.ReservedSlugs, slug) {
-		h.writeError(w, r, http.StatusNotFound)
+		h.miss(w, r, http.StatusNotFound)
 		return
 	}
 	if span := trace.SpanFromContext(r.Context()); span.IsRecording() {
@@ -158,7 +170,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p, err := h.resolve(r.Context(), slug, version)
 	if err != nil {
 		if errors.Is(err, artifact.ErrNotFound) || errors.Is(err, artifact.ErrVersionNotFound) {
-			h.writeError(w, r, http.StatusNotFound)
+			h.miss(w, r, http.StatusNotFound)
 			return
 		}
 		h.internalError(w, r, fmt.Errorf("resolve %s: %w", slug, err))
@@ -166,10 +178,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !p.Servable() {
 		if p.PurgedAt != nil {
-			h.writeError(w, r, http.StatusGone)
+			h.miss(w, r, http.StatusGone)
 			return
 		}
-		h.writeError(w, r, http.StatusNotFound)
+		h.miss(w, r, http.StatusNotFound)
 		return
 	}
 
@@ -186,6 +198,19 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if reserved {
 			h.opts.Gate.ServeReserved(w, r, p, host)
 			return
+		}
+		// Ahead of Allow, whose 401 a browser would keep the worker through.
+		// Every path gets this answer, so it does not show which files exist.
+		if isWorkerScript(r) && p.Visibility.Gated() {
+			admitted, err := h.opts.Gate.Admits(r, p, host)
+			if err != nil {
+				h.internalError(w, r, fmt.Errorf("check access to %s: %w", host, err))
+				return
+			}
+			if !admitted {
+				h.evictWorker(w, r, false)
+				return
+			}
 		}
 		// Public pages pass the gate too, which counts them.
 		if !h.opts.Gate.Allow(w, r, p, host) {
@@ -221,7 +246,25 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 		name = path.Join(clean, indexFile)
 	}
 
-	if f, ok := files[name]; ok {
+	f, found := files[name]
+	if isWorkerScript(r) {
+		// Ahead of the redirect, the SPA route and 404.html below, none of
+		// which is a script.
+		if !found || !javaScript(f.ContentType) {
+			h.evictWorker(w, r, false)
+			return
+		}
+		controlled, err := h.resolver.WorkerControlled(r.Context(), p.VersionID, f.Path)
+		if err != nil {
+			h.internalError(w, r, fmt.Errorf("check worker %s/%s: %w", p.Slug, f.Path, err))
+			return
+		}
+		if !controlled {
+			h.evictWorker(w, r, false)
+			return
+		}
+	}
+	if found {
 		h.serveFile(w, r, p, pinned, f)
 		return
 	}
@@ -316,6 +359,55 @@ func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *a
 	}
 	if _, err := io.Copy(w, rc); err != nil && !errors.Is(err, context.Canceled) {
 		h.log.WarnContext(r.Context(), "site: copy 404.html", "slug", p.Slug, "err", err)
+	}
+}
+
+// isWorkerScript reports whether a browser is fetching r's path as a service
+// worker, to install it or to check it for an update. That request skips any
+// worker the browser holds, so it is the one a worker cannot answer itself.
+func isWorkerScript(r *http.Request) bool {
+	return r.Header.Get("Service-Worker") == "script"
+}
+
+// javaScript reports whether a browser accepts ct for a service worker; it
+// keeps the worker it has when the update check gets anything else.
+func javaScript(ct string) bool {
+	base, _, _ := strings.Cut(strings.ToLower(ct), ";")
+	switch strings.TrimSpace(base) {
+	case "text/javascript", "application/javascript", "application/x-javascript",
+		"text/ecmascript", "application/ecmascript":
+		return true
+	}
+	return false
+}
+
+// miss answers a request for an artifact or version that is not served. A
+// worker's update check gets the eviction script; only a purged artifact,
+// which no page of the origin will come back to, loses the origin's storage.
+func (h *handler) miss(w http.ResponseWriter, r *http.Request, status int) {
+	if isWorkerScript(r) {
+		h.evictWorker(w, r, status == http.StatusGone)
+		return
+	}
+	h.writeError(w, r, status)
+}
+
+// evictWorker answers a worker-script request with evictionScript. clear also
+// wipes the origin's storage. Live pages never ask for that: a first
+// registration looks the same as an update check, so a page that registers a
+// missing script would lose its visitors' data on every load.
+func (h *handler) evictWorker(w http.ResponseWriter, r *http.Request, clear bool) {
+	h.setErrorHeaders(w, nil)
+	hdr := w.Header()
+	hdr.Set("Content-Type", "text/javascript; charset=utf-8")
+	hdr.Set("Cache-Control", "no-store")
+	hdr.Set("Content-Length", strconv.Itoa(len(evictionScript)))
+	if clear {
+		hdr.Set("Clear-Site-Data", `"storage"`)
+	}
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = io.WriteString(w, evictionScript)
 	}
 }
 

@@ -617,6 +617,68 @@ func TestWritePolicy(t *testing.T) {
 	}
 }
 
+// A worker script stays in a browser only while the person who uploaded it
+// could still change the artifact.
+func TestWorkerControlled(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		policy string
+		change func(t *testing.T, e *env)
+		want   bool
+	}{
+		{"shared", artifact.WriteShared, nil, true},
+		{"shared, author not owner", artifact.WriteShared, func(t *testing.T, e *env) { e.transfer(t, "bob") }, true},
+		{"shared, author disabled", artifact.WriteShared, func(t *testing.T, e *env) { e.setUser(t, "disabled_at = 1") }, false},
+		{"shared, author enabled again", artifact.WriteShared, func(t *testing.T, e *env) {
+			e.setUser(t, "disabled_at = 1")
+			e.setUser(t, "disabled_at = NULL")
+		}, true},
+		{"owner policy, author owner", artifact.WriteOwner, nil, true},
+		{"owner policy, author disabled", artifact.WriteOwner, func(t *testing.T, e *env) { e.setUser(t, "disabled_at = 1") }, false},
+		{"owner policy, author not owner", artifact.WriteOwner, func(t *testing.T, e *env) { e.transfer(t, "bob") }, false},
+		{"owner policy, author admin", artifact.WriteOwner, func(t *testing.T, e *env) {
+			e.transfer(t, "bob")
+			e.setUser(t, "role = 'admin'")
+		}, true},
+		{"owner policy, admin disabled", artifact.WriteOwner, func(t *testing.T, e *env) {
+			e.transfer(t, "bob")
+			e.setUser(t, "role = 'admin', disabled_at = 1")
+		}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, artifact.Options{WritePolicy: tt.policy})
+			e.create(t, e.user(t, "alice"), "demo", "sw.js", "self")
+			e.user(t, "bob")
+			if tt.change != nil {
+				tt.change(t, e)
+			}
+			p, err := e.svc.ResolvePublished(e.ctx, "demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := e.svc.WorkerControlled(e.ctx, p.VersionID, "sw.js")
+			if err != nil || got != tt.want {
+				t.Errorf("WorkerControlled = %t, %v, want %t", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func (e *env) transfer(t *testing.T, to string) {
+	t.Helper()
+	if _, err := e.svc.Transfer(e.ctx, artifact.Actor{Handle: "root", Admin: true}, "demo", to); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setUser changes alice's row, as the user service does.
+func (e *env) setUser(t *testing.T, set string) {
+	t.Helper()
+	if _, err := e.db.ExecContext(e.ctx, `UPDATE user SET `+set+` WHERE handle = 'alice'`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // An offline artifact (unpublished or soft-deleted) can be changed,
 // republished or restored only by those who can read it: whoever cannot
 // see it gets not_found, under either policy.
