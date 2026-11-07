@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
 type metadataServer struct {
@@ -175,6 +178,51 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func TestClientMetadataDocumentLongID(t *testing.T) {
+	meta := newMetadataServer(t)
+	e := newEnv(t, envOptions{httpClient: meta.srv.Client()})
+	clientID := meta.srv.URL + "/" + strings.Repeat("a", 2048)
+	resp, body := e.get("/oauth/authorize?" + authorizeParams(clientID, "http://127.0.0.1:43210/callback", "", newPKCE("cimd")).Encode())
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "too long") {
+		t.Errorf("status = %d, want 400 naming the length: %s", resp.StatusCode, body)
+	}
+	if n := meta.count(); n != 0 {
+		t.Errorf("fetches = %d, want 0", n)
+	}
+}
+
+func TestClientMetadataDocumentAtClientLimit(t *testing.T) {
+	ctx := context.Background()
+	meta := newMetadataServer(t)
+	e := newEnv(t, envOptions{httpClient: meta.srv.Client(), maxUnusedClients: 1})
+	authorize := func(clientID string) (*http.Response, string) {
+		t.Helper()
+		return e.get("/oauth/authorize?" + authorizeParams(clientID, "http://127.0.0.1:43210/callback", "", newPKCE("cimd")).Encode())
+	}
+
+	known := meta.srv.URL + "/known.json"
+	if resp, body := authorize(known); resp.StatusCode != http.StatusFound {
+		t.Fatalf("first client: status %d: %s", resp.StatusCode, body)
+	}
+	other := meta.srv.URL + "/other.json"
+	resp, body := authorize(other)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("new client at the limit: status = %d, want 503: %s", resp.StatusCode, body)
+	}
+	if _, err := e.store.GetClient(ctx, other); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("GetClient(other) err = %v, want ErrNotFound", err)
+	}
+
+	// Refreshing a client already stored adds no row.
+	e.clock.Advance(2 * time.Hour)
+	if resp, body := authorize(known); resp.StatusCode != http.StatusFound {
+		t.Errorf("refresh at the limit: status %d: %s", resp.StatusCode, body)
+	}
+	if n := meta.count(); n != 3 {
+		t.Errorf("fetches = %d, want 3", n)
+	}
 }
 
 func TestDefaultHTTPClientRefusesLocalAddresses(t *testing.T) {

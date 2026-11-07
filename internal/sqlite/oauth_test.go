@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -355,6 +356,62 @@ func TestOAuthStoreTokens(t *testing.T) {
 	}
 	if got := grantIDs("bob", t1); got != nil {
 		t.Errorf("ListGrants(bob) after RevokeAllForUser = %v", got)
+	}
+}
+
+func TestOAuthStoreAddClient(t *testing.T) {
+	ctx := context.Background()
+	s := oauthTestStores(t) // dcr_test, without a grant
+	add := func(id string) error {
+		return s.AddClient(ctx, &oauth.Client{ID: id, RedirectURIs: []string{"https://app.example/cb"}, CreatedAt: oauthT0}, 2)
+	}
+	if err := add("dcr_second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("dcr_third"); !errors.Is(err, oauth.ErrClientLimit) {
+		t.Fatalf("add at the limit: err = %v, want ErrClientLimit", err)
+	}
+	if _, err := s.GetClient(ctx, "dcr_third"); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("refused client stored: %v", err)
+	}
+	// A grant takes a client out of the count.
+	a, r := oauthPair("alice", nil, oauthT0.Add(time.Minute), 0)
+	if err := s.CreateTokens(ctx, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("dcr_third"); err != nil {
+		t.Errorf("add after a grant: %v", err)
+	}
+}
+
+func TestOAuthStoreAddClientConcurrent(t *testing.T) {
+	ctx := context.Background()
+	s := oauthTestStores(t)
+	const limit = 4 // dcr_test is the first
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		added   int
+		refused int
+	)
+	for i := range 12 {
+		wg.Go(func() {
+			err := s.AddClient(ctx, &oauth.Client{ID: fmt.Sprintf("dcr_%d", i), RedirectURIs: []string{"https://app.example/cb"}, CreatedAt: oauthT0}, limit)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				added++
+			case errors.Is(err, oauth.ErrClientLimit):
+				refused++
+			default:
+				t.Errorf("AddClient: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if added != limit-1 || refused != 12-(limit-1) {
+		t.Errorf("added %d, refused %d; want %d, %d", added, refused, limit-1, 12-(limit-1))
 	}
 }
 
