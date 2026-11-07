@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -794,13 +795,23 @@ func lineHash(line string) string {
 	return string(appendHash(buf[:0], line))
 }
 
-// appendHash appends line's 32-bit FNV-1a, folded to 16 bits, in hex.
-func appendHash(dst []byte, line string) []byte {
-	v := uint32(2166136261)
-	for i := 0; i < len(line); i++ {
-		v ^= uint32(line[i])
+const fnvOffset = uint32(2166136261)
+
+// fnv1a continues a 32-bit FNV-1a sum over b, so a line can be hashed in parts.
+func fnv1a[T string | []byte](v uint32, b T) uint32 {
+	for i := 0; i < len(b); i++ {
+		v ^= uint32(b[i])
 		v *= 16777619
 	}
+	return v
+}
+
+// appendHash appends line's 32-bit FNV-1a, folded to 16 bits, in hex.
+func appendHash(dst []byte, line string) []byte {
+	return appendSum(dst, fnv1a(fnvOffset, line))
+}
+
+func appendSum(dst []byte, v uint32) []byte {
 	v = (v>>16 ^ v) & 0xffff
 	const digits = "0123456789abcdef"
 	return append(dst, digits[v>>12], digits[v>>8&0xf], digits[v>>4&0xf], digits[v&0xf])
@@ -812,9 +823,13 @@ func Anchor(n int, line string) string {
 }
 
 func appendAnchor(dst []byte, n int, line string) []byte {
+	return appendAnchorSum(dst, n, fnv1a(fnvOffset, line))
+}
+
+func appendAnchorSum(dst []byte, n int, sum uint32) []byte {
 	dst = strconv.AppendInt(dst, int64(n), 10)
 	dst = append(dst, ':')
-	return appendHash(dst, line)
+	return appendSum(dst, sum)
 }
 
 // ParseAnchor splits "12:3fa0" into line number and hash, ignoring anything
@@ -840,18 +855,94 @@ func AnchorLines(content string) string {
 
 // WriteAnchored streams AnchorLines(content) to w.
 func WriteAnchored(w io.Writer, content string) error {
-	bw := bufio.NewWriter(w)
-	var prefix []byte
-	eachLine(content, func(i, start int, line string) bool {
-		prefix = append(appendAnchor(prefix[:0], i+1, line), '|')
-		_, _ = bw.Write(prefix)
-		_, _ = bw.WriteString(line)
-		if start+len(line) < len(content) {
-			_ = bw.WriteByte('\n')
+	return StreamAnchored(w, strings.NewReader(content))
+}
+
+// ErrFileRead marks a StreamAnchored failure of the file, not of the writer.
+var ErrFileRead = errors.New("artifact: read file")
+
+// AnchorableText reports whether r holds UTF-8 text with no NUL, the only
+// files with line anchors. It reads r to the end in a fixed buffer.
+func AnchorableText(r io.Reader) (bool, error) {
+	br := bufio.NewReader(r)
+	for {
+		c, size, err := br.ReadRune()
+		if err == io.EOF {
+			return true, nil
 		}
-		return true
-	})
-	return bw.Flush() // reports the first write error
+		if err != nil {
+			return false, err
+		}
+		if c == 0 || c == utf8.RuneError && size == 1 {
+			return false, nil
+		}
+	}
+}
+
+// StreamAnchored writes what AnchorLines gives for the text in r, which starts
+// at its first byte, holding only fixed buffers however long a line is: w may
+// block for as long as its reader likes. A line that outgrows the buffer is
+// hashed first, because its anchor comes before it, then read again from where
+// it started.
+func StreamAnchored(w io.Writer, r io.ReadSeeker) error {
+	bw := bufio.NewWriter(w)
+	br := bufio.NewReader(r)
+	var prefix []byte
+	var off int64
+	for n := 1; ; n++ {
+		sum, passed := fnvOffset, int64(0)
+		chunk, err := br.ReadSlice('\n')
+		for err == bufio.ErrBufferFull {
+			sum = fnv1a(sum, chunk)
+			passed += int64(len(chunk))
+			chunk, err = br.ReadSlice('\n')
+		}
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("%w: %w", ErrFileRead, err)
+		}
+		if passed == 0 && len(chunk) == 0 {
+			return bw.Flush() // reports the first write error
+		}
+		sum = fnv1a(sum, bytes.TrimSuffix(chunk, []byte{'\n'}))
+		prefix = append(appendAnchorSum(prefix[:0], n, sum), '|')
+		if _, werr := bw.Write(prefix); werr != nil {
+			return werr
+		}
+		size := passed + int64(len(chunk))
+		if passed == 0 {
+			if _, werr := bw.Write(chunk); werr != nil {
+				return werr
+			}
+		} else if err := copyLineFrom(bw, br, r, off); err != nil {
+			return err
+		}
+		off += size
+		if err == io.EOF {
+			return bw.Flush()
+		}
+	}
+}
+
+// copyLineFrom writes the line that starts at off, with its break, leaving br
+// just after it.
+func copyLineFrom(bw *bufio.Writer, br *bufio.Reader, r io.ReadSeeker, off int64) error {
+	if _, err := r.Seek(off, io.SeekStart); err != nil {
+		return fmt.Errorf("%w: %w", ErrFileRead, err)
+	}
+	br.Reset(r)
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if _, werr := bw.Write(chunk); werr != nil {
+			return werr
+		}
+		switch err {
+		case bufio.ErrBufferFull:
+		case nil, io.EOF:
+			return nil
+		default:
+			return fmt.Errorf("%w: %w", ErrFileRead, err)
+		}
+	}
 }
 
 // excerpt anchors the lines r spans, startLine to endLine, with context,
