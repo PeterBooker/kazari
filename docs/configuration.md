@@ -336,7 +336,7 @@ The URLs Kazari fetches for members: a file named by `url` in a create or update
 | --------- | -------- | ------- | ----------------------------------------------------------------------------- |
 | `enabled` | bool     | `true`  | `false` removes the `import_page` tool and refuses files named by `url`.      |
 | `timeout` | duration | `15s`   | The longest one request may take.                                             |
-| `budget`  | duration | `1m`    | The longest one import, or the downloads of one publish, may take in all; what does not fit an import stays remote. |
+| `budget`  | duration | `1m`    | The longest one import, or the downloads of one publish, may take in all; what does not fit an import stays remote, and a page that cannot be parsed in that time fails the import with `fetch_failed`. |
 
 Set `enabled: false` on an instance that must make no outbound requests on members' behalf. The fetch for OAuth client metadata is separate and stays on.
 

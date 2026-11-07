@@ -317,3 +317,129 @@ func TestTakeRefusesOversizedPages(t *testing.T) {
 		t.Errorf("oversized page: %v", err)
 	}
 }
+
+// cancelAfter ends a context as the body at path is read to its end, so the
+// fetch succeeds and what follows it runs with the context already over.
+type cancelAfter struct {
+	path   string
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfter) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && r.URL.Path == c.path {
+		resp.Body = cancelAtEOF{resp.Body, c.cancel}
+	}
+	return resp, err
+}
+
+type cancelAtEOF struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelAtEOF) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.cancel()
+	}
+	return n, err
+}
+
+func TestTakeStopsParsingWhenTheContextEnds(t *testing.T) {
+	var page strings.Builder
+	page.WriteString("<!doctype html>")
+	for i := range 2000 {
+		fmt.Fprintf(&page, "<html a%d>", i)
+	}
+	srv := serve(t, site{
+		"/page":  {"text/html", page.String()},
+		"/small": {"text/html", "<!doctype html><title>Small</title><p>Hello"},
+	})
+	rt := &cancelAfter{path: "/page"}
+	tk := snapshot.New(fetch.New(fetch.Options{Transport: rt, Dir: t.TempDir()}), snapshot.Options{})
+	// One more import than there are slots, so a slot that stays taken fails.
+	for range 5 {
+		var ctx context.Context
+		ctx, rt.cancel = context.WithCancel(context.Background())
+		snap, err := tk.Take(ctx, srv.URL+"/page", false)
+		if err == nil {
+			snap.Close()
+			t.Fatal("Take parsed the whole page after its context ended")
+		}
+		if !errors.Is(err, artifact.ErrFetchFailed) || !strings.Contains(err.Error(), "import budget exhausted") {
+			t.Fatalf("Take: %v", err)
+		}
+	}
+	snap, err := tk.Take(context.Background(), srv.URL+"/small", false)
+	if err != nil {
+		t.Fatalf("small page after stopped imports: %v", err)
+	}
+	snap.Close()
+}
+
+// A landmark the outline cannot find in the rendering costs a scan of the
+// rest of the page, so it counts toward the limit like one it finds.
+func TestTakeStopsOutliningAfterTheLimit(t *testing.T) {
+	srv := serve(t, site{"/": {"text/html", "<!doctype html><title>x</title><body><svg>" +
+		strings.Repeat("<section xlink:href=x />", 61) + "</svg><section id=after></section>"}})
+	snap, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	if o := snap.Report.Outline; len(o) != 0 {
+		t.Errorf("outline searched on past the limit: %+v", o)
+	}
+}
+
+// The budget running out while fetching assets leaves them remote; the page
+// itself is still imported, with its outline.
+func TestTakeKeepsThePageWhenTheContextEndsOnAnAsset(t *testing.T) {
+	srv := serve(t, site{
+		"/":      {"text/html", `<!doctype html><title>x</title><body><section><img src="/a.png"><img src="/b.png"></section>`},
+		"/a.png": {"image/png", "a"},
+		"/b.png": {"image/png", "b"},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tk := snapshot.New(fetch.New(fetch.Options{Transport: &cancelAfter{"/a.png", cancel}, Dir: t.TempDir()}), snapshot.Options{})
+	snap, err := tk.Take(ctx, srv.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	r := snap.Report
+	if len(r.Skipped) != 1 || r.Skipped[0].Reason != "import budget exhausted" || len(r.Outline) != 1 {
+		t.Errorf("skipped %+v, outline %+v", r.Skipped, r.Outline)
+	}
+}
+
+// A page deep in nesting with whitespace between block siblings renders at
+// many times its size, and everything after the walk follows the rendering,
+// so it stops at the file limit. One more import than there are slots.
+func TestTakeRefusesRenderingPastTheFileLimit(t *testing.T) {
+	srv := serve(t, site{
+		"/":      {"text/html", "<!doctype html><title>x</title><body>" + strings.Repeat("<div>\n", 400) + strings.Repeat("<hr>\n", 2000)},
+		"/small": {"text/html", "<!doctype html><title>x</title><body><section></section>"},
+	})
+	tk := taker(t, snapshot.Options{MaxFileBytes: 64 << 10})
+	for range 5 {
+		snap, err := tk.Take(context.Background(), srv.URL, false)
+		if err == nil {
+			snap.Close()
+			t.Fatal("Take rendered the whole page past the file limit")
+		}
+		if !errors.Is(err, artifact.ErrTooLarge) {
+			t.Fatalf("Take: %v", err)
+		}
+	}
+	snap, err := tk.Take(context.Background(), srv.URL+"/small", false)
+	if err != nil {
+		t.Fatalf("small page after refused imports: %v", err)
+	}
+	defer snap.Close()
+	if len(snap.Report.Outline) != 1 {
+		t.Errorf("outline: %+v", snap.Report.Outline)
+	}
+}
