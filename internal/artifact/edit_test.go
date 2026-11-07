@@ -2,6 +2,7 @@ package artifact_test
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -190,6 +191,131 @@ func TestApplyEditsReplacementCap(t *testing.T) {
 	got, outs, err := artifact.ApplyEdits("big.txt", in[:artifact.MaxReplacements], []artifact.Edit{{OldText: "a", NewText: "b", ReplaceAll: true}}, 0)
 	if err != nil || got != strings.Repeat("b", artifact.MaxReplacements) || outs[0].Replacements != artifact.MaxReplacements {
 		t.Errorf("at the cap: %v, %d replacements", err, outs[0].Replacements)
+	}
+}
+
+// allocated returns the bytes f allocates, freed or not, which is what a copy
+// per match costs even when the collector keeps up.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// A refused whitespace-tolerant edit must cost about the file and the new
+// text, not matches x new text.
+func TestApplyEditsFuzzyRefusalMemory(t *testing.T) {
+	const limit = 1 << 20
+	const budget = 4 << 20
+	large := strings.Repeat("A", 64<<10) + "\nB" // 26 MiB over 400 matches
+	small := strings.Repeat("A", 1<<10) + "\nB"  // 10 MiB over the cap
+	// Each new line takes the file's indentation, so one copy is what grows.
+	lines := strings.Repeat("a\n", 2000)
+	wide, narrow := strings.Repeat(" ", 64<<10), strings.Repeat(" ", 16<<10)
+	cases := []struct {
+		name string
+		in   string
+		edit artifact.Edit
+		code *artifact.Error
+		has  string
+	}{
+		{"indentation, ambiguous", strings.Repeat("x\n", 400),
+			artifact.Edit{OldText: " x", NewText: large}, artifact.ErrEditAmbiguous, "matches 400 places"},
+		{"indentation, over the limit", strings.Repeat("x\n", 400),
+			artifact.Edit{OldText: " x", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+		{"crlf, ambiguous", strings.Repeat("x\r\n", 400),
+			artifact.Edit{OldText: "x ", NewText: large}, artifact.ErrEditAmbiguous, "matches 400 places"},
+		{"crlf, over the limit", strings.Repeat("x\r\n", 400),
+			artifact.Edit{OldText: "x ", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+		{"over the replacement cap", strings.Repeat("x\n", artifact.MaxReplacements+5),
+			artifact.Edit{OldText: " x", NewText: small, ReplaceAll: true}, artifact.ErrInvalidArgument, "more than 10000 places"},
+		{"long indentation, one match", wide + "x\n" + wide + "y\n",
+			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+		{"long indentation, replace_all", strings.Repeat(narrow+"x\n"+narrow+"y\n", 8),
+			artifact.Edit{OldText: "x\ny", NewText: lines, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+		{"long indentation, crlf", wide + "x\r\n" + wide + "y\r\n",
+			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var err error
+			got := allocated(func() {
+				_, _, err = artifact.ApplyEdits("a.txt", c.in, []artifact.Edit{c.edit}, limit)
+			})
+			if !errors.Is(err, c.code) || !strings.Contains(err.Error(), c.has) {
+				t.Errorf("err = %v, want %s with %q", err, c.code.Code, c.has)
+			}
+			if got > budget {
+				t.Errorf("allocated %d bytes, more than %d", got, budget)
+			}
+		})
+	}
+}
+
+// Indentation the old and new text share leaves each match, so an edit whose
+// result is small costs about that result however long the new text is.
+func TestApplyEditsFuzzyStrippedNewText(t *testing.T) {
+	indent := strings.Repeat(" ", 64<<10)
+	var got string
+	var err error
+	spent := allocated(func() {
+		got, _, err = artifact.ApplyEdits("a.txt", strings.Repeat("x\n", 400), []artifact.Edit{
+			{OldText: indent + "x", NewText: indent + "z", ReplaceAll: true}}, 1<<20)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Repeat("z\n", 400); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if spent > 4<<20 {
+		t.Errorf("allocated %d bytes, more than %d", spent, 4<<20)
+	}
+}
+
+// The limit applies to the result, so what a matched line loses counts
+// wherever it comes in the file, and so does whatever the match does to the
+// new text.
+func TestApplyEditsFuzzyAtTheLimit(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		edit  artifact.Edit
+		limit int64
+		want  string
+	}{
+		{"growth before the shrinking match", "x\n" + strings.Repeat(" ", 10) + "x\n",
+			artifact.Edit{OldText: "\tx", NewText: strings.Repeat("y", 5), ReplaceAll: true}, 12,
+			strings.Repeat("y", 5) + "\n" + strings.Repeat("y", 5) + "\n"},
+		{"new text over the limit loses its last break", "x",
+			artifact.Edit{OldText: " x\n", NewText: "abc\n"}, 3, "abc"},
+		{"new text over the limit loses indentation", "x\ny\n",
+			artifact.Edit{OldText: "  x\n  y\n", NewText: "  a\n  b\n"}, 4, "a\nb\n"},
+		{"crlf counted", "x\r\nx\r\n",
+			artifact.Edit{OldText: "x ", NewText: "a\nb", ReplaceAll: true}, 12, "a\r\nb\r\na\r\nb\r\n"},
+		{"each match's indentation counted", "  x\n    y\n\tx\n\t\ty\n",
+			artifact.Edit{OldText: "x\ny\n", NewText: "a\n\n b\n", ReplaceAll: true}, 21,
+			"  a\n\n     b\n\ta\n\n\t\t b\n"},
+		{"indentation and crlf counted", "  x\r\n  y\r\n",
+			artifact.Edit{OldText: "x\ny\n", NewText: "a\nb\n"}, 10, "  a\r\n  b\r\n"},
+		{"a dropped last break leaves no crlf", "  x\r\n  y",
+			artifact.Edit{OldText: "x\ny\n", NewText: "a\nb\r\n"}, 9, "  a\r\n  b\r"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _, err := artifact.ApplyEdits("a.txt", c.in, []artifact.Edit{c.edit}, c.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+			if _, _, err := artifact.ApplyEdits("a.txt", c.in, []artifact.Edit{c.edit}, c.limit-1); !errors.Is(err, artifact.ErrTooLarge) {
+				t.Errorf("one byte under: err = %v", err)
+			}
+		})
 	}
 }
 

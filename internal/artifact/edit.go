@@ -242,6 +242,13 @@ type editor struct {
 	ranges [][2]int
 }
 
+func (ed *editor) checkSize(size int64) error {
+	if ed.max > 0 && size > ed.max {
+		return Errorf(ErrTooLarge, "the edits would make %s %d bytes, more than the %d-byte file limit", ed.name, size, ed.max)
+	}
+	return nil
+}
+
 // apply replaces ms, which must be sorted and not overlap, moves ed.ranges
 // with the text and returns where each new text landed.
 func (ed *editor) apply(ms []match) ([][2]int, error) {
@@ -249,8 +256,8 @@ func (ed *editor) apply(ms []match) ([][2]int, error) {
 	for _, m := range ms {
 		size += int64(len(m.repl)) - int64(m.end-m.start)
 	}
-	if ed.max > 0 && size > ed.max {
-		return nil, Errorf(ErrTooLarge, "the edits would make %s %d bytes, more than the %d-byte file limit", ed.name, size, ed.max)
+	if err := ed.checkSize(size); err != nil {
+		return nil, err
 	}
 	var b strings.Builder
 	b.Grow(int(size))
@@ -309,6 +316,12 @@ func (ed *editor) applyTexts(edits []Edit) ([]EditOutcome, error) {
 type match struct {
 	start, end int
 	repl       string
+	// A line match has no repl until it is known to be wanted and to fit:
+	// buildRepls fills it from the lines up to linesEnd, and dropBreak says
+	// the new text's last break goes because the file ended before the old
+	// text's.
+	linesEnd  int
+	dropBreak bool
 }
 
 func (ed *editor) applyText(n int, e Edit) (EditOutcome, error) {
@@ -317,10 +330,10 @@ func (ed *editor) applyText(n int, e Edit) (EditOutcome, error) {
 	fuzzy := lineCount(e.OldText) <= maxFuzzyLines
 	if len(matches) == 0 && fuzzy {
 		kind = MatchTrailingWhitespace
-		matches = lineMatches(ed.text, e, trimTrailing, false)
+		matches = lineMatches(ed.text, e, trimTrailing)
 		if len(matches) == 0 {
 			kind = MatchIndentation
-			matches = lineMatches(ed.text, e, strings.TrimSpace, true)
+			matches = lineMatches(ed.text, e, strings.TrimSpace)
 		}
 	}
 	count := strconv.Itoa(len(matches))
@@ -351,6 +364,11 @@ func (ed *editor) applyText(n int, e Edit) (EditOutcome, error) {
 			"edit %d: replace_all would change %s places in %s; at most %d per edit, so make old_text more specific",
 			n, count, ed.name, MaxReplacements)
 	}
+	if kind != MatchExact {
+		if err := ed.buildRepls(matches, e, kind == MatchIndentation); err != nil {
+			return EditOutcome{}, err
+		}
+	}
 	moved, err := ed.apply(matches)
 	if err != nil {
 		return EditOutcome{}, err
@@ -374,10 +392,44 @@ func exactMatches(text, old, repl string) []match {
 	return out
 }
 
+// buildRepls fits the new text to each line match, which copies it, so it
+// runs only for an edit that passed the count and ambiguity rules, and it
+// works out the exact size of the result before building anything: a copy
+// is as long as the file's indentation times the new text's lines, which a
+// small request can make far larger than the file limit.
+func (ed *editor) buildRepls(ms []match, e Edit, reindent bool) error {
+	oldLines := splitLines(e.OldText)
+	whole := newLineRepl(e.NewText, oldLines, reindent)
+	cut := whole
+	if ms[len(ms)-1].dropBreak { // only the file's end can drop it
+		cut = newLineRepl(strings.TrimSuffix(e.NewText, "\n"), oldLines, reindent)
+	}
+	repl := func(m match) *lineRepl {
+		if m.dropBreak {
+			return cut
+		}
+		return whole
+	}
+	size := int64(len(ed.text))
+	for _, m := range ms {
+		first, later := whole.indents(ed.text[m.start:m.linesEnd])
+		size += repl(m).size(first, later, endsCRLF(ed.text, m.start)) - int64(m.end-m.start)
+	}
+	if err := ed.checkSize(size); err != nil {
+		return err
+	}
+	for i := range ms {
+		m := &ms[i]
+		first, later := whole.indents(ed.text[m.start:m.linesEnd])
+		m.repl = repl(*m).build(first, later, endsCRLF(ed.text, m.start))
+	}
+	return nil
+}
+
 // lineMatches finds runs of whole lines equal to e.OldText's after norm. It
 // is a Knuth-Morris-Pratt search over lines, so a repetitive file stays
 // linear, and stops after MaxReplacements+1 runs.
-func lineMatches(text string, e Edit, norm func(string) string, reindent bool) []match {
+func lineMatches(text string, e Edit, norm func(string) string) []match {
 	oldLines := splitLines(e.OldText)
 	if len(oldLines) == 0 {
 		return nil
@@ -420,22 +472,16 @@ func lineMatches(text string, e Edit, norm func(string) string, reindent bool) [
 			return true
 		}
 		k = 0 // matches do not overlap
-		first := starts[(i-n+1)%n]
-		crlf := endsCRLF(text, first)
 		// Keep the last line's break unless the old text included one.
-		end := start + len(strings.TrimSuffix(line, "\r"))
-		repl := e.NewText
+		m := match{start: starts[(i-n+1)%n], end: start + len(strings.TrimSuffix(line, "\r")), linesEnd: start + len(line)}
 		if withNL {
 			if start+len(line) < len(text) {
-				end = start + len(line) + 1
+				m.end = start + len(line) + 1
 			} else {
-				repl = strings.TrimSuffix(repl, "\n")
+				m.dropBreak = true
 			}
 		}
-		if reindent {
-			repl = reindentText(repl, oldLines, splitLines(text[first:start+len(line)]))
-		}
-		out = append(out, match{start: first, end: end, repl: fitBreaks(repl, crlf)})
+		out = append(out, m)
 		return len(out) <= MaxReplacements
 	})
 	return out
@@ -445,33 +491,113 @@ func trimTrailing(s string) string { return strings.TrimRight(s, " \t\r") }
 
 func leading(s string) string { return s[:len(s)-len(strings.TrimLeft(s, " \t"))] }
 
-// reindentText fits newText to fileLines, the lines oldLines matched. Its
-// first line takes the file's first indentation; later lines shift by the
-// difference at the first non-blank later line (else the first line's),
-// since text copied from a page often starts after its first indentation.
-func reindentText(newText string, oldLines, fileLines []string) string {
-	from0, to0 := leading(oldLines[0]), leading(fileLines[0])
-	from, to := from0, to0
-	for j := 1; j < len(oldLines) && j < len(fileLines); j++ {
+// lineRepl is one edit's new text, readied once for all its line matches, so
+// that size is constant and build costs what it returns, however much of the
+// new text was indentation the old text shares.
+//
+// The first line takes the file's first indentation; later lines shift by the
+// difference at the first non-blank later line (else the first line's), since
+// text copied from a page often starts after its first indentation. A line
+// only shifts if it is not blank and starts with the old indentation.
+type lineRepl struct {
+	text   string // the new text less the old indentation of the lines that shift
+	shifts []bool // by line of text; nil if not re-indenting
+	first  int    // 1 if the first line shifts
+	later  int    // how many other lines shift
+	guide  int    // the line of the old text that sets the later lines' shift
+	breaks int    // line feeds in text
+	crlf   bool   // text has a CRLF of its own, so fitBreaks leaves it alone
+}
+
+func newLineRepl(newText string, oldLines []string, reindent bool) *lineRepl {
+	r := &lineRepl{text: newText, breaks: strings.Count(newText, "\n"), crlf: strings.Contains(newText, "\r\n")}
+	if !reindent {
+		return r
+	}
+	from0 := leading(oldLines[0])
+	from := from0
+	for j := 1; j < len(oldLines); j++ {
 		if strings.TrimSpace(oldLines[j]) != "" {
-			from, to = leading(oldLines[j]), leading(fileLines[j])
+			from, r.guide = leading(oldLines[j]), j
 			break
 		}
 	}
-	lines := strings.Split(newText, "\n")
-	for i, l := range lines {
-		f, t := from, to
+	r.shifts = make([]bool, r.breaks+1)
+	var b strings.Builder
+	b.Grow(len(newText))
+	for i := 0; ; i++ {
+		l, rest, more := strings.Cut(newText, "\n")
+		f := from
 		if i == 0 {
-			f, t = from0, to0
+			f = from0
 		}
-		if f == t || strings.TrimSpace(l) == "" {
-			continue
+		if strings.HasPrefix(l, f) && strings.TrimSpace(l[len(f):]) != "" {
+			l = l[len(f):]
+			r.shifts[i] = true
+			if i == 0 {
+				r.first = 1
+			} else {
+				r.later++
+			}
 		}
-		if strings.HasPrefix(l, f) {
-			lines[i] = t + l[len(f):]
+		b.WriteString(l)
+		if !more {
+			break
 		}
+		b.WriteByte('\n')
+		newText = rest
 	}
-	return strings.Join(lines, "\n")
+	r.text = b.String()
+	return r
+}
+
+// indents returns the indentation the first line and the later lines take
+// from matched, the file's lines of one match.
+func (r *lineRepl) indents(matched string) (first, later string) {
+	first = leading(matched)
+	for range r.guide {
+		matched = matched[strings.IndexByte(matched, '\n')+1:]
+	}
+	return first, leading(matched)
+}
+
+func (r *lineRepl) added(first, later string) int64 {
+	return int64(r.first)*int64(len(first)) + int64(r.later)*int64(len(later))
+}
+
+// size is the length of what build returns.
+func (r *lineRepl) size(first, later string, crlf bool) int64 {
+	n := int64(len(r.text)) + r.added(first, later)
+	if crlf && !r.crlf {
+		n += int64(r.breaks)
+	}
+	return n
+}
+
+func (r *lineRepl) build(first, later string, crlf bool) string {
+	s := r.text
+	if added := r.added(first, later); added > 0 {
+		var b strings.Builder
+		b.Grow(len(s) + int(added))
+		for i := 0; ; i++ {
+			l, rest, more := strings.Cut(s, "\n")
+			if r.shifts[i] {
+				if i == 0 {
+					b.WriteString(first)
+				} else {
+					b.WriteString(later)
+				}
+			}
+			b.WriteString(l)
+			if !more {
+				break
+			}
+			b.WriteByte('\n')
+			s = rest
+		}
+		s = b.String()
+	}
+	return fitBreaks(s, crlf)
 }
 
 func endsCRLF(text string, off int) bool {
