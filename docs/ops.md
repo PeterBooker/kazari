@@ -419,6 +419,21 @@ Each period is a `lifecycle` setting in the [configuration](configuration.md#lif
 - Shorten `tombstone` to free slugs sooner. It is the window in which old links answer `410` rather than someone else's page.
 - Change `default_grace` to set the grace a `stale` call gets when it names none.
 
+### Service workers
+
+A page can register a service worker on its own host. The browser keeps that worker after the person who uploaded it loses the artifact, so Kazari answers every worker-script request (`Service-Worker: script`) itself. The answer is a small script that replaces the worker and unregisters it, sent instead of the file when:
+
+- the artifact or version is not served: unpublished, soft-deleted, purged or never there;
+- the path holds no file, or a file that is not JavaScript;
+- the artifact is `members` and the visitor has no access;
+- the script's uploader can no longer change the artifact: they are disabled, or under `auth.write_policy: owner` they are neither its owner nor an admin.
+
+The uploader is whoever first put that content at that path in the artifact, so a new version that carries the script on does not change it. To keep a worker after a transfer, or after its author is disabled, publish the script with changed content. Enabling the user again restores the script.
+
+A purged artifact also sends `Clear-Site-Data: "storage"`. Other answers leave the origin's storage alone, because a first registration looks the same as an update check, and a page that registers a missing script would lose its visitors' data on every load.
+
+The browser checks for an update only when it returns to the host, and it runs the check after the navigation. The first visit after the change therefore still passes through the old worker, which can see that request and its response, and a browser that never returns keeps the worker. On a `--v<N>` host, whose files are cached as immutable, a worker that asked for cached updates can put the check off for up to a day. After disabling a user or transferring an artifact, revoke any share link that matters.
+
 ### Unpublished pages
 
 `unpublished` is separate from this chain. It comes from `kazari visibility <slug> unpublished` or `admin hide`. The page answers `404`, nothing is deleted, and nothing moves on until someone deletes it.
@@ -466,7 +481,7 @@ To revoke one OAuth grant instead, which also revokes every token rotated from i
 
 ### Handing over a disabled user's pages
 
-A disabled user's artifacts keep serving. To hand one over to another user, transfer it:
+A disabled user's artifacts keep serving, apart from any [service worker](#service-workers) they uploaded. To hand one over to another user, transfer it:
 
 ```sh
 kazari admin transfer q3-report peter

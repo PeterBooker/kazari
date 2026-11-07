@@ -253,6 +253,22 @@ func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, ver
 	return File{}, nil, Errorf(ErrFileNotFound, "no file %q in version %d", clean, version)
 }
 
+// WorkerControlled reports whether the person who uploaded the version's file
+// at path could still change the artifact, the test a service worker must
+// pass to stay in a browser. It looks at the upload and not the latest
+// version, which carries unchanged files on: a script stays its author's
+// until someone replaces its content.
+func (s *Service) WorkerControlled(ctx context.Context, versionID int64, path string) (bool, error) {
+	o, err := s.store.FileOrigin(ctx, versionID, path)
+	if err != nil {
+		return false, err
+	}
+	if o.Disabled {
+		return false, nil
+	}
+	return s.canWrite(Actor{Handle: o.Author, Admin: o.Admin}, &Artifact{OwnerHandle: o.Owner}), nil
+}
+
 // ResolvePublished returns the serving record for the published version.
 func (s *Service) ResolvePublished(ctx context.Context, slug string) (*Published, error) {
 	p, err := s.store.ResolvePublished(ctx, slug)

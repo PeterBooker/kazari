@@ -698,6 +698,30 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ map[strin
 	return m, nil
 }
 
+func (s *ArtifactStore) FileOrigin(ctx context.Context, versionID int64, path string) (_ *artifact.FileOrigin, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.FileOrigin")
+	defer func() { end(err) }()
+	var o artifact.FileOrigin
+	err = s.db.QueryRowContext(ctx, `
+		SELECT v.created_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
+		FROM version_file cur
+		JOIN version cv ON cv.id = cur.version_id
+		JOIN artifact a ON a.id = cv.artifact_id
+		JOIN user owner ON owner.id = a.owner_id
+		JOIN version v ON v.artifact_id = a.id
+		JOIN version_file vf ON vf.version_id = v.id AND vf.path = cur.path AND vf.blob_hash = cur.blob_hash
+		LEFT JOIN user u ON u.handle = v.created_by
+		WHERE cur.version_id = ? AND cur.path = ?
+		ORDER BY v.number LIMIT 1`, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, artifact.ErrNotFound
+	}
+	if err != nil {
+		return nil, artifactErr("file origin", err)
+	}
+	return &o, nil
+}
+
 func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (_ int64, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.Usage")
 	defer func() { end(err) }()

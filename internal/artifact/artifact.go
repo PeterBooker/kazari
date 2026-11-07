@@ -174,6 +174,15 @@ func (p *Published) Servable() bool {
 	return p.VersionID != 0 && p.UnpublishedAt == nil && p.DeletedAt == nil && p.PurgedAt == nil
 }
 
+// FileOrigin says who first put a file's content at its path in an artifact.
+// A handle with no user (the admin token, the scheduler) counts as an admin.
+type FileOrigin struct {
+	Author   string
+	Admin    bool
+	Disabled bool
+	Owner    string // the artifact's owner now
+}
+
 // ShareLink opens one members-only artifact, on its latest and version
 // hosts, without signing in. Its token, kzs_<prefix>_<secret>, is shown
 // once when the link is created; the store keeps only the token's hash, and

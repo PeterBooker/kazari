@@ -16,6 +16,13 @@ type fakeGate struct {
 	allow    bool
 	allowed  []string // host of each Allow call
 	reserved []string // method host path of each ServeReserved call
+	gateErr  error    // returned by Admits
+}
+
+func (g *fakeGate) Admits(*http.Request, *artifact.Published, string) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.allow, g.gateErr
 }
 
 func (g *fakeGate) Allow(w http.ResponseWriter, _ *http.Request, p *artifact.Published, host string) bool {
