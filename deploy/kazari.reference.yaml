@@ -82,7 +82,7 @@ serve:
 fetch:
   enabled: true                      # false removes import_page and refuses files[].url
   timeout: 15s                       # one request
-  budget: 1m                         # every request of one import together
+  budget: 1m                         # one import in all: its requests and parsing the page
 
 auth:
   write_policy: shared               # shared | owner

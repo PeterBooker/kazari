@@ -36,6 +36,15 @@ const (
 	// maxSkipped bounds the report, since a page can reference any number
 	// of resources that fail.
 	maxSkipped = 100
+	// parseChunk is how much of a page the parser takes between looks at
+	// the context. On a hostile page one tag can cost time in proportion to
+	// the page so far, so this is what bounds the overrun.
+	parseChunk = 64
+)
+
+var (
+	errBudgetExhausted = errors.New("import budget exhausted")
+	errRenderTooLarge  = errors.New("rendering exceeds the file limit")
 )
 
 // Options bounds a snapshot. The limits are the artifact service's, so a
@@ -73,8 +82,39 @@ func New(client *fetch.Client, opts Options) *Taker {
 
 var _ artifact.PageSource = (*Taker)(nil)
 
+// budgetReader gives html.Parse, which takes no context, a page in small
+// reads that fail once ctx is over; the parser stops at a read error.
+type budgetReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (b budgetReader) Read(p []byte) (int, error) {
+	if b.ctx.Err() != nil {
+		return 0, errBudgetExhausted
+	}
+	return b.r.Read(p[:min(len(p), parseChunk)])
+}
+
+// limitWriter refuses a rendering past limit, the largest file a publish
+// takes. A hostile page can render at hundreds of times its size, and what
+// follows the render takes time and memory in proportion to the rendering.
+type limitWriter struct {
+	buf   *bytes.Buffer
+	limit int64
+}
+
+func (l limitWriter) Write(p []byte) (int, error) {
+	if int64(l.buf.Len()+len(p)) > l.limit {
+		return 0, errRenderTooLarge
+	}
+	return l.buf.Write(p)
+}
+
 // Take fetches the page at rawURL and its subresources within the client's
-// budget; what does not fit is left remote and reported.
+// budget; what does not fit is left remote and reported. A page that cannot
+// be parsed within the budget fails, since the parser holds a slot, and so
+// does one that renders past the file limit, which could not publish.
 func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*artifact.Snapshot, error) {
 	select {
 	case t.slots <- struct{}{}:
@@ -99,7 +139,7 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	if err != nil {
 		return nil, artifact.Errorf(artifact.ErrFetchFailed, "%s: %v", rawURL, err)
 	}
-	doc, err := html.Parse(r)
+	doc, err := html.Parse(budgetReader{ctx, r})
 	if err != nil {
 		return nil, artifact.Errorf(artifact.ErrFetchFailed, "%s: %v", rawURL, err)
 	}
@@ -120,12 +160,15 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	declareUTF8(doc)
 	format(doc)
 	var buf bytes.Buffer
-	if err := html.Render(&buf, doc); err != nil {
+	if err := html.Render(limitWriter{&buf, t.opts.MaxFileBytes}, doc); err != nil {
 		w.close()
+		if errors.Is(err, errRenderTooLarge) {
+			return nil, artifact.Errorf(artifact.ErrTooLarge, "%s renders to more than the %d-byte file limit", rawURL, t.opts.MaxFileBytes)
+		}
 		return nil, fmt.Errorf("snapshot: render: %w", err)
 	}
 	page := buf.Bytes()
-	w.report.Outline = outline(doc, page)
+	w.report.Outline = outline(doc, page, outlineMaxScan)
 	if w.report.ScriptsRemoved >= 2 && len(strings.Fields(text(find(doc, atom.Body)))) < 40 {
 		w.report.Notes = append(w.report.Notes, "the page holds little text and relied on scripts that were removed; "+
 			"the site probably renders with JavaScript, so this copy may be a shell")

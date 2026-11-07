@@ -89,6 +89,11 @@ const (
 	tagMaxLen      = 120
 	headingMaxLen  = 80
 	outlineMaxSize = 60
+	// outlineMaxScan is how many bytes of a rendering one outline searches
+	// in all: the limit's worth of searches of a page at maxTextBytes. A
+	// rendering can be far larger than its page, so searches alone do not
+	// bound the work.
+	outlineMaxScan = outlineMaxSize * maxTextBytes
 )
 
 func startTag(n *html.Node) string {
@@ -103,29 +108,40 @@ func startTag(n *html.Node) string {
 
 // outline lists the landmarks of the rendered page in document order. A
 // tag is located by searching the rendering from the previous one on, so
-// the line is right even where several landmarks share a line.
-func outline(doc *html.Node, rendered []byte) []artifact.Landmark {
+// the line is right even where several landmarks share a line. A landmark
+// not found still scanned the rest of the page, so searches count toward
+// the limit whether or not they find one, and bytes searched toward
+// maxScan. It takes no context: a page whose budget ran out on assets keeps
+// its outline, and what is spent shortens the outline instead.
+func outline(doc *html.Node, rendered []byte, maxScan int) []artifact.Landmark {
 	body := find(doc, atom.Body)
 	if body == nil {
 		return nil
 	}
 	var out []artifact.Landmark
-	offset := 0
+	offset, line, searches := 0, 1, 0
 	var visit func(n *html.Node, depth int)
 	visit = func(n *html.Node, depth int) {
-		for c := n.FirstChild; c != nil && len(out) < outlineMaxSize; c = c.NextSibling {
+		for c := n.FirstChild; c != nil && searches < outlineMaxSize && maxScan > 0; c = c.NextSibling {
 			if c.Type != html.ElementNode {
 				continue
 			}
 			if landmarks[c.DataAtom] {
+				searches++
 				tag := startTag(c)
-				if i := bytes.Index(rendered[offset:], []byte(tag)); i >= 0 {
+				rest := rendered[offset:]
+				rest = rest[:min(len(rest), maxScan)]
+				if i := bytes.Index(rest, []byte(tag)); i >= 0 {
+					line += bytes.Count(rest[:i], []byte("\n"))
 					offset += i
+					maxScan -= i
 					out = append(out, artifact.Landmark{
-						Line:    1 + bytes.Count(rendered[:offset], []byte("\n")),
+						Line:    line,
 						Tag:     clip(tag, tagMaxLen),
 						Heading: clip(strings.Join(strings.Fields(heading(c)), " "), headingMaxLen),
 					})
+				} else {
+					maxScan -= len(rest)
 				}
 			}
 			if depth < outlineDepth {
