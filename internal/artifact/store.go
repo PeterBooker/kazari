@@ -82,6 +82,9 @@ type Store interface {
 	// and whose created_at is before the given time.
 	UnreferencedBlobs(ctx context.Context, before time.Time, limit int) ([]string, error)
 
+	// BlobReferenced reports whether any version's file uses the blob.
+	BlobReferenced(ctx context.Context, hash string) (bool, error)
+
 	DeleteBlob(ctx context.Context, hash string) error
 
 	// CreateShareLink adds l to the artifact; hash is the hex SHA-256 of

@@ -1136,6 +1136,16 @@ func testBlobs(t *testing.T, h *harness) {
 		t.Fatalf("after older re-record (-want +got):\n%s", diff)
 	}
 
+	for hash, want := range map[string]bool{free1: false, used: true, hashOf("unknown"): false} {
+		got, err := h.store.BlobReferenced(h.ctx, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("BlobReferenced(%s) = %v, want %v", hash, got, want)
+		}
+	}
+
 	if err := h.store.DeleteBlob(h.ctx, free2); err != nil {
 		t.Fatal(err)
 	}

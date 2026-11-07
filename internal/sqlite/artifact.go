@@ -840,6 +840,18 @@ func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time,
 	return out, nil
 }
 
+func (s *ArtifactStore) BlobReferenced(ctx context.Context, hash string) (_ bool, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.BlobReferenced")
+	defer func() { end(err) }()
+	var referenced bool
+	err = s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM version_file WHERE blob_hash = ?)`, hash).Scan(&referenced)
+	if err != nil {
+		return false, artifactErr("blob referenced", err)
+	}
+	return referenced, nil
+}
+
 func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlob")
 	defer func() { end(err) }()

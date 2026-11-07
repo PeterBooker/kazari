@@ -363,7 +363,7 @@ Kazari runs four maintenance jobs on its own:
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within 7 days of registering |
 
-`gc` spares recent blobs so that a publish in progress never loses one. It also removes temporary files a crash left behind: blob writes and spilled bundles older than an hour.
+`gc` spares recent blobs so that a publish in progress never loses one. The unreferenced blobs it finds are those of purged or hard-deleted artifacts and of a publish that a crash interrupted, since a failed publish deletes its own. It also removes temporary files a crash left behind: blob writes and spilled bundles older than an hour.
 
 Each interval is jittered by ±10%, and the first run comes after a random delay of up to 10% of the interval. A job never runs twice at once.
 
@@ -430,6 +430,8 @@ Each user has a quota, `quota_bytes`. A new user gets `limits.default_user_quota
 Usage is the sum of the sizes of every version of every artifact the user owns, counted logically. A 5 MiB site with ten versions uses 50 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
 
 Kazari checks the owner's quota whenever a version is added, whoever adds it. Under the `shared` write policy, a version that another member adds to someone else's artifact counts against the owner's quota too, and a version that would exceed it gets `403 quota_exceeded`. An admin transfer moves the artifact's usage to the new owner.
+
+A publish that fails keeps nothing: Kazari deletes the blobs it wrote before it answers, except any that a version uses, so a refused publish takes no disk once it has finished. While it runs, it can hold up to the owner's remaining quota or `max_version_bytes`, whichever is smaller.
 
 ### Changing a quota
 
