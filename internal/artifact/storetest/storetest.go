@@ -52,6 +52,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"PurgeAndDeleteTombstone", testPurgeAndDeleteTombstone},
 		{"Blobs", testBlobs},
 		{"ShareLinks", testShareLinks},
+		{"UserShareLinks", testUserShareLinks},
 		{"ShareLinksFollowTheRow", testShareLinksFollowTheRow},
 		{"Census", testCensus},
 	}
@@ -1273,6 +1274,57 @@ func testShareLinks(t *testing.T, h *harness) {
 	wantErr(t, "RevokeShareLink through another artifact",
 		h.store.RevokeShareLink(h.ctx, "other", l2.Prefix, at(0)), artifact.ErrLinkNotFound)
 	wantErr(t, "RevokeShareLink unknown", h.store.RevokeShareLink(h.ctx, "demo", "zzzzzzzz", at(0)), artifact.ErrLinkNotFound)
+}
+
+// A user's links end together, on every artifact and only theirs, and a link
+// revoked earlier keeps its revoke time.
+func testUserShareLinks(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	h.create(t, newArtifact("demo", "alice", at(0)))
+	h.create(t, newArtifact("other", "bob", at(0)))
+	for i, l := range []struct{ slug, prefix, by string }{
+		{"demo", "aaaaaaaa", "alice"}, {"other", "bbbbbbbb", "alice"},
+		{"demo", "cccccccc", "alice"}, {"demo", "dddddddd", "bob"},
+	} {
+		link := &artifact.ShareLink{Prefix: l.prefix, CreatedBy: l.by, CreatedAt: at(0), ExpiresAt: at(time.Hour)}
+		if err := h.store.CreateShareLink(h.ctx, l.slug, link, hashOf(fmt.Sprintf("token-%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.store.RevokeShareLink(h.ctx, "demo", "cccccccc", at(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.store.RevokeUserShareLinks(h.ctx, "alice", at(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.SortFunc(got, func(a, b artifact.RevokedShareLink) int { return strings.Compare(a.Prefix, b.Prefix) })
+	want := []artifact.RevokedShareLink{{Slug: "demo", Prefix: "aaaaaaaa"}, {Slug: "other", Prefix: "bbbbbbbb"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("RevokeUserShareLinks (-want +got):\n%s", diff)
+	}
+	for i, wantAt := range []*time.Time{ptr(at(2 * time.Minute)), ptr(at(2 * time.Minute)), ptr(at(time.Minute)), nil} {
+		slug := "demo"
+		if i == 1 {
+			slug = "other"
+		}
+		l, err := h.store.ShareLink(h.ctx, slug, hashOf(fmt.Sprintf("token-%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(wantAt, l.RevokedAt); diff != "" {
+			t.Errorf("link %s RevokedAt (-want +got):\n%s", l.Prefix, diff)
+		}
+	}
+
+	// Nothing is left to revoke, and a handle with no links is not an error.
+	for _, handle := range []string{"alice", "nobody"} {
+		if got, err := h.store.RevokeUserShareLinks(h.ctx, handle, at(3*time.Minute)); err != nil || len(got) != 0 {
+			t.Fatalf("RevokeUserShareLinks(%s) = %v, %v; want none", handle, got, err)
+		}
+	}
 }
 
 // A link belongs to its artifact row: it outlives a purge, goes with the

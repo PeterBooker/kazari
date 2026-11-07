@@ -151,7 +151,7 @@ Sets one of four visibilities. `members` means that only people signed in to the
 
 ### `create_share_link`
 
-Returns a URL that opens a `members` artifact without signing in. The link works until `expires_in` passes or it is revoked; by default it lasts 7 days, and at most `serve.share_link_max_ttl`.
+Returns a URL that opens a `members` artifact without signing in. The link works until `expires_in` passes or it is revoked, and disabling the user who created it revokes it; by default it lasts 7 days, and at most `serve.share_link_max_ttl`.
 
 The URL is returned only this once. `list_share_links` shows the links without their URLs.
 

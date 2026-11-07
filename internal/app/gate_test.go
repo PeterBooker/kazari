@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/cli"
 )
 
@@ -185,5 +186,87 @@ func TestGatedEndToEnd(t *testing.T) {
 	if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: "open",
 		Files: []api.FileInput{{Path: ".kazari/share", Content: "x"}}}); !cli.IsCode(err, api.CodeInvalidPath) {
 		t.Fatalf("a file under .kazari/ was accepted: %v", err)
+	}
+}
+
+// Disabling a user ends every share link they created, on any member's
+// artifact, including a browser that already opened one. Enabling the user
+// does not bring the links back, and other people's links are untouched.
+func TestDisableRevokesShareLinks(t *testing.T) {
+	in := start(t, testConfig(t))
+	addr := in.app.Addrs().HTTP
+	ctx := context.Background()
+	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	member := func(handle string) *cli.Client {
+		t.Helper()
+		if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: handle}); err != nil {
+			t.Fatal(err)
+		}
+		issued, err := admin.IssueKey(ctx, handle, api.IssueKeyRequest{Label: "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	}
+	owner, leaver := member("owner"), member("leaver")
+	if _, err := owner.Create(ctx, api.CreateArtifactRequest{Slug: "team", Visibility: "members",
+		Files: []api.FileInput{{Path: "index.html", Content: "team page"}}}); err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := leaver.CreateShareLink(ctx, "team", "kept", "90d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewers, err := owner.CreateShareLink(ctx, "team", "reviewer", "2d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, reviewer := newBrowser(t, addr), newBrowser(t, addr)
+	opened.follow(opened.get(theirs.URL), "link before the disable")
+	reviewer.follow(reviewer.get(reviewers.URL), "reviewer's link")
+	wantStatus(t, opened.get("http://team.localhost/"), http.StatusOK, "page before the disable")
+
+	disabled := true
+	if _, err := admin.UpdateUser(ctx, "leaver", api.UpdateUserRequest{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	gone := func(when string) {
+		t.Helper()
+		wantStatus(t, opened.get("http://team.localhost/"), http.StatusFound, "open browser "+when)
+		fresh := newBrowser(t, addr)
+		wantStatus(t, fresh.get(theirs.URL), http.StatusForbidden, "opening the link "+when)
+		wantStatus(t, fresh.get("http://team.localhost/"), http.StatusFound, "fresh browser "+when)
+	}
+	gone("after the disable")
+	wantStatus(t, reviewer.get("http://team.localhost/"), http.StatusOK, "another member's link")
+
+	disabled = false
+	if _, err := admin.UpdateUser(ctx, "leaver", api.UpdateUserRequest{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	gone("after enabling the user")
+
+	links, err := owner.ListShareLinks(ctx, "team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range links.Items {
+		if want := l.Prefix == reviewers.ShareLink.Prefix; l.Active != want {
+			t.Errorf("link by %s: active = %v, want %v", l.CreatedBy, l.Active, want)
+		}
+	}
+	events, err := admin.Audit(ctx, "", "team", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revokes []api.AuditEvent
+	for _, ev := range events {
+		if ev.Action == audit.ShareLinkRevoke {
+			revokes = append(revokes, ev)
+		}
+	}
+	if len(revokes) != 1 || revokes[0].Actor != "admin" ||
+		revokes[0].Details["prefix"] != theirs.ShareLink.Prefix || revokes[0].Details["created_by"] != "leaver" {
+		t.Errorf("share_link.revoke events = %+v, want one by the admin", revokes)
 	}
 }

@@ -225,7 +225,7 @@ To sign out, open `/.kazari/signout` on a members page the browser has open, for
 
 ### Share links
 
-Share links are for people who cannot sign in. Opening one stores its token as the view cookie on that host until the link expires, then redirects to `/`. A share link looks like this:
+Share links are for people who cannot sign in. Opening one stores its token as the view cookie on that host until the link expires, then redirects to `/`. Disabling the user who created a link [revokes it](#revoking-everything-a-user-holds). A share link looks like this:
 
 ```text
 https://<slug>.<base>/.kazari/share?token=kzs_...
@@ -310,7 +310,7 @@ To cut off a user completely, disable them:
 kazari admin users update jdoe --disable
 ```
 
-This revokes their API keys and OAuth grants, ends their browser sessions and refuses their sign-ins. Enabling the user again restores none of them. [Disabling users](ops.md#disabling-users-and-revoking-access) covers revoking single API keys and handing over the user's pages.
+This revokes their API keys, OAuth grants and every share link they created, ends their browser sessions and refuses their sign-ins. Links they gave to outside reviewers end too; a reviewer who still needs the page needs a new link from someone else. Enabling the user again restores none of them. [Disabling users](ops.md#disabling-users-and-revoking-access) covers revoking single API keys and handing over the user's pages.
 
 ### Revoking a share link
 
