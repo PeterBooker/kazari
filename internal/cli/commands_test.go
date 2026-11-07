@@ -807,6 +807,67 @@ func TestRunGetTerminalSafe(t *testing.T) {
 	}
 }
 
+// A failed edit quotes the current lines of a file another member may have
+// written, so the error text is as untrusted as a table cell.
+func TestErrorMessageTerminalSafe(t *testing.T) {
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+		"POST /v1/artifacts/demo/edit": replyWith(409, api.ErrorResponse{Error: api.Error{
+			Code:    "anchor_mismatch\x1b[2K",
+			Message: "line 1 is now 1:e9af|<h1>x\x1b]52;c;QQ==\x07\x1b[1A\r\u202ey\u009bz</h1>\nread the file again",
+		}}),
+	})
+	for _, args := range [][]string{
+		{"edit", "demo", "index.html", "--start", "1:0000", "--new", "x"},
+		{"--json", "edit", "demo", "index.html", "--start", "1:0000", "--new", "x"},
+	} {
+		r := runCLI(t, nil, append([]string{"--url", srv.URL, "--token", "t"}, args...)...)
+		if r.code != exitError {
+			t.Fatalf("%v: %+v", args, r)
+		}
+		want := "kazari: anchor_mismatch\uFFFD[2K: line 1 is now 1:e9af|<h1>x\uFFFD]52;c;QQ==\uFFFD\uFFFD[1A\uFFFD\uFFFDy\uFFFDz</h1>\nread the file again\n"
+		if r.stderr != want {
+			t.Errorf("%v: stderr\n got %q\nwant %q", args, r.stderr, want)
+		}
+	}
+}
+
+// A body that is not the API's error shape is printed as the message too.
+func TestErrorBodyTerminalSafe(t *testing.T) {
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+		"GET /v1/artifacts/demo": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			io.WriteString(w, "bad\x1b[2J gateway\xff")
+		},
+	})
+	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "get", "demo")
+	if want := "kazari: http_502: bad\uFFFD[2J gateway\uFFFD\n"; r.code != exitError || r.stderr != want {
+		t.Errorf("code %d, stderr\n got %q\nwant %q", r.code, r.stderr, want)
+	}
+}
+
+// The import report holds URLs and text taken from a third-party page.
+func TestImportReportTerminalSafe(t *testing.T) {
+	res := api.PublishResult{URL: "https://demo.art.test", Import: &api.ImportReport{
+		Source: "https://src.test/\x1b[2J",
+		Skipped: []api.SkippedFetch{
+			{URL: "https://src.test/a\u009b31m\u202egnp.exe", Reason: "too large\x07"},
+		},
+		Notes: []string{"note\x1b]0;title\x07 text"},
+	}}
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{"POST /v1/artifacts": replyWith(201, res)})
+	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "import", "--slug", "demo", "https://src.test/")
+	if r.code != 0 {
+		t.Fatalf("import: %+v", r)
+	}
+	want := "https://demo.art.test\n" +
+		"1 files from https://src.test/\uFFFD[2J; 0 scripts removed\n" +
+		"left remote: https://src.test/a\uFFFD31m\uFFFDgnp.exe (too large\uFFFD)\n" +
+		"note: note\uFFFD]0;title\uFFFD text\n"
+	if r.stdout != want {
+		t.Errorf("stdout\n got %q\nwant %q", r.stdout, want)
+	}
+}
+
 func TestRunEdit(t *testing.T) {
 	var got api.EditRequest
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{

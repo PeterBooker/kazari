@@ -177,7 +177,7 @@ func (r *runner) exit(err error) int {
 		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
 		return exitUsage
 	case errors.As(err, &he):
-		fmt.Fprintf(r.stderr, "kazari: %s: %s\n", he.Err.Code, he.Err.Message)
+		fmt.Fprintf(termSafe{r.stderr}, "kazari: %s: %s\n", he.Err.Code, he.Err.Message)
 		return exitError
 	default:
 		fmt.Fprintf(r.stderr, "kazari: %v\n", err)
