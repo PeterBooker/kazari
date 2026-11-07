@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -349,5 +350,205 @@ func TestReadZipCorruptEntry(t *testing.T) {
 	_, err = readAllZip(t, raw, 100)
 	if !errors.Is(err, artifact.ErrInvalidArgument) || !strings.Contains(err.Error(), "a.txt") {
 		t.Fatalf("err = %v, want invalid_argument naming the entry", err)
+	}
+}
+
+// sharedRecord is one central directory record of sharedZip. compressed, when
+// set, replaces the size of the shared stream and is carried in a zip64 extra.
+type sharedRecord struct {
+	name       string
+	compressed uint64
+}
+
+// sharedZip builds what zip.Writer cannot: one local header and one deflate
+// stream of streamBytes bytes that inflates to nothing, pad unused bytes, and
+// a central directory whose records all point at that header. archive/zip
+// reads each record as an entry of its own.
+func sharedZip(t *testing.T, streamBytes, pad int, records []sharedRecord) []byte {
+	t.Helper()
+	const finalBlock = 2
+	emptyBlock := []byte{0x00, 0x00, 0x00, 0xff, 0xff}
+	if streamBytes < finalBlock || (streamBytes-finalBlock)%len(emptyBlock) != 0 {
+		t.Fatalf("stream of %d bytes cannot be built from empty blocks", streamBytes)
+	}
+	stream := append(bytes.Repeat(emptyBlock, (streamBytes-finalBlock)/len(emptyBlock)), 0x03, 0x00)
+
+	le := binary.LittleEndian
+	raw := le.AppendUint32(nil, 0x04034b50)         // local file header
+	raw = le.AppendUint16(raw, 20)                  // version needed
+	raw = le.AppendUint16(raw, 0)                   // flags
+	raw = le.AppendUint16(raw, zip.Deflate)         // method
+	raw = le.AppendUint32(raw, 0)                   // time and date
+	raw = le.AppendUint32(raw, 0)                   // CRC-32
+	raw = le.AppendUint32(raw, uint32(len(stream))) // compressed size
+	raw = le.AppendUint32(raw, 0)                   // uncompressed size
+	raw = le.AppendUint16(raw, 1)                   // name length
+	raw = le.AppendUint16(raw, 0)                   // extra length
+	raw = append(append(raw, 'a'), stream...)
+	raw = append(raw, make([]byte, pad)...)
+
+	dirAt := len(raw)
+	for _, r := range records {
+		size, extra := uint32(len(stream)), []byte(nil)
+		if r.compressed != 0 {
+			size = 0xffffffff
+			extra = le.AppendUint64(le.AppendUint16(le.AppendUint16(nil, 0x0001), 8), r.compressed)
+		}
+		raw = le.AppendUint32(raw, 0x02014b50)          // central directory header
+		raw = le.AppendUint16(raw, 45)                  // version made by
+		raw = le.AppendUint16(raw, 45)                  // version needed
+		raw = le.AppendUint16(raw, 0)                   // flags
+		raw = le.AppendUint16(raw, zip.Deflate)         // method
+		raw = le.AppendUint32(raw, 0)                   // time and date
+		raw = le.AppendUint32(raw, 0)                   // CRC-32
+		raw = le.AppendUint32(raw, size)                // compressed size
+		raw = le.AppendUint32(raw, 0)                   // uncompressed size
+		raw = le.AppendUint16(raw, uint16(len(r.name))) // name length
+		raw = le.AppendUint16(raw, uint16(len(extra)))  // extra length
+		raw = le.AppendUint16(raw, 0)                   // comment length
+		raw = le.AppendUint32(raw, 0)                   // disk and internal attributes
+		raw = le.AppendUint32(raw, 0)                   // external attributes
+		raw = le.AppendUint32(raw, 0)                   // local header offset
+		raw = append(append(raw, r.name...), extra...)
+	}
+	dirBytes := len(raw) - dirAt
+	raw = le.AppendUint32(raw, 0x06054b50) // end of central directory
+	raw = le.AppendUint32(raw, 0)          // disk numbers
+	raw = le.AppendUint16(raw, uint16(len(records)))
+	raw = le.AppendUint16(raw, uint16(len(records)))
+	raw = le.AppendUint32(raw, uint32(dirBytes))
+	raw = le.AppendUint32(raw, uint32(dirAt))
+	return le.AppendUint16(raw, 0) // comment length
+}
+
+func sharedRecords(n int) []sharedRecord {
+	records := make([]sharedRecord, n)
+	for i := range records {
+		records[i].name = fmt.Sprintf("f%04d", i)
+	}
+	return records
+}
+
+// countingReaderAt counts the bytes read through it, which is the input every
+// entry's inflate consumes.
+type countingReaderAt struct {
+	r *bytes.Reader
+	n int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.r.ReadAt(p, off)
+	c.n += int64(n)
+	return n, err
+}
+
+// Entries that overlap in the archive would be inflated over the same bytes
+// once each, at a cost the output budget never sees when they inflate to
+// nothing.
+func TestReadZipRejectsOverlappingEntries(t *testing.T) {
+	const stream = 4097 // 819 empty blocks and the final one
+	wrapping := []sharedRecord{
+		{name: "a"},
+		{name: "dir/", compressed: ^uint64(stream) + 1},
+		{name: "b"},
+	}
+	tests := []struct {
+		name    string
+		records []sharedRecord
+	}{
+		{"two records share one header", sharedRecords(2)},
+		{"many records share one header", sharedRecords(64)},
+		{"a skipped record wraps the sum", wrapping},
+		{"a size past the end of the archive", []sharedRecord{{name: "a", compressed: 1 << 40}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readAllZip(t, sharedZip(t, stream, 0, tt.records), 100)
+			if !errors.Is(err, artifact.ErrInvalidArgument) || !strings.Contains(err.Error(), "overlap") {
+				t.Fatalf("readZip listed %d files, err = %v, want invalid_argument about overlap", len(got), err)
+			}
+		})
+	}
+}
+
+// Whatever an archive's records claim, reading its entries consumes no more
+// than the archive and a local header per entry.
+func TestReadZipInflateInputBoundedByArchive(t *testing.T) {
+	const (
+		stream      = 64002 // 12800 empty blocks and the final one
+		localHeader = 30
+	)
+	tests := []struct {
+		name         string
+		stream, pad  int
+		records      int
+		wantRejected bool
+	}{
+		{name: "one record", stream: stream, records: 1},
+		{name: "records repeat the stream", stream: stream, records: 64, wantRejected: true},
+		{name: "records that fit the archive", stream: 1002, pad: 8192, records: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := sharedZip(t, tt.stream, tt.pad, sharedRecords(tt.records))
+			ra := &countingReaderAt{r: bytes.NewReader(raw)}
+			files, err := readZip(ra, int64(len(raw)), 100)
+			if tt.wantRejected != (err != nil) {
+				if err == nil {
+					drained := drainZip(t, ra, files)
+					t.Fatalf("readZip accepted %d records; draining them read %d bytes of a %d-byte archive, %.1f times over",
+						len(files), drained, len(raw), float64(drained)/float64(len(raw)))
+				}
+				t.Fatalf("readZip: %v", err)
+			}
+			if err != nil {
+				return
+			}
+			if drained, limit := drainZip(t, ra, files), int64(len(raw)+tt.records*localHeader); drained > limit {
+				t.Errorf("draining %d entries read %d bytes, limit %d", len(files), drained, limit)
+			}
+		})
+	}
+}
+
+// drainZip reads every entry to the end and returns the bytes that took.
+func drainZip(t *testing.T, ra *countingReaderAt, files []artifact.FileInput) int64 {
+	t.Helper()
+	ra.n = 0
+	for _, f := range files {
+		n, err := io.Copy(io.Discard, f.Content)
+		if err != nil {
+			t.Fatalf("%s: %v", f.Path, err)
+		}
+		if n != 0 {
+			t.Fatalf("%s: inflated to %d bytes, want none", f.Path, n)
+		}
+	}
+	return ra.n
+}
+
+// Ordinary archives are not touched by the overlap check: empty files take no
+// bytes at all, and directories and links still count towards the sum.
+func TestReadZipKeepsOrdinaryArchives(t *testing.T) {
+	raw := zipArchive(t, []zipFile{
+		{name: "empty-1"},
+		{name: "empty-2"},
+		{name: "assets/", mode: os.ModeDir | 0o755},
+		{name: "assets/random.bin", body: "incompressible \x8f\x13\xd2\x7a\x01\xe6"},
+		{name: "link", body: "assets/random.bin", mode: os.ModeSymlink | 0o777},
+		{name: "index.html", body: strings.Repeat("<p>hi</p>", 1000)},
+	})
+	got, err := readAllZip(t, raw, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"empty-1":           "",
+		"empty-2":           "",
+		"assets/random.bin": "incompressible \x8f\x13\xd2\x7a\x01\xe6",
+		"index.html":        strings.Repeat("<p>hi</p>", 1000),
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("readZip (-want +got):\n%s", diff)
 	}
 }
