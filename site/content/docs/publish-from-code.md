@@ -144,7 +144,7 @@ jobs:
         run: kazari stale "$SLUG" --grace 72h
 ```
 
-On every push to a pull request, the workflow builds the site and publishes it to a slug made from the pull request's number, such as `myapp-pr-42`. When the pull request closes, it marks the preview stale with a 72-hour grace period.
+On every push to a pull request, the workflow builds the site and publishes it to a slug made from the pull request's number, such as `myapp-pr-42`. When the pull request closes, it marks the preview stale with a 72-hour grace period. A key without the delete scope can do this only to artifacts its user owns, which is every preview it created; a slug that another member created first answers `403`.
 
 Each push becomes a new version, so reviewers can link to `myapp-pr-42--v3` and know it will not change under them. For the main branch, publish to a fixed slug the same way, without the retire step.
 

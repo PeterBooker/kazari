@@ -64,7 +64,7 @@ func newEnv(t testing.TB) *env {
 	}
 	t.Cleanup(func() { db.Close() })
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO user (handle, role, quota_bytes, created_at) VALUES ('alice', 'member', 0, ?)`,
+		`INSERT INTO user (handle, role, quota_bytes, created_at) VALUES ('alice', 'member', 0, ?1), ('carol', 'member', 0, ?1)`,
 		time.Now().UnixNano()); err != nil {
 		t.Fatal(err)
 	}
@@ -748,4 +748,24 @@ func TestBeginUploadArchive(t *testing.T) {
 	if !strings.HasPrefix(msg, "too_large: ") {
 		t.Errorf("over the limit: %q", msg)
 	}
+}
+
+// mark_stale from a credential without artifacts:delete reaches only its
+// user's own artifacts.
+func TestMarkStaleWithoutDeleteScope(t *testing.T) {
+	e := newEnv(t)
+	rw := []string{auth.ScopeRead, auth.ScopeWrite}
+	alice := e.connect(t, member)
+	carol := e.connect(t, auth.Principal{Handle: "carol", Scopes: rw, Source: auth.SourceAPIKey})
+	aliceCI := e.connect(t, auth.Principal{Handle: "alice", Scopes: rw, Source: auth.SourceAPIKey})
+	page := []map[string]any{{"path": "index.html", "content": "<h1>x</h1>"}}
+	ok[api.PublishResult](t, alice, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "A page.", "files": page})
+	ok[api.PublishResult](t, carol, "create_artifact", map[string]any{"slug": "preview", "name": "Preview", "description": "A page.", "files": page})
+
+	msg := fails(t, carol, "mark_stale", map[string]any{"slug": "demo", "grace": "72h"})
+	if !strings.Contains(msg, "forbidden") || !strings.Contains(msg, "artifacts:delete") {
+		t.Errorf("mark_stale of another member's artifact = %q", msg)
+	}
+	ok[api.StaleResult](t, carol, "mark_stale", map[string]any{"slug": "preview", "grace": "72h"})
+	ok[api.StaleResult](t, aliceCI, "mark_stale", map[string]any{"slug": "demo", "grace": "72h"})
 }

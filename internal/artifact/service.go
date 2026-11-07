@@ -378,6 +378,10 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 				return Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 			}
+			// The mark would soft-delete the artifact again at the next sweep.
+			if restoring && !req.KeepStale {
+				a.StaleAt, a.ExpiresAt = nil, nil
+			}
 			return nil
 		})
 		if err != nil {

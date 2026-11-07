@@ -541,6 +541,44 @@ func TestUpdateWithUpload(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/demo/files/gone.txt"), token: e.alice}), 404, api.CodeFileNotFound)
 }
 
+// A key without artifacts:delete retires its user's own artifacts, as the CI
+// preview workflow does, and nobody else's.
+func TestStaleWithoutDeleteScope(t *testing.T) {
+	e := newEnv(t, config{})
+	rw := []string{auth.ScopeRead, auth.ScopeWrite}
+	carol := e.member("carol", rw)
+	aliceCI := e.member("alice", rw)
+	e.create(e.alice, "demo")
+	e.create(carol, "preview")
+	stale := func(token, slug string) *http.Response {
+		return e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts/" + slug + "/stale"), token: token,
+			body: bytes.NewReader(mustJSON(e.t, api.StaleRequest{Grace: "72h"})), contentType: "application/json"})
+	}
+
+	e.apiErr(stale(carol, "demo"), http.StatusForbidden, api.CodeForbidden)
+	name := "carol was here"
+	e.call(http.MethodPatch, e.u("/v1/artifacts/demo"), carol, api.UpdateArtifactRequest{Name: &name}, http.StatusOK, nil)
+	e.apiErr(stale(carol, "demo"), http.StatusForbidden, api.CodeForbidden)
+	var d api.ArtifactDetail
+	e.call(http.MethodGet, e.u("/v1/artifacts/demo"), e.alice, nil, http.StatusOK, &d)
+	if d.Artifact.StaleAt != nil || d.Artifact.ExpiresAt != nil {
+		t.Errorf("refused call left a mark: %+v", d.Artifact)
+	}
+
+	e.expect(stale(carol, "preview"), http.StatusOK, nil)
+	e.expect(stale(aliceCI, "demo"), http.StatusOK, nil)
+	e.call(http.MethodDelete, e.u("/v1/artifacts/demo/stale"), aliceCI, nil, http.StatusOK, nil)
+	e.expect(stale(e.member("dave", nil), "demo"), http.StatusOK, nil)
+	if _, err := e.users.CreateUser(e.ctx, user.CreateUserRequest{Handle: "root", Role: user.RoleAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	_, admin, err := e.users.IssueKey(e.ctx, "root", "test", auth.AllScopes, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.expect(stale(admin, "demo"), http.StatusOK, nil)
+}
+
 func TestDelete(t *testing.T) {
 	e := newEnv(t, config{})
 	noDelete := e.member("alice", []string{auth.ScopeRead, auth.ScopeWrite})

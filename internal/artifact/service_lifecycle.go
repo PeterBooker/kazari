@@ -113,6 +113,10 @@ func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version
 
 // MarkStale starts the grace period after which Sweep soft-deletes the
 // artifact. grace <= 0 uses Options.DefaultGrace. The page keeps serving.
+// An expiry ends in a purge, so on an artifact the actor does not own it
+// takes the delete scope as well as the write policy; owners may retire
+// their own artifacts without it, as CI keys do. Being involved is not
+// owning: any update makes an actor involved.
 func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace time.Duration) (_ *Artifact, err error) {
 	ctx, span := s.span(ctx, "artifact.mark_stale", slug)
 	defer func() { endSpan(span, err) }()
@@ -122,6 +126,9 @@ func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace
 	now := s.now()
 	expires := now.Add(grace)
 	return s.modify(ctx, actor, slug, false, audit.ArtifactStale, func(a *Artifact) (map[string]string, error) {
+		if !actor.Admin && !actor.CanDelete && actor.Handle != a.OwnerHandle {
+			return nil, Errorf(ErrForbidden, "marking %q stale needs the artifacts:delete scope or ownership", slug)
+		}
 		a.StaleAt, a.ExpiresAt = &now, &expires
 		return map[string]string{"expires_at": expires.Format(time.RFC3339)}, nil
 	})
