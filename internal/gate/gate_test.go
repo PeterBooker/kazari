@@ -392,3 +392,33 @@ func TestInsecureCookies(t *testing.T) {
 		t.Fatal("plain view cookie refused in insecure mode")
 	}
 }
+
+// Admits decides as Allow does and leaves the response to its caller.
+func TestAdmits(t *testing.T) {
+	fx := newFixture()
+	for _, tc := range []struct {
+		name, cookie string
+		want         bool
+	}{
+		{"no cookie", "", false},
+		{"view session", viewToken, true},
+		{"share link", linkToken, true},
+		{"unknown session", "someone-elses-token", false},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "https://team.art.test/sw.js", nil)
+		if tc.cookie != "" {
+			r.AddCookie(&http.Cookie{Name: "__Host-kazari_view", Value: tc.cookie})
+		}
+		got, err := fx.g.Admits(r, team, "team")
+		if err != nil || got != tc.want {
+			t.Errorf("%s: Admits = %t, %v, want %t", tc.name, got, err, tc.want)
+		}
+	}
+
+	fx.sessions.err = errors.New("database is down")
+	r := httptest.NewRequest(http.MethodGet, "https://team.art.test/sw.js", nil)
+	r.AddCookie(&http.Cookie{Name: "__Host-kazari_view", Value: viewToken})
+	if _, err := fx.g.Admits(r, team, "team"); err == nil {
+		t.Error("a failed check admits or refuses without an error")
+	}
+}
