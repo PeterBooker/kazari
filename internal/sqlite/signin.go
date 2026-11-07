@@ -81,8 +81,8 @@ func (s *OAuthStore) CreateSession(ctx context.Context, sess *oauth.Session) (er
 		if err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO signin_session (token_hash, user_id, key_prefix, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?)`, sess.Hash, uid, sess.KeyPrefix, toNanos(sess.CreatedAt), toNanos(sess.ExpiresAt))
+		res, err := tx.ExecContext(ctx, `INSERT INTO signin_session (token_hash, browser, user_id, key_prefix, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?)`, sess.Hash, sess.Browser, uid, sess.KeyPrefix, toNanos(sess.CreatedAt), toNanos(sess.ExpiresAt))
 		if err != nil {
 			return err
 		}
@@ -95,7 +95,7 @@ func (s *OAuthStore) CreateSession(ctx context.Context, sess *oauth.Session) (er
 	return nil
 }
 
-const sessionSelect = `SELECT s.id, s.token_hash, u.handle, s.key_prefix, s.created_at, s.expires_at
+const sessionSelect = `SELECT s.id, s.token_hash, s.browser, u.handle, s.key_prefix, s.created_at, s.expires_at
 	FROM signin_session s JOIN user u ON u.id = s.user_id`
 
 func (s *OAuthStore) getSession(ctx context.Context, where string, arg any) (*oauth.Session, error) {
@@ -104,7 +104,7 @@ func (s *OAuthStore) getSession(ctx context.Context, where string, arg any) (*oa
 		created, expires int64
 	)
 	err := s.db.QueryRowContext(ctx, sessionSelect+" WHERE "+where, arg).Scan(
-		&sess.ID, &sess.Hash, &sess.UserHandle, &sess.KeyPrefix, &created, &expires)
+		&sess.ID, &sess.Hash, &sess.Browser, &sess.UserHandle, &sess.KeyPrefix, &created, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = oauth.ErrNotFound
 	}
@@ -130,12 +130,13 @@ func (s *OAuthStore) GetSessionByID(ctx context.Context, id int64) (_ *oauth.Ses
 	return s.getSession(ctx, "s.id = ?", id)
 }
 
-// DeleteSession implements oauth.Store. Its codes and view sessions go by
+// DeleteSession implements oauth.Store. The codes and view sessions go by
 // cascade.
 func (s *OAuthStore) DeleteSession(ctx context.Context, id int64) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.DeleteSession")
 	defer func() { end(err) }()
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM signin_session WHERE id = ?`, id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM signin_session WHERE id = ?
+		OR browser IN (SELECT browser FROM signin_session WHERE id = ? AND browser != '')`, id, id); err != nil {
 		return fmt.Errorf("sqlite: delete session: %w", err)
 	}
 	return nil

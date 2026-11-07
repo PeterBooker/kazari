@@ -29,7 +29,8 @@ const (
 
 	// Cookie names before the __Host- prefix: the session on the MCP host,
 	// and the per-browser value that binds a pending identity-provider
-	// sign-in to the browser that started it.
+	// sign-in to the browser that started it and links the sessions of one
+	// browser, so that sign-out ends them together.
 	sessionCookie = "kazari_session"
 	signInCookie  = "kazari_signin"
 
@@ -115,23 +116,20 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The binding cookie is per browser, so several tabs signing in at
+	// once each complete, and their sessions end together.
+	binding := s.signInBinding(r)
 	if s.idp == nil {
 		if s.keys == nil {
 			s.message(w, http.StatusNotFound, "Sign-in unavailable", "This instance has no way to sign in.", "")
 			return
 		}
+		// The form has no expiry, so the cookie outlasts a pending sign-in.
+		s.setNamedCookie(w, s.named(signInCookie), binding, s.opts.SessionTTL)
 		s.renderSignIn(w, http.StatusOK, t, "")
 		return
 	}
 
-	// The binding cookie is per browser, so several tabs signing in at
-	// once each complete.
-	binding := ""
-	if ck, err := r.Cookie(s.named(signInCookie)); err == nil && len(ck.Value) == tokenLen {
-		binding = ck.Value
-	} else {
-		binding = randomString(secretBytes)
-	}
 	verifier := oauth2.GenerateVerifier()
 	req := &SignInRequest{
 		ID:               signInStatePrefix + randomString(secretBytes),
@@ -150,6 +148,15 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setNamedCookie(w, s.named(signInCookie), binding, s.opts.RequestTTL)
 	http.Redirect(w, r, s.idp.AuthURL(req.ID, req.Nonce, oauth2.S256ChallengeFromVerifier(verifier)), http.StatusFound)
+}
+
+// signInBinding returns the browser's sign-in cookie value, or a new one
+// when it has none.
+func (s *Service) signInBinding(r *http.Request) string {
+	if ck, err := r.Cookie(s.named(signInCookie)); err == nil && len(ck.Value) == tokenLen {
+		return ck.Value
+	}
+	return randomString(secretBytes)
 }
 
 // renderSignIn shows the API-key sign-in form, used without an identity
@@ -213,7 +220,7 @@ func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
 		s.renderSignIn(w, http.StatusUnauthorized, t, "That API key was not accepted.")
 		return
 	}
-	sess, err := s.startSession(ctx, w, p.Handle, p.KeyID)
+	sess, err := s.startSession(ctx, w, s.signInBinding(r), p.Handle, p.KeyID)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
@@ -291,7 +298,7 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signedIn(ctx, viaOIDC, signInOK)
-	sess, err := s.startSession(ctx, w, u.Handle, "")
+	sess, err := s.startSession(ctx, w, ck.Value, u.Handle, "")
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
@@ -300,9 +307,11 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 	s.sendToHost(w, r, sess, t)
 }
 
-// startSession stores a session for handle and sets its cookie. A session
-// opened with an API key ends no later than the key.
-func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, handle, keyPrefix string) (*Session, error) {
+// startSession stores a session for handle in the browser that binding
+// names and sets both cookies, the binding lasting as long as the session
+// so that a tab finishing later joins it. A session opened with an API key
+// ends no later than the key.
+func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, binding, handle, keyPrefix string) (*Session, error) {
 	now := s.now()
 	expires := now.Add(s.opts.SessionTTL)
 	via := "oidc"
@@ -320,11 +329,12 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, handl
 		}
 	}
 	token := randomString(secretBytes)
-	sess := &Session{Hash: hashSecret(token), UserHandle: handle, KeyPrefix: keyPrefix, CreatedAt: now, ExpiresAt: expires}
+	sess := &Session{Hash: hashSecret(token), Browser: hashSecret(binding), UserHandle: handle, KeyPrefix: keyPrefix, CreatedAt: now, ExpiresAt: expires}
 	if err := s.store.CreateSession(ctx, sess); err != nil {
 		return nil, err
 	}
 	s.setNamedCookie(w, s.named(sessionCookie), token, expires.Sub(now))
+	s.setNamedCookie(w, s.named(signInCookie), binding, expires.Sub(now))
 	details := map[string]string{"via": via}
 	if keyPrefix != "" {
 		details["key_prefix"] = keyPrefix
@@ -461,9 +471,10 @@ func (s *Service) Viewer(ctx context.Context, host, token string) (string, error
 	return v.UserHandle, nil
 }
 
-// SignOut ends the sign-in session behind the view session token on host,
-// and with it every view session it opened, on every host. An unknown
-// token is not an error.
+// SignOut ends the sign-in session behind the view session token on host
+// and every other session of the same browser, such as one finished in a
+// second tab, and with them every view session they opened, on every host.
+// An unknown token is not an error.
 func (s *Service) SignOut(ctx context.Context, host, token string) error {
 	v, err := s.viewSession(ctx, host, token)
 	if errors.Is(err, ErrNotFound) {

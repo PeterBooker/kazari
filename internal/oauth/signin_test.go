@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -326,6 +327,162 @@ func TestViewSessionEnds(t *testing.T) {
 			t.Fatalf("Viewer after re-enabling = %v", err)
 		}
 	})
+}
+
+// signInTabs opens the sign-in step for each host before any finishes, as
+// tabs of one browser do, then finishes each and returns its view token. A
+// key signs in on the form, no key at the identity provider. beforeFinish,
+// if set, runs before each finish.
+func (e *env) signInTabs(key string, beforeFinish func(), hosts ...string) []string {
+	e.t.Helper()
+	states := make([]string, len(hosts))
+	for i, host := range hosts {
+		resp, _ := e.get(signInQuery(host, "/"))
+		if key == "" {
+			states[i] = location(e.t, resp).Query().Get("state")
+		}
+	}
+	tokens := make([]string, len(hosts))
+	for i, host := range hosts {
+		if beforeFinish != nil {
+			beforeFinish()
+		}
+		var (
+			resp *http.Response
+			body string
+		)
+		if key != "" {
+			resp, body = e.keySignIn(host, key, nil)
+		} else {
+			resp, body = e.get("/oauth/callback?" + url.Values{"code": {"upstream-code"}, "state": {states[i]}}.Encode())
+		}
+		if resp.StatusCode != http.StatusFound {
+			e.t.Fatalf("finishing %s: status %d: %s", host, resp.StatusCode, body)
+		}
+		v, err := e.svc.Redeem(context.Background(), hostCode(e.t, resp, host), host, browserNonce)
+		if err != nil {
+			e.t.Fatalf("Redeem for %s: %v", host, err)
+		}
+		tokens[i] = v.Token
+	}
+	return tokens
+}
+
+// wantSignedOut checks that no view of hosts still works and that the
+// sign-in host asks the browser to sign in again.
+func (e *env) wantSignedOut(hosts, tokens []string) {
+	e.t.Helper()
+	for i, host := range hosts {
+		if who, err := e.svc.Viewer(context.Background(), host, tokens[i]); !errors.Is(err, oauth.ErrNotFound) {
+			e.t.Errorf("view on %s after sign-out: Viewer = %q, %v", host, who, err)
+		}
+		resp, body := e.get(signInQuery(host, "/"))
+		if resp.StatusCode == http.StatusOK && strings.Contains(body, `name="api_key"`) {
+			continue
+		}
+		if loc := location(e.t, resp); loc.Host != "idp.example" {
+			e.t.Errorf("%s reopened with no prompt after sign-out: %s", host, loc)
+		}
+	}
+}
+
+// Sign-out ends every sign-in of the browser, whichever tab finished last
+// and whichever signs out, even when a tab finished before the other's
+// session cookie reached it.
+func TestSignOutEndsParallelSignIns(t *testing.T) {
+	ctx := context.Background()
+	hosts := []string{"demo", "other"}
+	for _, viaKey := range []bool{false, true} {
+		for out, host := range hosts {
+			for _, racing := range []bool{false, true} {
+				t.Run(fmt.Sprintf("key=%t/signout on %s/racing=%t", viaKey, host, racing), func(t *testing.T) {
+					e := newEnv(t, envOptions{noIDP: viaKey})
+					key := ""
+					if viaKey {
+						if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "bob"}); err != nil {
+							t.Fatal(err)
+						}
+						var err error
+						if _, key, err = e.users.IssueKey(ctx, "bob", "", []string{auth.ScopeRead}, 0); err != nil {
+							t.Fatal(err)
+						}
+					}
+					var finish func()
+					if racing {
+						// Each finish carries only what the browser held
+						// before the first one answered.
+						var held []*http.Cookie
+						base, _ := url.Parse(e.srv.URL)
+						finish = func() {
+							if held == nil {
+								held = e.jar.Cookies(base)
+							}
+							e.jar, _ = cookiejar.New(nil)
+							e.jar.SetCookies(base, held)
+							e.client.Jar = e.jar
+						}
+					}
+					tokens := e.signInTabs(key, finish, hosts...)
+					if err := e.svc.SignOut(ctx, host, tokens[out]); err != nil {
+						t.Fatal(err)
+					}
+					e.wantSignedOut(hosts, tokens)
+				})
+			}
+		}
+	}
+}
+
+// Sign-out says it ends the sign-in in this browser, so a second person who
+// signed in there goes with the first.
+func TestSignOutEndsEverySignInOfTheBrowser(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{noIDP: true})
+	hosts := []string{"demo", "other"}
+	tokens := make([]string, len(hosts))
+	for i, handle := range []string{"bob", "carol"} {
+		if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: handle}); err != nil {
+			t.Fatal(err)
+		}
+		_, key, err := e.users.IssueKey(ctx, handle, "", []string{auth.ScopeRead}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, _ := e.keySignIn(hosts[i], key, nil)
+		v, err := e.svc.Redeem(ctx, hostCode(t, resp, hosts[i]), hosts[i], browserNonce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[i] = v.Token
+	}
+	if err := e.svc.SignOut(ctx, "other", tokens[1]); err != nil {
+		t.Fatal(err)
+	}
+	e.wantSignedOut(hosts, tokens)
+}
+
+// The same person signed in on a second browser stays signed in there.
+func TestSignOutLeavesOtherBrowsers(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOptions{})
+	first, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.jar, _ = cookiejar.New(nil) // another browser
+	e.client.Jar = e.jar
+	second, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SignOut(ctx, "demo", first.Token); err != nil {
+		t.Fatal(err)
+	}
+	if who, err := e.svc.Viewer(ctx, "demo", second.Token); err != nil || who != "alice" {
+		t.Fatalf("view in the other browser: Viewer = %q, %v", who, err)
+	}
+	resp, _ := e.get(signInQuery("other", "/"))
+	hostCode(t, resp, "other")
 }
 
 // keySignIn posts the API-key sign-in form as the browser would.
