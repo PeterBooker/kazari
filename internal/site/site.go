@@ -177,6 +177,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if version != 0 {
 		host += artifact.VersionSeparator + strconv.Itoa(version)
 	}
+	if p.Visibility.Gated() {
+		// Sibling artifact hosts are same-site, so a viewer's Lax cookie
+		// rides along when another artifact's page requests this host.
+		// same-origin stops the browser handing it the response. Every
+		// answer from here on, the gate's and any error, has to carry it:
+		// the page can see which ones the browser refuses, and any
+		// difference would tell it whether the visitor has access.
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	}
 	if h.opts.Gate == nil {
 		if reserved || p.Visibility.Gated() {
 			h.writeError(w, r, http.StatusNotFound)
@@ -366,13 +375,6 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 		hdr.Set("Cache-Control", h.immutable)
 	default:
 		hdr.Set("Cache-Control", cacheLatest)
-	}
-	if gated {
-		// Sibling artifact hosts are same-site, so a viewer's Lax cookie
-		// rides along when another artifact's page loads this one's
-		// script, JSON or image; same-origin stops the browser handing
-		// such a no-cors response to that page.
-		hdr.Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 }
 
