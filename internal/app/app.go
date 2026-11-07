@@ -411,6 +411,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		Logger:           log,
 		Gate: gate.New(oauthSvc, arts, gate.Options{
 			SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
+			SignOutURL:      mcpURL + strings.TrimPrefix(oauth.PathSignOut, "/"),
 			InsecureCookies: cfg.ExternalScheme == "http",
 			Now:             now,
 			Logger:          log,

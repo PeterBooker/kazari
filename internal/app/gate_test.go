@@ -168,9 +168,9 @@ func TestGatedEndToEnd(t *testing.T) {
 	wantStatus(t, guest.get("http://team.localhost/"), http.StatusFound, "guest after revoke")
 	wantStatus(t, guest.get(created.URL), http.StatusForbidden, "revoked share link")
 
-	// Signing out on one host ends the browser's access on every host.
-	wantStatus(t, b.get("http://team.localhost/.kazari/signout"), http.StatusOK, "sign-out page")
-	out := b.send(http.MethodPost, "http://team.localhost/.kazari/signout", url.Values{}, http.Header{"Origin": {"http://team.localhost"}})
+	// Signing out on the MCP host ends the browser's access on every host.
+	wantStatus(t, b.get("http://mcp.localhost/oauth/signout"), http.StatusOK, "sign-out page")
+	out := b.send(http.MethodPost, "http://mcp.localhost/oauth/signout", url.Values{}, http.Header{"Origin": {"http://mcp.localhost"}})
 	wantStatus(t, out, http.StatusOK, "sign out")
 	wantStatus(t, b.get("http://team--v1.localhost/"), http.StatusFound, "version host after sign-out")
 	if loc := b.follow(b.get("http://team.localhost/"), "after sign-out"); !strings.HasPrefix(loc, "http://mcp.localhost/oauth/signin?") {
@@ -185,5 +185,74 @@ func TestGatedEndToEnd(t *testing.T) {
 	if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: "open",
 		Files: []api.FileInput{{Path: ".kazari/share", Content: "x"}}}); !cli.IsCode(err, api.CodeInvalidPath) {
 		t.Fatalf("a file under .kazari/ was accepted: %v", err)
+	}
+}
+
+// Script on one artifact host runs on the same origin as the gate, so what
+// it can post there must not reach past that host: the visitor keeps their
+// sign-in and every other host. Only the page on the MCP host ends it.
+func TestArtifactScriptCannotEndSignIn(t *testing.T) {
+	in := start(t, testConfig(t))
+	addr := in.app.Addrs().HTTP
+	ctx := context.Background()
+	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := admin.IssueKey(ctx, "peter", api.IssueKeyRequest{Label: "browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	for _, slug := range []string{"team", "notes"} {
+		if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: slug, Visibility: "members",
+			Files: []api.FileInput{{Path: "index.html", Content: slug}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	b := newBrowser(t, addr)
+	signIn := b.follow(b.get("http://team.localhost/"), "first navigation")
+	u, err := url.Parse(signIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	callback := b.follow(b.send(http.MethodPost, "http://mcp.localhost/oauth/signin", url.Values{
+		"host": {q.Get("host")}, "path": {q.Get("path")}, "nonce": {q.Get("nonce")}, "api_key": {issued.Key},
+	}, http.Header{"Origin": {"http://mcp.localhost"}}), "API-key sign-in")
+	b.follow(b.get(callback), "callback")
+	// The second host opens with no prompt.
+	silent := b.follow(b.get("http://notes.localhost/"), "second host")
+	b.follow(b.get(b.follow(b.get(silent), "silent sign-in")), "second callback")
+	wantStatus(t, b.get("http://notes.localhost/"), http.StatusOK, "second host signed in")
+
+	// What page script on notes can send: a same-origin fetch.
+	script := http.Header{"Origin": {"http://notes.localhost"}, "Sec-Fetch-Site": {"same-origin"},
+		"Sec-Fetch-Mode": {"cors"}, "Sec-Fetch-Dest": {"empty"}}
+	out := b.send(http.MethodPost, "http://notes.localhost/.kazari/signout", url.Values{}, script)
+	wantStatus(t, out, http.StatusOK, "sign-out on the artifact host")
+	wantStatus(t, b.get("http://team.localhost/"), http.StatusOK, "another host after sign-out on notes")
+	// notes itself lost its view session, and comes back with no prompt.
+	back := b.follow(b.get("http://notes.localhost/"), "notes after its sign-out")
+	if code := b.follow(b.get(back), "silent sign-in after sign-out on notes"); !strings.HasPrefix(code, "http://notes.localhost/.kazari/callback?code=") {
+		t.Fatalf("the sign-in did not survive: went to %s", code)
+	}
+
+	// The same script cannot use the MCP host's form either.
+	script = http.Header{"Origin": {"http://notes.localhost"}, "Sec-Fetch-Site": {"same-site"}}
+	wantStatus(t, b.send(http.MethodPost, "http://mcp.localhost/oauth/signout", url.Values{}, script), http.StatusForbidden, "sign-out from an artifact host")
+	wantStatus(t, b.get("http://team.localhost/"), http.StatusOK, "after a refused sign-out")
+
+	// A person using the page on the MCP host ends the sign-in everywhere.
+	page := b.get("http://mcp.localhost/oauth/signout")
+	wantStatus(t, page, http.StatusOK, "sign-out page")
+	if !strings.Contains(page.body, `action="/oauth/signout"`) {
+		t.Fatalf("sign-out page = %q", truncate(page.body))
+	}
+	wantStatus(t, b.send(http.MethodPost, "http://mcp.localhost/oauth/signout", url.Values{}, http.Header{"Origin": {"http://mcp.localhost"}}), http.StatusOK, "sign out")
+	again := b.follow(b.get("http://team.localhost/"), "after signing out")
+	if got := b.get(again); got.status != http.StatusOK || !strings.Contains(got.body, `name="api_key"`) {
+		t.Fatalf("after signing out: status %d, body %q", got.status, truncate(got.body))
 	}
 }

@@ -43,6 +43,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
 	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
 	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
+	mux.HandleFunc("GET "+PathSignOut, s.serveSignOutPage)
+	mux.HandleFunc("POST "+PathSignOut, s.serveSignOut)
 	return middleware.Routed(mux)
 }
 

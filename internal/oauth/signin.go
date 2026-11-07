@@ -24,8 +24,13 @@ import (
 // the identity provider first, or, without one, with an API key. The
 // artifact host redeems the code in-process (Redeem) for a view session
 // whose cookie only that host receives.
+//
+// A sign-in ends at PathSignOut and nowhere else: member-authored script
+// runs on every artifact host, so an artifact host can end only its own
+// view session (EndView).
 const (
-	PathSignIn = "/oauth/signin"
+	PathSignIn  = "/oauth/signin"
+	PathSignOut = "/oauth/signout"
 
 	// Cookie names before the __Host- prefix: the session on the MCP host,
 	// and the per-browser value that binds a pending identity-provider
@@ -461,10 +466,9 @@ func (s *Service) Viewer(ctx context.Context, host, token string) (string, error
 	return v.UserHandle, nil
 }
 
-// SignOut ends the sign-in session behind the view session token on host,
-// and with it every view session it opened, on every host. An unknown
-// token is not an error.
-func (s *Service) SignOut(ctx context.Context, host, token string) error {
+// EndView ends the view session token on host. Its sign-in session and
+// the view sessions of other hosts stay. An unknown token is not an error.
+func (s *Service) EndView(ctx context.Context, host, token string) error {
 	v, err := s.viewSession(ctx, host, token)
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -472,7 +476,54 @@ func (s *Service) SignOut(ctx context.Context, host, token string) error {
 	if err != nil {
 		return err
 	}
-	return s.store.DeleteSession(ctx, v.SessionID)
+	return s.store.DeleteViewSession(ctx, v.Hash)
+}
+
+// serveSignOutPage asks a person to confirm ending the sign-in. It changes
+// nothing: a link from an artifact can bring a browser here, but only the
+// button ends anything.
+func (s *Service) serveSignOutPage(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.sign_out")
+	defer endHandle(span, out)
+	sess, err := s.liveSession(r.Context(), r)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "oauth: load session", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return
+	}
+	if sess == nil {
+		s.message(w, http.StatusOK, "Not signed in", "This browser is not signed in to this Kazari instance.", "")
+		return
+	}
+	s.pages.render(w, http.StatusOK, "signout", nil, "")
+}
+
+// serveSignOut ends the browser's sign-in session, and with it every view
+// session it opened, on every host. Like the consent form it must come from
+// this server's own page, which no artifact can script: sibling hosts are
+// same-site, so the session cookie alone would not show that.
+func (s *Service) serveSignOut(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.sign_out")
+	defer endHandle(span, out)
+	ctx := r.Context()
+	if !s.sameOrigin(r) {
+		s.message(w, http.StatusForbidden, "Request rejected",
+			"This form was not sent from this server's sign-out page.", "")
+		return
+	}
+	if ck, err := r.Cookie(s.named(sessionCookie)); err == nil && len(ck.Value) == tokenLen {
+		sess, err := s.store.GetSession(ctx, hashSecret(ck.Value))
+		if err == nil {
+			err = s.store.DeleteSession(ctx, sess.ID)
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			s.log.ErrorContext(ctx, "oauth: end session", "err", err)
+			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+			return
+		}
+	}
+	s.setNamedCookie(w, s.named(sessionCookie), "", -1)
+	s.message(w, http.StatusOK, "Signed out", "You are signed out of this Kazari instance in this browser.", "")
 }
 
 // viewSession loads the view session token names on host. ErrNotFound.
