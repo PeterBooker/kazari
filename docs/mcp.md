@@ -40,11 +40,11 @@ An administrator issues the key with `POST /users/{handle}/keys` on the [admin A
 
 A key carries scopes, which decide the tools it can call:
 
-| Scope              | Tools                                  |
-| ------------------ | -------------------------------------- |
-| `artifacts:read`   | The read tools                         |
-| `artifacts:write`  | Publishing and lifecycle changes       |
-| `artifacts:delete` | `delete_artifact`                      |
+| Scope              | Tools                                                    |
+| ------------------ | -------------------------------------------------------- |
+| `artifacts:read`   | The read tools                                           |
+| `artifacts:write`  | Publishing and lifecycle changes                         |
+| `artifacts:delete` | `delete_artifact`, and `mark_stale` on others' artifacts |
 
 Agents that read skills from disk can also install the server's skill ([Installing the skill from disk](#installing-the-skill-from-disk)).
 
@@ -77,7 +77,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read a window of a large text file. |
 | `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata`, `stale` and `deleted`. |
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
-| `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. |
+| `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. Needs `artifacts:delete` unless you own the artifact. |
 | `unmark_stale` | Cancel a pending expiry. |
 | `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. |
 | `create_share_link` | Create a URL that opens a `members` artifact without signing in. |
@@ -96,7 +96,7 @@ The fields are the name, description, metadata and visibility. In metadata, `nul
 
 To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari publish --update` does for a directory.
 
-`restore: true` brings back a soft-deleted artifact, which is otherwise `not_found`, and then applies the other changes. It works until the retention period ends and the artifact is purged. `list_artifacts` with `deleted: "include"` or `"only"` shows the soft-deleted artifacts you may still see: your own, and the ones you created or updated. Those are also the only ones you can restore; any other is `not_found`.
+`restore: true` brings back a soft-deleted artifact, which is otherwise `not_found`, clears its stale mark unless `keep_stale` is true, and then applies the other changes. It works until the retention period ends and the artifact is purged. `list_artifacts` with `deleted: "include"` or `"only"` shows the soft-deleted artifacts you may still see: your own, and the ones you created or updated. Those are also the only ones you can restore; any other is `not_found`.
 
 ### Files named by URL
 
@@ -361,7 +361,7 @@ The codes are:
 | `fetch_failed` | The server could not fetch a URL: the message names the address and what happened (a status, a non-public address, a timeout, a size over the limit). |
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |
-| `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or the write policy denies the change. |
+| `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or the write policy denies the change, or `mark_stale` lacks `artifacts:delete` on an artifact you do not own. |
 | `rate_limited` | The credential used up its write budget (`rate_limited: too many writes; retry in 12s`). |
 | `internal` | Server error, including a handler that crashed; details are in the server log. |
 

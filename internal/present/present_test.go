@@ -97,3 +97,19 @@ func TestArchiveURL(t *testing.T) {
 		t.Errorf("Error(ErrDigestMismatch) = %d %+v", status, body)
 	}
 }
+
+func TestActorCanDelete(t *testing.T) {
+	tests := []struct {
+		p    auth.Principal
+		want bool
+	}{
+		{auth.Principal{Handle: "alice", Scopes: auth.MemberScopes}, true},
+		{auth.Principal{Handle: "alice", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}}, false},
+		{auth.Principal{Handle: "root", Admin: true}, true},
+	}
+	for _, tt := range tests {
+		if got := Actor(tt.p).CanDelete; got != tt.want {
+			t.Errorf("Actor(%+v).CanDelete = %v, want %v", tt.p, got, tt.want)
+		}
+	}
+}

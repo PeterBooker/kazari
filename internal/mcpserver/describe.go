@@ -182,7 +182,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
 			"restore: true brings back a soft-deleted artifact (get_artifact shows deleted_at) and then applies the " +
-				"other changes; without it a soft-deleted artifact is not_found.",
+				"other changes; without it a soft-deleted artifact is not_found. It also clears a stale mark unless keep_stale " +
+				"is true.",
 			"To make the new version hold exactly a set of files, list the latest version's paths with get_artifact " +
 				"and include_files, and add {path, delete: true} for each path not in the set. A change that spans " +
 				"several files is atomic only in one update_artifact call with the whole files; edit_file publishes " +
@@ -272,7 +273,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 
 		"mark_stale": "Mark an artifact stale. The page keeps serving, but unless it is updated or unmarked before " +
 			"expires_at it is soft-deleted, then purged after the retention period. grace is a duration such as \"72h\" " +
-			"or \"14d\"; omit it for the instance default.",
+			"or \"14d\"; omit it for the instance default. On an artifact you do not own it needs the artifacts:delete scope.",
 
 		"unmark_stale": "Cancel a pending stale expiry, keeping the artifact indefinitely. Publishing a new version " +
 			"also cancels it unless keep_stale is set.",

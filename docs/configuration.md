@@ -351,6 +351,8 @@ Who can change artifacts, and the admin token:
 
 An empty `admin_token` disables it, leaving the admin socket and admin users' credentials that carry the `admin` scope. [The admin token](#the-admin-token) covers generating and retiring it.
 
+Under either policy, marking an artifact you do not own stale also takes `artifacts:delete`, because the expiry ends in a purge. Admins are exempt.
+
 ### `auth.oidc`
 
 With this section, users sign in through an OpenID Connect provider. Without it, the OAuth consent page asks for an API key instead. [Sign-in and identity](identity.md) walks through setting up a provider.

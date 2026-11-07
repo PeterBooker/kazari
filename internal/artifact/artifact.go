@@ -94,6 +94,9 @@ type Actor struct {
 	// Credential is "api_key:<prefix>", "oauth:<id>" or "admin_token", for
 	// the audit trail; empty for System.
 	Credential string
+	// CanDelete is whether the credential holds artifacts:delete, the scope
+	// MarkStale needs on an artifact the actor does not own.
+	CanDelete bool
 }
 
 // System is the actor used by scheduler jobs.
@@ -120,7 +123,7 @@ type UpdateRequest struct {
 	Visibility      *Visibility
 	Label           string
 	ExpectedVersion int  // compared with LatestVersion; 0 = no check
-	KeepStale       bool // a new version normally clears stale_at/expires_at
+	KeepStale       bool // a new version or a restore normally clears stale_at/expires_at
 	Restore         bool
 	Files           []FileInput
 }

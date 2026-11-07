@@ -393,7 +393,7 @@ kazari stale <slug> [--grace 336h]
 kazari unstale <slug>
 ```
 
-`stale` starts the grace period after which the artifact is soft-deleted, and the page keeps serving meanwhile. `--grace` is a Go duration in hours, such as `72h` or `336h`; without it, the server's `lifecycle.default_grace` applies. `unstale` cancels the grace period.
+`stale` starts the grace period after which the artifact is soft-deleted, and the page keeps serving meanwhile. `--grace` is a Go duration in hours, such as `72h` or `336h`; without it, the server's `lifecycle.default_grace` applies. `unstale` cancels the grace period. A key without `artifacts:delete` can mark only its own user's artifacts stale.
 
 To retire a page in three days:
 

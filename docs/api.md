@@ -35,6 +35,8 @@ Every credential carries scopes, which decide the routes it can call:
 | `artifacts:delete` | `DELETE /artifacts/{slug}`, soft and hard                               |
 | `admin`            | The admin API. Held only by admin users, and implies every other scope  |
 
+A credential without `artifacts:delete` can mark stale only the artifacts its user owns, because the expiry ends in a purge.
+
 A missing or invalid credential gets `401` with `WWW-Authenticate: Bearer error="invalid_token"`. A valid credential without the scope gets `403 forbidden`.
 
 ### Admin credentials
@@ -136,7 +138,7 @@ The server interprets keys under `kazari.` itself, and accepts only these:
 
 #### Write policy
 
-By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can. An unpublished or soft-deleted artifact is the exception under both: only the people who can [read it](#get-an-artifact-get-artifactsslug) can change, republish or restore it.
+By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can. An unpublished or soft-deleted artifact is the exception under both: only the people who can [read it](#get-an-artifact-get-artifactsslug) can change, republish or restore it. Marking an artifact stale is the other exception: unless you own it or are an admin, it also needs `artifacts:delete`.
 
 ## User API
 
@@ -344,7 +346,7 @@ These fields work differently from create, or exist only here:
 | `metadata`         | Merged into the existing metadata; `null` deletes a key                         |
 | `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else |
 | `expected_version` | Fails with `412 version_conflict` unless this is the latest version             |
-| `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version otherwise clears  |
+| `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version or a `restore` otherwise clears |
 | `restore`          | Clears `deleted_at` on a soft-deleted artifact, which is `404` without it       |
 
 #### Multipart body
@@ -469,7 +471,7 @@ The response is a publish result. A version that does not exist is `404 version_
 
 ### Stale: `POST` and `DELETE /artifacts/{slug}/stale`
 
-`POST` marks the artifact stale. The page keeps serving until the grace period ends, then the sweep soft-deletes it. The body is optional; to set the grace period, send `grace`:
+`POST` marks the artifact stale. The page keeps serving until the grace period ends, then the sweep soft-deletes it. The body is optional; to set the grace period, send `grace`. A credential without `artifacts:delete` gets `403 forbidden` on an artifact its user does not own:
 
 ```json
 { "grace": "72h" }

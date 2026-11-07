@@ -400,7 +400,7 @@ published ──stale──▶ stale ──grace──▶ soft-deleted ──ret
 
 Each state works as follows:
 
-- **Stale**: `kazari stale <slug> [--grace 72h]` sets `stale_at`, and sets `expires_at` to now plus the grace period. The page keeps serving. Publishing a new version clears the mark unless `keep_stale` is set.
+- **Stale**: `kazari stale <slug> [--grace 72h]` sets `stale_at`, and sets `expires_at` to now plus the grace period. The page keeps serving. Publishing a new version or restoring the artifact clears the mark unless `keep_stale` is set. A credential without `artifacts:delete` can mark only its own user's artifacts.
 - **Soft-deleted**: by `rm`, or by the sweep after `expires_at`. The page answers `404` and the slug stays taken. Until `lifecycle.retention` has passed since `deleted_at`, the owner can still read the files and restore the artifact.
 - **Purged**: by the sweep after retention, or at once by `rm --hard`. Versions and file lists are deleted, and the blobs go at the next `gc`. The page answers `410 Gone`, and the slug stays reserved for `lifecycle.tombstone`.
 - **Freed**: the tombstone row is deleted, and the slug can be used again.
@@ -553,7 +553,7 @@ Kazari did not accept the credential. Check that:
 - the key is not revoked or expired (`kazari admin keys list <handle>`), and its user is not disabled;
 - an OAuth client can refresh its access token, which lives one hour. A client that cannot refresh must sign in again.
 
-A `403` instead means the credential is valid but lacks a scope: `artifacts:delete` for `rm`, or the `admin` scope for the admin API.
+A `403` instead means the credential is valid but lacks a scope: `artifacts:delete` for `rm` or for `stale` on an artifact you do not own, or the `admin` scope for the admin API.
 
 ### `413 Payload Too Large`
 

@@ -566,8 +566,8 @@ func TestWritePolicy(t *testing.T) {
 		actor  artifact.Actor
 		ok     bool
 	}{
-		{"", artifact.Actor{Handle: "bob"}, true}, // default is shared
-		{artifact.WriteShared, artifact.Actor{Handle: "bob"}, true},
+		{"", artifact.Actor{Handle: "bob", CanDelete: true}, true}, // default is shared
+		{artifact.WriteShared, artifact.Actor{Handle: "bob", CanDelete: true}, true},
 		{artifact.WriteShared, artifact.Actor{Handle: "alice"}, true},
 		{artifact.WriteOwner, artifact.Actor{Handle: "alice"}, true},
 		{artifact.WriteOwner, artifact.Actor{Handle: "bob"}, false},
@@ -753,6 +753,108 @@ func TestStale(t *testing.T) {
 		audit.ArtifactUpdate, audit.ArtifactUpdate, audit.ArtifactStale, audit.ArtifactUnstale}
 	if diff := cmp.Diff(want, e.actions()); diff != "" {
 		t.Fatalf("audit actions (-want +got):\n%s", diff)
+	}
+}
+
+// A credential without artifacts:delete retires what its user owns, and only
+// that: the sweep would otherwise carry its mark through to a purge the
+// credential cannot ask for directly.
+func TestMarkStaleOthersArtifactNeedsDelete(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	bob := e.user(t, "bob")
+	e.create(t, alice, "demo")
+	e.create(t, alice, "open")
+	e.create(t, bob, "preview")
+	// Having updated an artifact does not make it bob's.
+	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("bob was here")}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := e.svc.MarkStale(e.ctx, bob, "demo", time.Nanosecond)
+	if !errors.Is(err, artifact.ErrForbidden) {
+		t.Errorf("stale of alice's artifact without delete: err = %v, want ErrForbidden", err)
+	}
+	e.clock.Advance(time.Second)
+	if _, err := e.svc.Sweep(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := e.svc.Get(e.ctx, alice, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.StaleAt != nil || a.ExpiresAt != nil || a.DeletedAt != nil {
+		t.Errorf("after the refused call and a sweep: stale %v expires %v deleted %v", a.StaleAt, a.ExpiresAt, a.DeletedAt)
+	}
+
+	// Only a mark is refused: bob can still cancel one.
+	if _, err := e.svc.MarkStale(e.ctx, alice, "demo", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.UnmarkStale(e.ctx, bob, "demo"); err != nil {
+		t.Errorf("unstale without delete: %v", err)
+	}
+
+	allowed := []struct {
+		name  string
+		actor artifact.Actor
+		slug  string
+	}{
+		{"owner without delete", bob, "preview"},
+		{"member with delete", artifact.Actor{Handle: "bob", CanDelete: true}, "demo"},
+		{"admin", artifact.Actor{Handle: "root", Admin: true}, "open"},
+	}
+	for _, tt := range allowed {
+		if _, err := e.svc.MarkStale(e.ctx, tt.actor, tt.slug, time.Hour); err != nil {
+			t.Errorf("%s: %v", tt.name, err)
+		}
+	}
+
+	// Ownership is read from the row, so it follows a transfer.
+	if _, err := e.svc.Transfer(e.ctx, artifact.System, "preview", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.MarkStale(e.ctx, bob, "preview", time.Hour)
+	wantErr(t, "stale after transfer away", err, artifact.ErrForbidden)
+}
+
+// A restore without files clears the mark that expired, as one with files
+// does, or the next sweep would soft-delete the artifact again.
+func TestRestoreClearsStaleMark(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo")
+	expire := func() {
+		t.Helper()
+		if _, err := e.svc.MarkStale(e.ctx, alice, "demo", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		e.clock.Advance(2 * time.Hour)
+		if got, err := e.svc.Sweep(e.ctx); err != nil || got.SoftDeleted != 1 {
+			t.Fatalf("Sweep = %+v, %v", got, err)
+		}
+	}
+
+	expire()
+	a, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.DeletedAt != nil || a.StaleAt != nil || a.ExpiresAt != nil {
+		t.Errorf("restore: deleted %v stale %v expires %v", a.DeletedAt, a.StaleAt, a.ExpiresAt)
+	}
+	e.clock.Advance(time.Hour)
+	if got, err := e.svc.Sweep(e.ctx); err != nil || got.SoftDeleted != 0 {
+		t.Errorf("sweep after restore = %+v, %v", got, err)
+	}
+
+	expire()
+	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true, KeepStale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.DeletedAt != nil || a.StaleAt == nil || a.ExpiresAt == nil {
+		t.Errorf("restore with KeepStale: deleted %v stale %v expires %v", a.DeletedAt, a.StaleAt, a.ExpiresAt)
 	}
 }
 
