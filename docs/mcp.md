@@ -393,6 +393,10 @@ A missing or invalid token gets `401` with a JSON error body and this header:
 WWW-Authenticate: Bearer error="invalid_token", resource_metadata="..."
 ```
 
+### Batches
+
+A JSON-RPC batch, a body that is a JSON array, gets `400` with a JSON error at every protocol version. Send one message per request, so the rate limit counts each call. Protocol versions from 2025-06-18 removed batches; 2025-03-26 is the only version Kazari speaks that defined them.
+
 ### Request size
 
 The request body limit is large enough for a whole version sent inline in base64, or for one full chunk. The artifact and upload services enforce the real limits.
