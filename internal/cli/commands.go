@@ -181,12 +181,13 @@ func (c *ImportCmd) Run(r *runner) error {
 	}
 	fmt.Fprintln(r.stdout, res.URL)
 	if imp := res.Import; imp != nil {
-		fmt.Fprintf(r.stdout, "%d files from %s; %d scripts removed\n", imp.Fetched+1, imp.Source, imp.ScriptsRemoved)
+		out := termSafe{r.stdout}
+		fmt.Fprintf(out, "%d files from %s; %d scripts removed\n", imp.Fetched+1, imp.Source, imp.ScriptsRemoved)
 		for _, s := range imp.Skipped {
-			fmt.Fprintf(r.stdout, "left remote: %s (%s)\n", s.URL, s.Reason)
+			fmt.Fprintf(out, "left remote: %s (%s)\n", s.URL, s.Reason)
 		}
 		for _, n := range imp.Notes {
-			fmt.Fprintf(r.stdout, "note: %s\n", n)
+			fmt.Fprintf(out, "note: %s\n", n)
 		}
 	}
 	return nil

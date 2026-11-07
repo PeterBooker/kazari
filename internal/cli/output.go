@@ -31,7 +31,8 @@ func newTable(w io.Writer) *tabwriter.Writer {
 
 // termSafe replaces control characters but tab and newline, and the bidi
 // controls, with U+FFFD, so server text cannot drive or reorder the terminal.
-// Writes must not split a UTF-8 sequence; tabwriter writes whole cells.
+// Writes must not split a UTF-8 sequence; tabwriter writes whole cells and
+// fmt.Fprintf makes one Write per call.
 type termSafe struct{ w io.Writer }
 
 func (t termSafe) Write(p []byte) (int, error) {
