@@ -33,10 +33,17 @@ func isWhitespace(n *html.Node) bool {
 	return n != nil && n.Type == html.TextNode && strings.TrimSpace(n.Data) == ""
 }
 
-func format(doc *html.Node) { formatNode(doc, 0) }
+func (w *walker) format(doc *html.Node) { w.formatNode(doc, 0) }
 
-func formatNode(n *html.Node, depth int) {
-	if n.Type == html.ElementNode && preformatted[n.DataAtom] {
+// reindent replaces the whitespace of ws, charging what the new indent adds.
+func (w *walker) reindent(ws *html.Node, indent string) {
+	if w.spend(max(len(indent)-len(ws.Data), 0)) {
+		ws.Data = indent
+	}
+}
+
+func (w *walker) formatNode(n *html.Node, depth int) {
+	if w.room < 0 || (n.Type == html.ElementNode && preformatted[n.DataAtom]) {
 		return
 	}
 	mayCreate := n.Type == html.DocumentNode || n.DataAtom == atom.Html || n.DataAtom == atom.Head || n.DataAtom == atom.Body
@@ -55,14 +62,14 @@ func formatNode(n *html.Node, depth int) {
 		hadBlock = true
 		switch {
 		case isWhitespace(c.PrevSibling):
-			c.PrevSibling.Data = indent
-		case mayCreate:
+			w.reindent(c.PrevSibling, indent)
+		case mayCreate && w.spend(len(indent)):
 			n.InsertBefore(&html.Node{Type: html.TextNode, Data: indent}, c)
 		}
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode {
-			formatNode(c, depth+1)
+			w.formatNode(c, depth+1)
 		}
 	}
 	if !hadBlock || n.Type != html.ElementNode {
@@ -71,8 +78,8 @@ func formatNode(n *html.Node, depth int) {
 	closing := "\n" + strings.Repeat("  ", max(depth-1, 0))
 	switch {
 	case isWhitespace(n.LastChild):
-		n.LastChild.Data = closing
-	case mayCreate:
+		w.reindent(n.LastChild, closing)
+	case mayCreate && w.spend(len(closing)):
 		n.AppendChild(&html.Node{Type: html.TextNode, Data: closing})
 	}
 }

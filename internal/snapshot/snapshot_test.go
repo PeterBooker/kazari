@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -315,5 +316,102 @@ func TestTakeRefusesOversizedPages(t *testing.T) {
 	_, err := taker(t, snapshot.Options{}).Take(context.Background(), srv.URL, false)
 	if !errors.Is(err, artifact.ErrFetchFailed) || !strings.Contains(err.Error(), "larger than") {
 		t.Errorf("oversized page: %v", err)
+	}
+}
+
+// growth is a byte budget that the fixtures of the tests below reach with a
+// hundred references, while the pages themselves stay well inside it.
+const growth = 64 << 10
+
+func TestTakeRefusesPagesThatGrowPastTheBudget(t *testing.T) {
+	long := "/" + strings.Repeat("a", 1<<10) + "/"
+	base := `<base href="` + long + `">`
+	links := func(el string) string { return base + strings.Repeat(el, 100) }
+	var srcset []string
+	for range 100 {
+		srcset = append(srcset, "x 1x")
+	}
+	for _, tc := range []struct {
+		name string
+		page string
+		css  string
+	}{
+		{name: "a", page: links(`<a href=x></a>`)},
+		{name: "area", page: links(`<area href=x>`)},
+		{name: "form", page: links(`<form action=x></form>`)},
+		{name: "iframe", page: links(`<iframe src=x></iframe>`)},
+		{name: "object", page: links(`<object data=x></object>`)},
+		{name: "embed", page: links(`<embed src=x>`)},
+		{name: "img", page: links(`<img src=x>`)},
+		{name: "srcset", page: base + `<img srcset="` + strings.Join(srcset, ", ") + `">`},
+		{name: "style attribute", page: links(`<p style="background:url(x)"></p>`)},
+		{name: "style element", page: base + "<style>" + strings.Repeat("p{background:url(x)}", 100) + "</style>"},
+		{name: "stylesheet", page: `<link rel="stylesheet" href="` + long + `s.css">`, css: strings.Repeat("p{background:url(x)}", 100)},
+		{name: "indentation", page: strings.Repeat("<div>", 400) + strings.Repeat("<div></div> ", 100)},
+		{name: "unusable base", page: `<base href="http://user@` + long[1:] + `">` + strings.Repeat(`<a href=x></a>`, 100)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := serve(t, site{
+				"/":            {"text/html", "<!doctype html><html><body>" + tc.page + "</body></html>"},
+				long + "s.css": {"text/css", tc.css},
+			})
+			snap, err := taker(t, snapshot.Options{MaxFileBytes: growth}).Take(context.Background(), srv.URL, false)
+			if err == nil {
+				defer snap.Close()
+				t.Fatalf("Take succeeded with a %d-byte page", len(files(t, snap)["index.html"]))
+			}
+			if !errors.Is(err, artifact.ErrTooLarge) {
+				t.Errorf("err = %v, want too_large", err)
+			}
+		})
+	}
+}
+
+func TestTakeKeepsPagesWithinTheBudget(t *testing.T) {
+	long := "/" + strings.Repeat("a", 1<<10) + "/"
+	base := `<base href="` + long + `">`
+	for _, tc := range []struct {
+		name string
+		page string
+		want string
+	}{
+		{"relative links under the budget", base + strings.Repeat(`<a href=x></a>`, 50), long + "x"},
+		{"links the base does not reach", base + strings.Repeat(`<a href="https://example.com/x"></a><a href="#x"></a><a href="mailto:x@example.com"></a>`, 100), "https://example.com/x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := serve(t, site{"/": {"text/html", "<html><body>" + tc.page + "</body></html>"}})
+			snap, err := taker(t, snapshot.Options{MaxFileBytes: growth}).Take(context.Background(), srv.URL, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer snap.Close()
+			if page := files(t, snap)["index.html"]; !strings.Contains(page, tc.want) {
+				t.Errorf("page lacks %q", tc.want)
+			}
+		})
+	}
+}
+
+// TestTakeBoundsAllocation sizes its page so that rewriting it in full comes
+// to 64 MiB, a safe distance from what the same shape reaches at the page cap.
+func TestTakeBoundsAllocation(t *testing.T) {
+	page := `<html><body><base href="/` + strings.Repeat("a", 64<<10) + `/">` + strings.Repeat(`<a href=x></a>`, 1000) + "</body></html>"
+	srv := serve(t, site{"/": {"text/html", page}})
+	tk := taker(t, snapshot.Options{})
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	snap, err := tk.Take(context.Background(), srv.URL, false)
+	runtime.ReadMemStats(&after)
+
+	if err == nil {
+		defer snap.Close()
+	}
+	if !errors.Is(err, artifact.ErrTooLarge) {
+		t.Errorf("err = %v, want too_large", err)
+	}
+	const limit = 48 << 20
+	if got := after.TotalAlloc - before.TotalAlloc; got > limit {
+		t.Errorf("allocated %d bytes, want at most %d", got, limit)
 	}
 }

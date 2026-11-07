@@ -28,7 +28,8 @@ const (
 	assetDir = "assets/"
 	cssDepth = 3
 	// maxTextBytes caps what is held in memory to parse or rewrite: the
-	// page and each stylesheet. Other assets stream to disk.
+	// page and each stylesheet. Other assets stream to disk. Rewriting them
+	// may add as much again, in all, for one import.
 	maxTextBytes = 4 << 20
 	// maxConcurrent bounds the imports in flight, and with them the
 	// documents in memory at once.
@@ -84,7 +85,8 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	}
 	ctx, cancel := context.WithTimeout(fetch.WithPurpose(ctx, fetch.PurposeImport), t.client.Budget())
 	defer cancel()
-	data, res, err := t.client.Get(ctx, rawURL, min(t.opts.MaxFileBytes, maxTextBytes))
+	textLimit := min(t.opts.MaxFileBytes, maxTextBytes)
+	data, res, err := t.client.Get(ctx, rawURL, textLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -105,9 +107,11 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	}
 
 	// The rendered page grows a little with indentation and absolute links,
-	// so the budget for assets leaves it room.
+	// so the budget for assets leaves it room. A page built to grow more
+	// than that, through a long base and many short links, runs out of room
+	// and is refused here, long before Create would see the result.
 	w := &walker{ctx: ctx, t: t, base: res.URL, keepScripts: keepScripts,
-		local: map[string]string{}, failed: map[string]string{}, total: int64(len(data)) * 5 / 4}
+		local: map[string]string{}, failed: map[string]string{}, total: int64(len(data)) * 5 / 4, room: textLimit}
 	w.report.Source = res.URL.String()
 	if b := find(doc, atom.Base); b != nil {
 		if href := attr(b, "href"); href != "" {
@@ -118,7 +122,12 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	}
 	w.walk(doc)
 	declareUTF8(doc)
-	format(doc)
+	w.format(doc)
+	if w.room < 0 {
+		w.close()
+		return nil, artifact.Errorf(artifact.ErrTooLarge, "copying %s would add more than %d bytes of absolute links and indentation; "+
+			"save the page from a browser and publish the files", rawURL, textLimit)
+	}
 	var buf bytes.Buffer
 	if err := html.Render(&buf, doc); err != nil {
 		w.close()
@@ -157,7 +166,15 @@ type walker struct {
 	files   []artifact.FileInput
 	closers []io.Closer
 	total   int64
+	room    int64 // bytes rewriting may still add; negative once spent
 	report  artifact.ImportReport
+}
+
+// spend takes n bytes from the room rewriting has left and reports whether
+// they fit.
+func (w *walker) spend(n int) bool {
+	w.room -= int64(n)
+	return w.room >= 0
 }
 
 func (w *walker) close() error {
@@ -187,7 +204,7 @@ func (w *walker) ref(base *url.URL, ref, kind string, depth int, prefix string) 
 // its file name; when the resource stays remote it returns the absolute
 // URL and false.
 func (w *walker) localize(base *url.URL, ref, kind string, depth int) (string, bool) {
-	u := resolve(base, ref)
+	u := w.resolve(base, ref)
 	if u == nil {
 		return ref, false
 	}
@@ -270,9 +287,13 @@ func reason(err error, u string) string {
 	return strings.TrimLeft(strings.TrimPrefix(msg, u), ": ")
 }
 
-func resolve(base *url.URL, ref string) *url.URL {
+// resolve returns ref made absolute against base, or nil when it stays as
+// it is. A relative reference takes on the base, so it is charged the
+// base's length before the URL is built; once the room is spent nothing is
+// built, and Take refuses the page.
+func (w *walker) resolve(base *url.URL, ref string) *url.URL {
 	ref = strings.TrimSpace(ref)
-	if ref == "" {
+	if ref == "" || w.room < 0 {
 		return nil
 	}
 	lower := strings.ToLower(ref)
@@ -281,8 +302,12 @@ func resolve(base *url.URL, ref string) *url.URL {
 			return nil
 		}
 	}
-	u, err := base.Parse(ref)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+	r, err := url.Parse(ref)
+	if err != nil || (!r.IsAbs() && !w.spend(len(base.String()))) {
+		return nil
+	}
+	u := base.ResolveReference(r)
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil
 	}
 	return u
