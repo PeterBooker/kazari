@@ -863,6 +863,6 @@ These are the codes, with their HTTP status and meaning:
 | `gone`                   | 410    | The artifact has been purged                                                       |
 | `fetch_failed`           | 502    | A URL named by `url` or `source_url` could not be fetched; the message says why    |
 | `version_conflict`       | 412    | `expected_version` / `If-Match` is not the latest version                          |
-| `too_large`              | 413    | A file, version, chunk, upload, manifest or request body is over its limit         |
+| `too_large`              | 413    | A file, imported page, version, chunk, upload, manifest or request body is over its limit |
 | `rate_limited`           | 429    | Too many requests; see `Retry-After` and [Rate limits](#rate-limits)               |
 | `internal`               | 500    | Server fault; details are logged, never returned                                   |

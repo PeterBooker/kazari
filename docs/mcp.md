@@ -135,7 +135,7 @@ The result is a publish result with an `import` field:
 
 The outline is for the edits that follow. Imported markup is formatted only where that cannot change how the page renders: whitespace that already stood between elements becomes a line break, and new whitespace is added only inside `<head>` and between the direct children of `<html>` and `<body>`. A minified page therefore stays on few lines, and a text edit with an outline `tag` as its `old_text` is the way to reach a section: `new_text` of the new content followed by the same tag inserts before it.
 
-Fetches dial public addresses only, follow at most five redirects, send no credentials and stop at `fetch.timeout` per request and `fetch.budget` for the import as a whole ([`fetch`](configuration.md#fetch)). The page and each stylesheet are capped at 4 MiB, a failing resource is tried once, `skipped` lists at most a hundred resources and a note counts the rest, and at most four imports run at once on an instance; a fifth fails with `rate_limited`. A page behind a login, a CAPTCHA or bot protection fails with `fetch_failed`; the next step then is to save the page from a browser and publish the files. Every import is recorded in the audit log with its source.
+Fetches dial public addresses only, follow at most five redirects, send no credentials and stop at `fetch.timeout` per request and `fetch.budget` for the import as a whole ([`fetch`](configuration.md#fetch)). The page and each stylesheet are capped at 4 MiB, and what the copy adds to them, as absolute links and indentation, is capped at 4 MiB or `limits.max_file_bytes` if that is lower; a page past that fails with `too_large`. A failing resource is tried once, `skipped` lists at most a hundred resources and a note counts the rest, and at most four imports run at once on an instance; a fifth fails with `rate_limited`. A page behind a login, a CAPTCHA or bot protection fails with `fetch_failed`; the next step then is to save the page from a browser and publish the files. Every import is recorded in the audit log with its source.
 
 ### `read_file`
 
@@ -352,7 +352,7 @@ The codes are:
 | `edit_not_found` | An `old_text` matched nowhere, even ignoring whitespace; the message names the closest lines. |
 | `edit_ambiguous` | An `old_text` matched more than once without `replace_all`; the message lists the lines. |
 | `anchor_mismatch` | An anchor's line changed since the file was read, or is past its end. |
-| `too_large`, `too_many_files`, `quota_exceeded` | A file, version, chunk, upload or quota limit was hit. |
+| `too_large`, `too_many_files`, `quota_exceeded` | A file, imported page, version, chunk, upload or quota limit was hit. |
 | `upload_offset_mismatch` | Wrong chunk offset; the text carries `current=<n>`. |
 | `upload_digest_mismatch` | The body sent to `archive_url` is not the archive `begin_upload` was told about; the text counts the attempts left. |
 | `upload_not_found` | Unknown, expired, foreign or already consumed upload. |

@@ -154,7 +154,7 @@ func (w *walker) absolute(n *html.Node, key string) {
 	if w.dropScriptURL(n, key, v) {
 		return
 	}
-	if u := resolve(w.base, v); u != nil {
+	if u := w.resolve(w.base, v); u != nil {
 		setAttr(n, key, u.String())
 	}
 }
