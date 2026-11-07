@@ -134,14 +134,22 @@ func (h *userAPI) readArchive(ctx context.Context, spill *os.File, size int64) (
 // path and has room for the bytes, and the listing stops at maxFiles so a
 // central directory of a million names is not held in memory. Names are
 // validated by the service like any other path; the reader's own name check
-// is not relied on.
+// is not relied on. The compressed sizes of all records, skipped ones too,
+// must fit the archive: an entry reads at most its compressed size, so this
+// bounds the inflate input of the whole archive by its size even when records
+// share bytes, and comparing against what is left cannot wrap.
 func readZip(ra io.ReaderAt, size int64, maxFiles int) ([]artifact.FileInput, error) {
 	zr, err := zip.NewReader(ra, size)
 	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
 		return nil, invalid("the archive is not a valid zip: %v", err)
 	}
 	var files []artifact.FileInput
+	var compressed uint64
 	for _, f := range zr.File {
+		if f.CompressedSize64 > uint64(size)-compressed {
+			return nil, invalid("the zip entries overlap or exceed the archive size")
+		}
+		compressed += f.CompressedSize64
 		if !f.Mode().IsRegular() {
 			continue
 		}
