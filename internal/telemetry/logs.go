@@ -2,8 +2,10 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -21,7 +23,11 @@ import (
 // identityKeys are dropped from exported log records, which often go to a
 // hosted vendor; stderr keeps them for the operator. A log call that adds a
 // key naming a person or a credential adds it here.
-var identityKeys = []string{"ip", "email", "subject", "handle", "actor", "family"}
+var identityKeys = []string{"ip", "email", "subject", "handle", "user", "actor", "family"}
+
+// quotedText matches a %q verb's output. An error names a person or a
+// credential with %q, which keeps the name out of the export.
+var quotedText = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 
 func (t *Telemetry) buildLogs(ctx context.Context, o Options, res *resource.Resource) error {
 	exp := o.LogExporter
@@ -89,20 +95,27 @@ func (h correlate) WithGroup(name string) slog.Handler { return correlate{h.Hand
 
 type withoutIdentity struct{ slog.Handler }
 
-func identity(a slog.Attr) bool { return slices.Contains(identityKeys, a.Key) }
+// exported returns a as it may leave the host, or false to drop it. A path
+// and an error's text can hold what identityKeys drops: a log call that puts
+// an identity in another value makes that value safe here. An error stays an
+// error, which the bridge exports as exception.message under any key.
+func exported(a slog.Attr) (slog.Attr, bool) {
+	if slices.Contains(identityKeys, a.Key) {
+		return a, false
+	}
+	v := a.Value.Resolve()
+	if err, ok := v.Any().(error); ok {
+		a.Value = slog.AnyValue(errors.New(quotedText.ReplaceAllLiteralString(err.Error(), `"`+instrument.Redacted+`"`)))
+	} else if a.Key == "path" && v.Kind() == slog.KindString {
+		a.Value = slog.StringValue(instrument.RedactAdminPath(v.String()))
+	}
+	return a, true
+}
 
 func (h withoutIdentity) Handle(ctx context.Context, r slog.Record) error {
-	found := false
-	r.Attrs(func(a slog.Attr) bool {
-		found = identity(a)
-		return !found
-	})
-	if !found {
-		return h.Handler.Handle(ctx, r)
-	}
 	kept := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		if !identity(a) {
+		if a, ok := exported(a); ok {
 			kept.AddAttrs(a)
 		}
 		return true
@@ -111,7 +124,13 @@ func (h withoutIdentity) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h withoutIdentity) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return withoutIdentity{h.Handler.WithAttrs(slices.DeleteFunc(slices.Clone(attrs), identity))}
+	kept := make([]slog.Attr, 0, len(attrs))
+	for _, a := range attrs {
+		if a, ok := exported(a); ok {
+			kept = append(kept, a)
+		}
+	}
+	return withoutIdentity{h.Handler.WithAttrs(kept)}
 }
 
 func (h withoutIdentity) WithGroup(name string) slog.Handler {

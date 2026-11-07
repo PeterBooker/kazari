@@ -111,7 +111,7 @@ Lines of requests that were not sampled carry neither.
 
 To send a copy of the log to the OpenTelemetry endpoint as well, set `telemetry.logs.otlp: true`. Records at `log.level` and above are exported, or at `telemetry.logs.level` when it is set; stderr is unchanged. Each record carries its trace and span ids as fields, so the backend links it to its trace.
 
-Exported records leave out the keys that name a person or a credential: `ip`, `email`, `subject`, `handle`, `actor` and `family`. The journal keeps them. User agents are still exported in the access log's `user_agent`; drop the attribute in your collector if it should not reach a hosted backend.
+Exported records leave out the keys that name a person or a credential: `ip`, `email`, `subject`, `handle`, `user`, `actor` and `family`. On the admin API, the handle and credential id in `path` read `REDACTED`, as does text quoted in an error message, which is where errors name a user or a key. The journal keeps all of them. User agents are still exported in the access log's `user_agent`; drop the attribute in your collector if it should not reach a hosted backend.
 
 ### Messages from libraries
 

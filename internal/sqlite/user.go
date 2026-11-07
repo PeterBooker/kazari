@@ -349,7 +349,7 @@ func (s *UserStore) GetIdentity(ctx context.Context, issuer, subject string) (_ 
 		if errors.Is(err, sql.ErrNoRows) {
 			err = user.ErrNotFound
 		}
-		return nil, fmt.Errorf("sqlite: get identity %s %s: %w", issuer, subject, err)
+		return nil, fmt.Errorf("sqlite: get identity %q %q: %w", issuer, subject, err)
 	}
 	return &u, nil
 }
@@ -373,7 +373,7 @@ func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Ide
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("sqlite: link identity %s %s to %q: %w", id.Issuer, id.Subject, handle, err)
+		return fmt.Errorf("sqlite: link identity %q %q to %q: %w", id.Issuer, id.Subject, handle, err)
 	}
 	return nil
 }
@@ -388,7 +388,7 @@ func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject 
 		err = userOneRow(res, user.ErrNotFound)
 	}
 	if err != nil {
-		return fmt.Errorf("sqlite: unlink identity %s %s from %q: %w", issuer, subject, handle, err)
+		return fmt.Errorf("sqlite: unlink identity %q %q from %q: %w", issuer, subject, handle, err)
 	}
 	return nil
 }

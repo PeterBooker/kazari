@@ -148,6 +148,29 @@ func SurfaceFrom(ctx context.Context) string {
 // Redacted stands in for a value telemetry must not carry.
 const Redacted = "REDACTED"
 
+// RedactAdminPath hides the handles and credential ids in admin paths
+// (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix}, /v1/grants/{id}):
+// who did what stays in the audit log.
+func RedactAdminPath(p string) string {
+	rest, ok := strings.CutPrefix(p, "/v1/")
+	if !ok {
+		return p
+	}
+	seg := strings.Split(rest, "/")
+	switch {
+	case len(seg) >= 2 && seg[0] == "users":
+		seg[1] = Redacted
+		if len(seg) >= 4 && seg[2] == "keys" {
+			seg[3] = Redacted
+		}
+	case len(seg) >= 2 && seg[0] == "grants":
+		seg[1] = Redacted
+	default:
+		return p
+	}
+	return "/v1/" + strings.Join(seg, "/")
+}
+
 // RedactQuery keeps a query string's keys and hides every value: share
 // tokens, OAuth codes and presigned signatures travel in query strings.
 func RedactQuery(raw string) string {

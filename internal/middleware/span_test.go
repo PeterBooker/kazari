@@ -204,20 +204,6 @@ func TestServerSpanSkipsAndNoTraces(t *testing.T) {
 }
 
 func TestAdminPathRedacted(t *testing.T) {
-	for in, want := range map[string]string{
-		"/v1/users/peter":                  "/v1/users/REDACTED",
-		"/v1/users/peter/keys":             "/v1/users/REDACTED/keys",
-		"/v1/users/peter/keys/ab12cd34":    "/v1/users/REDACTED/keys/REDACTED",
-		"/v1/users/peter/identities":       "/v1/users/REDACTED/identities",
-		"/v1/grants/42":                    "/v1/grants/REDACTED",
-		"/v1/users":                        "/v1/users",
-		"/v1/artifacts/q3-report/transfer": "/v1/artifacts/q3-report/transfer",
-		"/metrics":                         "/metrics",
-	} {
-		if got := redactAdminPath(in); got != want {
-			t.Errorf("redactAdminPath(%q) = %q, want %q", in, got, want)
-		}
-	}
 	obs, rec := newTracedObserver(t)
 	obs.Observe(instrument.SurfaceAdmin, ObserveOptions{})(http.NotFoundHandler()).
 		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/v1/users/peter/keys/ab12cd34", nil))

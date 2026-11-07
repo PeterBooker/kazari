@@ -50,8 +50,6 @@ type ObserveOptions struct {
 // ignored, and nothing is ever injected outbound.
 var traceContext = propagation.TraceContext{}
 
-const redacted = instrument.Redacted
-
 // NewObserver creates the instruments once; in proxy mode it takes the
 // scheme from X-Forwarded-Proto.
 func NewObserver(p instrument.Providers, proxyMode bool) *Observer {
@@ -172,7 +170,7 @@ func (s *surfaceObserver) startSpan(ctx context.Context, r *http.Request, method
 	}
 	path := r.URL.Path
 	if s.surface == instrument.SurfaceAdmin {
-		path = redactAdminPath(path)
+		path = instrument.RedactAdminPath(path)
 	}
 	attrs := make([]attribute.KeyValue, 0, 12)
 	attrs = append(attrs,
@@ -247,29 +245,6 @@ func serverAddress(host, scheme string) (string, int) {
 		return name, 443
 	}
 	return name, 80
-}
-
-// redactAdminPath hides the handles and credential ids in admin paths
-// (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix}, /v1/grants/{id}):
-// who did what stays in the audit log.
-func redactAdminPath(p string) string {
-	rest, ok := strings.CutPrefix(p, "/v1/")
-	if !ok {
-		return p
-	}
-	seg := strings.Split(rest, "/")
-	switch {
-	case len(seg) >= 2 && seg[0] == "users":
-		seg[1] = redacted
-		if len(seg) >= 4 && seg[2] == "keys" {
-			seg[3] = redacted
-		}
-	case len(seg) >= 2 && seg[0] == "grants":
-		seg[1] = redacted
-	default:
-		return p
-	}
-	return "/v1/" + strings.Join(seg, "/")
 }
 
 func (s *surfaceObserver) scheme(r *http.Request) string {
