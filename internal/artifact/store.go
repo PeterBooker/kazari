@@ -99,6 +99,10 @@ type Store interface {
 	// has no such link.
 	RevokeShareLink(ctx context.Context, slug, prefix string, at time.Time) error
 
+	// RevokeUserShareLinks sets the revoke time of every unrevoked link
+	// created by handle, on any artifact, and returns those links.
+	RevokeUserShareLinks(ctx context.Context, handle string, at time.Time) ([]RevokedShareLink, error)
+
 	// ShareLink returns the artifact's link whose token hashes to hash, in
 	// any state. ErrLinkNotFound otherwise, including for another
 	// artifact's link.

@@ -209,3 +209,43 @@ func TestShareLinkOfflineArtifact(t *testing.T) {
 		t.Fatalf("owner on an unpublished artifact: %v", err)
 	}
 }
+
+// Revoking a user's links ends them in the serving path, leaves other
+// people's alone and records each one for its artifact.
+func TestRevokeUserShareLinks(t *testing.T) {
+	e := newEnv(t, artifact.Options{MaxShareLinkTTL: 30 * 24 * time.Hour})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	e.create(t, alice, "demo")
+	l, token, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, kept, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	admin := artifact.Actor{Handle: "admin", Admin: true}
+	if err := e.svc.RevokeUserShareLinks(e.ctx, admin, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.CheckShareLink(e.ctx, "demo", token)
+	wantErr(t, "a revoked user's link", err, artifact.ErrLinkNotFound)
+	if _, err := e.svc.CheckShareLink(e.ctx, "demo", kept); err != nil {
+		t.Fatalf("another user's link: %v", err)
+	}
+	ev := e.rec.Events[len(e.rec.Events)-1]
+	if ev.Action != audit.ShareLinkRevoke || ev.Actor != "admin" || ev.Slug != "demo" ||
+		ev.Details["prefix"] != l.Prefix || ev.Details["created_by"] != "bob" {
+		t.Fatalf("audit = %+v", ev)
+	}
+
+	// Nothing is left, so a second run records nothing.
+	n := len(e.rec.Events)
+	if err := e.svc.RevokeUserShareLinks(e.ctx, admin, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.rec.Events) != n {
+		t.Fatalf("second run recorded %+v", e.rec.Events[n:])
+	}
+}

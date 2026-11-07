@@ -514,7 +514,7 @@ Files of an unpublished or soft-deleted artifact are readable only by admins, it
 
 ### Share links
 
-A share link opens one `members` artifact in a browser without signing in. It is for people who cannot sign in to the instance: a client, an outside reviewer, a headless browser. It works until it expires or is revoked.
+A share link opens one `members` artifact in a browser without signing in. It is for people who cannot sign in to the instance: a client, an outside reviewer, a headless browser. It works until it expires or is revoked, and disabling the user who created it revokes it.
 
 The link's URL opens the latest host. The cookie it sets is per host, so to open a pinned version, open `https://<slug>--v<N>.<base>/.kazari/share?token=...` with the same token.
 
@@ -755,7 +755,7 @@ A user's fields follow these rules:
 - `quota_bytes` defaults to `limits.default_user_quota` when omitted, and `0` means unlimited.
 - `email` is stored lower-case and must be unique.
 
-`"disabled": true` stamps `disabled_at` and revokes every API key of the user. `false` re-enables the user, but revoked keys stay revoked.
+`"disabled": true` stamps `disabled_at` and revokes every API key and OAuth grant of the user and every share link they created. `false` re-enables the user, but all of these stay revoked.
 
 ### Keys
 

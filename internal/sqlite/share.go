@@ -83,6 +83,34 @@ func (s *ArtifactStore) RevokeShareLink(ctx context.Context, slug, prefix string
 	return shareLinkTouched(res, "revoke share link")
 }
 
+// RevokeUserShareLinks implements artifact.Store.
+func (s *ArtifactStore) RevokeUserShareLinks(ctx context.Context, handle string, at time.Time) (_ []artifact.RevokedShareLink, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.RevokeUserShareLinks")
+	defer func() { end(err) }()
+	var out []artifact.RevokedShareLink
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`UPDATE share_link SET revoked_at = ? WHERE created_by = ? AND revoked_at IS NULL
+			 RETURNING (SELECT slug FROM artifact WHERE id = artifact_id), prefix`, toNanos(at), handle)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var l artifact.RevokedShareLink
+			if err := rows.Scan(&l.Slug, &l.Prefix); err != nil {
+				return err
+			}
+			out = append(out, l)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, artifactErr("revoke user share links", err)
+	}
+	return out, nil
+}
+
 // ShareLink implements artifact.Store.
 func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (_ *artifact.ShareLink, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ShareLink")

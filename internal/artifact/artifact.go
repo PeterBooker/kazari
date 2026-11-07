@@ -194,6 +194,12 @@ func (l *ShareLink) Active(now time.Time) bool {
 	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
 }
 
+// RevokedShareLink names a link that a bulk revoke ended.
+type RevokedShareLink struct {
+	Slug   string
+	Prefix string
+}
+
 // SweepReport counts what one Sweep did.
 type SweepReport struct {
 	SoftDeleted int // stale past expiry

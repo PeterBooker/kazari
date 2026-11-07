@@ -215,10 +215,17 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		userOpts.AutoProvision = o.AutoProvision
 		userOpts.AdminEmails = o.AdminEmails
 	}
-	// oauthSvc is set below, before any request.
-	var oauthSvc *oauth.Service
+	// oauthSvc and arts are set below, before any request.
+	var (
+		oauthSvc *oauth.Service
+		arts     *artifact.Service
+	)
 	userOpts.OnDisable = func(ctx context.Context, handle string) error {
-		return oauthSvc.RevokeAllForUser(ctx, handle)
+		actor := artifact.Actor{Handle: "admin"}
+		if p, ok := auth.FromContext(ctx); ok && p.Handle != "" {
+			actor = present.Actor(p)
+		}
+		return errors.Join(oauthSvc.RevokeAllForUser(ctx, handle), arts.RevokeUserShareLinks(ctx, actor, handle))
 	}
 	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
 	a.users = users
@@ -256,7 +263,7 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 			MaxFiles:      cfg.Limits.MaxFiles,
 		})
 	}
-	arts := artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artOpts)
+	arts = artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artOpts)
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
 		Telemetry:       tel,

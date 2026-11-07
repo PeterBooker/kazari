@@ -58,8 +58,8 @@ type Options struct {
 	// AdminEmails are provisioned as admins.
 	AdminEmails []string
 	// OnDisable, if set, runs after a user is disabled and their keys revoked,
-	// to revoke credentials held elsewhere (OAuth grants). An error fails the
-	// update; the user stays disabled.
+	// to revoke credentials held elsewhere (OAuth grants, share links). An
+	// error fails the update; the user stays disabled.
 	OnDisable func(ctx context.Context, handle string) error
 	// Now defaults to time.Now.
 	Now       func() time.Time
@@ -180,8 +180,8 @@ type UpdateUserRequest struct {
 }
 
 // UpdateUser applies req. Disabling stamps DisabledAt, revokes every key and
-// runs Options.OnDisable; enabling clears DisabledAt (revoked keys and grants
-// stay revoked).
+// runs Options.OnDisable; enabling clears DisabledAt (revoked keys, grants and
+// share links stay revoked).
 func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (_ *User, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.update")
 	defer func() { endSpan(span, err) }()

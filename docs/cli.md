@@ -372,7 +372,7 @@ kazari share list <slug>
 kazari share revoke <slug> <prefix>
 ```
 
-`create` prints a URL that opens a `members` artifact without signing in, for someone outside the instance. The link works until it expires or is revoked. `--expires` takes a duration such as `72h` or `14d`; by default a link lasts 7 days, and at most `serve.share_link_max_ttl`.
+`create` prints a URL that opens a `members` artifact without signing in, for someone outside the instance. The link works until it expires or is revoked, and disabling the user who created it revokes it. `--expires` takes a duration such as `72h` or `14d`; by default a link lasts 7 days, and at most `serve.share_link_max_ttl`.
 
 The URL holds the link's secret and is printed only this once. It goes to stdout while the prefix and expiry go to stderr, so `kazari share create q3-report --label "Acme" | pbcopy` copies only the URL.
 
@@ -454,7 +454,7 @@ Admin commands manage users, keys, artifacts and the server. On the server's hos
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `admin users list`                                                      | List users                                                  |
 | `admin users create <handle> [--email E] [--role member\|admin] [--quota 500MiB]` | Create a user                                    |
-| `admin users update <handle> [--disable\|--enable] [--role R] [--quota Q] [--email E]` | Change a user; `--disable` also revokes every key |
+| `admin users update <handle> [--disable\|--enable] [--role R] [--quota Q] [--email E]` | Change a user; `--disable` also revokes every key, OAuth grant and share link they created |
 | `admin keys list <handle>`                                              | List a user's keys                                          |
 | `admin keys issue <handle> [--label L] [--scopes a,b] [--expires 720h]` | Issue a key; prints the key once on stdout                  |
 | `admin keys revoke <handle> <prefix>`                                   | Revoke a key                                                |

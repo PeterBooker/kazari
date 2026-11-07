@@ -140,6 +140,24 @@ func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix
 	return nil
 }
 
+// RevokeUserShareLinks ends every link handle created, on any artifact, so a
+// disabled user keeps no way in. It is wired to user.Options.OnDisable, so
+// enabling the user does not restore them.
+func (s *Service) RevokeUserShareLinks(ctx context.Context, actor Actor, handle string) (err error) {
+	ctx, span := s.span(ctx, "artifact.share_link.revoke_user", "")
+	defer func() { endSpan(span, err) }()
+	revoked, err := s.store.RevokeUserShareLinks(ctx, handle, s.now())
+	if err != nil {
+		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("revoke"))
+		return err
+	}
+	for _, l := range revoked {
+		s.countOutcome(ctx, s.m.shareLinks, nil, shareOperationKey.String("revoke"))
+		s.record(ctx, actor, audit.ShareLinkRevoke, l.Slug, map[string]string{"prefix": l.Prefix, "created_by": handle})
+	}
+	return nil
+}
+
 // CheckShareLink returns slug's active link for token, for the serving
 // path. Anything else (a malformed, unknown, revoked or expired token, or
 // another artifact's) is ErrLinkNotFound.

@@ -451,7 +451,7 @@ To block a user, disable them:
 kazari admin users update ana --disable
 ```
 
-Disabling a user revokes every API key at once, makes every OAuth access and refresh token fail, and refuses sign-in with the "No access" page. `--enable` lets them sign in again, but revoked keys stay revoked.
+Disabling a user revokes every API key at once, makes every OAuth access and refresh token fail, revokes every share link they created on any artifact, and refuses sign-in with the "No access" page. Links they gave to outside reviewers end too: a reviewer who still needs the page needs a new link from someone else. `--enable` lets them sign in again, but revoked keys and links stay revoked.
 
 ### Revoking one API key
 
@@ -526,7 +526,7 @@ The actions, with the details each records:
 | `oauth.revoke`        | OAuth grant revoked                                                  |
 | `oauth.signin`        | A browser signed in to view `members` pages (`via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
 | `share_link.create`   | Share link created (`prefix`, `expires_at`)                          |
-| `share_link.revoke`   | Share link revoked (`prefix`)                                        |
+| `share_link.revoke`   | Share link revoked (`prefix`; `created_by` when disabling its creator did it) |
 
 An event is written just after the change it describes, outside its transaction, so a crash in between loses that one row. The log is append-only and never pruned.
 

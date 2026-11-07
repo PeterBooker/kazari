@@ -107,7 +107,7 @@ func (c *AdminUsersCreateCmd) Run(r *runner) error {
 // AdminUsersUpdateCmd changes a user.
 type AdminUsersUpdateCmd struct {
 	Handle  string  `arg:"" help:"The user's handle."`
-	Disable bool    `help:"Disable the user, which revokes every key."`
+	Disable bool    `help:"Disable the user, which revokes every key, OAuth grant and share link they created."`
 	Enable  bool    `help:"Re-enable the user."`
 	Role    *string `help:"member or admin." placeholder:"ROLE"`
 	Quota   *string `help:"Storage quota, such as 500MiB; 0 is unlimited." placeholder:"SIZE"`
