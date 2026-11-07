@@ -135,6 +135,21 @@ func TestGatedEndToEnd(t *testing.T) {
 		page.header.Get("Cross-Origin-Resource-Policy") != "same-origin" {
 		t.Fatalf("page = %q, headers %v", page.body, page.header)
 	}
+	// A cross-site opener must not tell these responses apart, with access
+	// or without, by the opener policy of where the navigation ended, and
+	// the sign-in page keeps its own.
+	for name, r := range map[string]response{
+		"redirect to sign in": newBrowser(t, addr).get("http://team.localhost/"),
+		"refused fetch":       anon,
+		"sign-in page":        form,
+		"gate page":           newBrowser(t, addr).get("http://team.localhost/.kazari/share?token=nope"),
+		"page":                page,
+		"missing page":        b.get("http://team.localhost/nope"),
+	} {
+		if got := r.header.Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
+			t.Errorf("%s: Cross-Origin-Opener-Policy = %q, want same-origin", name, got)
+		}
+	}
 	// A replayed callback is refused.
 	wantStatus(t, b.get(callback), http.StatusBadRequest, "replayed callback")
 
