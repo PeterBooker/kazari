@@ -20,8 +20,8 @@ button{font:inherit;padding:.5rem 1.25rem;border-radius:.5rem;border:1px solid c
 <main>
 <h1>{{.Title}}</h1>
 <p>{{.Message}}</p>
-{{if .Form}}<form method="post" action="{{.Form}}"><button type="submit">Sign out</button></form>
-{{else if .Link}}<p><a href="{{.Link}}">{{.LinkText}}</a></p>
+{{if .Form}}<form method="post" action="{{.Form}}"><button type="submit">Sign out of this page</button></form>
+{{end}}{{if .Link}}<p><a href="{{.Link}}">{{.LinkText}}</a></p>
 {{end}}</main>
 </body>
 </html>

@@ -237,7 +237,9 @@ Every sign-in session lasts 12 hours, and every view session it opened ends with
 
 ### Signing out
 
-To sign out, open `/.kazari/signout` on a members page the browser has open, for example `https://<slug>.<base>/.kazari/signout`. That ends every sign-in of this browser on every host, including one finished in a second tab. Other browsers stay signed in.
+To sign out, open `https://mcp.<base>/oauth/signout` and press the button. That ends every sign-in of this browser, including one finished in a second tab, and every view session they opened, on every host. Other browsers stay signed in. Only that page can: artifact hosts run member-authored script, so a sign-in cannot be ended from one.
+
+`/.kazari/signout` on an artifact host, for example `https://<slug>.<base>/.kazari/signout`, ends that host's access only: its view session and cookie, or a share link's cookie. The sign-in stays, so opening a members page there again needs no prompt. The page links to the sign-out page on the MCP host.
 
 ### Share links
 

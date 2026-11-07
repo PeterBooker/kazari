@@ -2,7 +2,8 @@
 // hosts. It decides whether a request may see the page, sends a browser
 // without access to sign in at the MCP host, and answers the paths every
 // artifact host reserves under /.kazari/: the end of a sign-in, share links
-// and sign-out.
+// and leaving this host. It cannot end a sign-in: member-authored script
+// runs on these hosts, so that happens only on the MCP host.
 //
 // A visitor's access is one host-only cookie, __Host-kazari_view, set by
 // this package and by nothing else: either a view session token from a
@@ -63,7 +64,7 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'sel
 type Sessions interface {
 	Redeem(ctx context.Context, code, host, nonce string) (oauth.View, error)
 	Viewer(ctx context.Context, host, token string) (string, error)
-	SignOut(ctx context.Context, host, token string) error
+	EndView(ctx context.Context, host, token string) error
 }
 
 // Links checks share links. artifact.Service implements it; both methods
@@ -78,6 +79,9 @@ type Options struct {
 	// SignInURL is where a browser without access is sent, e.g.
 	// https://mcp.art.example.com/oauth/signin.
 	SignInURL string
+	// SignOutURL is the page that ends a whole sign-in, e.g.
+	// https://mcp.art.example.com/oauth/signout.
+	SignOutURL string
 	// InsecureCookies drops the Secure attribute and the __Host- prefix,
 	// for development over plain http.
 	InsecureCookies bool
@@ -331,20 +335,25 @@ func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-// signOut shows a sign-out button (GET) or signs out (POST): a sign-in
-// ends in this browser on every host, and a share link's cookie on this
-// host is dropped. The POST must come from this host's own page. Only a
-// host the browser opened holds a cookie to sign out with, so elsewhere
-// the page says so instead of offering a button that would do nothing.
+// signOut shows a button (GET) or leaves this host (POST): its view session
+// ends and its cookie is dropped, a share link's too. That is all an
+// artifact host can do. Script on this host passes the same-origin check
+// and could read a token from the form, so nothing here can tell a person
+// from the page, and a sign-in ends only on the MCP host's page, which
+// every answer links to. A sign-in that goes on opens this host again with
+// no prompt, so the pages say so.
 func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
+	const everywhere = "Sign out of this Kazari instance"
 	if r.Method == http.MethodGet {
 		if ck, err := r.Cookie(g.name(viewCookie)); err != nil || ck.Value == "" {
 			g.page(w, r, http.StatusOK, page{Title: "Not signed in here",
-				Message: "This browser has not opened this page signed in. Sign out from a members page you have open."})
+				Message: "This browser has not opened this page signed in.",
+				Link:    g.opts.SignOutURL, LinkText: everywhere})
 			return
 		}
 		g.page(w, r, http.StatusOK, page{Title: "Sign out",
-			Message: "Sign out of this Kazari instance in this browser?", Form: SignOutPath})
+			Message: "This ends this browser's access to this page only. Any sign-in to this Kazari instance stays, and opens the page again with no prompt.",
+			Form:    SignOutPath, Link: g.opts.SignOutURL, LinkText: everywhere})
 		return
 	}
 	if !sameOrigin(r) {
@@ -352,14 +361,16 @@ func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 		return
 	}
 	if ck, err := r.Cookie(g.name(viewCookie)); err == nil && !artifact.IsLinkToken(ck.Value) {
-		if err := g.sessions.SignOut(r.Context(), host, ck.Value); err != nil {
-			g.log.ErrorContext(r.Context(), "gate: sign out", "host", host, "err", err)
+		if err := g.sessions.EndView(r.Context(), host, ck.Value); err != nil {
+			g.log.ErrorContext(r.Context(), "gate: end view", "host", host, "err", err)
 			g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
 			return
 		}
 	}
 	g.setCookie(w, viewCookie, "", -1)
-	g.page(w, r, http.StatusOK, page{Title: "Signed out", Message: "You are signed out of this Kazari instance in this browser."})
+	g.page(w, r, http.StatusOK, page{Title: "Signed out of this page",
+		Message: "This browser's access to this page has ended. Any sign-in to this Kazari instance is still active.",
+		Link:    g.opts.SignOutURL, LinkText: everywhere})
 }
 
 // sameOrigin reports whether a form post comes from a page on the request's

@@ -109,11 +109,62 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 		t.Fatalf("Viewer(other) = %q, %v", got, err)
 	}
 
-	// Signing out on one host ends the browser's sign-in everywhere.
-	if err := e.svc.SignOut(ctx, "other", v2.Token); err != nil {
+	// A host ends its own view session and no more: not with another
+	// host's token, and not the sign-in or the other host's view session.
+	if err := e.svc.EndView(ctx, "demo", v2.Token); err != nil {
 		t.Fatal(err)
 	}
-	for host, tok := range map[string]string{"demo": v.Token, "other": v2.Token} {
+	if got, err := e.svc.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
+		t.Fatalf("Viewer(other) after EndView on demo with its token = %q, %v", got, err)
+	}
+	if err := e.svc.EndView(ctx, "other", v2.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Viewer(ctx, "other", v2.Token); !errors.Is(err, oauth.ErrNotFound) {
+		t.Fatalf("Viewer(other) after EndView = %v", err)
+	}
+	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
+		t.Fatalf("Viewer(demo) after EndView on other = %q, %v", got, err)
+	}
+	resp, _ = e.get(signInQuery("other", "/"))
+	v3, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	if err != nil {
+		t.Fatalf("the sign-in did not survive EndView: %v", err)
+	}
+	if err := e.svc.EndView(ctx, "demo", "unknown"); err != nil {
+		t.Fatalf("EndView of an unknown token = %v", err)
+	}
+
+	// The page changes nothing; its form, from this server, ends the
+	// sign-in everywhere. From an artifact host it is refused.
+	resp, body = e.get(oauth.PathSignOut)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `action="/oauth/signout"`) || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("sign-out page: status %d, %q", resp.StatusCode, body)
+	}
+	post := func(header http.Header) int {
+		req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignOut), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header = header
+		resp, _ := e.do(req)
+		return resp.StatusCode
+	}
+	for name, header := range map[string]http.Header{
+		"sibling origin":    {"Origin": {"https://demo.art.test"}, "Sec-Fetch-Site": {"same-site"}},
+		"sandboxed sibling": {"Origin": {"null"}, "Sec-Fetch-Site": {"same-site"}},
+	} {
+		if got := post(header); got != http.StatusForbidden {
+			t.Fatalf("%s: status %d", name, got)
+		}
+		if _, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil {
+			t.Fatalf("%s ended the sign-in: %v", name, err)
+		}
+	}
+	if got := post(http.Header{"Origin": {"null"}, "Sec-Fetch-Site": {"same-origin"}}); got != http.StatusOK {
+		t.Fatalf("sign-out: status %d", got)
+	}
+	for host, tok := range map[string]string{"demo": v.Token, "other": v3.Token} {
 		if _, err := e.svc.Viewer(ctx, host, tok); !errors.Is(err, oauth.ErrNotFound) {
 			t.Errorf("Viewer(%s) after sign-out = %v", host, err)
 		}
@@ -122,8 +173,11 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 	if loc := location(t, resp); loc.Host != "idp.example" {
 		t.Fatalf("after sign-out the sign-in went to %s, want the identity provider", loc)
 	}
-	if err := e.svc.SignOut(ctx, "demo", "unknown"); err != nil {
-		t.Fatalf("SignOut of an unknown token = %v", err)
+	if _, body = e.get(oauth.PathSignOut); !strings.Contains(body, "Not signed in") || strings.Contains(body, "<form") {
+		t.Fatalf("sign-out page after sign-out: %q", body)
+	}
+	if got := post(http.Header{"Origin": {e.url("")}}); got != http.StatusOK {
+		t.Fatalf("second sign-out: status %d", got)
 	}
 }
 
@@ -368,6 +422,19 @@ func (e *env) signInTabs(key string, beforeFinish func(), hosts ...string) []str
 	return tokens
 }
 
+// signOut presses the button on the sign-out page, as the browser would.
+func (e *env) signOut() {
+	e.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignOut), nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req.Header.Set("Origin", e.srv.URL)
+	if resp, body := e.do(req); resp.StatusCode != http.StatusOK {
+		e.t.Fatalf("sign-out: status %d: %s", resp.StatusCode, body)
+	}
+}
+
 // wantSignedOut checks that no view of hosts still works and that the
 // sign-in host asks the browser to sign in again.
 func (e *env) wantSignedOut(hosts, tokens []string) {
@@ -386,49 +453,45 @@ func (e *env) wantSignedOut(hosts, tokens []string) {
 	}
 }
 
-// Sign-out ends every sign-in of the browser, whichever tab finished last
-// and whichever signs out, even when a tab finished before the other's
-// session cookie reached it.
+// Sign-out ends every sign-in of the browser, not only the one its session
+// cookie names, even when a tab finished before the other's session cookie
+// reached it.
 func TestSignOutEndsParallelSignIns(t *testing.T) {
 	ctx := context.Background()
 	hosts := []string{"demo", "other"}
 	for _, viaKey := range []bool{false, true} {
-		for out, host := range hosts {
-			for _, racing := range []bool{false, true} {
-				t.Run(fmt.Sprintf("key=%t/signout on %s/racing=%t", viaKey, host, racing), func(t *testing.T) {
-					e := newEnv(t, envOptions{noIDP: viaKey})
-					key := ""
-					if viaKey {
-						if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "bob"}); err != nil {
-							t.Fatal(err)
-						}
-						var err error
-						if _, key, err = e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Scopes: []string{auth.ScopeRead}}); err != nil {
-							t.Fatal(err)
-						}
-					}
-					var finish func()
-					if racing {
-						// Each finish carries only what the browser held
-						// before the first one answered.
-						var held []*http.Cookie
-						base, _ := url.Parse(e.srv.URL)
-						finish = func() {
-							if held == nil {
-								held = e.jar.Cookies(base)
-							}
-							e.jar, _ = cookiejar.New(nil)
-							e.jar.SetCookies(base, held)
-							e.client.Jar = e.jar
-						}
-					}
-					tokens := e.signInTabs(key, finish, hosts...)
-					if err := e.svc.SignOut(ctx, host, tokens[out]); err != nil {
+		for _, racing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("key=%t/racing=%t", viaKey, racing), func(t *testing.T) {
+				e := newEnv(t, envOptions{noIDP: viaKey})
+				key := ""
+				if viaKey {
+					if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "bob"}); err != nil {
 						t.Fatal(err)
 					}
-					e.wantSignedOut(hosts, tokens)
-				})
-			}
+					var err error
+					if _, key, err = e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Scopes: []string{auth.ScopeRead}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var finish func()
+				if racing {
+					// Each finish carries only what the browser held
+					// before the first one answered.
+					var held []*http.Cookie
+					base, _ := url.Parse(e.srv.URL)
+					finish = func() {
+						if held == nil {
+							held = e.jar.Cookies(base)
+						}
+						e.jar, _ = cookiejar.New(nil)
+						e.jar.SetCookies(base, held)
+						e.client.Jar = e.jar
+					}
+				}
+				tokens := e.signInTabs(key, finish, hosts...)
+				e.signOut()
+				e.wantSignedOut(hosts, tokens)
+			})
 		}
 	}
 }
@@ -455,9 +518,7 @@ func TestSignOutEndsEverySignInOfTheBrowser(t *testing.T) {
 		}
 		tokens[i] = v.Token
 	}
-	if err := e.svc.SignOut(ctx, "other", tokens[1]); err != nil {
-		t.Fatal(err)
-	}
+	e.signOut()
 	e.wantSignedOut(hosts, tokens)
 }
 
@@ -469,15 +530,20 @@ func TestSignOutLeavesOtherBrowsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	firstJar := e.jar
 	e.jar, _ = cookiejar.New(nil) // another browser
 	e.client.Jar = e.jar
 	second, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.SignOut(ctx, "demo", first.Token); err != nil {
-		t.Fatal(err)
+	secondJar := e.jar
+	e.jar, e.client.Jar = firstJar, firstJar
+	e.signOut()
+	if _, err := e.svc.Viewer(ctx, "demo", first.Token); !errors.Is(err, oauth.ErrNotFound) {
+		t.Fatalf("view in the browser that signed out: %v", err)
 	}
+	e.jar, e.client.Jar = secondJar, secondJar
 	if who, err := e.svc.Viewer(ctx, "demo", second.Token); err != nil || who != "alice" {
 		t.Fatalf("view in the other browser: Viewer = %q, %v", who, err)
 	}
