@@ -109,6 +109,56 @@ func TestGatedAsksTheGate(t *testing.T) {
 	checkHeaders(t, rec, map[string]string{"Cross-Origin-Resource-Policy": ""})
 }
 
+// A cross-site opener can see whether a window's browsing context changed,
+// so a members host must answer with the same opener policy whatever the
+// gate decides and wherever the request ends. The sign-in page has one, so
+// a response without it would tell an opener that the visitor has access.
+func TestGatedOpenerPolicy(t *testing.T) {
+	const coop = "Cross-Origin-Opener-Policy"
+	fx := newFixture(t)
+	fx.addMembers(t)
+	g := &fakeGate{}
+	h := fx.handler(Options{Gate: g})
+
+	for _, tc := range []struct {
+		name  string
+		allow bool
+		host  string
+		path  string
+		code  int
+	}{
+		{"gate refuses", false, "team.art.test", "/", http.StatusUnauthorized},
+		{"gate refuses a version host", false, "team--v1.art.test", "/", http.StatusUnauthorized},
+		{"reserved path", false, "team.art.test", "/.kazari/signout", http.StatusOK},
+		{"page", true, "team.art.test", "/", http.StatusOK},
+		{"version host page", true, "team--v1.art.test", "/", http.StatusOK},
+		{"artifact 404.html", true, "team.art.test", "/nope", http.StatusNotFound},
+		{"instance 404 page", true, "team--v1.art.test", "/nope", http.StatusNotFound},
+		{"path no file can have", true, "team--v1.art.test", "/a%5Cb", http.StatusNotFound},
+	} {
+		g.allow = tc.allow
+		rec := do(t, h, http.MethodGet, tc.host, tc.path, nil)
+		if rec.Code != tc.code {
+			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.code)
+		}
+		if got := rec.Header().Get(coop); got != "same-origin" {
+			t.Errorf("%s: %s = %q, want same-origin", tc.name, coop, got)
+		}
+	}
+
+	// A page that opens another page may need the link between them, so
+	// public artifacts, and hosts that do not exist, stay without one.
+	for _, tc := range []struct{ host, path string }{
+		{"demo.art.test", "/"},
+		{"demo.art.test", "/nope"},
+		{"demo.art.test", "/.kazari/signout"},
+		{"nosuch.art.test", "/"},
+	} {
+		rec := do(t, h, http.MethodGet, tc.host, tc.path, nil)
+		checkHeaders(t, rec, map[string]string{coop: ""})
+	}
+}
+
 func TestReservedPaths(t *testing.T) {
 	fx := newFixture(t)
 	fx.addMembers(t)

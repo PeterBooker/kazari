@@ -173,6 +173,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if p.Visibility.Gated() {
+		// A visitor without access ends on the sign-in page, whose policy
+		// severs a cross-site opener's window handle, so every answer on
+		// this host needs the same policy or the handle tells that opener
+		// who has access. Set here it covers the gate's answers and error
+		// responses, which get no artifact and so no setCommonHeaders.
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	}
+
 	host := slug
 	if version != 0 {
 		host += artifact.VersionSeparator + strconv.Itoa(version)

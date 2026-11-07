@@ -217,6 +217,8 @@ browser ──1──▶ team.<base>/report       no view cookie: 302, sets a no
 > [!NOTE]
 > On a plain-HTTP instance (`external_scheme: http`, development only), the cookies drop `Secure` and the `__Host-` prefix: `kazari_session`, `kazari_view` and `kazari_nonce`.
 
+Every response to a `GET` on a members host, whether a page, an error, the redirect to sign in or a `/.kazari/` page, carries `Cross-Origin-Opener-Policy: same-origin`, as the sign-in page does. A window opened by another site therefore looks the same to its opener with access or without, so the opener cannot tell whether the visitor can see the page. It also means a members page has no `window.opener` from a page on another origin, and a popup it opens to another origin returns a handle that reads as closed. Public and unlisted artifacts do not send this header.
+
 Every sign-in session lasts 12 hours, and every view session it opened ends with it. A disabled user, or a revoked API key, loses access on the next request.
 
 ### Signing out
