@@ -48,14 +48,21 @@ An explicit `--admin-socket` wins over everything, an admin URL with a token win
 
 ### Environment variables and `.env`
 
-The environment variables can also come from a `.env` file in the working directory, with one `KEY=VALUE` line each, as for the server:
+The environment variables can also come from a dotenv file you name with `$KAZARI_ENV_FILE`, with one `KEY=VALUE` line each, as for the server:
 
 ```sh
+# ~/.config/kazari/client.env
 KAZARI_URL=https://api.art.example.com
 KAZARI_TOKEN=kzk_...
 ```
 
+```sh
+export KAZARI_ENV_FILE=~/.config/kazari/client.env
+```
+
 A variable already set in the process environment wins over the file.
+
+The client commands never read `./.env` on their own. The working directory can be a repository someone else wrote, and a URL from a file in it would receive the token in your config file. For the same reason, give `$KAZARI_ENV_FILE` an absolute path: a relative one is looked up in whichever directory you run `kazari` from.
 
 ### The config file
 
@@ -69,7 +76,7 @@ admin_token: ""                            # optional
 ```
 
 > [!WARNING]
-> The config file, and any `.env` holding a token, contain credentials. Make them readable by you alone with `chmod 600`.
+> The config file, and any dotenv file holding a token, contain credentials. Make them readable by you alone with `chmod 600`.
 
 ## Output and exit codes
 
@@ -100,7 +107,7 @@ kazari serve [--config PATH] [--env-file PATH]
 kazari serve --local
 ```
 
-Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE` or a dotenv file in the working directory ([how configuration is loaded](configuration.md#how-configuration-is-loaded)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use, exits with status 1.
+Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE` or a `.env` file in the working directory, which beside a configuration file only fills `${NAME}` references ([how configuration is loaded](configuration.md#how-configuration-is-loaded)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use, exits with status 1.
 
 `--local` runs the preset for your own machine instead, with no DNS, certificate or token: `http://<slug>.localhost:8080/`, data in `./.data` ([the local preset](configuration.md#the-local-preset)).
 

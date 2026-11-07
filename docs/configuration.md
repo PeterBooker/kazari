@@ -29,7 +29,7 @@ From lowest to highest:
 
 1. Built-in defaults.
 2. The YAML file, after `${}` references are expanded.
-3. `KAZARI_*` overrides, from the process environment or the `.env` file.
+3. `KAZARI_*` overrides, from the process environment or a [dotenv file](#the-env-file).
 
 Validation then checks the result.
 
@@ -93,11 +93,13 @@ export KAZARI_TLS_DNS_API_TOKEN="your-cloudflare-token"
 KAZARI_LISTEN_PROXY_MODE=true
 ```
 
-A variable already set in the process environment wins over the file. Variables from the file feed both `${NAME}` references and the [`KAZARI_*` overrides](#overriding-keys-from-the-environment).
+A variable already set in the process environment wins over the file. Variables from a file named by `--env-file` or `$KAZARI_ENV_FILE` feed both `${NAME}` references and the [`KAZARI_*` overrides](#overriding-keys-from-the-environment).
+
+A `./.env` found in the working directory does the same only when no configuration file is in use, which includes `--local`. Beside a configuration file (`--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`) it feeds `${NAME}` references alone, so `${KAZARI_TLS_DNS_API_TOKEN}` still works but `KAZARI_LISTEN_PROXY_MODE` above would be ignored: a file that merely sits in the directory `serve` or `check` runs from cannot change where the configured credentials go. To override keys from a dotenv file, name it.
 
 The file holds secrets, so keep it mode `0600` and out of version control. Under systemd, the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=` instead, so those variables arrive as process environment. Under Docker Compose, `compose.yml` passes `.env` into the container the same way.
 
-The CLI reads `./.env` too, for its own variables: see [CLI configuration](cli.md#configuring-the-client).
+The client commands do not read `./.env`, only a file named by `$KAZARI_ENV_FILE`: see [CLI configuration](cli.md#environment-variables-and-env).
 
 ## Keeping secrets out of the file
 
@@ -106,7 +108,7 @@ Three keys are secrets: `tls.dns.api_token`, `auth.admin_token` and `auth.oidc.c
 Never write them into the YAML file, which must be world-readable under systemd. Refer to them as `${NAME}`, or leave them out and set the `KAZARI_*` override. Then supply the variables from one of these places:
 
 - `/etc/kazari/kazari.env` for the systemd unit, with mode `0600`. systemd reads it as root.
-- `.env` beside `compose.yml`, or in the working directory in development.
+- `.env` beside `compose.yml`, or in the working directory in development, referred to as `${NAME}` when a configuration file is in use.
 - `--env-file` for any other setup.
 - A file per secret, as the next section describes.
 

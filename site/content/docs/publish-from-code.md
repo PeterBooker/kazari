@@ -44,7 +44,7 @@ export KAZARI_TOKEN=kzk_...
 kazari me          # who you are, your scopes and your storage use
 ```
 
-The same settings can also live in a `.env` file in the working directory, or in `~/.config/kazari/config.yaml` ([CLI configuration](cli.md#configuring-the-client)).
+The same settings can also live in a dotenv file named by `$KAZARI_ENV_FILE`, or in `~/.config/kazari/config.yaml` ([CLI configuration](cli.md#configuring-the-client)).
 
 ## Publishing a directory
 

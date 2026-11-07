@@ -180,3 +180,100 @@ func TestLoadDefaultEnvFile(t *testing.T) {
 		t.Errorf("malformed .env: err = %v, want a line error", err)
 	}
 }
+
+// Beside a config file, ./.env fills ${NAME} references and nothing else: it
+// is not a source the operator named, so it must not move a credential from
+// the file to another destination.
+func TestLoadDefaultEnvFileDoesNotOverrideConfigFile(t *testing.T) {
+	const yaml = `
+base_domain: art.example.test
+data_dir: /d
+tls:
+  mode: self-signed
+auth:
+  admin_token: ${KAZARI_TEST_ADMIN_TOKEN}
+telemetry:
+  otlp:
+    endpoint: https://otlp.config.test
+    headers:
+      authorization: Bearer dummy-config-token
+`
+	const dotenv = "KAZARI_TEST_ADMIN_TOKEN=" + testAdminToken + "\n" +
+		"KAZARI_TELEMETRY_OTLP_ENDPOINT=https://otlp.dotenv.test\n" +
+		"KAZARI_TELEMETRY_OTLP_HEADERS=authorization=dummy-dotenv\n" +
+		"KAZARI_BASE_DOMAIN=dotenv.test\n"
+	cfgPath := writeYAML(t, yaml)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	envPath := writeEnvFile(t, dir, dotenv)
+
+	c, err := Load(cfgPath, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Telemetry.OTLP.Endpoint; got != "https://otlp.config.test" {
+		t.Errorf("Endpoint = %q from the working directory's dotenv file", got)
+	}
+	if got := c.Telemetry.OTLP.Headers["authorization"]; got != "Bearer dummy-config-token" {
+		t.Errorf("Headers[authorization] = %q from the working directory's dotenv file", got)
+	}
+	if c.BaseDomain != "art.example.test" {
+		t.Errorf("BaseDomain = %q from the working directory's dotenv file", c.BaseDomain)
+	}
+	if c.Auth.AdminToken != testAdminToken {
+		t.Errorf("AdminToken = %q, want the ${NAME} reference filled from the dotenv file", c.Auth.AdminToken)
+	}
+
+	// A secret's _FILE variable is an override too.
+	t.Run("secret file", func(t *testing.T) {
+		secret := filepath.Join(t.TempDir(), "secret")
+		if err := os.WriteFile(secret, []byte("authorization=dummy-file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeEnvFile(t, dir, dotenv+"KAZARI_TELEMETRY_OTLP_HEADERS_FILE="+secret+"\n")
+		t.Cleanup(func() { writeEnvFile(t, dir, dotenv) })
+		c, err := Load(cfgPath, "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := c.Telemetry.OTLP.Headers["authorization"]; got != "Bearer dummy-config-token" {
+			t.Errorf("Headers[authorization] = %q from a _FILE variable in the dotenv file", got)
+		}
+	})
+
+	// The same file named on purpose overrides as before.
+	t.Run("named file", func(t *testing.T) {
+		c, err := Load(cfgPath, envPath)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := c.Telemetry.OTLP.Endpoint; got != "https://otlp.dotenv.test" {
+			t.Errorf("Endpoint = %q, want the override from the named file", got)
+		}
+	})
+
+	t.Run("process environment", func(t *testing.T) {
+		t.Setenv("KAZARI_TELEMETRY_OTLP_ENDPOINT", "https://otlp.process.test")
+		c, err := Load(cfgPath, "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := c.Telemetry.OTLP.Endpoint; got != "https://otlp.process.test" {
+			t.Errorf("Endpoint = %q, want the process environment's", got)
+		}
+	})
+
+	// With no config file there is no destination for the dotenv file to
+	// move, and it stays the whole configuration.
+	t.Run("no config file", func(t *testing.T) {
+		writeEnvFile(t, dir, "KAZARI_BASE_DOMAIN=dotenv.test\nKAZARI_DATA_DIR=/d\nKAZARI_TLS_MODE=self-signed\n")
+		t.Cleanup(func() { writeEnvFile(t, dir, dotenv) })
+		c, err := Load("", "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if c.BaseDomain != "dotenv.test" {
+			t.Errorf("BaseDomain = %q, want dotenv.test", c.BaseDomain)
+		}
+	})
+}

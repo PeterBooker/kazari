@@ -21,7 +21,7 @@ const defaultConfigPath = "/etc/kazari/kazari.yaml"
 // serverFlags are shared by serve and check.
 type serverFlags struct {
 	Config  string `help:"Configuration file (default: $KAZARI_CONFIG, then /etc/kazari/kazari.yaml if it exists, else the environment alone)." placeholder:"PATH" xor:"source"`
-	EnvFile string `name:"env-file" help:"Dotenv file with the secrets (default: $KAZARI_ENV_FILE, then the dotenv file in the working directory if it exists)." placeholder:"PATH"`
+	EnvFile string `name:"env-file" help:"Dotenv file with the secrets (default: $KAZARI_ENV_FILE, then the dotenv file in the working directory if it exists, which beside a configuration file only fills references)." placeholder:"PATH"`
 	Local   bool   `help:"Serve http://<slug>.localhost:8080/ with the data in ./.data: no DNS, certificate or token needed. KAZARI_* variables still apply." xor:"source"`
 }
 
