@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -44,13 +45,14 @@ func (c *clock) Advance(d time.Duration) {
 }
 
 type env struct {
-	ctx   context.Context
-	svc   *artifact.Service
-	db    *sqlite.DB
-	store *sqlite.ArtifactStore
-	blobs *blob.FS
-	rec   *audit.Memory
-	clock *clock
+	ctx     context.Context
+	svc     *artifact.Service
+	db      *sqlite.DB
+	store   *sqlite.ArtifactStore
+	blobs   *blob.FS
+	blobDir string
+	rec     *audit.Memory
+	clock   *clock
 }
 
 func newEnv(t *testing.T, opts artifact.Options) *env {
@@ -62,7 +64,8 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	blobs, err := blob.NewFS(filepath.Join(dir, "blobs"), blob.Options{})
+	blobDir := filepath.Join(dir, "blobs")
+	blobs, err := blob.NewFS(blobDir, blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +73,28 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 	opts.Now = c.Now
 	store := sqlite.NewArtifactStore(db)
 	rec := &audit.Memory{}
-	return &env{ctx: ctx, svc: artifact.New(store, blobs, rec, opts), db: db, store: store, blobs: blobs, rec: rec, clock: c}
+	return &env{ctx: ctx, svc: artifact.New(store, blobs, rec, opts), db: db, store: store, blobs: blobs, blobDir: blobDir, rec: rec, clock: c}
+}
+
+// storedBytes sums every file under the blob directory, temporary ones too.
+func (e *env) storedBytes(t *testing.T) int64 {
+	t.Helper()
+	var total int64
+	err := filepath.WalkDir(e.blobDir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return total
 }
 
 func (e *env) user(t *testing.T, handle string) artifact.Actor {
@@ -1184,6 +1208,175 @@ func TestSweepLifecycle(t *testing.T) {
 	}
 }
 
+// failingStore fails the commit of a publish, or the blob row before it.
+type failingStore struct {
+	*sqlite.ArtifactStore
+	recordErr, commitErr error
+}
+
+func (s *failingStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error {
+	if s.recordErr != nil {
+		return s.recordErr
+	}
+	return s.ArtifactStore.RecordBlob(ctx, hash, size, at)
+}
+
+func (s *failingStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) error {
+	if s.commitErr != nil {
+		return s.commitErr
+	}
+	return s.ArtifactStore.Create(ctx, a, v, quota)
+}
+
+func (s *failingStore) AddVersion(ctx context.Context, slug string, v *artifact.Version, expected int, quota int64, fn func(a *artifact.Artifact) error) error {
+	if s.commitErr != nil {
+		return s.commitErr
+	}
+	return s.ArtifactStore.AddVersion(ctx, slug, v, expected, quota, fn)
+}
+
+// cancellingReader ends the request after its content is read.
+type cancellingReader struct {
+	cancel context.CancelFunc
+}
+
+func (r cancellingReader) Read(p []byte) (int, error) {
+	r.cancel()
+	return copy(p, "tail"), nil
+}
+
+func TestFailedPublishRemovesItsBlobs(t *testing.T) {
+	const orphan = "orphan content"
+	big := strings.Repeat("x", 101)
+	errStore := errors.New("store failed")
+
+	for name, tc := range map[string]struct {
+		store   func(s *failingStore)
+		actor   artifact.Actor
+		publish func(e *env, svc *artifact.Service, actor artifact.Actor) error
+		want    error
+	}{
+		"create over a limit": {
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Create(e.ctx, actor, artifact.CreateRequest{Slug: "failed", Files: files("ok.txt", orphan, "big.txt", big)})
+				return err
+			},
+			want: artifact.ErrTooLarge,
+		},
+		"create over quota": {
+			actor: artifact.Actor{QuotaBytes: 100},
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Create(e.ctx, actor, artifact.CreateRequest{Slug: "failed",
+					Files: files("ok.txt", strings.Repeat(orphan, 2), "more.txt", strings.Repeat("y", 70))})
+				return err
+			},
+			want: artifact.ErrQuotaExceeded,
+		},
+		"update over a limit": {
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Update(e.ctx, actor, artifact.UpdateRequest{Slug: "kept", Files: files("ok.txt", orphan, "big.txt", big)})
+				return err
+			},
+			want: artifact.ErrTooLarge,
+		},
+		"create refused by the store": {
+			store: func(s *failingStore) { s.commitErr = errStore },
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Create(e.ctx, actor, artifact.CreateRequest{Slug: "failed", Files: files("ok.txt", orphan)})
+				return err
+			},
+			want: errStore,
+		},
+		"update refused by the store": {
+			store: func(s *failingStore) { s.commitErr = errStore },
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Update(e.ctx, actor, artifact.UpdateRequest{Slug: "kept", Files: files("ok.txt", orphan)})
+				return err
+			},
+			want: errStore,
+		},
+		"blob row refused": {
+			store: func(s *failingStore) { s.recordErr = errStore },
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				_, _, err := svc.Create(e.ctx, actor, artifact.CreateRequest{Slug: "failed", Files: files("ok.txt", orphan)})
+				return err
+			},
+			want: errStore,
+		},
+		"request cancelled": {
+			publish: func(e *env, svc *artifact.Service, actor artifact.Actor) error {
+				ctx, cancel := context.WithCancel(e.ctx)
+				defer cancel()
+				_, _, err := svc.Create(ctx, actor, artifact.CreateRequest{Slug: "failed", Files: []artifact.FileInput{
+					{Path: "ok.txt", Content: strings.NewReader(orphan)},
+					{Path: "tail.txt", Content: cancellingReader{cancel}},
+				}})
+				return err
+			},
+			want: context.Canceled,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, artifact.Options{MaxFileBytes: 100})
+			alice := e.user(t, "alice")
+			e.create(t, alice, "kept", "index.html", "kept content")
+			before := e.storedBytes(t)
+			totals, err := e.store.BlobTotals(e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			store := &failingStore{ArtifactStore: e.store}
+			if tc.store != nil {
+				tc.store(store)
+			}
+			svc := artifact.New(store, e.blobs, e.rec, artifact.Options{MaxFileBytes: 100, Now: e.clock.Now})
+			actor := alice
+			actor.QuotaBytes = tc.actor.QuotaBytes
+			wantErr(t, "failed publish", tc.publish(e, svc, actor), tc.want)
+
+			if got := e.storedBytes(t); got != before {
+				t.Errorf("blob directory holds %d bytes after the failed publish, want %d", got, before)
+			}
+			got, err := e.store.BlobTotals(e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != totals {
+				t.Errorf("BlobTotals = %+v, want %+v", got, totals)
+			}
+			if body := e.read(t, alice, "kept", "index.html", 0); body != "kept content" {
+				t.Errorf("kept index.html = %q", body)
+			}
+		})
+	}
+}
+
+func TestFailedPublishKeepsBlobAVersionReferences(t *testing.T) {
+	e := newEnv(t, artifact.Options{MaxFileBytes: 100})
+	alice := e.user(t, "alice")
+	const content = "live content"
+	e.create(t, alice, "live", "index.html", content)
+	before := e.storedBytes(t)
+
+	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
+		Slug: "failed", Files: files("copy.txt", content, "orphan.txt", "orphan content", "big.txt", strings.Repeat("x", 101)),
+	})
+	wantErr(t, "failed create", err, artifact.ErrTooLarge)
+
+	if got := e.storedBytes(t); got != before {
+		t.Errorf("blob directory holds %d bytes, want %d", got, before)
+	}
+	if body := e.read(t, alice, "live", "index.html", 0); body != content {
+		t.Fatalf("live index.html = %q", body)
+	}
+	// The orphan is gone already, so gc has nothing left to do.
+	e.clock.Advance(2 * time.Hour)
+	if n, err := e.svc.CollectGarbage(e.ctx); err != nil || n != 0 {
+		t.Fatalf("CollectGarbage = %d, %v; want 0 deleted", n, err)
+	}
+}
+
 func TestCollectGarbage(t *testing.T) {
 	e := newEnv(t, artifact.Options{BlobGrace: time.Hour, MaxFileBytes: 100})
 	alice := e.user(t, "alice")
@@ -1196,10 +1389,14 @@ func TestCollectGarbage(t *testing.T) {
 	if err := e.svc.Delete(e.ctx, alice, "purged", true); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
-		Slug: "failed", Files: files("ok.txt", "orphan content", "big.txt", strings.Repeat("x", 101)),
-	})
-	wantErr(t, "failed create", err, artifact.ErrTooLarge)
+	// What a crash between the blob and its version leaves behind.
+	hash, size, err := e.blobs.Put(e.ctx, strings.NewReader("orphan content"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.RecordBlob(e.ctx, hash, size, e.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
 	e.create(t, alice, "shared-live", "s.txt", "shared content")
 	e.create(t, alice, "shared-dead", "s.txt", "shared content")
 	if err := e.svc.Delete(e.ctx, alice, "shared-dead", true); err != nil {

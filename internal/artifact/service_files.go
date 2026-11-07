@@ -18,8 +18,9 @@ const sniffLen = 512
 
 // buildFiles applies inputs to base (nil on create), streaming additions
 // into the blob store, and returns the files sorted by path with their
-// total size. A nil quotaLeft is unlimited.
-func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs []FileInput, quotaLeft *int64) ([]File, int64, error) {
+// total size. A nil quotaLeft is unlimited. The hash of every blob stored
+// is added to put, on failure too.
+func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs []FileInput, quotaLeft *int64, put *[]string) ([]File, int64, error) {
 	type addition struct {
 		path string
 		in   FileInput
@@ -76,7 +77,7 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 	}
 
 	for _, ad := range adds {
-		f, err := s.putFile(ctx, ad.path, ad.in, &versionLeft, quotaLeft)
+		f, err := s.putFile(ctx, ad.path, ad.in, &versionLeft, quotaLeft, put)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -94,7 +95,7 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 
 // putFile records the blob row so the garbage collector's grace window
 // starts now.
-func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64) (File, error) {
+func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64, put *[]string) (File, error) {
 	fileLeft := s.opts.MaxFileBytes
 	var r io.Reader = &limitReader{r: in.Content, left: &fileLeft,
 		err: Errorf(ErrTooLarge, "file %q exceeds %d bytes", p, s.opts.MaxFileBytes)}
@@ -123,10 +124,38 @@ func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLe
 	if err != nil {
 		return File{}, domainErr(err)
 	}
+	*put = append(*put, hash)
 	if err := s.store.RecordBlob(ctx, hash, size, s.now()); err != nil {
 		return File{}, err
 	}
 	return File{Path: p, Hash: hash, Size: size, ContentType: ct}, nil
+}
+
+// dropBlobs removes what a failed publish stored, so a failure takes no disk
+// that a quota does not count. The write side of blobMu waits out publishes
+// in progress, any of which may have stored the same content, and a blob a
+// version references stays. A blob that cannot be dropped is left to
+// CollectGarbage.
+func (s *Service) dropBlobs(ctx context.Context, hashes []string) {
+	s.blobMu.Lock()
+	defer s.blobMu.Unlock()
+	for _, h := range hashes {
+		if err := s.dropBlob(ctx, h); err != nil {
+			s.opts.Logger.ErrorContext(ctx, "dropping a failed publish's blob", "err", err)
+		}
+	}
+}
+
+// dropBlob deletes in CollectGarbage's order: the file before the row.
+func (s *Service) dropBlob(ctx context.Context, hash string) error {
+	referenced, err := s.store.BlobReferenced(ctx, hash)
+	if err != nil || referenced {
+		return err
+	}
+	if err := s.blobs.Delete(ctx, hash); err != nil {
+		return err
+	}
+	return s.store.DeleteBlob(ctx, hash)
 }
 
 // domainErr unwraps an *Error the blob store wrapped, so callers see the

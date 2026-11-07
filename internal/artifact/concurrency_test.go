@@ -86,6 +86,52 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	}
 }
 
+func TestFailedPublishSparesBlobOfPublishInProgress(t *testing.T) {
+	e := newEnv(t, artifact.Options{MaxFileBytes: 100})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	const content = "<h1>shared content</h1>"
+
+	// Parked on its second file: the first is stored but not yet referenced.
+	br := &blockingReader{data: strings.NewReader("tail"), reached: make(chan struct{}), release: make(chan struct{})}
+	created := make(chan error, 1)
+	go func() {
+		_, _, err := e.svc.Create(e.ctx, bob, artifact.CreateRequest{Slug: "new-page", Files: []artifact.FileInput{
+			{Path: "index.html", Content: strings.NewReader(content)},
+			{Path: "tail.txt", Content: br},
+		}})
+		created <- err
+	}()
+	<-br.reached
+
+	failed := make(chan error, 1)
+	go func() {
+		_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
+			Slug: "failed", Files: files("index.html", content, "big.txt", strings.Repeat("x", 101)),
+		})
+		failed <- err
+	}()
+	// Release the publish once the cleanup waits for it or has finished
+	// without waiting.
+	var failure error
+	for finished := false; !finished && !artifact.GCWaiting(e.svc); {
+		select {
+		case failure = <-failed:
+			finished = true
+			failed <- failure
+		default:
+			runtime.Gosched()
+		}
+	}
+	close(br.release)
+	if err := <-created; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	wantErr(t, "failed create", <-failed, artifact.ErrTooLarge)
+	if body := e.read(t, bob, "new-page", "index.html", 0); body != content {
+		t.Fatalf("new-page index.html = %q", body)
+	}
+}
+
 type blockingReader struct {
 	data    *strings.Reader
 	reached chan struct{}

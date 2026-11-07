@@ -128,7 +128,7 @@ type Service struct {
 	// blobMu orders publishes against the garbage collector: a Put of stored
 	// content writes nothing, so the blob looks unreferenced until its
 	// version commits. Publishes hold the read side over that window,
-	// CollectGarbage the write side over each batch.
+	// CollectGarbage and a failed publish's cleanup the write side.
 	blobMu sync.RWMutex
 }
 
@@ -251,8 +251,8 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 		a.Metadata = map[string]string{}
 	}
 	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
-	err = s.holdBlobs(func() error {
-		files, size, err := s.buildFiles(ctx, nil, req.Files, quota)
+	err = s.holdBlobs(ctx, func(put *[]string) error {
+		files, size, err := s.buildFiles(ctx, nil, req.Files, quota, put)
 		if err != nil {
 			return err
 		}
@@ -272,11 +272,19 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 
 // holdBlobs runs fn under blobMu's read side. Every content reader is local
 // (memory, a spilled bundle or a staged upload), so the hold is bounded by
-// disk speed, not by a client.
-func (s *Service) holdBlobs(fn func() error) error {
-	s.blobMu.RLock()
-	defer s.blobMu.RUnlock()
-	return fn()
+// disk speed, not by a client. When fn fails, the blobs it noted in put are
+// dropped, even if ctx ended, because no version charges them to anyone.
+func (s *Service) holdBlobs(ctx context.Context, fn func(put *[]string) error) error {
+	var put []string
+	err := func() error {
+		s.blobMu.RLock()
+		defer s.blobMu.RUnlock()
+		return fn(&put)
+	}()
+	if err != nil && len(put) > 0 {
+		s.dropBlobs(context.WithoutCancel(ctx), put)
+	}
+	return err
 }
 
 func validateTexts(name, description, label string) error {
@@ -415,8 +423,8 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		return nil, nil, err
 	}
 	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
-	err = s.holdBlobs(func() error {
-		files, size, err := s.buildFiles(ctx, base, req.Files, quota)
+	err = s.holdBlobs(ctx, func(put *[]string) error {
+		files, size, err := s.buildFiles(ctx, base, req.Files, quota, put)
 		if err != nil {
 			return err
 		}
