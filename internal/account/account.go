@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -51,6 +52,8 @@ const (
 	// link is open; the link itself lives on if they take longer.
 	linkCookieTTL = 15 * time.Minute
 	maxFormBytes  = 64 << 10
+	// formTokenField is the hidden field every form of these pages carries.
+	formTokenField = "form_token"
 )
 
 // How wrong link tokens and wrong current passwords slow the next attempt:
@@ -176,8 +179,8 @@ func New(d Deps, o Options) http.Handler {
 			handle("POST "+Prefix+string(p), s.redeemLink(p))
 		}
 		handle("POST "+Prefix+"password", s.signedIn(s.changePassword))
-		handle("POST "+Prefix+"sessions/end", s.signedIn(s.endSessions))
 	}
+	handle("POST "+Prefix+"sessions/end", s.signedIn(s.endSessions))
 	handle("GET "+CallbackPath, s.callback)
 	handle("GET /account", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, Prefix, http.StatusMovedPermanently)
@@ -251,7 +254,8 @@ func (s *server) signedIn(fn func(http.ResponseWriter, *http.Request, visit)) ht
 				s.message(w, r, http.StatusBadRequest, "bad-form")
 				return
 			}
-			if !sess.ValidForm(r.PostForm.Get("form_token")) {
+			if !sess.ValidForm(r.PostForm.Get(formTokenField)) {
+				s.auth.Record(ctx, auth.ResultForbidden, nil)
 				s.message(w, r, http.StatusForbidden, "forbidden")
 				return
 			}
@@ -291,7 +295,7 @@ func (b base) Shell(title, label, nav string) theme.Shell {
 		Nav:     []theme.Link{{Label: nav, Href: Prefix, Current: true}},
 		Person:  b.Person,
 		Detail:  b.Handle + " · " + b.Role,
-		SignOut: theme.Form{Action: Prefix + "signout", Hidden: map[string]string{"form_token": b.FormToken}},
+		SignOut: theme.Form{Action: Prefix + "signout", Hidden: map[string]string{formTokenField: b.FormToken}},
 	}
 }
 
@@ -339,6 +343,15 @@ func (s *server) wait(w http.ResponseWriter, r *http.Request, d time.Duration) {
 	s.render(w, r, http.StatusTooManyRequests, "message", messagePage{base: s.base(), Kind: "wait", Seconds: secs})
 }
 
+// busy answers a password that was not checked or set because the server
+// is hashing as many as it does at once: nothing changed, and the same
+// form works a moment later.
+func (s *server) busy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", "5")
+	s.message(w, r, http.StatusServiceUnavailable, "busy")
+	middleware.SetErrorCode(r.Context(), api.CodeBusy)
+}
+
 // fail logs an error that is not the person's doing and answers with a
 // page that says nothing about it.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, what string, err error) {
@@ -381,7 +394,8 @@ func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess != nil {
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-		if err := r.ParseForm(); err != nil || !sess.ValidForm(r.PostForm.Get("form_token")) {
+		if err := r.ParseForm(); err != nil || !sess.ValidForm(r.PostForm.Get(formTokenField)) {
+			s.auth.Record(r.Context(), auth.ResultForbidden, nil)
 			s.message(w, r, http.StatusForbidden, "forbidden")
 			return
 		}

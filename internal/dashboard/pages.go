@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"errors"
-	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,22 +15,21 @@ import (
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-var pagesFuncs = template.FuncMap{}
-
 var pagesFlashes = map[string]string{
-	"page-visibility":       "Who can open the page is changed.",
-	"page-hidden":           "The page is hidden. Its address answers 404 until it is published again.",
-	"page-kept":             "The stale mark is cleared. The page stays.",
-	"page-binned":           "The page is in the bin. It can be restored until it is removed for good.",
-	"page-restored":         "The page is restored from the bin.",
-	"page-handed-over":      "The page has a new owner.",
-	"version-published":     "That version is now the published one.",
-	"link-revoked":          "The share link is revoked.",
-	"page-taken-down":       "The page is hidden. Its owner can still sign in.",
-	"page-taken-down-owner": "The page is hidden and its owner is disabled.",
-	"takedown-last-admin":   "The page is hidden. Its owner is the last active admin and was not disabled.",
-	"takedown-self":         "The page is hidden. You own it, and nobody disables their own account.",
-	"page-removed":          "The page is removed for good.",
+	"page-visibility":          "Who can open the page is changed.",
+	"page-hidden":              "The page is hidden. Its address answers 404 until it is published again.",
+	"page-kept":                "The stale mark is cleared. The page stays.",
+	"page-binned":              "The page is in the bin. It can be restored until it is removed for good.",
+	"page-restored":            "The page is restored from the bin.",
+	"page-handed-over":         "The page has a new owner.",
+	"version-published":        "That version is now the published one.",
+	"version-published-hidden": "That version is now the published one. The page is still hidden: publish it again under Address and access to show it.",
+	"link-revoked":             "The share link is revoked.",
+	"page-taken-down":          "The page is hidden. Its owner can still sign in.",
+	"page-taken-down-owner":    "The page is hidden and its owner is disabled.",
+	"takedown-last-admin":      "The page is hidden. Its owner is the last active admin and was not disabled.",
+	"takedown-self":            "The page is hidden. You own it, and nobody disables their own account.",
+	"page-removed":             "The page is removed for good.",
 }
 
 func (s *server) pagesRoutes(mux *http.ServeMux) {
@@ -163,10 +161,15 @@ func (f pagesFilter) query() (q artifact.ListQuery, ok bool) {
 		if f.Visibility != "" {
 			q.Deleted = "exclude"
 		}
-	case stateLive.Key:
-		q.Deleted, q.Stale = "exclude", "exclude"
-	case stateStale.Key:
-		q.Deleted, q.Stale = "exclude", "only"
+	case stateLive.Key, stateStale.Key:
+		// A hidden page shows under that status alone.
+		if f.Visibility == artifact.Unpublished {
+			return q, false
+		}
+		q.Deleted, q.Stale, q.Published = "exclude", "exclude", true
+		if f.Status == stateStale.Key {
+			q.Stale = "only"
+		}
 	case stateUnpublished.Key:
 		if f.Visibility != "" && f.Visibility != artifact.Unpublished {
 			return q, false
@@ -205,13 +208,7 @@ func (s *server) pagesList(w http.ResponseWriter, r *http.Request, c *request) e
 			return pageErr(err)
 		}
 		for i := range found.Items {
-			row := s.pageRow(&found.Items[i])
-			// The store cannot ask for "published": a live or stale page
-			// that is unpublished shows under that status alone.
-			if f.Status != "" && row.State.Key != f.Status {
-				continue
-			}
-			data.Rows = append(data.Rows, row)
+			data.Rows = append(data.Rows, s.pageRow(&found.Items[i]))
 		}
 		if found.NextCursor != "" {
 			data.Next = f.address(found.NextCursor)
@@ -314,7 +311,10 @@ type pageData struct {
 	// The share-link form: its limits, and what was typed when it was
 	// refused.
 	MaxLinkDays, LinkDays int
-	LinkLabel, LinkError  string
+	LinkLabel             string
+	// LinkErr names what is wrong with a field of that form, by the
+	// field's name.
+	LinkErr map[string]string
 }
 
 const (
@@ -442,30 +442,6 @@ func (s *server) pagesHandOver(w http.ResponseWriter, r *http.Request, c *reques
 	return s.done(w, r, pagePath(slug), "page-handed-over")
 }
 
-// confirmData is a confirmation page: what the change does, what it leaves
-// alone, and the one button that makes it.
-type confirmData struct {
-	Slug    string // the page, for the way back
-	Heading string
-	Intro   string
-	Does    []string
-	Keeps   []string
-	Action  string // where the form posts to
-	Button  string
-	Danger  bool
-	// Check, when set, is a ticked option the form carries.
-	Check *confirmCheck
-	Note  string // why there is no option, when there is none
-}
-
-type confirmCheck struct {
-	Name, Label, Help string
-}
-
-func (s *server) confirm(w http.ResponseWriter, r *http.Request, c *request, d confirmData) error {
-	return s.render(w, r, c, http.StatusOK, "pages_confirm", page{Title: d.Heading, Nav: "pages"}, d)
-}
-
 // version reads the version number of the path and checks the page has it.
 func (s *server) version(r *http.Request, c *request) (*artifact.Artifact, int, error) {
 	a, _, err := s.load(r.Context(), c, r.PathValue("slug"))
@@ -487,24 +463,29 @@ func (s *server) pagesPublishConfirm(w http.ResponseWriter, r *http.Request, c *
 	if a.DeletedAt != nil {
 		return refused("The page is in the bin. Restore it first.")
 	}
-	if n == a.PublishedVersion && a.UnpublishedAt == nil {
+	if n == a.PublishedVersion {
+		if a.UnpublishedAt != nil {
+			return refused("Version %d is already the published one, and the page is hidden. Publish the page again under Address and access to show it.", n)
+		}
 		return refused("Version %d is already the published one.", n)
 	}
 	host := hostOf(s.d.Links.ArtifactURL(a.Slug))
 	version := strconv.Itoa(n)
-	d := confirmData{
-		Slug:    a.Slug,
-		Heading: "Publish version " + version + " of " + a.Slug,
-		Does:    []string{"The address " + host + " shows version " + version + " from now on."},
-		Keeps: []string{
-			"No version is deleted, and each keeps its own address.",
-			"The next publish, from an agent or the command line, makes a new version and goes live as usual.",
-		},
-		Action: pagePath(a.Slug) + "/versions/" + version + "/publish",
-		Button: "Publish version " + version,
+	d := pageConfirmation(a.Slug)
+	d.Title = "Publish version " + version + " of " + a.Slug
+	d.Ends = []string{"The address " + host + " shows version " + version + " from now on."}
+	d.Stays = []string{
+		"No version is deleted, and each keeps its own address.",
+		"The next publish, from an agent or the command line, makes a new version and goes live as usual.",
 	}
-	if a.PublishedVersion != n && a.PublishedVersion != 0 {
-		d.Does[0] = "The address " + host + " shows version " + version + " from now on, in place of version " + strconv.Itoa(a.PublishedVersion) + "."
+	d.Action, d.Button = pagePath(a.Slug)+"/versions/"+version+"/publish", "Publish version "+version
+	if a.PublishedVersion != 0 {
+		d.Ends[0] = "The address " + host + " shows version " + version + " from now on, in place of version " + strconv.Itoa(a.PublishedVersion) + "."
+	}
+	// Choosing a version does not show a hidden page, and must not say so.
+	if a.UnpublishedAt != nil {
+		d.Ends = []string{"Version " + version + " becomes the published version."}
+		d.Stays = append([]string{"The page stays hidden: " + host + " answers 404 until you publish the page again under Address and access."}, d.Stays...)
 	}
 	return s.confirm(w, r, c, d)
 }
@@ -517,14 +498,16 @@ func (s *server) pagesPublish(w http.ResponseWriter, r *http.Request, c *request
 	if _, err := s.d.Artifacts.Publish(r.Context(), c.actor, a.Slug, n); err != nil {
 		return pageErr(err)
 	}
+	if a.UnpublishedAt != nil {
+		return s.done(w, r, pagePath(a.Slug), "version-published-hidden")
+	}
 	return s.done(w, r, pagePath(a.Slug), "version-published")
 }
 
-type linkCreatedData struct {
-	Slug, Host string
-	Link       *artifact.ShareLink
-	// URL is the link itself. It is in this response and nowhere else.
-	URL string
+// pageConfirmation starts the confirmation of a change to the page slug,
+// with the headings every such page has.
+func pageConfirmation(slug string) confirmation {
+	return confirmation{Slug: slug, EndsTitle: "What happens", StaysTitle: "What stays as it is", Cancel: pagePath(slug)}
 }
 
 // pagesLinkCreate makes a share link and shows it in the response to the
@@ -533,12 +516,12 @@ type linkCreatedData struct {
 func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *request) error {
 	ctx, slug := r.Context(), r.PathValue("slug")
 	label, typed := strings.TrimSpace(r.PostForm.Get("label")), strings.TrimSpace(r.PostForm.Get("days"))
-	refuse := func(msg string) error {
+	refuse := func(field, msg string) error {
 		d, err := s.pageView(ctx, c, slug)
 		if err != nil {
 			return err
 		}
-		d.LinkLabel, d.LinkError = label, msg
+		d.LinkLabel, d.LinkErr = label, map[string]string{field: msg}
 		if n, err := strconv.Atoi(typed); err == nil {
 			d.LinkDays = n
 		}
@@ -546,19 +529,35 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 	}
 	days, err := strconv.Atoi(typed)
 	if err != nil || days < 1 || days > s.maxLinkDays() {
-		return refuse("Give a number of days from 1 to " + strconv.Itoa(s.maxLinkDays()) + ".")
+		return refuse("days", "Give a number of days from 1 to "+strconv.Itoa(s.maxLinkDays())+".")
+	}
+	// The days are checked above, so what the service still refuses here is
+	// the note.
+	if artifact.ValidateLabel(label) != nil {
+		return refuse("label", "Keep the note to one line of plain text, at most "+strconv.Itoa(artifact.LabelMaxBytes)+" bytes.")
 	}
 	l, token, err := s.d.Artifacts.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour)
-	var ae *artifact.Error
-	if errors.Is(err, artifact.ErrInvalidArgument) && errors.As(err, &ae) {
-		return refuse(asSentence(ae.Message))
+	if errors.Is(err, artifact.ErrInvalidArgument) {
+		return refuse("label", "That note was not accepted. Use plain text on one line.")
 	}
 	if err != nil {
 		return pageErr(err)
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	return s.render(w, r, c, http.StatusOK, "pages_link", page{Title: "Share link for " + slug, Nav: "pages"}, linkCreatedData{
-		Slug: slug, Host: hostOf(s.d.Links.ArtifactURL(slug)), Link: l, URL: s.d.Links.ShareURL(slug, token),
+	what := "Share link"
+	if l.Label != "" {
+		what += " for " + l.Label
+	}
+	// The link is in this response and nowhere else.
+	return s.showOnce(w, r, c, shownOnce{
+		Slug: slug, Title: "Share link for " + slug, Label: what,
+		Lede: "Copy it now and send it over a channel you trust. Whoever has it can open " +
+			hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in.",
+		Value: s.d.Links.ShareURL(slug, token), Button: "Copy the link",
+		Notes: []string{
+			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked from the page's own page.",
+			"Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.",
+		},
+		Back: "Back to the page",
 	})
 }
 
@@ -589,20 +588,16 @@ func (s *server) pagesLinkRevokeConfirm(w http.ResponseWriter, r *http.Request, 
 	if l.Label != "" {
 		name += ", " + l.Label
 	}
-	return s.confirm(w, r, c, confirmData{
-		Slug:    slug,
-		Heading: "Revoke a share link of " + slug,
-		Intro:   "The link " + name + ".",
-		Does: []string{
-			"The link stops opening the page at once.",
-			"Browsers that opened the page with it lose access on their next request.",
-			"This cannot be undone.",
-		},
-		Keeps:  []string{"The page, its other share links and everyone who signs in to open it.", "A new link can be created at any time."},
-		Action: pagePath(slug) + "/links/" + url.PathEscape(l.Prefix) + "/revoke",
-		Button: "Revoke the link",
-		Danger: true,
-	})
+	d := pageConfirmation(slug)
+	d.Title, d.Lede = "Revoke a share link of "+slug, "The link "+name+"."
+	d.Ends = []string{
+		"The link stops opening the page at once.",
+		"Browsers that opened the page with it lose access on their next request.",
+		"This cannot be undone.",
+	}
+	d.Stays = []string{"The page, its other share links and everyone who signs in to open it.", "A new link can be created at any time."}
+	d.Action, d.Button, d.Danger = pagePath(slug)+"/links/"+url.PathEscape(l.Prefix)+"/revoke", "Revoke the link", true
+	return s.confirm(w, r, c, d)
 }
 
 func (s *server) pagesLinkRevoke(w http.ResponseWriter, r *http.Request, c *request) error {
@@ -629,19 +624,14 @@ func (s *server) pagesTakeDownConfirm(w http.ResponseWriter, r *http.Request, c 
 	if a.DeletedAt != nil {
 		return refused("The page is in the bin, so nobody can open it. Remove it for good to delete its content.")
 	}
-	d := confirmData{
-		Slug:    a.Slug,
-		Heading: "Take down " + a.Slug,
-		Intro:   "For a page that has to go offline now.",
-		Does:    []string{"The page is hidden: " + hostOf(s.d.Links.ArtifactURL(a.Slug)) + " and the address of every version answer 404 at once."},
-		Keeps: []string{
-			"Nothing is deleted. Every version stays stored, and the page can be published again.",
-			"To delete the content as well, remove the page for good afterwards.",
-		},
-		Action: pagePath(a.Slug) + "/takedown",
-		Button: "Take the page down",
-		Danger: true,
+	d := pageConfirmation(a.Slug)
+	d.Title, d.Lede = "Take down "+a.Slug, "For a page that has to go offline now."
+	d.Ends = []string{"The page is hidden: " + hostOf(s.d.Links.ArtifactURL(a.Slug)) + " and the address of every version answer 404 at once."}
+	d.Stays = []string{
+		"Nothing is deleted. Every version stays stored, and the page can be published again.",
+		"To delete the content as well, remove the page for good afterwards.",
 	}
+	d.Action, d.Button, d.Danger = pagePath(a.Slug)+"/takedown", "Take the page down", true
 	owner, err := s.d.Users.GetUser(ctx, a.OwnerHandle)
 	if err != nil {
 		return err
@@ -653,7 +643,7 @@ func (s *server) pagesTakeDownConfirm(w http.ResponseWriter, r *http.Request, c 
 		d.Note = "Its owner, " + owner.Handle + ", is already disabled."
 	default:
 		d.Check = &confirmCheck{
-			Name:  disableOwnerField,
+			Name: disableOwnerField, Legend: "The owner", Checked: true,
 			Label: "Also disable its owner, " + owner.Handle,
 			Help: "Hiding is not a lock: the owner, or anyone else who may change the page, can publish it again. " +
 				"Disabling ends the owner's sign-in, their API keys, the apps they connected and the share links they created, for good. " +

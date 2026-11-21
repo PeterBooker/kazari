@@ -714,7 +714,8 @@ func TestRunAdmin(t *testing.T) {
 		"GET /v1/audit": record(api.AuditList{NextCursor: "c2", Events: []api.AuditEvent{
 			{At: t0, Actor: "ann", Action: "artifact.create", Slug: "demo", Details: map[string]string{"version": "1", "a": "b"}}}}),
 		"GET /v1/users/bob": record(api.User{Handle: "bob", Role: "member", CreatedAt: t0, Identities: []api.Identity{
-			{Issuer: "https://idp.test", Subject: "sub-1", Email: "bob@x.test", LastLoginAt: t0}}}),
+			{Issuer: "https://idp.test", Subject: "sub-1", Email: "bob@x.test", LastLoginAt: &t0},
+			{Issuer: "https://idp.test", Subject: "sub-2"}}}),
 		"POST /v1/users/bob/identities":        record(nil),
 		"POST /v1/users/bob/identities/unlink": record(nil),
 		"POST /v1/users/ann/transfer":          record(api.TransferredArtifacts{Transferred: []string{"demo", "notes"}}),
@@ -759,15 +760,27 @@ func TestRunAdmin(t *testing.T) {
 			wantQuery:  "action=artifact.&action=key.issue&actor=ann&cursor=c1&until=2026-10-02T00%3A00%3A00Z"},
 		{args: []string{"users", "transfer", "ann", "bob"}, wantOut: "2 artifacts of ann now belong to bob\ndemo\nnotes\n",
 			wantBody: `{"owner":"bob"}`},
+		// An identity linked by hand that has not signed in yet has no
+		// last sign-in.
 		{args: []string{"identities", "list", "bob"}, wantOut: "ISSUER            SUBJECT  EMAIL       LAST SIGN-IN\n" +
-			"https://idp.test  sub-1    bob@x.test  2026-10-01T14:00:00+02:00\n"},
+			"https://idp.test  sub-1    bob@x.test  2026-10-01T14:00:00+02:00\n" +
+			"https://idp.test  sub-2    -           -\n"},
+		{args: []string{"users", "create", "bob", "--name", "Bob B", "--email", "bob@x.test"},
+			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500.0 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
+			wantBody: `{"handle":"bob","email":"bob@x.test","display_name":"Bob B"}`},
+		{args: []string{"users", "update", "bob", "--name", "Robert"},
+			wantOut:  "handle:   bob\nemail:    -\nrole:     admin\nstorage:  0 B used (no quota)\ncreated:  2026-10-01T14:00:00+02:00\n",
+			wantBody: `{"display_name":"Robert"}`},
+		{args: []string{"users", "update", "bob", "--name", ""},
+			wantOut:  "handle:   bob\nemail:    -\nrole:     admin\nstorage:  0 B used (no quota)\ncreated:  2026-10-01T14:00:00+02:00\n",
+			wantBody: `{"display_name":""}`},
 		{args: []string{"identities", "link", "bob", "--issuer", "https://idp.test", "--subject", "sub-1", "--email", "bob@x.test"},
 			wantOut: "linked sub-1 to bob\n", wantBody: `{"issuer":"https://idp.test","subject":"sub-1","email":"bob@x.test"}`},
 		{args: []string{"identities", "unlink", "bob", "--issuer", "https://idp.test", "--subject", "sub-1"},
 			wantOut: "unlinked sub-1 from bob\n", wantBody: `{"issuer":"https://idp.test","subject":"sub-1"}`},
 		{args: []string{"health"}, wantOut: "ok (server 1.2.3)\n"},
-		{args: []string{"artifacts", "list", "--deleted", "only", "--search", "q3 report", "--visibility", "members"},
-			wantQuery: "deleted=only&q=q3+report&visibility=members",
+		{args: []string{"artifacts", "list", "--deleted", "only", "--search", "q3 report", "--visibility", "members", "--owner", "peter"},
+			wantQuery: "deleted=only&owner=peter&q=q3+report&visibility=members",
 			wantOut: "OWNER  SLUG  VERSION  VISIBILITY  STATE  SIZE     UPDATED                    NAME\n" +
 				"peter  demo  2/3      public      live   1.5 KiB  2026-10-01T15:00:00+02:00  Demo page\n"},
 	}

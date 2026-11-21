@@ -17,8 +17,6 @@ var activityFuncs = template.FuncMap{
 	"describe": describe,
 }
 
-var activityFlashes = map[string]string{}
-
 func (s *server) activityRoutes(mux *http.ServeMux) {
 	s.view(mux, "GET /activity", s.activity)
 	s.action(mux, "POST /activity/export", s.activityExport)

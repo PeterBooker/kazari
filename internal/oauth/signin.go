@@ -298,7 +298,7 @@ func (s *Service) serveSignInForm(w http.ResponseWriter, r *http.Request) {
 		// key may read.
 		if len(p.Slugs) > 0 {
 			s.renderSignIn(w, http.StatusForbidden, page, true,
-				"That API key is restricted to certain artifacts, so it cannot sign in. Use a key without a restriction.")
+				"That API key is restricted to certain pages, so it cannot sign in. Use a key without a restriction.")
 			return
 		}
 		handle, keyPrefix, via = p.Handle, p.KeyID, viaAPIKey
@@ -339,8 +339,9 @@ func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page si
 		s.renderSignIn(w, http.StatusBadRequest, page, false, "Enter your handle or email, and your password.")
 		return nil, false
 	}
-	account, ip := accountKey(login), ratelimit.IPKey(r)
-	if wait := max(s.accountDelay.Wait(ctx, account), s.ipDelay.Wait(ctx, ip)); wait > 0 {
+	account := s.accountKey(ctx, login)
+	attempt, wait := ratelimit.BeginPair(ctx, s.accountDelay, account, s.ipDelay, ratelimit.IPKey(r))
+	if wait > 0 {
 		s.signedIn(ctx, viaPassword, signInDelayed)
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
 		s.renderSignIn(w, http.StatusTooManyRequests, page, false,
@@ -349,10 +350,15 @@ func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page si
 	}
 	u, err := s.passwords.CheckPassword(ctx, login, password)
 	if errors.Is(err, user.ErrBadPassword) {
-		s.accountDelay.Fail(account)
-		s.ipDelay.Fail(ip)
+		attempt.Failed()
 		s.signedIn(ctx, viaPassword, signInFailed)
 		s.renderSignIn(w, http.StatusUnauthorized, page, false, "That name or password was not accepted.")
+		return nil, false
+	}
+	attempt.Done()
+	if errors.Is(err, user.ErrBusy) {
+		w.Header().Set("Retry-After", "5")
+		s.renderSignIn(w, http.StatusServiceUnavailable, page, false, "The server is busy. Try again in a moment.")
 		return nil, false
 	}
 	if err != nil {
@@ -365,9 +371,14 @@ func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page si
 	return u, true
 }
 
-// accountKey is what failed sign-ins are counted under: the name as typed,
-// folded and bounded, so an unknown name earns its delays like a real one.
-func accountKey(login string) string {
+// accountKey is what failed sign-ins are counted under: the person the name
+// belongs to, so that their handle and their email are one account, else
+// the name as typed, folded and bounded, so an unknown name earns its
+// delays like a real one.
+func (s *Service) accountKey(ctx context.Context, login string) string {
+	if handle := s.users.HandleFor(ctx, login); handle != "" {
+		return handle
+	}
 	login = strings.ToLower(login)
 	if len(login) > maxAccountKey {
 		login = login[:maxAccountKey]

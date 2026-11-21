@@ -111,6 +111,7 @@ type App struct {
 	obs        *middleware.Observer
 	sched      *scheduler.Scheduler
 	users      *user.Service
+	ready      *preflight.Checker
 	stderr     io.Writer
 	certs      certs.Source // nil in proxy mode
 	router     http.Handler
@@ -422,7 +423,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			HTTPClient: &http.Client{Timeout: updateCheckTimeout, Transport: fetchObs.Transport(transport)}})
 		if updates.Enabled() {
 			jobs = append(jobs, scheduler.Job{Name: "update-check", Every: updateCheckEvery, Run: func(ctx context.Context) error {
-				if err := updates.Check(ctx); err != nil {
+				if err := updates.Check(fetch.WithPurpose(ctx, fetch.PurposeUpdate)); err != nil {
 					return err
 				}
 				if r := updates.Result(); r.Newer {
@@ -434,6 +435,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: tel}, jobs...)
 	ready := preflight.NewChecker(cfg, preflight.ReadyOptions{Now: now, CertNotAfter: a.certNotAfter, Providers: tel}, 0)
+	a.ready = ready
 
 	apiBase := cfg.ExternalURL("api") + "v1"
 	mcpOpts := mcpserver.Options{
@@ -483,6 +485,11 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Metrics:   a.tel.MetricsHandler(),
 		Links:     links,
 		Logger:    log,
+	}
+	// Set only when there is one: a nil *update.Checker in the interface
+	// would not be a nil interface.
+	if updates != nil {
+		adminDeps.Updates = updates
 	}
 	if cfg.AdminSocketPath() != "" {
 		a.adminLocal = a.surface(instrument.SurfaceAdmin, true, httpapi.NewAdminAPI(adminDeps,

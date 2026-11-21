@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,8 +11,10 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/backup"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -40,6 +41,12 @@ type BackupWriter interface {
 // run while it is fresh. preflight.Checker implements it.
 type ReadyChecker interface {
 	Check(ctx context.Context, fresh bool) (preflight.Report, error)
+}
+
+// Updates knows the last answer of the update check. update.Checker
+// implements it.
+type Updates interface {
+	Result() update.Result
 }
 
 // writeSecret is writeJSON for a response that holds a link's token: no
@@ -142,7 +149,11 @@ func (h *adminAPI) ready(w http.ResponseWriter, r *http.Request, _ auth.Principa
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, present.Ready(report))
+	out := present.Ready(report)
+	if h.d.Updates != nil {
+		out.Update = present.Update(h.d.Updates.Result())
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 
@@ -158,11 +169,10 @@ func (h *adminAPI) backup(w http.ResponseWriter, r *http.Request, _ auth.Princip
 		return &statusError{status: http.StatusForbidden, code: api.CodeForbidden,
 			msg: "the certificate's private key leaves the host only over the admin socket; ask without certs, or run kazari admin backup on the server"}
 	}
-	// A large archive outlasts the server's write timeout.
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		h.log.WarnContext(r.Context(), "httpapi: backup: lift write deadline", "err", err)
-	}
-	out := &archiveWriter{w: w, name: h.backupFileName()}
+	// A large archive outlasts the server's write timeout, so each write
+	// renews it: the download lasts while its reader reads, and one that
+	// stalls ends, which frees the backup for the next caller.
+	out := &archiveWriter{w: w, body: middleware.Streaming(w, backupStall), name: h.backupFileName()}
 	if _, err := h.d.Backup.Write(r.Context(), out, backup.WriteOptions{Certs: certs}); err != nil {
 		if !out.started {
 			return err
@@ -195,9 +205,14 @@ func (h *adminAPI) backupFileName() string {
 // until then the response can still be an error.
 type archiveWriter struct {
 	w       http.ResponseWriter
+	body    io.Writer // w, with a write deadline of its own
 	name    string
 	started bool
 }
+
+// backupStall is how long a backup's reader may take over one write before
+// the server gives the download up.
+const backupStall = time.Minute
 
 func (a *archiveWriter) start() {
 	if a.started {
@@ -213,5 +228,5 @@ func (a *archiveWriter) start() {
 
 func (a *archiveWriter) Write(p []byte) (int, error) {
 	a.start()
-	return a.w.Write(p)
+	return a.body.Write(p)
 }

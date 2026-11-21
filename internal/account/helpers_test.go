@@ -75,6 +75,9 @@ type envOptions struct {
 	maxKeys   int           // user.Options.MaxKeys
 	maxKeyTTL time.Duration // auth.tokens.max_key_ttl, for the service and the page
 	telemetry instrument.Providers
+	// grants, when set, stands between the pages and the sign-in host's
+	// service.
+	grants func(account.Grants) account.Grants
 }
 
 // env is an instance without an identity provider: the apex with the
@@ -138,7 +141,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		SignInURL:       mcpURL + oauth.PathSignIn,
 		AdminURL:        adminURL,
 		MCPURL:          mcpURL + "/",
-		APIURL:          "https://api.art.test",
+		APIURL:          "https://api.art.test/v1",
 		LocalAccounts:   !eo.noLocal,
 		MaxKeyTTL:       eo.maxKeyTTL,
 		InsecureCookies: true,
@@ -148,8 +151,12 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	if eo.noAdmin {
 		opts.AdminURL = ""
 	}
+	var grants account.Grants = e.oauth
+	if eo.grants != nil {
+		grants = eo.grants(grants)
+	}
 	e.apex.Config.Handler = account.New(account.Deps{
-		Sessions: e.oauth, Users: e.users, Grants: e.oauth, Artifacts: e.pages, Audit: e.audit,
+		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.pages, Audit: e.audit,
 		Links: present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
 	}, opts)
 	e.mcp.Config.Handler = e.oauth.Handler()
@@ -228,10 +235,28 @@ func (b *browser) getURL(target string) (*http.Response, string) {
 	return b.do(req)
 }
 
-// post sends a form of the apex from one of its own pages.
+// post sends a form of the apex from one of its own pages. A link's form
+// is sent as the page that link opened wrote it, with the value that ties
+// it to the link, unless the test names its own.
 func (b *browser) post(path string, form url.Values) (*http.Response, string) {
 	b.e.t.Helper()
+	if _, named := form["form_token"]; !named && linkPath.MatchString(path) {
+		if token := b.linkCookie(); token != "" {
+			form.Set("form_token", account.LinkFormToken(token))
+		}
+	}
 	return b.postFrom(b.e.apex.URL, b.e.apex.URL+path, form)
+}
+
+// linkCookie returns the token of the link the browser has open, or "".
+func (b *browser) linkCookie() string {
+	apex, _ := url.Parse(b.e.apex.URL)
+	for _, c := range b.c.Jar.Cookies(apex) {
+		if c.Name == "kazari_link" {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 func (b *browser) postFrom(origin, target string, form url.Values) (*http.Response, string) {

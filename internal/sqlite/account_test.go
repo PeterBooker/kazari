@@ -21,12 +21,12 @@ func TestUserStoreLastAdmin(t *testing.T) {
 
 	demoted := *boss
 	demoted.Role = user.RoleMember
-	if err := s.UpdateUser(ctx, &demoted); !errors.Is(err, user.ErrLastAdmin) {
+	if err := userSet(s, ctx, &demoted); !errors.Is(err, user.ErrLastAdmin) {
 		t.Fatalf("demoting the last admin: err = %v, want ErrLastAdmin", err)
 	}
 	disabled := *boss
 	disabled.DisabledAt = &userT0
-	if err := s.UpdateUser(ctx, &disabled); !errors.Is(err, user.ErrLastAdmin) {
+	if err := userSet(s, ctx, &disabled); !errors.Is(err, user.ErrLastAdmin) {
 		t.Fatalf("disabling the last admin: err = %v, want ErrLastAdmin", err)
 	}
 	if got, _ := s.GetUser(ctx, "boss"); got.Role != user.RoleAdmin || got.DisabledAt != nil {
@@ -34,10 +34,10 @@ func TestUserStoreLastAdmin(t *testing.T) {
 	}
 	renamed := *boss
 	renamed.DisplayName = "The Boss"
-	if err := s.UpdateUser(ctx, &renamed); err != nil {
+	if err := userSet(s, ctx, &renamed); err != nil {
 		t.Errorf("an update that keeps the last admin an admin: %v", err)
 	}
-	if err := s.UpdateUser(ctx, &user.User{Handle: "nobody", Role: user.RoleMember}); !errors.Is(err, user.ErrNotFound) {
+	if err := userSet(s, ctx, &user.User{Handle: "nobody", Role: user.RoleMember}); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("updating an unknown user: err = %v, want ErrNotFound", err)
 	}
 }
@@ -56,7 +56,7 @@ func TestUserStoreLastAdminConcurrent(t *testing.T) {
 		wg.Go(func() {
 			demoted := *u
 			demoted.Role = user.RoleMember
-			errs[i] = s.UpdateUser(ctx, &demoted)
+			errs[i] = userSet(s, ctx, &demoted)
 		})
 	}
 	wg.Wait()
@@ -221,7 +221,19 @@ func TestUserStoreLinks(t *testing.T) {
 	if _, err := s.RevokeLink(ctx, second.ID, userT0.Add(3*time.Minute)); !errors.Is(err, user.ErrLinkNotFound) {
 		t.Errorf("revoking a used link: err = %v", err)
 	}
-	revoked, err := s.RevokeLink(ctx, reset.ID, userT0.Add(3*time.Minute))
+	// Using one link ends the person's others: the reset link that was
+	// passed over must not set the password again later.
+	if got, _, _ := s.GetLink(ctx, "h2"); got.RevokedAt == nil {
+		t.Error("the reset link outlived the use of the invite")
+	}
+	if _, _, err := s.UseLink(ctx, "h2", userT0.Add(3*time.Minute), "pw2", nil); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Errorf("using a link passed over: err = %v", err)
+	}
+	fourth := link("ana", user.PurposeReset, "h5", userT0.Add(3*time.Minute))
+	if err := s.CreateLink(ctx, fourth); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := s.RevokeLink(ctx, fourth.ID, userT0.Add(3*time.Minute))
 	if err != nil || revoked.UserHandle != "ana" || revoked.RevokedAt == nil {
 		t.Fatalf("RevokeLink = %+v, %v", revoked, err)
 	}
@@ -233,7 +245,7 @@ func TestUserStoreLinks(t *testing.T) {
 	}
 	ana, _ := s.GetUser(ctx, "ana")
 	ana.DisabledAt = &userT0
-	if err := s.UpdateUser(ctx, ana); err != nil {
+	if err := userSet(s, ctx, ana); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.UseLink(ctx, "h4", userT0.Add(5*time.Minute), "pw3", nil); !errors.Is(err, user.ErrLinkNotFound) {
@@ -338,5 +350,193 @@ func TestOAuthStoreUserSessions(t *testing.T) {
 	}
 	if n, err := s.DeleteUserSessions(ctx, "nobody", 0); err != nil || n != 0 {
 		t.Errorf("DeleteUserSessions of an unknown user = %d, %v", n, err)
+	}
+}
+
+// What a new key depends on is read inside its own transaction: a key
+// revoked, expired or whose owner was disabled a moment ago issues nothing.
+func TestUserStoreKeyLiveness(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	userMustCreate(t, s, "boss", "", user.RoleAdmin)
+	userMustCreate(t, s, "ana", "", user.RoleMember)
+	userMustKey(t, s, "ana", "revokedk", userT0)
+	userMustKey(t, s, "ana", "livekeyy", userT0)
+	if _, err := s.RevokeKey(ctx, "ana", "revokedk", userT0); err != nil {
+		t.Fatal(err)
+	}
+	past := userT0.Add(-time.Minute)
+	expired := &user.APIKey{UserHandle: "ana", Prefix: "expiredk", Hash: "h", CreatedAt: userT0.Add(-time.Hour), ExpiresAt: &past}
+	if err := s.CreateKey(ctx, expired, 0); err != nil {
+		t.Fatal(err)
+	}
+	next := func(prefix string) *user.APIKey {
+		return &user.APIKey{UserHandle: "ana", Prefix: prefix, Hash: "hash-" + prefix, CreatedAt: userT0}
+	}
+
+	for _, old := range []string{"revokedk", "expiredk"} {
+		if err := s.RotateKey(ctx, old, next("rot"+old[:5]), userT0.Add(time.Hour), 0); !errors.Is(err, user.ErrKeyNotFound) {
+			t.Errorf("rotating %s: err = %v, want ErrKeyNotFound", old, err)
+		}
+		child := next("ch" + old[:6])
+		child.IssuedBy = old
+		if err := s.CreateKey(ctx, child, 0); !errors.Is(err, user.ErrKeyNotFound) {
+			t.Errorf("issuing with %s: err = %v, want ErrKeyNotFound", old, err)
+		}
+	}
+	keys, err := s.ListKeys(ctx, "ana")
+	if err != nil || len(keys) != 3 {
+		t.Fatalf("keys after refused rotations and issues = %d, %v; want the 3 there were", len(keys), err)
+	}
+
+	if _, err := s.UpdateUser(ctx, "ana", func(u *user.User) error { u.DisabledAt = &userT0; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateKey(ctx, next("disabled"), 0); !errors.Is(err, user.ErrDisabled) {
+		t.Errorf("a key for a disabled user: err = %v, want ErrDisabled", err)
+	}
+	if err := s.RotateKey(ctx, "livekeyy", next("rotlivek"), userT0.Add(time.Hour), 0); !errors.Is(err, user.ErrDisabled) {
+		t.Errorf("rotating a disabled user's key: err = %v, want ErrDisabled", err)
+	}
+	if k, _, _ := s.GetKey(ctx, "livekeyy"); k.ExpiresAt != nil {
+		t.Error("a refused rotation shortened the key it would have replaced")
+	}
+}
+
+// A change is made on the row as it is now, so one admin's edit cannot
+// write back what another has changed since both looked.
+func TestUserStoreUpdateOnCurrentRow(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	userMustCreate(t, s, "boss", "", user.RoleAdmin)
+	userMustCreate(t, s, "ana", "ana@example.com", user.RoleMember)
+
+	// One admin disables ana; another, who loaded her page before that,
+	// saves a new quota.
+	if _, err := s.UpdateUser(ctx, "ana", func(u *user.User) error { u.DisabledAt = &userT0; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UpdateUser(ctx, "ana", func(u *user.User) error {
+		if u.DisabledAt == nil {
+			t.Error("the change was offered a row from before the disable")
+		}
+		u.QuotaBytes = 42
+		return nil
+	})
+	if err != nil || got.QuotaBytes != 42 || got.DisabledAt == nil || got.Email != "ana@example.com" {
+		t.Fatalf("UpdateUser = %+v, %v; want the quota changed and the disable kept", got, err)
+	}
+	stored, _ := s.GetUser(ctx, "ana")
+	if stored.DisabledAt == nil || stored.QuotaBytes != 42 {
+		t.Errorf("stored = %+v", stored)
+	}
+
+	refusal := errors.New("refused")
+	if _, err := s.UpdateUser(ctx, "ana", func(u *user.User) error { u.QuotaBytes = 7; return refusal }); !errors.Is(err, refusal) {
+		t.Errorf("an error from the change: err = %v, want it back as it is", err)
+	}
+	if stored, _ := s.GetUser(ctx, "ana"); stored.QuotaBytes != 42 {
+		t.Errorf("a refused change wrote the quota %d", stored.QuotaBytes)
+	}
+	if _, err := s.UpdateUser(ctx, "nobody", func(*user.User) error { return nil }); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("updating an unknown user: err = %v", err)
+	}
+}
+
+func TestUserStoreCreateInvited(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	userMustCreate(t, s, "ana", "ana@example.com", user.RoleMember)
+	invite := func(handle, email, hash string) error {
+		u := &user.User{Handle: handle, Email: email, Role: user.RoleMember, CreatedAt: userT0}
+		l := &user.Link{UserHandle: handle, Purpose: user.PurposeInvite, Hash: hash, CreatedAt: userT0, ExpiresAt: userT0.Add(time.Hour)}
+		return s.CreateInvited(ctx, u, l)
+	}
+	if err := invite("ben", "ana@example.com", "h1"); !errors.Is(err, user.ErrEmailTaken) {
+		t.Fatalf("an invite with a taken email: err = %v", err)
+	}
+	if err := invite("ana", "", "h2"); !errors.Is(err, user.ErrHandleTaken) {
+		t.Fatalf("an invite with a taken handle: err = %v", err)
+	}
+	if _, err := s.GetUser(ctx, "ben"); !errors.Is(err, user.ErrNotFound) {
+		t.Error("a refused invite left the user")
+	}
+	if live, _ := s.ListLinks(ctx, userT0); len(live) != 0 {
+		t.Errorf("refused invites left links: %+v", live)
+	}
+	if err := invite("ben", "ben@example.com", "h3"); err != nil {
+		t.Fatal(err)
+	}
+	l, u, err := s.GetLink(ctx, "h3")
+	if err != nil || u.Handle != "ben" || l.ID == 0 {
+		t.Errorf("the invite = %+v, %+v, %v", l, u, err)
+	}
+}
+
+// The list holds the links that would work: not a disabled person's, and
+// not a setup link once anyone exists.
+func TestUserStoreListLinksUsable(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	setup := &user.Link{Purpose: user.PurposeSetup, Hash: "s1", CreatedAt: userT0, ExpiresAt: userT0.Add(time.Hour)}
+	if err := s.CreateLink(ctx, setup); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := s.ListLinks(ctx, userT0); len(live) != 1 {
+		t.Fatalf("on a fresh instance the setup link is not listed: %+v", live)
+	}
+	userMustCreate(t, s, "boss", "", user.RoleAdmin)
+	userMustCreate(t, s, "ana", "", user.RoleMember)
+	for i, handle := range []string{"ana", "boss"} {
+		l := &user.Link{UserHandle: handle, Purpose: user.PurposeReset, Hash: "r" + string(rune('1'+i)), CreatedAt: userT0, ExpiresAt: userT0.Add(time.Hour)}
+		if err := s.CreateLink(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, err := s.ListLinks(ctx, userT0)
+	if err != nil || len(live) != 2 {
+		t.Fatalf("ListLinks with users = %+v, %v; want the two reset links and no setup link", live, err)
+	}
+	if err := s.RevokeUserLinks(ctx, "ana", userT0); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := s.ListLinks(ctx, userT0); len(live) != 1 || live[0].UserHandle != "boss" {
+		t.Errorf("after revoking ana's links: %+v", live)
+	}
+	if err := s.RevokeUserLinks(ctx, "nobody", userT0); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("RevokeUserLinks of an unknown user: err = %v", err)
+	}
+}
+
+// A sign-in method an admin linked by hand is not a sign-in.
+func TestUserStoreAccountOfOne(t *testing.T) {
+	ctx := context.Background()
+	s := userTestStore(t)
+	userMustCreate(t, s, "ana", "", user.RoleMember)
+	userMustCreate(t, s, "ben", "", user.RoleMember)
+	if err := s.LinkIdentity(ctx, "ana", user.Identity{Issuer: "https://idp", Subject: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.GetAccount(ctx, "ana", userT0)
+	if err != nil || a.Handle != "ana" || a.Identities != 1 || a.IdentityLoginAt != nil || a.LastActive() != nil {
+		t.Fatalf("GetAccount = %+v, %v; want one sign-in method and no activity", a, err)
+	}
+	ids, _ := s.ListIdentities(ctx, "ana")
+	if len(ids) != 1 || !ids[0].LastLoginAt.IsZero() {
+		t.Errorf("identities = %+v, want no sign-in time", ids)
+	}
+	if err := s.LinkIdentity(ctx, "ana", user.Identity{Issuer: "https://idp", Subject: "a", LastLoginAt: userT0}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.GetAccount(ctx, "ana", userT0); a.IdentityLoginAt == nil || !a.IdentityLoginAt.Equal(userT0) {
+		t.Errorf("after a sign-in: %+v", a)
+	}
+	if _, err := s.GetAccount(ctx, "nobody", userT0); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("GetAccount of an unknown user: err = %v", err)
+	}
+	all, _ := s.ListAccounts(ctx, userT0)
+	one, _ := s.GetAccount(ctx, "ben", userT0)
+	if diff := cmp.Diff(all[1], one); diff != "" {
+		t.Errorf("GetAccount differs from the list's row (-list +one):\n%s", diff)
 	}
 }

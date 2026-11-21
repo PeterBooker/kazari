@@ -74,9 +74,14 @@ func (a *App) Run(ctx context.Context) (err error) {
 		"admin", a.cfg.ExternalURL("admin"),
 		"dashboard", a.cfg.DashboardEnabled(),
 	)
-	if a.cfg.Admin.Dashboard && !a.cfg.DashboardEnabled() {
+	switch {
+	case !a.cfg.Admin.Dashboard || a.cfg.DashboardEnabled():
+	case a.cfg.AdminURL() == "":
 		a.log.Warn("the dashboard is off: admin.listen moves the admin host and admin.public_url does not say where a browser reaches it",
 			"next", "set admin.public_url, for example http://localhost:9443 for an SSH tunnel to admin.listen")
+	default:
+		a.log.Warn("the dashboard is off: its address is plain http on a host that is not this machine",
+			"address", a.cfg.AdminURL(), "next", "serve the admin host over https, or set admin.public_url to an https address")
 	}
 	a.firstRunHint(context.WithoutCancel(ctx))
 	// After the hint, so whoever waits for the listeners can read it.
@@ -103,6 +108,16 @@ func (a *App) Run(ctx context.Context) (err error) {
 		})
 	}
 	g.Go(func() error { return a.sched.Run(bg) })
+	// Once at start, so the dashboard and the readiness gauge say what a
+	// restart with a broken configuration did, without anyone asking. After
+	// that the checks run on demand: one writes a record at the DNS
+	// provider, which is no work for a timer.
+	g.Go(func() error {
+		if _, err := a.ready.Check(bg, false); err != nil && bg.Err() == nil {
+			a.log.Warn("readiness checks at start", "err", err)
+		}
+		return nil
+	})
 	if a.certs != nil {
 		g.Go(func() error {
 			if err := a.certs.Run(bg); err != nil {

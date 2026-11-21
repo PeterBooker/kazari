@@ -1,6 +1,9 @@
 package account
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 
@@ -57,25 +60,37 @@ func (s *server) linkToken(r *http.Request) string {
 	return ck.Value
 }
 
+// linkFormToken ties a link's form to the page that link opened. The cookie
+// goes with every request a browser makes to this host, whoever wrote the
+// form; only a page that was rendered for the link holds this.
+func linkFormToken(token string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("kazari account link form"))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // openLink loads the live link of the request's cookie for purpose. When ok
 // is false it has answered: the link is not valid, whatever the reason, or
 // the address has to wait.
 func (s *server) openLink(w http.ResponseWriter, r *http.Request, purpose user.Purpose) (string, *user.User, bool) {
-	ip := ratelimit.IPKey(r)
-	if d := s.linkDelay.Wait(r.Context(), ip); d > 0 {
+	attempt, d := s.linkDelay.Begin(ratelimit.IPKey(r))
+	if d > 0 {
+		s.linkDelay.Refused(r.Context())
 		s.wait(w, r, d)
 		return "", nil, false
 	}
 	token := s.linkToken(r)
 	if token == "" {
+		attempt.Done()
 		s.message(w, r, http.StatusNotFound, "link-invalid")
 		return "", nil, false
 	}
 	l, u, err := s.d.Users.Link(r.Context(), token)
 	if errors.Is(err, user.ErrLinkNotFound) || errors.Is(err, user.ErrSetupDone) {
-		s.linkFailed(w, r)
+		s.linkFailed(w, r, attempt)
 		return "", nil, false
 	}
+	attempt.Done()
 	if err != nil {
 		s.fail(w, r, "load link", err)
 		return "", nil, false
@@ -89,8 +104,8 @@ func (s *server) openLink(w http.ResponseWriter, r *http.Request, purpose user.P
 
 // linkFailed answers for a token that opens nothing, and counts it against
 // the address. The cookie goes, so reloading the page does not count again.
-func (s *server) linkFailed(w http.ResponseWriter, r *http.Request) {
-	s.linkDelay.Fail(ratelimit.IPKey(r))
+func (s *server) linkFailed(w http.ResponseWriter, r *http.Request, attempt ratelimit.Attempt) {
+	attempt.Failed()
 	s.setLinkCookie(w, "")
 	s.message(w, r, http.StatusNotFound, "link-invalid")
 }
@@ -112,16 +127,17 @@ func (s *server) linkPage(purpose user.Purpose) http.HandlerFunc {
 			http.Redirect(w, r, Prefix+string(purpose), http.StatusSeeOther)
 			return
 		}
-		_, u, ok := s.openLink(w, r, purpose)
+		token, u, ok := s.openLink(w, r, purpose)
 		if !ok {
 			return
 		}
-		s.renderLink(w, r, http.StatusOK, purpose, u, linkPageData{})
+		s.renderLink(w, r, http.StatusOK, purpose, token, u, linkPageData{})
 	}
 }
 
-func (s *server) renderLink(w http.ResponseWriter, r *http.Request, status int, purpose user.Purpose, u *user.User, d linkPageData) {
+func (s *server) renderLink(w http.ResponseWriter, r *http.Request, status int, purpose user.Purpose, token string, u *user.User, d linkPageData) {
 	d.base = s.base()
+	d.FormToken = linkFormToken(token)
 	d.Purpose = string(purpose)
 	d.For = u
 	d.MinLength = s.d.Users.MinPasswordLength()
@@ -142,15 +158,21 @@ func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 			s.message(w, r, http.StatusBadRequest, "bad-form")
 			return
 		}
+		f := r.PostForm
+		// Before the link is looked up or anything is counted. Without a
+		// cookie there is no link, which openLink answers.
+		if open := s.linkToken(r); open != "" && !hmac.Equal([]byte(f.Get(formTokenField)), []byte(linkFormToken(open))) {
+			s.message(w, r, http.StatusForbidden, "link-forbidden")
+			return
+		}
 		token, u, ok := s.openLink(w, r, purpose)
 		if !ok {
 			return
 		}
-		f := r.PostForm
 		d := linkPageData{NewHandle: f.Get("handle"), Name: f.Get("name"), Email: f.Get("email")}
 		refuse := func(field, why string) {
 			d.Err = map[string]string{field: why}
-			s.renderLink(w, r, http.StatusUnprocessableEntity, purpose, u, d)
+			s.renderLink(w, r, http.StatusUnprocessableEntity, purpose, token, u, d)
 		}
 		password := f.Get("password")
 		if password != f.Get("confirm") {
@@ -167,9 +189,13 @@ func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 		case errors.Is(err, user.ErrInvalidHandle):
 			refuse("handle", "invalid")
 			return
+		case errors.Is(err, user.ErrBusy):
+			s.busy(w, r)
+			return
 		case errors.Is(err, user.ErrLinkNotFound), errors.Is(err, user.ErrSetupDone):
 			// Lost a race for the link since it was opened above.
-			s.linkFailed(w, r)
+			attempt, _ := s.linkDelay.Begin(ratelimit.IPKey(r))
+			s.linkFailed(w, r, attempt)
 			return
 		case err != nil:
 			s.fail(w, r, "redeem link", err)

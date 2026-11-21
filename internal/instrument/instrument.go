@@ -6,6 +6,8 @@ package instrument
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -62,6 +64,9 @@ func StartChild(ctx context.Context, t trace.Tracer, name string, opts ...trace.
 // End ends span, marking it failed when err is set, with error.type set to
 // code, Kazari's error code. Only internal errors become exception events:
 // the others are messages meant for the caller, already counted by code.
+// The event carries the type of the error's root cause and not its
+// message, which names what the operation was about: a handle, a link, a
+// key. The log line of the same trace has the message.
 func End(span trace.Span, err error, code string) {
 	if err != nil && span.IsRecording() {
 		if code == "" {
@@ -70,10 +75,22 @@ func End(span trace.Span, err error, code string) {
 		span.SetAttributes(semconv.ErrorTypeKey.String(code))
 		span.SetStatus(codes.Error, code)
 		if code == CodeInternal {
-			span.RecordError(err)
+			span.AddEvent(semconv.ExceptionEventName, trace.WithAttributes(semconv.ExceptionType(rootType(err))))
 		}
 	}
 	span.End()
+}
+
+// rootType is the type of the innermost error err wraps, which says what
+// failed where a wrapper's type says only that something was wrapped.
+func rootType(err error) string {
+	for {
+		inner := errors.Unwrap(err)
+		if inner == nil {
+			return fmt.Sprintf("%T", err)
+		}
+		err = inner
+	}
 }
 
 // CodeInternal is the error code of every failure that is not the caller's.
@@ -156,8 +173,9 @@ const Redacted = "REDACTED"
 // admin API (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix},
 // /v1/grants/{id}, /v1/invites/{id}), of the dashboard
 // (/people/{handle}/keys/{prefix}, /people/{handle}/apps/{id},
-// /invites/{id}) and of the account pages (/account/keys/{prefix},
-// /account/apps/{id}): who did what stays in the audit log.
+// /invites/{id}, /pages/{slug}/links/{prefix}) and of the account pages
+// (/account/keys/{prefix}, /account/apps/{id}): who did what stays in the
+// audit log.
 func RedactAdminPath(p string) string {
 	api := strings.HasPrefix(p, "/v1/")
 	root := "/"
@@ -178,6 +196,9 @@ func RedactAdminPath(p string) string {
 		seg[1] = Redacted
 	case len(seg) >= 3 && !api && seg[0] == "account" && (seg[1] == "keys" || seg[1] == "apps"):
 		seg[2] = Redacted
+	// A share link's prefix names a credential as a key's does.
+	case len(seg) >= 4 && !api && seg[0] == "pages" && seg[2] == "links":
+		seg[3] = Redacted
 	default:
 		return p
 	}

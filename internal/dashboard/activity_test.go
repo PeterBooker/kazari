@@ -333,6 +333,6 @@ func TestActivityExportEveryPage(t *testing.T) {
 func TestActivityMarkup(t *testing.T) {
 	_, b := activityEnv(t)
 	for _, path := range []string{"/activity", "/activity?kind=pages&person=ana", "/activity?person=nobody", "/activity?from=bad"} {
-		checkMarkup(t, path, b.get(path))
+		strictMarkup(t, path, b.get(path).body)
 	}
 }

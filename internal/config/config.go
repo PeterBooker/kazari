@@ -535,9 +535,11 @@ func (c Config) AdminURL() string {
 }
 
 // DashboardEnabled reports whether the dashboard is served: admin.dashboard
-// is on and AdminURL names where a browser finds it.
+// is on, AdminURL names where a browser finds it, and that address is one
+// CheckAdminURL accepts. The last matters for the default address under
+// external_scheme http, which no validation of admin.public_url has seen.
 func (c Config) DashboardEnabled() bool {
-	return c.Admin.Dashboard && c.AdminURL() != ""
+	return c.Admin.Dashboard && c.AdminURL() != "" && CheckAdminURL(c.AdminURL()) == nil
 }
 
 // SlogLevel returns log.level as a slog.Level (info when unrecognised).
@@ -579,7 +581,15 @@ func (c Config) Logger(w io.Writer, journal bool) *slog.Logger {
 // YAML file, with set secrets as "***", sizes and durations as strings
 // ("50MiB", "336h") and a missing auth.oidc as nil.
 func (c Config) Redacted() map[string]any {
-	return redactStruct(reflect.ValueOf(c))
+	m := redactStruct(reflect.ValueOf(c))
+	// The effective value, where the key's own may be left to follow
+	// auth.oidc.
+	if auth, ok := m["auth"].(map[string]any); ok {
+		if local, ok := auth["local"].(map[string]any); ok {
+			local["enabled"] = c.LocalAccounts()
+		}
+	}
+	return m
 }
 
 func redactStruct(v reflect.Value) map[string]any {

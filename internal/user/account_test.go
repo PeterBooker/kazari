@@ -647,17 +647,23 @@ func TestKeyCap(t *testing.T) {
 	refused("a key issuing", err)
 	_, _, err = f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "ana", Session: true})
 	refused("a session issuing", err)
-	_, _, _, err = f.svc.RotateKey(ctx, user.KeyRef{Handle: "ana", Prefix: first.Prefix}, time.Hour)
-	refused("rotating with an overlap", err)
+
+	// A rotation replaces a key: the one it replaces is not a key more,
+	// though both are live for the overlap. That is one over the cap, once.
+	next, _, _, err := f.svc.RotateKey(ctx, user.KeyRef{Handle: "ana", Prefix: first.Prefix}, time.Hour)
+	if err != nil {
+		t.Fatalf("rotating with an overlap at the cap: %v", err)
+	}
+	_, _, _, err = f.svc.RotateKey(ctx, user.KeyRef{Handle: "ana", Prefix: next.Prefix}, time.Hour)
+	refused("rotating again inside the overlap", err)
+	_, _, err = f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "ana"})
+	refused("issuing inside the overlap", err)
 
 	// The cap is each person's own, and counts live keys only.
 	f.mustIssue(t, "ben", nil, 0)
-	if _, _, _, err := f.svc.RotateKey(ctx, user.KeyRef{Handle: "ana", Prefix: first.Prefix}, 0); err != nil {
-		t.Errorf("rotating with no overlap at the cap: %v", err)
-	}
 	f.clock.Advance(time.Hour)
 	if _, _, err := f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "ana"}); err != nil {
-		t.Errorf("issuing once %s expired: %v", short.Prefix, err)
+		t.Errorf("issuing once %s and the rotated key expired: %v", short.Prefix, err)
 	}
 	_, _, err = f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "ana"})
 	refused("issuing again", err)
@@ -748,5 +754,125 @@ func TestKeyStatusScopes(t *testing.T) {
 	st, err = f.svc.KeyStatus(ctx, k.Prefix)
 	if err != nil || strings.Join(st.Scopes, " ") != strings.Join(auth.MemberScopes, " ") {
 		t.Errorf("KeyStatus after a demotion = %+v, %v; want the member scopes", st, err)
+	}
+}
+
+// Disabling a person ends their links for good: one that was pending works
+// no better after they are enabled again.
+func TestDisableRevokesLinks(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.mustCreate(t, "boss", "", user.RoleAdmin)
+	_, _, invite, err := f.svc.Invite(ctx, user.InviteRequest{Handle: "ana"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, disabled := range []bool{true, false} {
+		if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(disabled)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := f.svc.Link(ctx, invite); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Errorf("an invite from before the disable, after the enable: err = %v, want ErrLinkNotFound", err)
+	}
+	if _, err := f.svc.Redeem(ctx, invite, user.RedeemRequest{Password: goodPassword}); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Errorf("Redeem: err = %v, want ErrLinkNotFound", err)
+	}
+	if links, _ := f.svc.Links(ctx); len(links) != 0 {
+		t.Errorf("links still listed: %+v", links)
+	}
+}
+
+// An invite that was passed over, because the person set their password
+// another way, must not set it again for whoever finds the link later.
+func TestPassedOverLinkIsDead(t *testing.T) {
+	ctx := context.Background()
+	var ended int
+	f := accounts(t, user.Options{EndSessions: func(context.Context, string, int64) error { ended++; return nil }})
+	_, _, invite, err := f.svc.Invite(ctx, user.InviteRequest{Handle: "ana"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reset, err := f.svc.IssueLink(ctx, "ana", user.PurposeReset, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Redeem(ctx, reset, user.RedeemRequest{Password: goodPassword}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Redeem(ctx, invite, user.RedeemRequest{Password: "an attacker's password"}); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Fatalf("the invite after the reset was used: err = %v, want ErrLinkNotFound", err)
+	}
+	if _, err := f.svc.CheckPassword(ctx, "ana", goodPassword); err != nil {
+		t.Errorf("ana's password after the stale invite was tried: %v", err)
+	}
+	// Nor is a new invite made for someone who has a password: a reset is
+	// what ends their sessions.
+	if _, _, err := f.svc.IssueLink(ctx, "ana", user.PurposeInvite, false); !errors.Is(err, user.ErrHasPassword) {
+		t.Errorf("an invite for a person with a password: err = %v, want ErrHasPassword", err)
+	}
+	if _, _, err := f.svc.IssueLink(ctx, "ana", user.PurposeReset, false); err != nil {
+		t.Errorf("a reset link for a person with a password: %v", err)
+	}
+}
+
+// Changing a password is no sign-in, and ends a reset link made before it.
+func TestChangePasswordSideEffects(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.invite(t, "ana", "")
+	if acc := f.account(t, "ana"); acc.PasswordLoginAt != nil {
+		t.Fatalf("a sign-in is recorded before any: %+v", acc)
+	}
+	_, reset, err := f.svc.IssueLink(ctx, "ana", user.PurposeReset, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.store.PasswordHash(ctx, "ana")
+	if err := f.svc.ChangePassword(ctx, "ana", "not her password", "a new long password", 0); !errors.Is(err, user.ErrBadPassword) {
+		t.Fatal(err)
+	}
+	if after, _ := f.store.PasswordHash(ctx, "ana"); after != before {
+		t.Error("a refused change rewrote the hash")
+	}
+	if err := f.svc.ChangePassword(ctx, "ana", goodPassword, "a new long password", 0); err != nil {
+		t.Fatal(err)
+	}
+	if acc := f.account(t, "ana"); acc.PasswordLoginAt != nil || acc.LastActive() != nil {
+		t.Errorf("changing the password counted as a sign-in: %+v", acc)
+	}
+	if _, _, err := f.svc.Link(ctx, reset); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Errorf("a reset link from before the change: err = %v, want ErrLinkNotFound", err)
+	}
+}
+
+// An invite either makes the person and their link, or neither.
+func TestInviteIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.mustCreate(t, "ana", "ana@example.com", "")
+	events := len(f.audit.Events)
+	if _, _, _, err := f.svc.Invite(ctx, user.InviteRequest{Handle: "ben", Email: "ANA@example.com"}); !errors.Is(err, user.ErrEmailTaken) {
+		t.Fatalf("an invite with a taken email: err = %v", err)
+	}
+	if _, err := f.svc.GetUser(ctx, "ben"); !errors.Is(err, user.ErrNotFound) {
+		t.Error("the refused invite left a person without a link")
+	}
+	if links, _ := f.svc.Links(ctx); len(links) != 0 || len(f.audit.Events) != events {
+		t.Errorf("the refused invite left links %+v or audit events", links)
+	}
+	if _, _, _, err := f.svc.Invite(ctx, user.InviteRequest{Handle: "ben"}); err != nil {
+		t.Errorf("the handle is free for the next invite: %v", err)
+	}
+}
+
+func TestHandleFor(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.mustCreate(t, "ana", "ana@example.com", "")
+	for login, want := range map[string]string{"ana": "ana", " ANA ": "ana", "Ana@Example.com": "ana", "nobody": "", "x@example.com": "", "": ""} {
+		if got := f.svc.HandleFor(ctx, login); got != want {
+			t.Errorf("HandleFor(%q) = %q, want %q", login, got, want)
+		}
 	}
 }

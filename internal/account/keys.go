@@ -22,17 +22,26 @@ type newKeyPage struct {
 	Key    *user.APIKey
 	Secret string
 	// Old is the key a rotation replaced, as it now is.
-	Old            *user.APIKey
+	Old *user.APIKey
+	// OldLive is whether Old still works: a key rotated "at once" ended
+	// with the rotation.
+	OldLive        bool
 	MCPURL, APIURL string
 }
 
 func (s *server) showKey(w http.ResponseWriter, r *http.Request, v visit, k *user.APIKey, secret string, old *user.APIKey) {
 	s.render(w, r, http.StatusOK, "key", newKeyPage{
-		base: s.baseFor(v), Key: k, Secret: secret, Old: old, MCPURL: s.o.MCPURL, APIURL: s.o.APIURL,
+		base: s.baseFor(v), Key: k, Secret: secret, Old: old,
+		OldLive: old != nil && old.ExpiresAt != nil && old.ExpiresAt.After(s.now()),
+		// The command line takes the API's origin and adds the version
+		// itself.
+		MCPURL: s.o.MCPURL, APIURL: strings.TrimSuffix(strings.TrimSuffix(s.o.APIURL, "/"), "/v1"),
 	})
 }
 
-// maxKeyDays bounds the expiry field where the instance sets no limit.
+// maxKeyDays bounds the expiry field where the instance sets no limit, as
+// the dashboard's key form does: ten years, past which "no expiry" is the
+// honest choice.
 const maxKeyDays = 3650
 
 func (s *server) issueKey(w http.ResponseWriter, r *http.Request, v visit) {
@@ -69,6 +78,8 @@ func (s *server) issueKey(w http.ResponseWriter, r *http.Request, v visit) {
 		refuse(http.StatusForbidden, "key", "too-wide")
 	case errors.Is(err, user.ErrTooManyKeys):
 		refuse(http.StatusForbidden, "key", "too-many")
+	case errors.Is(err, user.ErrInvalidScope):
+		refuse(http.StatusUnprocessableEntity, "key", "scope")
 	case err != nil:
 		s.fail(w, r, "issue key", err)
 	default:

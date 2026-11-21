@@ -40,6 +40,7 @@ type AdminDeps struct {
 	Sessions  Sessions
 	Backup    BackupWriter
 	Ready     ReadyChecker
+	Updates   Updates               // the update check's answer, on GET /v1/ready
 	Settings  func() map[string]any // effective config, secrets redacted
 	Metrics   http.Handler          // mounted at /metrics, behind AdminOptions.MetricsToken
 	Links     present.Links
@@ -168,16 +169,27 @@ func (h *adminAPI) listUsers(w http.ResponseWriter, r *http.Request, _ auth.Prin
 	if err != nil {
 		return err
 	}
-	accounts, err := h.accounts(r.Context())
+	accounts, err := h.d.Users.Accounts(r.Context())
 	if err != nil {
 		return err
 	}
+	byHandle := make(map[string]user.Account, len(accounts))
+	for _, a := range accounts {
+		byHandle[a.Handle] = a
+	}
+	// One query for everyone's usage, not one a person.
+	owners, err := h.d.Artifacts.OwnerUsage(r.Context())
+	if err != nil {
+		return err
+	}
+	used := make(map[string]int64, len(owners))
+	for _, o := range owners {
+		used[o.Handle] = o.Bytes
+	}
 	out := make([]api.User, 0, len(users))
 	for i := range users {
-		u := present.WithAccount(present.User(&users[i]), accounts[users[i].Handle])
-		if u.UsedBytes, err = h.d.Artifacts.Usage(r.Context(), u.Handle); err != nil {
-			return err
-		}
+		u := present.WithAccount(present.User(&users[i]), byHandle[users[i].Handle])
+		u.UsedBytes = used[u.Handle]
 		out = append(out, u)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -213,11 +225,11 @@ func (h *adminAPI) getUser(w http.ResponseWriter, r *http.Request, _ auth.Princi
 	if err != nil {
 		return err
 	}
-	accounts, err := h.accounts(r.Context())
+	account, err := h.d.Users.Account(r.Context(), handle)
 	if err != nil {
 		return err
 	}
-	out := present.WithAccount(present.User(u), accounts[handle])
+	out := present.WithAccount(present.User(u), account)
 	for _, id := range ids {
 		out.Identities = append(out.Identities, present.Identity(id))
 	}
@@ -233,19 +245,6 @@ func (h *adminAPI) getUser(w http.ResponseWriter, r *http.Request, _ auth.Princi
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
-}
-
-// accounts returns how every person signs in, by handle.
-func (h *adminAPI) accounts(ctx context.Context) (map[string]user.Account, error) {
-	all, err := h.d.Users.Accounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	by := make(map[string]user.Account, len(all))
-	for _, a := range all {
-		by[a.Handle] = a
-	}
-	return by, nil
 }
 
 func (h *adminAPI) updateUser(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
@@ -338,7 +337,18 @@ func (h *adminAPI) unlinkIdentity(w http.ResponseWriter, r *http.Request, _ auth
 	if err := decodeJSON(w, r, jsonLimit, &req, false); err != nil {
 		return err
 	}
-	if err := h.d.Users.UnlinkIdentity(r.Context(), r.PathValue("handle"), req.Issuer, req.Subject); err != nil {
+	handle := r.PathValue("handle")
+	err := h.d.Users.UnlinkIdentity(r.Context(), handle, req.Issuer, req.Subject)
+	if errors.Is(err, user.ErrNotFound) {
+		// The store answers the same for an unknown user and for an identity
+		// the user does not have; say which, so the caller fixes the right
+		// thing.
+		if _, uerr := h.d.Users.GetUser(r.Context(), handle); uerr == nil {
+			return &statusError{status: http.StatusNotFound, code: api.CodeNotFound,
+				msg: "no identity with that issuer and subject is linked to " + strconv.Quote(handle)}
+		}
+	}
+	if err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

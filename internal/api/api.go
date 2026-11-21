@@ -40,6 +40,7 @@ const (
 	CodeSetupDone        = "setup_done"
 	CodeBackupRunning    = "backup_running"
 	CodeNoSpace          = "no_space"
+	CodeBusy             = "busy"
 )
 
 // ErrorCodes is every code above, the bounded set metrics count errors by.
@@ -50,7 +51,7 @@ var ErrorCodes = []string{
 	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeRateLimited, CodeHandleTaken,
 	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
 	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning, CodeLastAdmin,
-	CodeTooManyKeys, CodeSetupDone, CodeBackupRunning, CodeNoSpace,
+	CodeTooManyKeys, CodeSetupDone, CodeBackupRunning, CodeNoSpace, CodeBusy,
 }
 
 // Error is the body of every error response.
@@ -374,10 +375,12 @@ type User struct {
 
 // Identity is an upstream identity linked to a user.
 type Identity struct {
-	Issuer      string    `json:"issuer"`
-	Subject     string    `json:"subject"`
-	Email       string    `json:"email,omitempty"`
-	LastLoginAt time.Time `json:"last_login_at"`
+	Issuer  string `json:"issuer"`
+	Subject string `json:"subject"`
+	Email   string `json:"email,omitempty"`
+	// LastLoginAt is absent for an identity an admin linked that has not
+	// signed in yet.
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
 }
 
 // CreateUserRequest is POST /users on the admin API.
@@ -438,6 +441,16 @@ type Ready struct {
 	Ready     bool      `json:"ready"` // no check failed
 	CheckedAt time.Time `json:"checked_at"`
 	Checks    []Check   `json:"checks"`
+	// Update is absent until the update check has got an answer, and on an
+	// instance that does not run it.
+	Update *Update `json:"update,omitempty"`
+}
+
+// Update is the last answer of the daily update check.
+type Update struct {
+	Latest    string    `json:"latest"`
+	Newer     bool      `json:"newer"` // than the running version
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 // Check is one readiness finding. Detail ends with what to do next when

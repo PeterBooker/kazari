@@ -497,7 +497,7 @@ kazari keys rotate abcdefgh --overlap 24h
 
 `revoke` ends a key at once, with every key that was issued with it and every OAuth connection approved with one of them.
 
-A person holds 50 live keys at most. At that number, `issue` and a `rotate` with an overlap fail with `too_many_keys` until a key is revoked or expires.
+A person holds 50 live keys at most. At that number, `issue` fails with `too_many_keys` until a key is revoked or expires. `rotate` still works, because the key it replaces does not count against the limit.
 
 The [account page](identity.md#the-account-page) does the same from a browser, with no key in hand.
 
@@ -520,11 +520,11 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `admin users list`                                                      | List users with usage, quota, state (`active`, `invited` or `disabled`) and last activity |
 | `admin users show <handle>`                                             | One user: whether a password is set, live keys, browser sessions and last activity |
-| `admin users create <handle> [--email E] [--role member\|admin] [--quota 500MiB]` | Create a user                                    |
+| `admin users create <handle> [--email E] [--name N] [--role member\|admin] [--quota 500MiB]` | Create a user                        |
 | `admin users invite <handle> [--email E] [--name N] [--role R] [--quota Q] [--replace]` | Create a user and print the link that lets them set a password; `--replace` prints a new link for an existing user |
 | `admin users reset-password <handle> [--revoke-all]`                    | Print a link that lets a user set a new password            |
 | `admin users sign-out <handle>`                                         | End every browser session of a user; keys and connected apps stay |
-| `admin users update <handle> [--disable\|--enable] [--role R] [--quota Q] [--email E]` | Change a user; `--disable` also revokes every key, OAuth grant and share link they created |
+| `admin users update <handle> [--disable\|--enable] [--role R] [--quota Q] [--email E] [--name N]` | Change a user; `--disable` also revokes every key, OAuth grant and share link they created, and their unused invite and reset links |
 | `admin users transfer <handle> <owner>`                                 | Give every artifact a user owns to another user             |
 | `admin invites list`                                                    | List the invite, reset and setup links that still work      |
 | `admin invites revoke <id>`                                             | End a link before it is used                                |
@@ -538,7 +538,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | `admin identities unlink <handle> --issuer URL --subject SUB`           | Remove one of a user's identities                           |
 | `admin grants list <handle>`                                            | List a user's OAuth grants                                  |
 | `admin grants revoke <id>`                                              | Revoke an OAuth grant                                       |
-| `admin artifacts list [list flags]`                                     | Every artifact with its owner; same flags as `list`         |
+| `admin artifacts list [list flags] [--owner H]`                         | Every artifact with its owner; same flags as `list`, plus `--owner` for one user's |
 | `admin transfer <slug> <handle>`                                        | Give an artifact to another user                            |
 | `admin hide <slug>`                                                     | Unpublish an artifact (abuse response)                      |
 | `admin settings`                                                        | Effective server configuration, secrets redacted            |
@@ -546,7 +546,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | `admin jobs run <name>`                                                 | Run a job now and wait for it                               |
 | `admin audit [--since T] [--until T] [--slug S] [--actor H] [--action A ...] [--limit N] [--cursor C]` | Audit log, newest first                |
 | `admin backup <dir> [--no-certs]`                                       | Write a backup of the database and every blob into a directory |
-| `admin ready [--fresh]`                                                 | Check the running server is set up correctly; exits 1 when a check fails |
+| `admin ready [--fresh]`                                                 | Check the running server is set up correctly; exits 1 when a check fails. Also says when a newer release is known |
 | `admin health`                                                          | Server status and version                                   |
 
 ### Flag values
@@ -554,6 +554,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 The admin flags take these values:
 
 - `--quota`: bytes or a unit, such as `500MiB` or `2GB`; `0` means unlimited. A new user's quota defaults to `limits.default_user_quota`.
+- `--name`: the person's display name, such as `"Ana Lima"`. On `users update`, `--name ""` clears it.
 - `--scopes`: a comma-separated list from `artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete` and `admin`, which only admin users can hold. By default, a key gets the four artifact scopes.
 - `--slugs`: a comma-separated list of [slug patterns](api.md#restricted-credentials) that restricts the key to some artifacts, such as `'weekly-*'`. By default, a key is not restricted.
 - `--expires`: a lifetime such as `720h` or `90d`. By default, a key never expires, or gets `auth.tokens.max_key_ttl` when that is set.
@@ -594,7 +595,8 @@ kazari admin setup-link
 
 Each prints the link alone on stdout, and on stderr a line saying it works once and until when. The link is never shown again: a lost one is replaced with the same command, or `--replace` for an invite, which ends the link before it.
 
-- `invite` creates the user and their invite link. The flags are those of `users create`, plus `--name` for the display name.
+- `invite` creates the user and their invite link. The flags are those of `users create`.
+- `invite --replace` is for a user who has not set a password yet. For a user who has one it fails with `invalid_argument`, and `reset-password` is the command to use.
 - `reset-password` is for a user who exists. With `--revoke-all`, using the link also revokes the user's API keys and disconnects their apps.
 - `setup-link` works only while the instance has no user, and fails with `setup_done` afterwards.
 
@@ -605,7 +607,7 @@ kazari admin invites list
 kazari admin invites revoke 12
 ```
 
-`list` prints each link's id, user, purpose, who made it, when, and its expiry, never the link itself. On an instance with built-in accounts off, the commands that make a link fail with `forbidden`.
+`list` prints each link's id, user, purpose, who made it, when, and its expiry, never the link itself. A link leaves the list when it is used, replaced, revoked or expired, when its user sets or changes their password another way, and when its user is disabled. On an instance with built-in accounts off, the commands that make a link fail with `forbidden`.
 
 ### Identities
 
@@ -617,7 +619,7 @@ kazari admin identities link jdoe --issuer https://accounts.google.com --subject
 kazari admin identities unlink jdoe --issuer https://accounts.google.com --subject 1234567890
 ```
 
-`list` prints each identity's issuer, subject, email and last sign-in. `link` moves an identity that another user holds to this one. `--issuer` is the provider's issuer URL as in `auth.oidc.issuer`, and `--subject` the person's `sub` claim there.
+`list` prints each identity's issuer, subject, email and last sign-in, which is `-` for an identity that was linked here and has not signed in yet. `link` moves an identity that another user holds to this one. `unlink` fails with `not_found` for an identity the user does not have. `--issuer` is the provider's issuer URL as in `auth.oidc.issuer`, and `--subject` the person's `sub` claim there.
 
 ### Backups
 
@@ -629,6 +631,10 @@ sudo kazari admin backup /backup/kazari/2026-11-21
 
 It prints the number of files, their size and the directory. Over the admin socket the backup includes `certmagic/`, the certificate and its private key, unless `--no-certs` is given; over an admin URL it never does, and the command says so. [Backing up and restoring](ops.md#backing-up-and-restoring) covers scheduling and restoring.
 
+The command checks the directory before it asks the server. A directory that holds anything, or a path that is a file, ends it with exit status 2 and no backup is started.
+
+With `--json` it prints `dir`, `files`, `bytes` and `certificates`, which is `true` when the directory holds `certmagic/`.
+
 ### Readiness
 
 `admin ready` asks the running server to check its configuration, DNS records, DNS token, certificate and disk:
@@ -637,4 +643,6 @@ It prints the number of files, their size and the directory. Over the admin sock
 sudo kazari admin ready
 ```
 
-It prints one line per check and exits with status 1 when one fails. The server answers from its last run when that is under 15 minutes old; `--fresh` runs the checks now, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks.
+It prints one line per check and exits with status 1 when one fails. The server runs the checks once when it starts and answers from its last run when that is under 15 minutes old; `--fresh` runs the checks now, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks.
+
+When the server's [update check](ops.md#the-update-check) knows of a newer release, the command prints one more line that names it. With `--json`, the answer is under `update`.

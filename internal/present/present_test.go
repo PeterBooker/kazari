@@ -3,6 +3,7 @@ package present
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/preflight"
+	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -220,5 +222,40 @@ func TestPageCode(t *testing.T) {
 		if got := PageCode(status); got != "" && !slices.Contains(api.ErrorCodes, got) {
 			t.Errorf("PageCode(%d) = %q, which is not one of the API's codes", status, got)
 		}
+	}
+}
+
+func TestIdentityNeverSignedIn(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	if got := Identity(user.Identity{Issuer: "https://idp.test", Subject: "s", LastLoginAt: at}); got.LastLoginAt == nil || !got.LastLoginAt.Equal(at) {
+		t.Errorf("LastLoginAt = %v, want %v", got.LastLoginAt, at)
+	}
+	// Linked by an admin and not used yet: no sign-in to report.
+	got := Identity(user.Identity{Issuer: "https://idp.test", Subject: "s"})
+	raw, err := json.Marshal(got)
+	if err != nil || got.LastLoginAt != nil || strings.Contains(string(raw), "last_login_at") {
+		t.Errorf("an identity that never signed in = %s, %v", raw, err)
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	if got := Update(update.Result{}); got != nil {
+		t.Errorf("Update before any answer = %+v, want nil", got)
+	}
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	got := Update(update.Result{Latest: "0.8.0", Newer: true, CheckedAt: at})
+	if got == nil || *got != (api.Update{Latest: "0.8.0", Newer: true, CheckedAt: at}) {
+		t.Errorf("Update = %+v", got)
+	}
+}
+
+func TestAccountErrors(t *testing.T) {
+	status, body := Error(fmt.Errorf("user: invite %q: %w", "ana", user.ErrHasPassword))
+	if status != http.StatusUnprocessableEntity || body.Code != api.CodeInvalidArgument || !strings.Contains(body.Message, "reset link") {
+		t.Errorf("ErrHasPassword = %d %+v", status, body)
+	}
+	status, body = Error(fmt.Errorf("user: check password: %w", user.ErrBusy))
+	if status != http.StatusServiceUnavailable || body.Code != api.CodeBusy || !slices.Contains(api.ErrorCodes, api.CodeBusy) {
+		t.Errorf("ErrBusy = %d %+v", status, body)
 	}
 }

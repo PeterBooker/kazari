@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +49,9 @@ type fakeBackup struct {
 	err      error
 	body     string
 	estimate backup.Estimate
+	// estimates, when set, counts the calls of Estimate, which measures
+	// the blob directory file by file.
+	estimates *int
 }
 
 func (f fakeBackup) Write(_ context.Context, w io.Writer, _ backup.WriteOptions) (backup.Summary, error) {
@@ -59,39 +61,11 @@ func (f fakeBackup) Write(_ context.Context, w io.Writer, _ backup.WriteOptions)
 	return backup.Summary{}, f.err
 }
 
-func (f fakeBackup) Estimate(context.Context) (backup.Estimate, error) { return f.estimate, nil }
-
-const hostileValue = `<script>alert(1)</script>`
-
-var (
-	reInlineScript = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
-	reForeignAsset = regexp.MustCompile(`<(?:link|script|img|source|iframe)[^>]+(?:href|src)="(?:https?:)?//`)
-	reStyleAttr    = regexp.MustCompile(`\sstyle\s*=`)
-	reStyleBlock   = regexp.MustCompile(`(?i)<style`)
-)
-
-// strictMarkup fails the test unless body is a page the strict policy lets run:
-// nothing inline, every asset from this origin, and no hostileValue value
-// unescaped.
-func strictMarkup(t *testing.T, what, body string) {
-	t.Helper()
-	if reStyleAttr.MatchString(body) || reStyleBlock.MatchString(body) {
-		t.Errorf("%s has an inline style", what)
+func (f fakeBackup) Estimate(context.Context) (backup.Estimate, error) {
+	if f.estimates != nil {
+		*f.estimates++
 	}
-	for _, m := range reInlineScript.FindAllStringSubmatch(body, -1) {
-		if strings.TrimSpace(m[1]) != "" {
-			t.Errorf("%s has an inline script: %q", what, m[1])
-		}
-	}
-	if m := reForeignAsset.FindString(body); m != "" {
-		t.Errorf("%s loads an asset from another origin: %s", what, m)
-	}
-	if strings.Contains(body, hostileValue) || strings.Contains(body, "<script>alert") {
-		t.Errorf("%s shows a hostileValue value unescaped", what)
-	}
-	if strings.Contains(body, "<td>") || strings.Contains(body, "<td class=\"num\">") {
-		t.Errorf("%s has a table cell without a data-label", what)
-	}
+	return f.estimate, nil
 }
 
 func TestOverviewNewInstance(t *testing.T) {
@@ -103,7 +77,7 @@ func TestOverviewNewInstance(t *testing.T) {
 	for _, want := range []string{
 		`<span class="ja" lang="ja" aria-hidden="true">概要</span>`,
 		"Overview <b>of art.test</b>",
-		"Getting started", `href="/people/invite"`, "Invite a person",
+		"Getting started", `href="/invites/new"`, "Invite a person",
 		`value="https://mcp.art.test/"`, "claude mcp add --transport http kazari https://mcp.art.test/",
 		"export KAZARI_URL=https://api.art.test\n", "Publish a first page",
 		"One admin", `href="/people"`,
@@ -145,7 +119,7 @@ func TestOverviewWithoutLocalAccounts(t *testing.T) {
 	e := newEnv(t, func(_ *dashboard.Deps, o *dashboard.Options) { o.LocalAccounts = false })
 	e.person("boss", user.RoleAdmin)
 	r := e.signedIn("boss").get("/")
-	if !strings.Contains(r.body, "Add a person") || strings.Contains(r.body, "/people/invite") {
+	if !strings.Contains(r.body, "Add a person") || strings.Contains(r.body, "/invites/new") {
 		t.Errorf("an instance with an identity provider offers invites: %s", r.body)
 	}
 }
@@ -240,5 +214,26 @@ func TestOverviewBehindProxy(t *testing.T) {
 	r := e.signedIn("boss").get("/")
 	if !strings.Contains(r.body, "A proxy in front of Kazari holds the certificate.") {
 		t.Errorf("the overview does not say a proxy holds the certificate")
+	}
+}
+
+// An admin who was invited and has not set a password cannot let anyone
+// back in, so the instance still has a single admin.
+func TestOverviewSingleAdminCountsWhoCanSignIn(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	_, _, token, err := e.users.Invite(asAdmin(), user.InviteRequest{Handle: "second", Role: user.RoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := e.signedIn("boss")
+	if r := b.get("/"); !strings.Contains(r.body, "This instance has a single admin") {
+		t.Errorf("with a second admin who is only invited, the overview does not warn: %s", r.body)
+	}
+	if _, err := e.users.Redeem(context.Background(), token, user.RedeemRequest{Password: password}); err != nil {
+		t.Fatal(err)
+	}
+	if r := b.get("/"); strings.Contains(r.body, "This instance has a single admin") {
+		t.Errorf("with two admins who can sign in, the overview warns of one: %s", r.body)
 	}
 }

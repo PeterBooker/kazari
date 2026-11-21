@@ -258,7 +258,7 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 		case e.Details["user"] != "":
 			s.words("disconnected every app of ").person(e.Details["user"]).words(" and ended their sessions")
 		default:
-			s.words("disconnected an app, grant ").words(e.Details["grant"])
+			s.words("disconnected an app")
 		}
 	},
 	oauth.ActionSignIn: func(s *eventLine, e audit.Event) {
@@ -268,7 +268,7 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 		case "api_key":
 			s.words("signed in with key ").mono(e.Details["key_prefix"])
 		case "oidc":
-			s.words("signed in at the identity provider")
+			s.words("signed in at the provider")
 		default:
 			s.words("signed in")
 		}
@@ -299,10 +299,10 @@ func describeUserUpdate(s *eventLine, e audit.Event) {
 		s.words("renamed ").mono(d["renamed_from"]).words(" to ").person(who)
 		return
 	case d["identity"] == "link":
-		s.words("linked an identity to ").person(who)
+		s.words("linked a sign-in method to ").person(who)
 		return
 	case d["identity"] == "unlink":
-		s.words("unlinked an identity from ").person(who)
+		s.words("unlinked a sign-in method from ").person(who)
 		return
 	}
 	named := false

@@ -763,7 +763,7 @@ The new key is bounded by the key that issued it:
 
 A request for more is `403 forbidden`. Revoking a key revokes every key issued with it.
 
-A person holds 50 live keys at most, counting every key that is neither revoked nor expired, however it was issued. At that number a new key is refused with `403 too_many_keys`.
+A person holds 50 live keys at most, counting every key that is neither revoked nor expired, however it was issued. At that number a new key is refused with `403 too_many_keys`. A rotation is not: the key it replaces does not count against the limit.
 
 #### Rotate a key: `POST /me/keys/{prefix}/rotate`
 
@@ -816,7 +816,7 @@ These are its routes, with the body or query parameters each takes and its respo
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
 | `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
 | `POST`   | `/backup`                           | `certs`                                                   | `200` tar archive                       |
-| `GET`    | `/ready`                            | `fresh`                                                   | `200` `{ready, checked_at, checks}`     |
+| `GET`    | `/ready`                            | `fresh`                                                   | `200` `{ready, checked_at, checks, update?}` |
 | `GET`    | `/health` (also `/v1/health`)       |                                                           | `200` `{"status":"ok","version":"..."}` |
 | `GET`    | `/metrics`                          | `Authorization: Bearer <telemetry.metrics.token>`         | Prometheus text or OpenMetrics          |
 
@@ -841,7 +841,7 @@ A user's fields follow these rules:
 - `quota_bytes` defaults to `limits.default_user_quota` when omitted, and `0` means unlimited.
 - `email` is stored lower-case and must be unique.
 
-`"disabled": true` stamps `disabled_at` and revokes every API key and OAuth grant of the user and every share link they created. `false` re-enables the user, but all of these stay revoked.
+`"disabled": true` stamps `disabled_at` and revokes every API key and OAuth grant of the user, their unused invite and reset links, and every share link they created. `false` re-enables the user, but all of these stay revoked.
 
 Two changes are refused. Disabling or demoting the last active admin is `409 last_admin`. A person disabling or demoting their own account, with their own admin key, is `403 forbidden`; the admin token and the admin socket are no person and are not stopped by this.
 
@@ -852,7 +852,7 @@ On `GET /users` and `GET /users/{handle}`, a user also carries how they sign in:
 | `password`       | `true` when the user has set a password                                    |
 | `invited`        | `true` when an invite was made for the user and no password is set yet     |
 | `keys`           | The number of live API keys                                                |
-| `last_active_at` | The latest of the last password sign-in, sign-in at the identity provider and key use |
+| `last_active_at` | The latest of the last password sign-in, sign-in at the identity provider and key use. An identity an admin linked counts from its first sign-in |
 | `sessions`       | The number of browser sessions, on `GET /users/{handle}` only              |
 
 Fields that are `false`, `0` or unknown are left out.
@@ -884,9 +884,11 @@ On an instance with [built-in accounts](identity.md#built-in-accounts), a person
 
 `POST /users/{handle}/links` makes a link for a user who exists. `purpose` is `invite`, to replace an invite that was lost or has lapsed, or `reset`, for a new password. With `"revoke_all": true`, using a reset link also revokes the user's API keys and OAuth grants. Any other `purpose` is `422`, and a disabled user is `403`.
 
+An invite is for a user who has no password yet. For one who has, `"purpose": "invite"` is `422 invalid_argument`, and the message names the reset link.
+
 `POST /setup-link` makes the link that creates the first admin of a fresh instance. Once any user exists it answers `409 setup_done`.
 
-Every response that carries a `url` is sent with `Cache-Control: no-store`. Making a link ends the earlier unused link of the same user and purpose.
+Every response that carries a `url` is sent with `Cache-Control: no-store`. Making a link ends the earlier unused link of the same user and purpose. Setting a password with a link, or changing it on the account page, ends the user's other unused links.
 
 `GET /invites` lists the links that can still be used, of every purpose, newest first, with `id`, `user`, `purpose`, `revoke_all`, `created_by`, `created_at` and `expires_at`, never the address. `DELETE /invites/{id}` ends one; a link that is used, revoked or expired, or an unknown id, is `404`.
 
@@ -911,7 +913,9 @@ The response carries the secret, this once only:
 
 ### Identities
 
-`POST /users/{handle}/identities` links an upstream `(issuer, subject)` to a user before they sign in, or moves one from another user. `POST /users/{handle}/identities/unlink` removes it. [Admin-created users](identity.md#admin-created-users) explains when to use them, and [`kazari admin identities`](cli.md#identities) is the command for both.
+`POST /users/{handle}/identities` links an upstream `(issuer, subject)` to a user before they sign in, or moves one from another user. `POST /users/{handle}/identities/unlink` removes it, and answers `404` for an identity the user does not have.
+
+On `GET /users/{handle}`, each entry of `identities` has `issuer`, `subject`, `email` and `last_login_at`. An identity that an admin linked has no `last_login_at` until the person signs in with it. [Admin-created users](identity.md#admin-created-users) explains when to use them, and [`kazari admin identities`](cli.md#identities) is the command for both.
 
 ### Grants
 
@@ -979,6 +983,8 @@ curl -sS -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -o kazari.tar \
 
 Two refusals come before any byte of the archive: `409 backup_running` while another backup is written, and `507 no_space` when the data directory's `tmp/` cannot hold the copy of the database. A failure after the stream began closes the connection, so a transfer that ends early is not a complete archive.
 
+The stream lasts as long as the client keeps reading. The server closes the connection of a client that reads nothing for a minute.
+
 [`kazari admin backup`](cli.md#backups) calls this route and unpacks the stream; [backing up and restoring](ops.md#backing-up-and-restoring) covers the rest.
 
 ### Readiness
@@ -996,13 +1002,21 @@ Two refusals come before any byte of the archive: `409 backup_running` while ano
 }
 ```
 
-A check's `status` is `ok`, `warn`, `fail` or `skip`, and the `detail` of a `warn` or `fail` ends with what to do next. The server answers from its last run when that is under 15 minutes old; `fresh=true` runs the checks now, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks.
+A check's `status` is `ok`, `warn`, `fail` or `skip`, and the `detail` of a `warn` or `fail` ends with what to do next. The server runs the checks once when it starts, and answers from its last run when that is under 15 minutes old. `fresh=true` runs the checks now, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks.
+
+Once [the update check](ops.md#the-update-check) has got an answer, the response also carries it:
+
+```json
+{ "update": { "latest": "0.8.0", "newer": true, "checked_at": "2026-11-21T03:12:00Z" } }
+```
+
+`newer` is `true` when `latest` is a later release than the one running. The field is absent on a build without a release version, with `admin.update_check: false`, and until the first check has answered.
 
 Unlike `/health`, this route needs an admin credential.
 
 ### Settings
 
-`GET /settings` returns the effective configuration, keyed like the YAML file. Sizes and durations appear as strings, and secrets as `"***"`.
+`GET /settings` returns the effective configuration, keyed like the YAML file. Sizes and durations appear as strings, and secrets as `"***"`. `auth.local.enabled` is the value in use, whether or not the configuration sets it.
 
 ## Rate limits
 
@@ -1073,4 +1087,5 @@ These are the codes, with their HTTP status and meaning:
 | `too_large`              | 413    | A file, imported page, version, chunk, upload, manifest or request body is over its limit |
 | `rate_limited`           | 429    | Too many requests; see `Retry-After` and [Rate limits](#rate-limits)               |
 | `internal`               | 500    | Server fault; details are logged, never returned                                   |
+| `busy`                   | 503    | Too many passwords are being checked at once; retry after `Retry-After`            |
 | `no_space`               | 507    | Admin API: too little free space for a backup's copy of the database               |

@@ -6,7 +6,7 @@
 {{define "alert"}}<p class="error" role="alert">{{template "icon/alert"}}<span>{{.}}</span></p>
 {{end}}
 
-{{define "consent"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">Authorize <b>{{.ClientName}}</b></h1>
+{{define "consent"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">Authorise <b>{{.ClientName}}</b></h1>
 {{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Kazari instance.</p>
 {{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Kazari instance.</p>
 {{end}}<p class="soft">Returns to <span class="mono">{{.RedirectHost}}</span><br>Client <span class="mono">{{.ClientID}}</span></p>
@@ -20,12 +20,12 @@
 <input type="hidden" name="request_id" value="{{.RequestID}}">
 {{if .AskKey}}<div class="field"><label for="api_key">API key</label>
 <input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" aria-describedby="api_key_help">
-<p class="help" id="api_key_help">The connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked.</p></div>
+<p class="help" id="api_key_help">The connection gets at most that key's scopes and its restriction to certain pages, and ends when the key expires or is revoked.</p></div>
 {{end}}{{if .OfferKey}}<details{{if .Error}} open{{end}} class="more">
 <summary>Approve with an API key instead</summary>
 <div class="field"><label for="api_key">API key</label>
 <input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" aria-describedby="api_key_help">
-<p class="help" id="api_key_help">For a connection that should do less than you can, such as a scheduled agent. With one of your own keys here, the connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked. Leave it empty to approve as yourself.</p></div>
+<p class="help" id="api_key_help">For a connection that should do less than you can, such as a scheduled agent. With one of your own keys here, the connection gets at most that key's scopes and its restriction to certain pages, and ends when the key expires or is revoked. Leave it empty to approve as yourself.</p></div>
 </details>
 {{end}}<div class="actions">
 <button type="submit" class="btn" name="action" value="deny">Deny</button>
@@ -58,7 +58,7 @@
 <p class="help" id="password_help">You stay signed in for {{.Lifetime}}.</p></div>
 {{else}}<div class="field"><label for="api_key">API key</label>
 <input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" required aria-describedby="api_key_help">
-<p class="help" id="api_key_help">{{if eq .Host "@admin"}}A key that holds the admin scope opens the dashboard.{{else}}Any of your keys that can read artifacts works.{{end}} You stay signed in for {{.Lifetime}}, or until the key is revoked.</p></div>
+<p class="help" id="api_key_help">{{if eq .Host "@admin"}}A key that holds the admin scope opens the dashboard.{{else}}Any of your keys that can read pages works.{{end}} You stay signed in for {{.Lifetime}}, or until the key is revoked.</p></div>
 {{end}}<div class="actions">
 <button type="submit" class="btn btn-primary">Sign in</button>
 </div>

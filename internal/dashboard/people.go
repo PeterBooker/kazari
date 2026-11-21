@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/user"
 )
-
-var peopleFuncs = template.FuncMap{}
 
 var peopleFlashes = map[string]string{
 	"people-saved":          "The changes are saved.",
@@ -55,9 +52,11 @@ func (s *server) peopleRoutes(mux *http.ServeMux) {
 	s.view(mux, "GET /people/{handle}/disable", s.peopleDisableConfirm)
 	s.action(mux, "POST /people/{handle}/disable", s.peopleDisable)
 	s.action(mux, "POST /people/{handle}/enable", s.peopleEnable)
+	s.view(mux, "GET /people/{handle}/handover", s.peopleHandOverConfirm)
 	s.action(mux, "POST /people/{handle}/handover", s.peopleHandOver)
 	s.action(mux, "POST /people/{handle}/sessions/end", s.peopleSessionsEnd)
 	s.action(mux, "POST /people/{handle}/identities", s.peopleIdentityLink)
+	s.view(mux, "GET /people/{handle}/identities/unlink", s.peopleIdentityUnlinkConfirm)
 	s.action(mux, "POST /people/{handle}/identities/unlink", s.peopleIdentityUnlink)
 
 	s.view(mux, "GET /people/{handle}/invite", s.peopleReplaceConfirm)
@@ -314,42 +313,32 @@ func (s *server) peopleUser(r *http.Request) (*user.User, error) {
 
 func peoplePath(handle string) string { return "/people/" + url.PathEscape(handle) }
 
-var peopleSizeRE = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)$`)
-
-var peopleSizeUnits = map[string]float64{
-	"b": 1,
-	"k": 1 << 10, "kb": 1 << 10, "kib": 1 << 10,
-	"m": 1 << 20, "mb": 1 << 20, "mib": 1 << 20,
-	"g": 1 << 30, "gb": 1 << 30, "gib": 1 << 30,
-	"t": 1 << 40, "tb": 1 << 40, "tib": 1 << 40,
-}
-
-// peopleMaxQuota keeps a typed size inside what the disk of any host holds, and
-// well inside an int64.
+// peopleMaxQuota keeps a typed size inside what the disk of any host holds.
 const peopleMaxQuota = 1 << 50
 
-// peopleParseSize reads a size as a person writes it, in binary units as the
-// configuration does: 500 MiB, 2GiB, 1.5 g. 0 and "no limit" are no limit.
-// problem is the sentence for the field when the text is no size.
+// peopleParseSize reads a size as the configuration and the command line
+// do, so 500 MB is the same number of bytes wherever it is typed: a whole
+// number and a unit, MiB and GiB in powers of 1024, MB and GB in powers of
+// 1000. 0 and "no limit" are no limit. A bare number is refused: nobody
+// means a quota in bytes. problem is the sentence for the field when the
+// text is no size.
 func peopleParseSize(text string) (n int64, problem string) {
-	text = strings.ToLower(strings.TrimSpace(text))
-	switch text {
+	text = strings.TrimSpace(text)
+	switch strings.ToLower(text) {
 	case "0", "none", "no limit", "unlimited":
 		return 0, ""
 	}
-	m := peopleSizeRE.FindStringSubmatch(text)
-	if m == nil {
-		return 0, "Enter a size such as 500 MiB or 2 GiB, or 0 for no limit."
-	}
-	unit, ok := peopleSizeUnits[m[2]]
-	if !ok {
+	if _, err := strconv.ParseUint(text, 10, 64); err == nil {
 		return 0, "Say the unit: MiB or GiB, as in 500 MiB."
 	}
-	f, err := strconv.ParseFloat(m[1], 64)
-	if err != nil || f*unit > peopleMaxQuota {
+	size, err := config.ParseBytes(text)
+	if err != nil {
+		return 0, "Enter a whole number and a unit, such as 500 MiB or 2 GiB, or 0 for no limit."
+	}
+	if size > peopleMaxQuota {
 		return 0, "That size is too large."
 	}
-	return int64(f * unit), ""
+	return int64(size), ""
 }
 
 // peopleFieldError is the sentence shown beside a field for a refusal of the user

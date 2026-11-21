@@ -128,16 +128,31 @@ func checkPolicy(password string, min int) error {
 type hashing struct {
 	params Argon2
 	slots  chan struct{}
+	wait   time.Duration // for a free slot, before ErrBusy
 	dummy  func() string
 	// took reports how long one hash or verification took, its wait for a
 	// slot included.
 	took func(ctx context.Context, operation string, d time.Duration)
 }
 
+// slotWait bounds the wait for a slot. Without it a queue of requests,
+// each of which keeps its place until its client hangs up, could hold every
+// sign-in behind it for as long as it is fed.
+const slotWait = 10 * time.Second
+
 func (h *hashing) acquire(ctx context.Context) error {
 	select {
 	case h.slots <- struct{}{}:
 		return nil
+	default:
+	}
+	wait := time.NewTimer(h.wait)
+	defer wait.Stop()
+	select {
+	case h.slots <- struct{}{}:
+		return nil
+	case <-wait.C:
+		return ErrBusy
 	case <-ctx.Done():
 		return ctx.Err()
 	}

@@ -41,6 +41,8 @@ The dashboard is then at `http://localhost:9443/`. Open it at exactly the addres
 
 Plain `http` is accepted in `admin.public_url` for `localhost`, a name under it or a loopback address only. To reach the listener at any other address, such as a name on a VPN, put a TLS proxy in front of it and set `admin.public_url` to its `https` address.
 
+The default address follows the same rule. On an instance whose public URLs are plain `http` on a name other than `localhost`, the dashboard is off until the admin host is served over `https`.
+
 ### Turning the dashboard off
 
 To serve the admin API without the dashboard, set `admin.dashboard` to `false`:
@@ -104,7 +106,7 @@ kazari admin users list
 
 ### Inviting a person
 
-On an instance with built-in accounts, **Invite a person** asks for a handle, a name, an optional email, a role and a quota. The next page shows the invite link, once. Copy it and send it to the person over a channel you trust: Kazari sends no email.
+On an instance with built-in accounts, **Invite a person** asks for a handle, a name, an optional email, a role and a quota. The quota is a size as the configuration writes them, such as `500MiB` or `2GiB`; `0` is no limit, and an empty field takes the instance's default. The next page shows the invite link, once. Copy it and send it to the person over a channel you trust: Kazari sends no email.
 
 The link works once and for 7 days by default. Opening it changes nothing; setting a password uses it up. [Inviting a person](identity.md#inviting-a-person) has the rules in full. The command is:
 
@@ -112,7 +114,9 @@ The link works once and for 7 days by default. Opening it changes nothing; setti
 kazari admin users invite ana --email ana@example.com --name "Ana Lima"
 ```
 
-Links that have not been used are listed under the people, with their expiry. **Replace** makes a new link and ends the old one, and **Revoke** ends a link without a new one (`kazari admin users invite ana --replace`, `kazari admin invites revoke <id>`).
+Links that have not been used are listed under the people, with their expiry. **Replace** makes a new link and ends the old one, and **Revoke** ends a link without a new one (`kazari admin users invite ana --replace`, `kazari admin invites revoke <id>`). A link leaves the list once it no longer works.
+
+An invite is for a person who has no password yet. A person who has one gets a [reset link](#resetting-a-password) instead.
 
 On an instance with an identity provider the button reads **Add a person**. It creates the user ahead of their first sign-in, with no link (`kazari admin users create`).
 
@@ -149,11 +153,11 @@ The link is shown once on the next page and works for 24 hours by default. Using
 
 #### Linking a sign-in at the provider
 
-On an instance with an identity provider, **Link a sign-in at the provider** pins the person to one account there by its issuer and subject, and **Unlink** removes one (`kazari admin identities link`, `kazari admin identities unlink`). [Admin-created users](identity.md#admin-created-users) explains when this is needed.
+On an instance with an identity provider, **Link a sign-in at the provider** pins the person to one account there by its issuer and subject, and **Unlink** removes one, after a page that shows the issuer and subject you would need to link it again (`kazari admin identities link`, `kazari admin identities unlink`). [Admin-created users](identity.md#admin-created-users) explains when this is needed.
 
 ### Disabling a person and handing over their pages
 
-**Disable** opens a confirmation page that lists what ends for good: the person's keys, their connected apps and sessions, and every share link they created. Enabling them later restores none of these.
+**Disable** opens a confirmation page that lists what ends for good: the person's keys, their connected apps and sessions, and every share link they created. An invite or reset link that was waiting for them stops working as well. Enabling them later restores none of these.
 
 The same page offers to hand all their pages to another person, which keeps the pages online under an owner who can still sign in. **Enable** lets a disabled person sign in again. The commands are:
 
@@ -260,7 +264,7 @@ The System page says how the instance is doing and what it runs with.
 
 The health section shows the result of the readiness checks: the configuration, the DNS records, the DNS token, the certificate and the disk. Each line that warns or fails says what to do next.
 
-The server keeps a result for 15 minutes. **Run the checks now** runs them again, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks, and the command is:
+The server runs the checks once when it starts and keeps a result for 15 minutes. **Run the checks now** runs them again, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks, and the command is:
 
 ```sh
 kazari admin ready
@@ -298,7 +302,13 @@ Each entry is named for what the browser or the log shows.
 
 ### The admin host answers `404` at `/`
 
-The dashboard is off. Either `admin.dashboard` is `false`, or `admin.listen` is set and `admin.public_url` is not. In the second case the log says so at start, with the line `the dashboard is off`, and `kazari check` and `kazari admin ready` warn on their `dashboard` line. Set [`admin.public_url`](#with-a-separate-admin-listener) and restart.
+The dashboard is off, for one of three reasons:
+
+- `admin.dashboard` is `false`.
+- `admin.listen` is set and `admin.public_url` is not. Set [`admin.public_url`](#with-a-separate-admin-listener) and restart.
+- The dashboard's address is plain `http` on a host that is not this machine, for example with `external_scheme: http` on a public name. Serve the admin host over `https`, or set `admin.public_url` to an `https` address, and restart.
+
+In the last two cases the log says so at start, with a line that begins `the dashboard is off`, and the `dashboard` line of `kazari check` and `kazari admin ready` says which.
 
 ### "Not an admin"
 

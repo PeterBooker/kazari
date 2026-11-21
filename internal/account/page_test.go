@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/account"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -332,7 +333,8 @@ func TestKeysFromPasswordSession(t *testing.T) {
 		t.Fatalf("the page shows no key: %s", body)
 	}
 	for _, want := range []string{"it cannot be shown again", `data-copy-target="secret"`, "Authorization: Bearer " + secret,
-		"KAZARI_TOKEN=" + secret, e.mcp.URL + "/", "https://api.art.test", "weekly-* q3-report"} {
+		// The command line takes the API's origin and adds the version itself.
+		"export KAZARI_URL=https://api.art.test\nexport KAZARI_TOKEN=" + secret + "\n", e.mcp.URL + "/", "weekly-* q3-report"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the new-key page lacks %q", want)
 		}
@@ -571,9 +573,15 @@ func TestKeyCap(t *testing.T) {
 		t.Fatalf("a key past the cap: status %d: %s", resp.StatusCode, body)
 	}
 	keys, _ := e.users.ListKeys(context.Background(), "ana")
+	// A rotation is room for one key more while the old one runs out; a
+	// second on top of it is not.
 	resp, body = b.post("/account/keys/"+keys[0].Prefix+"/rotate", url.Values{"form_token": {b.token()}, "overlap": {"day"}})
-	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "The old key counts until it ends") {
-		t.Errorf("rotating with an overlap at the cap: status %d: %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "works until") {
+		t.Fatalf("rotating with an overlap at the cap: status %d: %s", resp.StatusCode, body)
+	}
+	resp, body = b.post("/account/keys/"+keys[1].Prefix+"/rotate", url.Values{"form_token": {b.token()}, "overlap": {"day"}})
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "A key you rotated counts until it ends") {
+		t.Errorf("a second rotation with an overlap at the cap: status %d: %s", resp.StatusCode, body)
 	}
 }
 
@@ -709,12 +717,157 @@ func TestWithoutLocalAccounts(t *testing.T) {
 	b := e.browser()
 	b.signIn("", secret)
 	page := b.page()
-	if strings.Contains(page, `action="/account/password"`) || strings.Contains(page, "Sign out of my other sessions") || !strings.Contains(page, "API keys") {
+	if strings.Contains(page, `action="/account/password"`) || strings.Contains(page, "change your password") || !strings.Contains(page, "API keys") {
 		t.Errorf("the page without built-in accounts: %s", page)
 	}
-	for _, path := range []string{"/account/password", "/account/sessions/end"} {
-		if resp, _ := b.post(path, url.Values{"form_token": {b.token()}}); resp.StatusCode != http.StatusNotFound {
-			t.Errorf("POST %s: status %d, want 404", path, resp.StatusCode)
-		}
+	if resp, _ := b.post("/account/password", url.Values{"form_token": {b.token()}}); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST /account/password: status %d, want 404", resp.StatusCode)
+	}
+
+	// A person who signs in at the provider or with a key has browser
+	// sessions too, and ends the others here like anyone else.
+	if !strings.Contains(page, `action="/account/sessions/end"`) || !strings.Contains(page, "Sign out of my other sessions") {
+		t.Fatalf("the page without built-in accounts has no way to end the other sessions: %s", page)
+	}
+	other := e.browser()
+	other.signIn("", secret)
+	resp, _ := b.post("/account/sessions/end", url.Values{"form_token": {b.token()}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
+		t.Fatalf("POST /account/sessions/end: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if other.signedIn() || !b.signedIn() {
+		t.Errorf("after ending the other sessions: the other browser signed in %v, this one %v", other.signedIn(), b.signedIn())
+	}
+}
+
+// A key rotated "at once" has ended by the time its page is shown, and the
+// page does not say it works until a time already past.
+func TestRotateAtOnce(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	ctx := context.Background()
+	e.person("ana", "")
+	b := e.browser()
+	b.signIn("ana", password)
+	k, oldSecret, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "ana"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, body := b.post("/account/keys/"+k.Prefix+"/rotate", url.Values{"form_token": {b.token()}, "overlap": {"now"}})
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `<span class="mono">kzk_`+k.Prefix+`</span> has stopped working`) ||
+		strings.Contains(body, "works until") {
+		t.Errorf("rotating at once: status %d: %s", resp.StatusCode, body)
+	}
+	if _, err := e.users.Authenticate(ctx, oldSecret); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("the old key after a rotation at once: %v", err)
+	}
+}
+
+// The page has one thing it is for at a time, and one button dressed as it.
+func TestAccountPageHasOnePrimaryButton(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", "")
+	b := e.browser()
+	b.signIn("ana", password)
+	page := b.page()
+	if n := strings.Count(page, "btn-primary"); n != 1 {
+		t.Errorf("the account page has %d primary buttons, want 1", n)
+	}
+	// Ending the other sessions is not part of changing the password.
+	sessions, pw := strings.Index(page, `action="/account/sessions/end"`), strings.Index(page, `id="password-h"`)
+	if sessions < 0 || pw < 0 || sessions > pw {
+		t.Errorf("the sessions button stands inside the password section, or is missing: at %d, password at %d", sessions, pw)
+	}
+}
+
+// A key that no key issued says so in the words the dashboard uses.
+func TestKeyWithoutAnIssuingKey(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", "")
+	if _, _, err := e.users.IssueKey(asAdmin, user.IssueKeyRequest{Handle: "ana"}); err != nil {
+		t.Fatal(err)
+	}
+	b := e.browser()
+	b.signIn("ana", password)
+	if page := b.page(); !strings.Contains(page, `<td data-label="Issued with"><span class="soft">A sign-in or an admin</span></td>`) {
+		t.Errorf("a key an admin issued: %s", page)
+	}
+}
+
+// The longest lifetime a form accepts is the dashboard's: ten years.
+func TestKeyLifetimeLimit(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", "")
+	b := e.browser()
+	b.signIn("ana", password)
+	resp, body := b.post("/account/keys", url.Values{"form_token": {b.token()}, "days": {"3651"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, `id="days-err"`) {
+		t.Errorf("a key for 3651 days: status %d: %s", resp.StatusCode, body)
+	}
+	if resp, body = b.post("/account/keys", url.Values{"form_token": {b.token()}, "days": {"3650"}}); resp.StatusCode != http.StatusOK {
+		t.Errorf("a key for 3650 days: status %d: %s", resp.StatusCode, body)
+	}
+}
+
+// failingGrants cannot look a client up.
+type failingGrants struct {
+	account.Grants
+	err error
+}
+
+func (f failingGrants) GetClient(context.Context, string) (*oauth.Client, error) { return nil, f.err }
+
+// A client that is gone leaves its id to show; a lookup that failed is not
+// a reason to show an app under another name.
+func TestAppsWhenTheClientLookupFails(t *testing.T) {
+	for name, tt := range map[string]struct {
+		err    error
+		status int
+	}{
+		"the client is gone": {oauth.ErrNotFound, http.StatusOK},
+		"the lookup failed":  {errors.New("database is locked"), http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, envOptions{grants: func(g account.Grants) account.Grants { return failingGrants{g, tt.err} }})
+			e.person("ana", "")
+			b := e.browser()
+			b.signIn("ana", password)
+			b.connect("Notebook")
+			grants, err := e.oauth.ListGrants(context.Background(), "ana")
+			if err != nil || len(grants) != 1 {
+				t.Fatalf("grants = %+v, %v", grants, err)
+			}
+			resp, body := b.get("/account/")
+			if resp.StatusCode != tt.status {
+				t.Fatalf("status %d, want %d: %s", resp.StatusCode, tt.status, body)
+			}
+			if listed := strings.Contains(body, `<span class="mono">`+grants[0].ClientID+`</span>`); listed != (tt.status == http.StatusOK) {
+				t.Errorf("the app listed by its id: %v", listed)
+			}
+			if strings.Contains(body, "database is locked") {
+				t.Error("the page shows the error")
+			}
+		})
+	}
+}
+
+// A session opened with a key that only administers has nothing to pass on
+// to a key made here. That is the person's to read, not a fault.
+func TestKeyFromASessionWithNothingToPassOn(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	ctx := context.Background()
+	e.person("boss", user.RoleAdmin)
+	_, secret, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "boss", Scopes: []string{auth.ScopeAdmin}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := e.browser()
+	b.signIn("", secret)
+	resp, body := b.post("/account/keys", url.Values{"form_token": {b.token()}, "label": {"kept"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "That key cannot be made here") ||
+		!strings.Contains(body, `value="kept"`) || strings.Contains(body, "Something went wrong") || strings.Contains(body, "user:") {
+		t.Errorf("status %d: %s", resp.StatusCode, body)
+	}
+	if keys, _ := e.users.ListKeys(ctx, "boss"); len(keys) != 1 {
+		t.Errorf("the refused form issued a key: %d keys", len(keys))
 	}
 }

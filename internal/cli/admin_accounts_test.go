@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func TestRunAdminAccounts(t *testing.T) {
 		}),
 		"GET /v1/users/ann": record(200, api.User{Handle: "ann", Role: "admin", Password: true, Keys: 2, LastActiveAt: &active,
 			Sessions: &three, CreatedAt: t0}),
-		"GET /v1/users/carol": record(200, api.User{Handle: "carol", Role: "member", Invited: true, CreatedAt: t0}),
+		"GET /v1/users/carol": record(200, api.User{Handle: "carol", DisplayName: "Carol C", Role: "member", Invited: true, CreatedAt: t0}),
 		"POST /v1/invites": record(201, api.Invited{User: api.User{Handle: "carol", Role: "member", Invited: true, CreatedAt: t0},
 			Link: api.CreatedLink{Link: invite, URL: inviteURL}}),
 		"POST /v1/users/carol/links":    record(201, api.CreatedLink{Link: invite, URL: inviteURL}),
@@ -67,7 +68,7 @@ func TestRunAdminAccounts(t *testing.T) {
 			"carol   -      member  invited   0 B   -      -                          2026-10-01T14:00:00+02:00\n"},
 		{args: []string{"users", "show", "ann"}, wantOut: "handle:       ann\nemail:        -\nrole:         admin\nstorage:      0 B used (no quota)\n" +
 			"password:     set\nkeys:         2\nlast active:  2026-10-01T15:00:00+02:00\nsessions:     3\ncreated:      2026-10-01T14:00:00+02:00\n"},
-		{args: []string{"users", "show", "carol"}, wantOut: "handle:    carol\nemail:     -\nrole:      member\nstorage:   0 B used (no quota)\n" +
+		{args: []string{"users", "show", "carol"}, wantOut: "handle:    carol\nname:      Carol C\nemail:     -\nrole:      member\nstorage:   0 B used (no quota)\n" +
 			"password:  not set, invited\ncreated:   2026-10-01T14:00:00+02:00\n"},
 		{args: []string{"users", "invite", "carol", "--email", "carol@x.test", "--name", "Carol C", "--role", "member", "--quota", "1GiB"},
 			wantOut:    inviteURL + "\n",
@@ -222,10 +223,20 @@ func TestRunAdminBackup(t *testing.T) {
 		}
 	}
 
-	// A directory that holds anything is left alone.
+	// A directory that holds anything is left alone, and so is a file; the
+	// server is not asked, since a backup it started would be thrown away.
+	query = "not asked"
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "backup", dir)
-	if r.code != exitUsage || !strings.Contains(r.stderr, "is not empty") || r.stdout != "" {
-		t.Errorf("into a full directory: %+v", r)
+	if r.code != exitUsage || !strings.Contains(r.stderr, "is not empty") || r.stdout != "" || query != "not asked" {
+		t.Errorf("into a full directory: %+v, query %q", r, query)
+	}
+	file := filepath.Join(dir, "kazari.db")
+	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "backup", file)
+	if r.code != exitUsage || !strings.Contains(r.stderr, "is a file") || query != "not asked" {
+		t.Errorf("onto a file: %+v, query %q", r, query)
+	}
+	if got, err := os.ReadFile(file); err != nil || string(got) != "the database" {
+		t.Errorf("the file the command was pointed at = %q, %v", got, err)
 	}
 
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "backup", filepath.Join(t.TempDir(), "b"))
@@ -235,8 +246,19 @@ func TestRunAdminBackup(t *testing.T) {
 }
 
 func TestRunAdminBackupOverSocket(t *testing.T) {
-	var query string
-	f := &fakeAPI{t: t, routes: map[string]http.HandlerFunc{"POST /v1/backup": backupRoute(t, &query)}}
+	var (
+		query   string
+		proxied atomic.Bool // the server has no certmagic/ to send
+	)
+	withCerts := backupRoute(t, &query)
+	f := &fakeAPI{t: t, routes: map[string]http.HandlerFunc{"POST /v1/backup": func(w http.ResponseWriter, r *http.Request) {
+		if !proxied.Load() {
+			withCerts(w, r)
+			return
+		}
+		query = r.URL.RawQuery
+		w.Write(archive(t, map[string]string{"kazari.db": "the database"}))
+	}}}
 	// A short path: a Unix socket's is bounded at about a hundred bytes.
 	sockDir, err := os.MkdirTemp("", "kz")
 	if err != nil {
@@ -268,6 +290,18 @@ func TestRunAdminBackupOverSocket(t *testing.T) {
 	r = runCLI(t, nil, "--admin-socket", socket, "admin", "backup", "--no-certs", dir)
 	if r.code != 0 || query != "" || r.stdout != "wrote 2 files, 18 B, to "+dir+"\n" {
 		t.Errorf("--no-certs: %+v, query %q", r, query)
+	}
+
+	// --json says whether the archive held the certificates, which a
+	// server behind a proxy has none of to give.
+	r = runCLI(t, nil, "--admin-socket", socket, "--json", "admin", "backup", filepath.Join(t.TempDir(), "backup"))
+	if r.code != 0 || query != "certs=true" || !strings.Contains(r.stdout, `"certificates": true`) {
+		t.Errorf("--json over the socket: %+v, query %q", r, query)
+	}
+	proxied.Store(true)
+	r = runCLI(t, nil, "--admin-socket", socket, "--json", "admin", "backup", filepath.Join(t.TempDir(), "backup"))
+	if r.code != 0 || query != "certs=true" || !strings.Contains(r.stdout, `"certificates": false`) {
+		t.Errorf("--json over the socket of a server without certificates: %+v, query %q", r, query)
 	}
 }
 
@@ -335,5 +369,22 @@ func TestRunAdminReady(t *testing.T) {
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "ready")
 	if r.code != exitError || !strings.Contains(r.stdout, `"ready": false`) || !strings.Contains(r.stdout, `"status": "fail"`) {
 		t.Errorf("--json with a failing check: %+v", r)
+	}
+
+	// The update check's answer comes with the checks; only a newer release
+	// is worth a line.
+	out.Ready, out.Checks = true, out.Checks[:1]
+	out.Update = &api.Update{Latest: "0.7.0", CheckedAt: t0}
+	if r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "ready"); r.code != 0 || strings.Contains(r.stdout, "release") {
+		t.Errorf("up to date: %+v", r)
+	}
+	out.Update = &api.Update{Latest: "0.8.0", Newer: true, CheckedAt: t0}
+	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "ready")
+	if r.code != 0 || !strings.HasSuffix(r.stdout, "a newer release is available: 0.8.0 (checked 2026-10-01T14:00:00+02:00)\n") {
+		t.Errorf("a newer release: %+v", r)
+	}
+	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "ready")
+	if r.code != 0 || !strings.Contains(r.stdout, `"latest": "0.8.0"`) || !strings.Contains(r.stdout, `"newer": true`) {
+		t.Errorf("--json with a newer release: %+v", r)
 	}
 }

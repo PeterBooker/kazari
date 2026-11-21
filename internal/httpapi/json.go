@@ -94,11 +94,13 @@ func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		instrument.Surface.String(instrument.OneOf(instrument.SurfaceFrom(ctx), instrument.SurfaceAPI, instrument.SurfaceAdmin)),
 		instrument.ErrorCode.String(instrument.OneOf(body.Code, api.ErrorCodes...)),
 	))
-	if status >= http.StatusInternalServerError {
+	// Turning a caller away for load is the server working as meant, not a
+	// fault to look into.
+	if status >= http.StatusInternalServerError && body.Code != api.CodeBusy {
 		b.log.ErrorContext(r.Context(), "httpapi: request failed",
 			"method", r.Method, "path", r.URL.Path, "status", status, "err", err)
 	}
-	if status == http.StatusTooManyRequests {
+	if status == http.StatusTooManyRequests || retry > 0 {
 		secs := int64(math.Ceil(retry.Seconds()))
 		w.Header().Set("Retry-After", strconv.FormatInt(max(secs, 1), 10))
 	}
@@ -123,8 +125,15 @@ func errorResponse(err error) (int, api.Error, time.Duration) {
 		return http.StatusInsufficientStorage, api.Error{Code: api.CodeNoSpace, Message: err.Error()}, 0
 	}
 	status, body := present.Error(err)
+	if body.Code == api.CodeBusy {
+		return status, body, busyRetryAfter
+	}
 	return status, body, 0
 }
+
+// busyRetryAfter is what a caller turned away for load is told to wait: a
+// password hash takes well under a second, so the queue is short-lived.
+const busyRetryAfter = 5 * time.Second
 
 // decodeJSON rejects unknown fields, trailing data and bodies over limit
 // (413). An empty body is a 422 unless optional, which leaves v as it is.

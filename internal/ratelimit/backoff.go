@@ -43,8 +43,9 @@ type Backoff struct {
 }
 
 type failures struct {
-	n    int
-	last time.Time
+	n       int // failures in a row
+	pending int // attempts under way
+	last    time.Time
 }
 
 // NewBackoff returns a Backoff.
@@ -56,47 +57,106 @@ func NewBackoff(o BackoffOptions) *Backoff {
 		o.Forget = 15 * time.Minute
 	}
 	o.Scope = instrument.OneOf(o.Scope, ScopeIP, ScopeAccount)
-	return &Backoff{o: o, entries: map[string]*failures{},
-		// The limiters' counter: a refusal for coming too early is a rate
-		// limit like theirs.
-		rejected: instrument.Handle(o.Telemetry.Meter(scope).Int64Counter("kazari.rate_limit.rejected_requests",
-			metric.WithDescription("Requests refused by a rate limit."),
-			metric.WithUnit("{request}")))}
+	// The limiters' counter: a refusal for coming too early is a rate limit
+	// like theirs.
+	return &Backoff{o: o, entries: map[string]*failures{}, rejected: rejectedCounter(o.Telemetry)}
 }
 
-// Wait returns how long until an attempt for key may be made, 0 when it may
-// be made now. An attempt that has to wait is refused by the caller: it is
-// counted against the surface in ctx and marked on its span, and it does
-// not extend the wait.
-func (b *Backoff) Wait(ctx context.Context, key string) time.Duration {
+// Attempt is one try that Begin admitted. Exactly one of Failed and Done
+// ends it.
+type Attempt struct {
+	b   *Backoff
+	key string
+}
+
+// Begin asks to make an attempt for key. It returns how long to wait, 0
+// when the attempt may be made now; the caller then ends the Attempt with
+// Failed or Done. Attempts that are under way count as failures until they
+// end, so a burst of parallel guesses is held to what one after the other
+// would be: past the free failures, one at a time. A refusal records
+// nothing but itself (Refused): an attempt that came too early does not
+// extend the wait.
+func (b *Backoff) Begin(key string) (Attempt, time.Duration) {
 	if b == nil {
-		return 0
+		return Attempt{}, 0
 	}
-	d := b.wait(key)
-	if d > 0 {
-		b.rejected.Add(ctx, 1, metric.WithAttributes(
-			instrument.Surface.String(instrument.SurfaceFrom(ctx)),
-			instrument.RateLimitScope.String(b.o.Scope),
-		))
-		trace.SpanFromContext(ctx).AddEvent("kazari.rate_limited",
-			trace.WithAttributes(instrument.RateLimitScope.String(b.o.Scope)))
-	}
-	return d
-}
-
-func (b *Backoff) wait(key string) time.Duration {
 	now := b.o.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	f, ok := b.entries[key]
-	if !ok {
-		return 0
-	}
-	if now.Sub(f.last) >= b.o.Forget {
+	if ok && now.Sub(f.last) >= b.o.Forget && f.pending == 0 {
 		delete(b.entries, key)
-		return 0
+		ok = false
 	}
-	return max(0, f.last.Add(b.delay(f.n)).Sub(now))
+	if !ok {
+		b.makeRoom(now)
+		f = &failures{}
+		b.entries[key] = f
+	}
+	if d := f.last.Add(b.delay(f.n)).Sub(now); f.n > 0 && d > 0 {
+		return Attempt{}, d
+	}
+	// With attempts under way that may yet fail, a further one is let in
+	// only while the failures so far and those would all still be free.
+	if f.pending > 0 && f.n+f.pending >= b.o.Free {
+		return Attempt{}, b.o.Base
+	}
+	f.pending++
+	return Attempt{b: b, key: key}, 0
+}
+
+// Refused counts a request the caller turned away because Begin said to
+// wait, against the surface in ctx, and marks it on the request's span. A
+// caller that asks several Backoffs counts the refusal once, with the one
+// that asked for the longest wait.
+func (b *Backoff) Refused(ctx context.Context) {
+	if b == nil {
+		return
+	}
+	b.rejected.Add(ctx, 1, metric.WithAttributes(
+		instrument.Surface.String(instrument.SurfaceFrom(ctx)),
+		instrument.RateLimitScope.String(b.o.Scope),
+	))
+	trace.SpanFromContext(ctx).AddEvent("kazari.rate_limited",
+		trace.WithAttributes(instrument.RateLimitScope.String(b.o.Scope)))
+}
+
+// Failed ends the attempt as a failure, which makes the next one wait.
+func (a Attempt) Failed() { a.end(true) }
+
+// Done ends the attempt without counting it: it succeeded, or was never
+// judged.
+func (a Attempt) Done() { a.end(false) }
+
+func (a Attempt) end(failed bool) {
+	b := a.b
+	if b == nil {
+		return
+	}
+	now := b.o.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	f, ok := b.entries[a.key]
+	if !ok {
+		// Evicted, or reset by a success, while this attempt ran.
+		if !failed {
+			return
+		}
+		b.makeRoom(now)
+		f = &failures{pending: 1}
+		b.entries[a.key] = f
+	}
+	f.pending = max(0, f.pending-1)
+	switch {
+	case failed:
+		if f.n > 0 && now.Sub(f.last) >= b.o.Forget {
+			f.n = 0
+		}
+		f.n++
+		f.last = now
+	case f.n == 0 && f.pending == 0:
+		delete(b.entries, a.key)
+	}
 }
 
 // delay is the wait that n failures in a row impose.
@@ -115,33 +175,12 @@ func (b *Backoff) delay(n int) time.Duration {
 	return min(d, b.o.Max)
 }
 
-// Fail records a failed attempt for key.
-func (b *Backoff) Fail(key string) {
-	if b == nil {
-		return
-	}
-	now := b.o.Now()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	f, ok := b.entries[key]
-	if ok && now.Sub(f.last) >= b.o.Forget {
-		f.n = 0
-	}
-	if !ok {
-		b.makeRoom(now)
-		f = &failures{}
-		b.entries[key] = f
-	}
-	f.n++
-	f.last = now
-}
-
 // makeRoom bounds memory as Limiter does: forgotten keys go once a minute
 // past sweepAt entries, and at MaxEntries an arbitrary one goes first.
 func (b *Backoff) makeRoom(now time.Time) {
 	if len(b.entries) > sweepAt && now.Sub(b.lastSweep) >= sweepEvery {
 		for k, f := range b.entries {
-			if now.Sub(f.last) >= b.o.Forget {
+			if f.pending == 0 && now.Sub(f.last) >= b.o.Forget {
 				delete(b.entries, k)
 			}
 		}
@@ -174,3 +213,32 @@ func (b *Backoff) Len() int {
 	defer b.mu.Unlock()
 	return len(b.entries)
 }
+
+// Pair is one attempt admitted by two Backoffs, such as an account's and
+// an address's.
+type Pair struct{ first, second Attempt }
+
+// BeginPair is Begin on two Backoffs. The attempt may be made only when
+// both admit it; otherwise it returns the longer wait and counts the one
+// refusal against the Backoff that asked for it.
+func BeginPair(ctx context.Context, first *Backoff, firstKey string, second *Backoff, secondKey string) (Pair, time.Duration) {
+	a, wa := first.Begin(firstKey)
+	b, wb := second.Begin(secondKey)
+	if wa == 0 && wb == 0 {
+		return Pair{a, b}, 0
+	}
+	a.Done()
+	b.Done()
+	if wa >= wb {
+		first.Refused(ctx)
+	} else {
+		second.Refused(ctx)
+	}
+	return Pair{}, max(wa, wb)
+}
+
+// Failed ends the attempt as a failure on both.
+func (p Pair) Failed() { p.first.Failed(); p.second.Failed() }
+
+// Done ends the attempt on both without counting it.
+func (p Pair) Done() { p.first.Done(); p.second.Done() }

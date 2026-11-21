@@ -647,6 +647,9 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 	case "only":
 		where = append(where, "a.deleted_at IS NOT NULL")
 	}
+	if q.Published {
+		where = append(where, "a.unpublished_at IS NULL")
+	}
 	switch q.Visibility {
 	case "":
 	case artifact.Unpublished:

@@ -46,7 +46,7 @@
 {{with .Data.Backup}}<section class="box section" id="backup" aria-labelledby="backup-h">
 <h2 class="h2" id="backup-h">Backup</h2>
 <dl class="kv">
-<dt>Size to expect</dt><dd>{{with .Estimate}}About {{bytes .Size}}: a database of {{bytes .DatabaseBytes}} and {{bytes .BlobBytes}} of files. The server needs {{bytes .DatabaseBytes}} free for a temporary copy and has {{bytes .FreeBytes}}.{{else}}<span class="soft">Could not be measured.</span>{{end}}</dd>
+<dt>Size to expect</dt><dd>About {{bytes .FileBytes}} of files, and the database on top. The server needs free space for a temporary copy of the database, and says so when it has too little.</dd>
 <dt>Last backup</dt><dd>{{with .Last}}{{when .At}} by <span class="mono">{{.Actor}}</span>{{else}}<span class="soft">None taken through Kazari yet.</span>{{end}}</dd>
 </dl>
 <div class="notice tone-warn">

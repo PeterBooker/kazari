@@ -15,12 +15,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/preflight"
+	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -368,6 +370,34 @@ func TestAdminUserAccountFields(t *testing.T) {
 	if !one.Password || one.Invited || one.LastActiveAt == nil {
 		t.Errorf("GET carol = %+v", one)
 	}
+
+	// The list and the single user agree on usage, and a person who owns
+	// nothing uses nothing.
+	e.create(e.alice, "notes")
+	users = byHandle()
+	e.call(http.MethodGet, e.a("/v1/users/alice"), adminToken, nil, http.StatusOK, &one)
+	if users["alice"].UsedBytes == 0 || users["alice"].UsedBytes != one.UsedBytes || users["carol"].UsedBytes != 0 {
+		t.Errorf("used bytes: alice %d in the list and %d alone, carol %d", users["alice"].UsedBytes, one.UsedBytes, users["carol"].UsedBytes)
+	}
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users/nobody"), token: adminToken}), http.StatusNotFound, api.CodeNotFound)
+}
+
+// An invite link is for a person who has no password yet; one who has gets
+// a reset link.
+func TestAdminInviteLinkForAPersonWithAPassword(t *testing.T) {
+	e := newEnv(t, config{local: true})
+	var invited api.Invited
+	e.call(http.MethodPost, e.a("/v1/invites"), adminToken, api.InviteRequest{Handle: "carol"}, http.StatusCreated, &invited)
+	if _, err := e.users.Redeem(e.ctx, linkToken(t, invited.Link.URL, "invite"), user.RedeemRequest{Password: testPassword}); err != nil {
+		t.Fatal(err)
+	}
+	refused := e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/carol/links"), token: adminToken, contentType: "application/json",
+		body: strings.NewReader(`{"purpose":"invite"}`)}), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+	if !strings.Contains(refused.Message, "reset link") {
+		t.Errorf("message = %q, want it to name the reset link", refused.Message)
+	}
+	var link api.CreatedLink
+	e.call(http.MethodPost, e.a("/v1/users/carol/links"), adminToken, api.LinkRequest{Purpose: "reset"}, http.StatusCreated, &link)
 }
 
 func TestKeyCapOnEveryRoute(t *testing.T) {
@@ -376,10 +406,16 @@ func TestKeyCapOnEveryRoute(t *testing.T) {
 	e.call(http.MethodPost, e.a("/v1/users/alice/keys"), adminToken, nil, http.StatusCreated, &issued)
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/alice/keys"), token: adminToken}), http.StatusForbidden, api.CodeTooManyKeys)
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/me/keys"), token: e.alice}), http.StatusForbidden, api.CodeTooManyKeys)
-	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/alice/keys/" + issued.APIKey.Prefix + "/rotate"), token: adminToken}),
+	// A rotation at the cap goes through: the key it replaces is not a key
+	// more. A second one, while the first key's overlap runs, would be.
+	var rotated api.IssuedKey
+	e.call(http.MethodPost, e.a("/v1/users/alice/keys/"+issued.APIKey.Prefix+"/rotate"), adminToken, nil, http.StatusCreated, &rotated)
+	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/alice/keys/" + rotated.APIKey.Prefix + "/rotate"), token: adminToken}),
 		http.StatusForbidden, api.CodeTooManyKeys)
 	// The cap counts live keys.
-	e.call(http.MethodDelete, e.a("/v1/users/alice/keys/"+issued.APIKey.Prefix), adminToken, nil, http.StatusNoContent, nil)
+	for _, prefix := range []string{issued.APIKey.Prefix, rotated.APIKey.Prefix} {
+		e.call(http.MethodDelete, e.a("/v1/users/alice/keys/"+prefix), adminToken, nil, http.StatusNoContent, nil)
+	}
 	e.call(http.MethodPost, e.u("/v1/me/keys"), e.alice, nil, http.StatusCreated, &issued)
 }
 
@@ -539,6 +575,28 @@ func (f *fakeReady) Check(_ context.Context, fresh bool) (preflight.Report, erro
 	return f.report, nil
 }
 
+type fakeUpdates struct{ result update.Result }
+
+func (f *fakeUpdates) Result() update.Result { return f.result }
+
+// The update check's last answer comes with the readiness checks, once it
+// has one.
+func TestAdminReadyUpdate(t *testing.T) {
+	up := &fakeUpdates{}
+	e := newEnv(t, config{ready: &fakeReady{report: preflight.Report{At: t0}}, updates: up})
+	var out api.Ready
+	e.call(http.MethodGet, e.a("/v1/ready"), adminToken, nil, http.StatusOK, &out)
+	if out.Update != nil {
+		t.Errorf("update = %+v before the check has answered", out.Update)
+	}
+	up.result = update.Result{Latest: "0.8.0", Newer: true, CheckedAt: t0.Add(time.Hour)}
+	out = api.Ready{}
+	e.call(http.MethodGet, e.a("/v1/ready"), adminToken, nil, http.StatusOK, &out)
+	if out.Update == nil || *out.Update != (api.Update{Latest: "0.8.0", Newer: true, CheckedAt: t0.Add(time.Hour)}) {
+		t.Errorf("update = %+v", out.Update)
+	}
+}
+
 func TestAdminReady(t *testing.T) {
 	rd := &fakeReady{report: preflight.Report{At: t0, Findings: []preflight.Finding{
 		{Check: "config", Status: preflight.OK, Detail: "valid"},
@@ -565,6 +623,11 @@ func TestAdminReady(t *testing.T) {
 		t.Errorf("fresh = %v, want false then true", rd.fresh)
 	}
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/ready?fresh=now"), token: adminToken}), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+
+	// Without an update check the answer says nothing about one.
+	if out.Update != nil {
+		t.Errorf("update = %+v on an instance without the check", out.Update)
+	}
 
 	// The findings describe the configuration, so they need an admin.
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/ready")}), http.StatusUnauthorized, api.CodeUnauthorized)

@@ -96,9 +96,10 @@
 {{else}}<div class="empty"><p>This page has no share link. Create one below when someone outside the instance needs to open it.</p></div>{{end}}
 <form class="filters" method="post" action="/pages/{{.Page.Slug}}/links">
 {{template "token" $}}
-<div class="field field-search"><label for="link-label">Who it is for <span class="optional">(optional)</span></label><input class="input" id="link-label" name="label" type="text" maxlength="200" value="{{.LinkLabel}}"></div>
-<div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .LinkError}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
-{{with .LinkError}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<div class="field field-search"><label for="link-label">Who it is for <span class="optional">(optional)</span></label><input class="input" id="link-label" name="label" type="text" maxlength="200" value="{{.LinkLabel}}"{{if .LinkErr.label}} aria-invalid="true" aria-describedby="link-label-err"{{end}}>
+{{with .LinkErr.label}}<p class="error" id="link-label-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .LinkErr.days}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
+{{with .LinkErr.days}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
 <button type="submit" class="btn">Create a share link</button>
 </form>
 <p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days.</p>
@@ -149,31 +150,6 @@
 {{end}}
 </div>{{template "theme/shell-close"}}{{end}}
 
-{{define "pages_confirm"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
-{{with .Data}}
-<header class="head">
-<p class="crumb"><a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></p>
-<div class="head-row"><h1 class="title">{{.Heading}}</h1></div>
-{{with .Intro}}<p class="lede">{{.}}</p>{{end}}
-</header>
-<div class="cols">
-<div class="box section"><h2 class="h3">What happens</h2>
-<ul class="dash">{{range .Does}}<li>{{.}}</li>{{end}}</ul></div>
-{{if .Keeps}}<div class="box section"><h2 class="h3">What stays as it is</h2>
-<ul class="dash">{{range .Keeps}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-</div>
-<form class="form" method="post" action="{{.Action}}">
-{{template "token" $}}
-{{with .Check}}<fieldset class="fieldset"><legend>The owner</legend>
-<label class="check"><input type="checkbox" name="{{.Name}}" value="yes" checked aria-describedby="check-help"><span>{{.Label}}</span></label>
-<p class="help" id="check-help">{{.Help}}</p>
-</fieldset>{{end}}
-{{with .Note}}<p class="soft">{{.}}</p>{{end}}
-<div class="actions"><button type="submit" class="btn {{if .Danger}}btn-danger{{else}}btn-primary{{end}}">{{.Button}}</button><a class="link" href="/pages/{{.Slug}}">Cancel</a></div>
-</form>
-{{end}}
-</div>{{template "theme/shell-close"}}{{end}}
-
 {{define "pages_remove"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
 {{with .Data}}
 <header class="head">
@@ -206,22 +182,3 @@
 {{end}}
 </div>{{template "theme/shell-close"}}{{end}}
 
-{{define "pages_link"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
-{{with .Data}}
-<header class="head">
-<p class="crumb"><a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></p>
-<div class="head-row"><h1 class="title">Share link, <b>shown once</b></h1></div>
-<p class="lede">Copy it now and send it over a channel you trust. Whoever has it can open <span class="mono">{{.Host}}</span> without signing in.</p>
-</header>
-<section class="box section" aria-labelledby="link-once">
-<h2 class="h2" id="link-once">The link{{with .Link.Label}} for {{.}}{{end}}</h2>
-<div class="copy"><input class="input input-mono" id="share-link" type="text" readonly value="{{.URL}}" aria-label="Share link">
-<button type="button" class="btn btn-primary" data-copy-target="share-link" hidden>Copy the link</button></div>
-<ul class="dash soft">
-<li>It works until {{day .Link.ExpiresAt}}, or until it is revoked from the page's own page.</li>
-<li>Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.</li>
-</ul>
-</section>
-<div class="actions"><a class="btn" href="/pages/{{.Slug}}">Back to the page</a></div>
-{{end}}
-</div>{{template "theme/shell-close"}}{{end}}

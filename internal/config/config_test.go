@@ -1027,3 +1027,35 @@ func TestAdminPublicURLEnv(t *testing.T) {
 		t.Errorf("the key admin.url: err = %v, want it refused as unknown", err)
 	}
 }
+
+// The default address is held to the rule an explicit one is validated
+// against: plain http is for this machine alone.
+func TestDashboardOffOnPlainHTTP(t *testing.T) {
+	c := valid()
+	c.ExternalScheme = "http"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.AdminURL() != "http://admin.art.example.com" || c.DashboardEnabled() {
+		t.Errorf("AdminURL() = %q, DashboardEnabled() = %v; want the dashboard off at a plain-http address that is not loopback",
+			c.AdminURL(), c.DashboardEnabled())
+	}
+	c.BaseDomain = "localhost"
+	if !c.DashboardEnabled() {
+		t.Error("DashboardEnabled() = false at http://admin.localhost")
+	}
+}
+
+func TestRedactedShowsEffectiveLocalAccounts(t *testing.T) {
+	enabled := func(c Config) any {
+		return c.Redacted()["auth"].(map[string]any)["local"].(map[string]any)["enabled"]
+	}
+	c := valid()
+	if got := enabled(c); got != true {
+		t.Errorf("auth.local.enabled without a provider = %v, want true", got)
+	}
+	c.Auth.OIDC = &OIDC{Issuer: "https://idp.example.com", ClientID: "id", ClientSecret: "secret"}
+	if got := enabled(c); got != false {
+		t.Errorf("auth.local.enabled with a provider = %v, want false", got)
+	}
+}

@@ -41,8 +41,11 @@ func TestOverviewNeedsAttention(t *testing.T) {
 		{name: "a failed job nobody named", mutate: func(in *attentionInput) {
 			in.Jobs = []scheduler.JobStatus{{Name: "custom", LastError: "boom"}}
 		}, tone: "danger", label: "Job failed", href: "/system#jobs", text: []string{"custom", "on its schedule"}},
-		{name: "certificate in 14 days", mutate: func(in *attentionInput) { in.CertNotAfter = now.Add(14 * 24 * time.Hour) },
-			tone: "warn", label: "Certificate", href: "/system#health", text: []string{"expires in 14 days", "5 Dec 2026"}},
+		// The same window, compared the same way, as the health check on the
+		// System page: the two never disagree about one certificate.
+		{name: "certificate just inside the health check's window", mutate: func(in *attentionInput) { in.CertNotAfter = now.Add(preflight.CertWarnWindow - time.Hour) },
+			tone: "warn", label: "Certificate", href: "/system#health", text: []string{"expires in 13 days", "5 Dec 2026"}},
+		{name: "certificate at the health check's window", mutate: func(in *attentionInput) { in.CertNotAfter = now.Add(preflight.CertWarnWindow) }},
 		{name: "certificate tomorrow", mutate: func(in *attentionInput) { in.CertNotAfter = now.Add(30 * time.Hour) },
 			tone: "warn", label: "Certificate", href: "/system#health", text: []string{"expires in 1 day,"}},
 		{name: "certificate within hours", mutate: func(in *attentionInput) { in.CertNotAfter = now.Add(3 * time.Hour) },
@@ -52,10 +55,12 @@ func TestOverviewNeedsAttention(t *testing.T) {
 			tone: "danger", label: "Certificate expired", href: "/system#health", text: []string{"expired on 21 Nov 2026"}},
 		{name: "no certificate served", mutate: func(in *attentionInput) { in.CertNotAfter = time.Time{} }},
 		{name: "disk under 10% free", mutate: func(in *attentionInput) { in.DiskFree = 9 * gib },
-			tone: "warn", label: "Disk space", href: "/pages/bin", text: []string{"9 GiB free of 100 GiB"}},
+			tone: "warn", label: "Disk space", href: "/bin", text: []string{"9 GiB free of 100 GiB"}},
 		{name: "disk at 10% free", mutate: func(in *attentionInput) { in.DiskFree = 10 * gib }},
+		{name: "disk at 2% free", mutate: func(in *attentionInput) { in.DiskFree = 2 * gib },
+			tone: "warn", label: "Disk space", href: "/bin", text: []string{"2 GiB free"}},
 		{name: "disk nearly full", mutate: func(in *attentionInput) { in.DiskFree = gib },
-			tone: "danger", label: "Disk almost full", href: "/pages/bin", text: []string{"1 GiB free"}},
+			tone: "danger", label: "Disk almost full", href: "/bin", text: []string{"1 GiB free"}},
 		{name: "disk size unknown", mutate: func(in *attentionInput) { in.DiskFree, in.DiskTotal = 0, 0 }},
 		{name: "quota above 90%", mutate: func(in *attentionInput) { in.People[0].Used = 2*gib - gib/20 },
 			tone: "warn", label: "Quota", href: "/people/ana", text: []string{"Ana Sousa has used 97% of a 2 GiB quota"}},

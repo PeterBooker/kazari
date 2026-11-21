@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/PeterBooker/kazari/internal/api"
@@ -46,7 +47,7 @@ type AdminUsersInviteCmd struct {
 	Name    string `help:"Display name." placeholder:"NAME"`
 	Role    string `help:"member (default) or admin." placeholder:"ROLE"`
 	Quota   string `help:"Storage quota, such as 500MiB (default: the server's)." placeholder:"SIZE"`
-	Replace bool   `help:"Make a new invite link for a user who exists and has not set a password; the link before it stops working."`
+	Replace bool   `help:"Make a new invite link for a user who exists and has not set a password yet; the link before it stops working. A user who has a password gets a reset link instead (admin users reset-password)."`
 }
 
 func (c *AdminUsersInviteCmd) Run(r *runner) error {
@@ -200,6 +201,11 @@ type AdminBackupCmd struct {
 }
 
 func (c *AdminBackupCmd) Run(r *runner) error {
+	// Before the server is asked: a backup started for a directory that
+	// cannot take it copies the whole database for nothing.
+	if err := backupTarget(c.Dir); err != nil {
+		return err
+	}
 	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
@@ -230,18 +236,43 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 			"an instance restored from this backup asks for a new certificate")
 	}
 	if r.g.JSON {
+		// What the archive held, not what was asked for: a server behind a
+		// proxy has no certificate to give.
+		_, err := os.Stat(filepath.Join(c.Dir, "certmagic"))
 		return r.printJSON(struct {
 			Dir          string `json:"dir"`
 			Files        int    `json:"files"`
 			Bytes        int64  `json:"bytes"`
 			Certificates bool   `json:"certificates"`
-		}{c.Dir, files, size, certs})
+		}{c.Dir, files, size, err == nil})
 	}
 	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, humanSize(size), c.Dir)
 	return nil
 }
 
 // treeStats counts the regular files under dir and sums their sizes.
+// backupTarget reports why dir cannot take a backup: it must be a directory
+// that is empty, or not exist yet.
+func backupTarget(dir string) error {
+	info, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("admin backup: %w", err)
+	case !info.IsDir():
+		return usagef("admin backup: %s is a file; name an empty directory or one that does not exist yet", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("admin backup: %w", err)
+	}
+	if len(entries) > 0 {
+		return usagef("admin backup: %s is not empty; name an empty directory or one that does not exist yet", dir)
+	}
+	return nil
+}
+
 func treeStats(dir string) (files int, size int64, err error) {
 	err = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
@@ -288,6 +319,9 @@ func (c *AdminReadyCmd) Run(r *runner) error {
 	}
 	preflight.Write(termSafe{r.stdout}, findings)
 	fmt.Fprintf(r.stdout, "checked %s\n", fmtTime(out.CheckedAt))
+	if u := out.Update; u != nil && u.Newer {
+		fmt.Fprintf(termSafe{r.stdout}, "a newer release is available: %s (checked %s)\n", u.Latest, fmtTime(u.CheckedAt))
+	}
 	if !out.Ready {
 		return failed
 	}

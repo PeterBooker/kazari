@@ -73,14 +73,19 @@ func (s *Service) Invite(ctx context.Context, req InviteRequest) (_ *User, _ *Li
 			return nil, nil, "", fmt.Errorf("%w: only an admin invites an admin", ErrInvalidRole)
 		}
 	}
-	u, err := s.CreateUser(ctx, CreateUserRequest(req))
+	u, err := s.newUser(CreateUserRequest(req))
 	if err != nil {
 		return nil, nil, "", err
 	}
-	l, token, err := s.newLink(ctx, u.Handle, PurposeInvite, false)
+	l, token, err := s.buildLink(ctx, u.Handle, PurposeInvite, false)
 	if err != nil {
 		return nil, nil, "", err
 	}
+	if err := s.store.CreateInvited(ctx, u, l); err != nil {
+		return nil, nil, "", err
+	}
+	s.recordCreated(ctx, u)
+	s.linkCreated(ctx, l)
 	return u, l, token, nil
 }
 
@@ -102,6 +107,17 @@ func (s *Service) IssueLink(ctx context.Context, handle string, purpose Purpose,
 	if u.DisabledAt != nil {
 		return nil, "", fmt.Errorf("user: issue link for %q: %w", handle, ErrDisabled)
 	}
+	if purpose == PurposeInvite {
+		// An invite ends no session; for a person who has signed in, a new
+		// password has to, which is what a reset does.
+		hash, err := s.store.PasswordHash(ctx, handle)
+		if err != nil {
+			return nil, "", err
+		}
+		if hash != "" {
+			return nil, "", fmt.Errorf("user: invite %q: %w; make a reset link instead", handle, ErrHasPassword)
+		}
+	}
 	return s.newLink(ctx, handle, purpose, revokeAll && purpose == PurposeReset)
 }
 
@@ -115,6 +131,19 @@ func (s *Service) SetupLink(ctx context.Context) (_ *Link, token string, err err
 }
 
 func (s *Service) newLink(ctx context.Context, handle string, purpose Purpose, revokeAll bool) (*Link, string, error) {
+	l, token, err := s.buildLink(ctx, handle, purpose, revokeAll)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := s.store.CreateLink(ctx, l); err != nil {
+		return nil, "", err
+	}
+	s.linkCreated(ctx, l)
+	return l, token, nil
+}
+
+// buildLink returns a link with a new token, not yet stored.
+func (s *Service) buildLink(ctx context.Context, handle string, purpose Purpose, revokeAll bool) (*Link, string, error) {
 	if !s.opts.LocalAccounts {
 		return nil, "", ErrLocalOff
 	}
@@ -123,7 +152,7 @@ func (s *Service) newLink(ctx context.Context, handle string, purpose Purpose, r
 		return nil, "", err
 	}
 	now := s.now()
-	l := &Link{
+	return &Link{
 		UserHandle: handle,
 		Purpose:    purpose,
 		Hash:       HashKey(token),
@@ -131,13 +160,12 @@ func (s *Service) newLink(ctx context.Context, handle string, purpose Purpose, r
 		CreatedBy:  actorFrom(ctx, "admin"),
 		CreatedAt:  now,
 		ExpiresAt:  now.Add(s.linkTTL(purpose)),
-	}
-	if err := s.store.CreateLink(ctx, l); err != nil {
-		return nil, "", err
-	}
-	s.link(ctx, linkCreate, purpose)
+	}, token, nil
+}
+
+func (s *Service) linkCreated(ctx context.Context, l *Link) {
+	s.link(ctx, linkCreate, l.Purpose)
 	s.record(ctx, l.CreatedBy, audit.InviteCreate, linkDetails(l))
-	return l, token, nil
 }
 
 func (s *Service) linkTTL(p Purpose) time.Duration {
@@ -310,29 +338,9 @@ func (s *Service) endSessions(ctx context.Context, handle string, keep int64) er
 func (s *Service) CheckPassword(ctx context.Context, login, password string) (_ *User, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.check_password")
 	defer func() { endSpan(span, err) }()
-	if !s.opts.LocalAccounts {
-		return nil, ErrBadPassword
-	}
-	u, err := s.byLogin(ctx, login)
+	u, stale, err := s.verify(ctx, login, password)
 	if err != nil {
 		return nil, err
-	}
-	var hash string
-	if u != nil && u.DisabledAt == nil {
-		if hash, err = s.store.PasswordHash(ctx, u.Handle); err != nil {
-			return nil, err
-		}
-	}
-	// An over-long password cannot be anyone's, and is not worth hashing.
-	if len(password) > maxPasswordBytes {
-		hash, password = "", ""
-	}
-	ok, stale, err := s.hashing.verify(ctx, hash, password)
-	if err != nil {
-		return nil, fmt.Errorf("user: check password: %w", err)
-	}
-	if !ok {
-		return nil, ErrBadPassword
 	}
 	now := s.now()
 	if stale {
@@ -344,6 +352,49 @@ func (s *Service) CheckPassword(ctx context.Context, login, password string) (_ 
 	}
 	_ = s.store.TouchPassword(ctx, u.Handle, now)
 	return u, nil
+}
+
+// verify is the check of CheckPassword without what a sign-in adds: it
+// renews no hash and records no sign-in. stale reports a hash made with
+// other parameters than Options.Argon2.
+func (s *Service) verify(ctx context.Context, login, password string) (_ *User, stale bool, err error) {
+	if !s.opts.LocalAccounts {
+		return nil, false, ErrBadPassword
+	}
+	u, err := s.byLogin(ctx, login)
+	if err != nil {
+		return nil, false, err
+	}
+	var hash string
+	if u != nil && u.DisabledAt == nil {
+		if hash, err = s.store.PasswordHash(ctx, u.Handle); err != nil {
+			return nil, false, err
+		}
+	}
+	// An over-long password cannot be anyone's, and is not worth hashing.
+	if len(password) > maxPasswordBytes {
+		hash, password = "", ""
+	}
+	ok, stale, err := s.hashing.verify(ctx, hash, password)
+	if err != nil {
+		return nil, false, fmt.Errorf("user: check password: %w", err)
+	}
+	if !ok {
+		return nil, false, ErrBadPassword
+	}
+	return u, stale, nil
+}
+
+// HandleFor returns the handle of the person login names, by handle or by
+// email, or "" when it names nobody. It is for keying what is counted per
+// account, so that a person's handle and email are one account; it says
+// nothing to the caller of a sign-in form.
+func (s *Service) HandleFor(ctx context.Context, login string) string {
+	u, err := s.byLogin(ctx, login)
+	if err != nil || u == nil {
+		return ""
+	}
+	return u.Handle
 }
 
 // byLogin finds a person by handle, or by email when login holds an "@",
@@ -381,7 +432,9 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 	if strings.Contains(handle, "@") {
 		return ErrBadPassword
 	}
-	u, err := s.CheckPassword(ctx, handle, current)
+	// Not CheckPassword: changing a password is no sign-in, and the hash
+	// it would renew is about to be replaced.
+	u, _, err := s.verify(ctx, handle, current)
 	if err != nil {
 		return err
 	}
@@ -396,6 +449,10 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 		return err
 	}
 	s.record(ctx, u.Handle, audit.PasswordSet, map[string]string{"handle": u.Handle, "via": "change"})
+	// A reset link made before the change would undo it.
+	if err := s.store.RevokeUserLinks(ctx, u.Handle, s.now()); err != nil {
+		return fmt.Errorf("user: change password of %q: %w", u.Handle, err)
+	}
 	if err := s.endSessions(ctx, u.Handle, keep); err != nil {
 		return fmt.Errorf("user: change password of %q: %w", u.Handle, err)
 	}
@@ -406,6 +463,11 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 // ordered by handle.
 func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
 	return s.store.ListAccounts(ctx, s.now())
+}
+
+// Account is Accounts for one person. ErrNotFound.
+func (s *Service) Account(ctx context.Context, handle string) (Account, error) {
+	return s.store.GetAccount(ctx, handle, s.now())
 }
 
 // MinPasswordLength is the shortest password the instance accepts, for the

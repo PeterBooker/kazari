@@ -26,9 +26,10 @@ const (
 	PurposeImport = "import"
 	PurposeCIMD   = "cimd"
 	PurposeOIDC   = "oidc"
+	PurposeUpdate = "update" // the daily check for a newer release
 )
 
-var purposes = []string{PurposeFile, PurposeImport, PurposeCIMD, PurposeOIDC}
+var purposes = []string{PurposeFile, PurposeImport, PurposeCIMD, PurposeOIDC, PurposeUpdate}
 
 const purposeKey = attribute.Key("kazari.fetch.purpose")
 

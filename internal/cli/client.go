@@ -246,6 +246,7 @@ type ListParams struct {
 	Deleted    string
 	Search     string // text in the slug or the name
 	Visibility string // public | unlisted | members | unpublished
+	Owner      string // a handle; the admin list alone reads it
 	Cursor     string
 	Limit      int
 }
@@ -265,6 +266,7 @@ func (p ListParams) values() url.Values {
 	set("deleted", p.Deleted)
 	set("q", p.Search)
 	set("visibility", p.Visibility)
+	set("owner", p.Owner)
 	set("cursor", p.Cursor)
 	if p.Limit > 0 {
 		q.Set("limit", strconv.Itoa(p.Limit))

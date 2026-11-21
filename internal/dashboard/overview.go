@@ -23,17 +23,12 @@ var overviewFuncs = template.FuncMap{
 	"howmany": howMany,
 }
 
-var overviewFlashes = map[string]string{}
-
 const releasesURL = "https://github.com/PeterBooker/kazari/releases"
 
-// Thresholds of the "needs attention" list.
-const (
-	certSoon     = 14 * 24 * time.Hour
-	diskLowPct   = 10 // free space below this share of the disk is a warning
-	diskEmptyPct = 2  // and below this the next publish may fail
-	quotaHighPct = 90
-)
+// quotaHighPct is the share of a quota past which a person is listed. The
+// certificate's and the disk's thresholds are the health checks' own, so
+// the two never disagree.
+const quotaHighPct = 90
 
 func (s *server) overviewRoutes(mux *http.ServeMux) {
 	s.view(mux, "GET /{$}", s.overview)
@@ -93,7 +88,7 @@ func needsAttention(in attentionInput) []attention {
 				Text: "The certificate expired on " + t.UTC().Format("2 Jan 2006") + ". Browsers refuse every page until it is renewed.",
 				Href: "/system#health", Link: "See the health checks",
 			})
-		case left <= certSoon:
+		case left < preflight.CertWarnWindow:
 			out = append(out, attention{
 				Tone: "warn", Label: "Certificate",
 				Text: "The certificate expires in " + daysLeft(left) + ", on " + t.UTC().Format("2 Jan 2006") + ". It should have been renewed by now.",
@@ -102,18 +97,18 @@ func needsAttention(in attentionInput) []attention {
 		}
 	}
 	if in.DiskTotal > 0 {
-		pct := int(in.DiskFree * 100 / in.DiskTotal)
+		share := float64(in.DiskFree) / float64(in.DiskTotal)
 		a := attention{
 			Tone: "warn", Label: "Disk space",
 			Text: fmt.Sprintf("The data disk has %s free of %s, under %d%%. Remove pages for good, or give the disk more room.",
-				humanBytes(in.DiskFree), humanBytes(in.DiskTotal), diskLowPct),
-			Href: "/pages/bin", Link: "Open the bin",
+				humanBytes(in.DiskFree), humanBytes(in.DiskTotal), int(preflight.DiskWarnFree*100)),
+			Href: "/bin", Link: "Open the bin",
 		}
 		switch {
-		case pct < diskEmptyPct:
+		case share < preflight.DiskFailFree:
 			a.Tone, a.Label = "danger", "Disk almost full"
 			out = append(out, a)
-		case pct < diskLowPct:
+		case share < preflight.DiskWarnFree:
 			out = append(out, a)
 		}
 	}
@@ -147,10 +142,10 @@ func needsAttention(in attentionInput) []attention {
 		switch f.Status {
 		case preflight.Fail:
 			out = append(out, attention{Tone: "danger", Label: "Health check failed",
-				Text: "The check \"" + f.Check + "\" failed. " + capitalised(f.Detail), Href: "/system#health", Link: "See the health checks"})
+				Text: "The check \"" + f.Check + "\" failed. " + asSentence(f.Detail), Href: "/system#health", Link: "See the health checks"})
 		case preflight.Warn:
 			out = append(out, attention{Tone: "warn", Label: "Health check",
-				Text: "The check \"" + f.Check + "\" has a warning. " + capitalised(f.Detail), Href: "/system#health", Link: "See the health checks"})
+				Text: "The check \"" + f.Check + "\" has a warning. " + asSentence(f.Detail), Href: "/system#health", Link: "See the health checks"})
 		}
 	}
 	if in.Update.Newer {
@@ -178,19 +173,6 @@ func jobConsequence(name string) string {
 		return "The dashboard does not know whether a newer version exists."
 	}
 	return "It runs again on its schedule."
-}
-
-// capitalised makes a finding's detail read as a sentence of its own.
-func capitalised(detail string) string {
-	detail = strings.TrimSpace(detail)
-	if detail == "" {
-		return ""
-	}
-	detail = strings.ToUpper(detail[:1]) + detail[1:]
-	if !strings.HasSuffix(detail, ".") {
-		detail += "."
-	}
-	return detail
 }
 
 func daysLeft(d time.Duration) string {
@@ -281,6 +263,9 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 	}
 	invited := make(map[string]bool, len(accounts))
 	keyUsed := false
+	// An admin who was invited and has set no password cannot let anyone
+	// back in yet.
+	canSignIn := 0
 	for _, a := range accounts {
 		invited[a.Handle] = a.Invited
 		keyUsed = keyUsed || a.KeyUsedAt != nil
@@ -307,11 +292,14 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		if u.DisabledAt == nil {
 			if u.Role == user.RoleAdmin {
 				d.People.Admins++
+				if !invited[u.Handle] {
+					canSignIn++
+				}
 			}
 			in.People = append(in.People, quotaUse{Handle: u.Handle, Name: u.DisplayName, Used: used[u.Handle], Quota: u.QuotaBytes})
 		}
 	}
-	in.ActiveAdmins = d.People.Admins
+	in.ActiveAdmins = canSignIn
 
 	census, err := s.d.Artifacts.Census(ctx)
 	if err != nil {
@@ -353,13 +341,11 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 	}
 	d.Attention = needsAttention(in)
 
-	if s.d.Audit != nil {
-		p, err := s.d.Audit.List(ctx, audit.Query{Limit: 10})
-		if err != nil {
-			return err
-		}
-		d.Events = p.Events
+	recent, err := s.d.Audit.List(ctx, audit.Query{Limit: 10})
+	if err != nil {
+		return err
 	}
+	d.Events = recent.Events
 
 	d.New = d.Pages.Total == 0 || d.People.Total <= 1
 	if d.New {
@@ -372,9 +358,6 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 
 // granted reports whether anybody ever connected an application.
 func (s *server) granted(ctx context.Context) bool {
-	if s.d.Audit == nil {
-		return false
-	}
 	p, err := s.d.Audit.List(ctx, audit.Query{Actions: []string{"oauth.grant"}, Limit: 1})
 	return err == nil && len(p.Events) > 0
 }

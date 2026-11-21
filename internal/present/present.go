@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -320,7 +321,19 @@ func Ready(r preflight.Report) api.Ready {
 
 // Identity converts a linked identity.
 func Identity(id user.Identity) api.Identity {
-	return api.Identity{Issuer: id.Issuer, Subject: id.Subject, Email: id.EmailAtLogin, LastLoginAt: id.LastLoginAt}
+	out := api.Identity{Issuer: id.Issuer, Subject: id.Subject, Email: id.EmailAtLogin}
+	if !id.LastLoginAt.IsZero() {
+		out.LastLoginAt = &id.LastLoginAt
+	}
+	return out
+}
+
+// Update converts the update check's last answer, nil while it has none.
+func Update(r update.Result) *api.Update {
+	if r.CheckedAt.IsZero() {
+		return nil
+	}
+	return &api.Update{Latest: r.Latest, Newer: r.Newer, CheckedAt: r.CheckedAt}
 }
 
 // Key converts an API key (never the secret).
@@ -415,6 +428,11 @@ func Error(err error) (int, api.Error) {
 		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
 	case errors.Is(err, user.ErrNotProvisioned):
 		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
+	case errors.Is(err, user.ErrHasPassword):
+		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument,
+			Message: "the person already has a password, so an invite link is not for them; make a reset link instead"}
+	case errors.Is(err, user.ErrBusy):
+		return http.StatusServiceUnavailable, api.Error{Code: api.CodeBusy, Message: "too many passwords are being checked at once; try again in a few seconds"}
 	case errors.Is(err, user.ErrLastAdmin):
 		return http.StatusConflict, api.Error{Code: api.CodeLastAdmin, Message: "the last active admin cannot be disabled or demoted; make another person an admin first"}
 	case errors.Is(err, user.ErrSelf):

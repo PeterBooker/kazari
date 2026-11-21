@@ -56,9 +56,14 @@
 {{if .SignIns}}<dl class="kv">
 {{range $i, $e := .SignIns}}<dt>{{if $i}}Before that{{else}}Latest{{end}}</dt><dd>{{template "time" $e.At}}<br><span class="soft">{{template "event" $e}}</span></dd>
 {{end}}</dl>
-<p class="help">Nobody is told of a sign-in by email. If one of these was not you, change your password and tell an admin.</p>
+<p class="help">Nobody is told of a sign-in by email. If one of these was not you, {{if .Local}}change your password, {{end}}sign out of your other sessions and tell an admin.</p>
 {{else}}<p class="soft">No sign-in is on record yet.</p>
-{{end}}</section>
+{{end}}<form class="inline" method="post" action="/account/sessions/end">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<button type="submit" class="btn">Sign out of my other sessions</button>
+</form>
+<p class="help">Ends your sign-in in every other browser. This one stays signed in, and your API keys and connected apps keep working.</p>
+</section>
 </div>
 
 {{if .Local}}<section class="box section" aria-labelledby="password-h">
@@ -79,16 +84,12 @@
 <input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if .Err.confirm}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
 {{if .Err.confirm}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two new passwords are not the same. Enter both again.</span></p>
 {{end}}</div>
-<div class="actions"><button type="submit" class="btn btn-primary">Change the password</button></div>
+<div class="actions"><button type="submit" class="btn">Change the password</button></div>
 </form>
 <ul class="dash soft">
 <li>Changing it signs you out of every other browser. Your API keys and connected apps keep working.</li>
 <li>Lost it? An admin of this instance makes a reset link. Kazari sends no email.</li>
 </ul>
-<form class="inline" method="post" action="/account/sessions/end">
-<input type="hidden" name="form_token" value="{{.FormToken}}">
-<button type="submit" class="btn">Sign out of my other sessions</button>
-</form>
 </section>
 {{end}}
 
@@ -104,7 +105,7 @@
 <td data-label="Key"><span class="mono nowrap">kzk_{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="May">{{template "key-scope" .}}</td>
 <td data-label="Slugs">{{if .Slugs}}<span class="mono">{{range $i, $s := .Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any</span>{{end}}</td>
-<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">A sign-in</span>{{end}}</td>
+<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">A sign-in or an admin</span>{{end}}</td>
 <td data-label="Created">{{template "time" .CreatedAt}}</td>
 <td data-label="Last used">{{with .LastUsedAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
 <td data-label="Expires">{{with .ExpiresAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
@@ -140,6 +141,10 @@
 {{else if eq .Err.key "too-many"}}<div class="notice tone-danger" role="alert">
 <p class="notice-title">{{template "icon/alert"}}You hold as many live keys as a person may</p>
 <p>Revoke one you no longer use, then make the new one.</p>
+</div>
+{{else if eq .Err.key "scope"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}That key cannot be made here</p>
+<p>A key made here takes what it may do from the key you signed in with, and that key holds nothing a key from this page can have. Sign in with your password, or make the key in the dashboard.</p>
 </div>
 {{end}}
 <form class="form-grid" method="post" action="/account/keys">
@@ -234,7 +239,7 @@
 {{end}}<dt>May</dt><dd>{{template "key-scope" .Key}}</dd>
 <dt>Slugs</dt><dd>{{if .Key.Slugs}}<span class="mono">{{range $i, $s := .Key.Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any page you may touch</span>{{end}}</dd>
 <dt>Expires</dt><dd>{{with .Key.ExpiresAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</dd>
-{{with .Old}}<dt>The old key</dt><dd><span class="mono">kzk_{{.Prefix}}</span> works until {{template "time" .ExpiresAt}}</dd>
+{{with .Old}}<dt>The old key</dt><dd><span class="mono">kzk_{{.Prefix}}</span> {{if $.OldLive}}works until {{template "time" .ExpiresAt}}{{else}}has stopped working{{end}}</dd>
 {{end}}</dl>
 </section>
 
@@ -278,7 +283,7 @@ kazari me</code></pre>
 </div>
 {{else if eq .Err "too-many"}}<div class="notice tone-danger" role="alert">
 <p class="notice-title">{{template "icon/alert"}}You hold as many live keys as a person may</p>
-<p>The old key counts until it ends. Choose "at once" below, or revoke a key you no longer use.</p>
+<p>A key you rotated counts until it ends. Wait for that key to end, or revoke one you no longer use.</p>
 </div>
 {{else if eq .Err "ended"}}<div class="notice tone-danger" role="alert">
 <p class="notice-title">{{template "icon/alert"}}This key has ended</p>

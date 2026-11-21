@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/config"
@@ -58,7 +59,7 @@ func TestSystemPage(t *testing.T) {
 		"abc1234", `tone-ok">Up to date`, `href="https://github.com/PeterBooker/kazari/releases"`, `href="https://kazari.io/docs/"`,
 		"https://mcp.art.test/", "An upgrade is done on the host",
 		// Backup.
-		`action="/system/backup"`, "Keep a backup as a secret", "hash of every password and key", "5 GiB of files",
+		`action="/system/backup"`, "Keep a backup as a secret", "hash of every password and key", "of files, and the database on top",
 		"leaves out the certificate", "kazari admin backup", "with the server stopped", "None taken through Kazari yet",
 		// Diagnostics.
 		`id="diagnostics-text"`, "kazari 0.8.0 (abc1234)", `data-copy-target="diagnostics-text"`,
@@ -378,5 +379,31 @@ func TestBackupRefused(t *testing.T) {
 	}
 	if err == nil {
 		t.Error("a backup that failed mid-transfer ended as a complete download")
+	}
+}
+
+// The System page says how large a backup will be from the database's own
+// totals. Measuring the blob directory reads every file's size, which is
+// for the moment a backup is refused, not for every view of the page.
+func TestSystemPageDoesNotMeasureTheDisk(t *testing.T) {
+	var estimates int
+	e := newEnv(t, func(d *dashboard.Deps, _ *dashboard.Options) {
+		d.Backup = fakeBackup{estimates: &estimates, estimate: backup.Estimate{DatabaseBytes: 1 << 20, BlobBytes: 7 << 30}}
+	})
+	e.person("boss", user.RoleAdmin)
+	a, _, err := e.artifacts.Create(context.Background(), artifact.Actor{Handle: "boss"}, artifact.CreateRequest{
+		Slug: "big", Name: "big", Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader(strings.Repeat("x", 3<<10))}},
+	})
+	if err != nil || a == nil {
+		t.Fatal(err)
+	}
+	b := e.signedIn("boss")
+	r := b.get("/system")
+	b.get("/system")
+	if estimates != 0 {
+		t.Errorf("two views of the System page measured the disk %d times", estimates)
+	}
+	if !strings.Contains(r.body, "About 3 KiB of files, and the database on top.") || strings.Contains(r.body, "7 GiB") {
+		t.Errorf("the size to expect: %s", r.body)
 	}
 }

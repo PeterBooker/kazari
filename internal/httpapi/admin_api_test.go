@@ -91,8 +91,18 @@ func TestAdminUsersAndKeys(t *testing.T) {
 	if len(u.Identities) != 0 {
 		t.Errorf("identities after unlink = %+v", u.Identities)
 	}
-	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/carol/identities/unlink"), token: adminToken, contentType: "application/json",
+	// An identity carol does not have, and a user who does not exist, are
+	// both not found, and the message says which.
+	gone := e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/carol/identities/unlink"), token: adminToken, contentType: "application/json",
 		body: strings.NewReader(`{"issuer":"https://idp.test","subject":"c-1"}`)}), 404, api.CodeNotFound)
+	if !strings.Contains(gone.Message, "no identity") || !strings.Contains(gone.Message, "carol") || strings.Contains(gone.Message, "user not found") {
+		t.Errorf("unlinking an identity carol does not have: %q", gone.Message)
+	}
+	nobody := e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/users/nobody/identities/unlink"), token: adminToken, contentType: "application/json",
+		body: strings.NewReader(`{"issuer":"https://idp.test","subject":"c-1"}`)}), 404, api.CodeNotFound)
+	if nobody.Message != "user not found" {
+		t.Errorf("unlinking from an unknown user: %q", nobody.Message)
+	}
 
 	e.call(http.MethodPatch, e.a("/v1/users/carol"), adminToken, api.UpdateUserRequest{Disabled: ptr(true), DisplayName: ptr("Carol")}, http.StatusOK, &u)
 	if u.DisabledAt == nil || u.DisplayName != "Carol" {

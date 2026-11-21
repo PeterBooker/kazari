@@ -26,6 +26,8 @@ import (
 
 const testPassword = "correct horse battery"
 
+var formTokenRE = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+
 var setupLinkRE = regexp.MustCompile(`http://localhost/account/setup\?token=(kzl_[a-z2-7]+)`)
 
 // origin is the Origin header a form of the page at rawURL is posted with.
@@ -62,8 +64,13 @@ func (b *browser) setPassword(link string, extra url.Values) response {
 		b.t.Fatalf("opening the link: status %d to %q, want 303 to %s", clean.status, clean.header.Get("Location"), u.Path)
 	}
 	page := u.Scheme + "://" + u.Host + u.Path
-	wantStatus(b.t, b.get(page), http.StatusOK, "the link's page")
-	form := url.Values{"password": {testPassword}, "confirm": {testPassword}}
+	shown := b.get(page)
+	wantStatus(b.t, shown, http.StatusOK, "the link's page")
+	token := formTokenRE.FindStringSubmatch(shown.body)
+	if token == nil {
+		b.t.Fatalf("the link's form carries no token: %s", truncate(shown.body))
+	}
+	form := url.Values{"password": {testPassword}, "confirm": {testPassword}, "form_token": {token[1]}}
 	for k, v := range extra {
 		form[k] = v
 	}
@@ -337,7 +344,7 @@ func TestAccountOnApex(t *testing.T) {
 	}
 	page := b.get("http://localhost/account/")
 	wantStatus(t, page, http.StatusOK, "the account page")
-	token := regexp.MustCompile(`name="form_token" value="([^"]+)"`).FindStringSubmatch(page.body)
+	token := formTokenRE.FindStringSubmatch(page.body)
 	if token == nil {
 		t.Fatalf("no form token on the account page: %s", truncate(page.body))
 	}

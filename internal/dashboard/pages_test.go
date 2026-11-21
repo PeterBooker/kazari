@@ -361,8 +361,8 @@ func TestPageShareLink(t *testing.T) {
 		t.Fatalf("create: status %d: %s", r.StatusCode, r.body)
 	}
 	for _, want := range []string{
-		`value="https://members-one.art.test/.kazari/share?token=` + token + `"`, "shown once", "for the client",
-		`<time datetime="2026-11-24T12:00:00Z">24 Nov 2026</time>`, `data-copy-target="share-link"`,
+		`value="https://members-one.art.test/.kazari/share?token=` + token + `"`, "Shown once", "for the client",
+		"It works until 24 Nov 2026", `data-copy-target="once-value"`, `href="/pages/members-one">Back to the page`,
 	} {
 		if !strings.Contains(r.body, want) {
 			t.Errorf("the link's page lacks %q", want)
@@ -468,7 +468,7 @@ func TestPageTakeDown(t *testing.T) {
 	r := b.get("/pages/live-one/takedown")
 	for _, want := range []string{
 		"live-one.art.test and the address of every version answer 404 at once", "Nothing is deleted.",
-		`name="disable_owner" value="yes" checked`, "Also disable its owner, ana", "Hiding is not a lock", "for good",
+		`name="disable_owner" value="1" checked`, "Also disable its owner, ana", "Hiding is not a lock", "for good",
 	} {
 		if !strings.Contains(r.body, want) {
 			t.Errorf("the confirmation lacks %q", want)
@@ -658,44 +658,98 @@ func TestPagesHostileNames(t *testing.T) {
 	}
 }
 
-var (
-	scriptTag = regexp.MustCompile(`<script[^>]*>`)
-	assetRef  = regexp.MustCompile(`<(?:link|script|img|source|iframe)[^>]*(?:href|src)="(?:https?:)?//`)
-)
-
-// checkMarkup fails for anything the strict policy would block or that
-// loads from another origin.
-func checkMarkup(t *testing.T, name string, r response) {
-	t.Helper()
-	for _, bad := range []string{" style=", "<style", "javascript:", " onclick="} {
-		if strings.Contains(r.body, bad) {
-			t.Errorf("%s: the page holds %q", name, bad)
-		}
-	}
-	for _, tag := range scriptTag.FindAllString(r.body, -1) {
-		if !strings.Contains(tag, ` src="/assets/`) {
-			t.Errorf("%s: a script that is not the theme's own: %s", name, tag)
-		}
-	}
-	if m := assetRef.FindString(r.body); m != "" {
-		t.Errorf("%s: an asset from another origin: %s", name, m)
-	}
-	if !strings.Contains(r.body, `<link rel="stylesheet" href="/assets/theme.`) {
-		t.Errorf("%s: the page does not load the theme's stylesheet", name)
-	}
-}
-
 func TestPagesMarkup(t *testing.T) {
 	e, b := hostilePages(t)
 	e.addVersion("ana", "stale-one", "<h1>two</h1>")
 	for _, path := range append([]string{"/pages/stale-one/versions/1/publish"}, pagesViews...) {
-		checkMarkup(t, path, b.get(path))
+		strictMarkup(t, path, b.get(path).body)
 	}
-	checkMarkup(t, "a new share link", b.post("/pages/members-one/links", url.Values{"days": {"1"}}))
-	checkMarkup(t, "an error page", b.navigate("/pages/no-such-page"))
+	strictMarkup(t, "a new share link", b.post("/pages/members-one/links", url.Values{"days": {"1"}}).body)
+	strictMarkup(t, "an error page", b.navigate("/pages/no-such-page").body)
 	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkMarkup(t, "a revoke confirmation", b.get("/pages/members-one/links/"+l.Prefix+"/revoke"))
+	strictMarkup(t, "a revoke confirmation", b.get("/pages/members-one/links/"+l.Prefix+"/revoke").body)
+}
+
+// The live filter is the database's, so a page of results is a page of live
+// pages however many hidden ones were changed more recently.
+func TestPagesListLiveBehindHiddenOnes(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	e.person("ana", "")
+	ctx := context.Background()
+	e.publish("ana", "live-old")
+	for i := range 51 {
+		e.clock.Advance(time.Second)
+		slug := fmt.Sprintf("hidden-%02d", i)
+		e.publish("ana", slug)
+		if _, err := e.artifacts.SetVisibility(ctx, boss, slug, artifact.Unpublished); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := e.signedIn("boss")
+	r := b.get("/pages?status=live")
+	if !listed(r, "live-old") || strings.Contains(r.body, `href="/pages/hidden-`) || strings.Contains(r.body, `rel="next"`) {
+		t.Errorf("the live pages, behind 51 hidden ones: %s", r.body)
+	}
+	if r = b.get("/pages?status=live&visibility=unpublished"); listed(r, "live-old") || strings.Contains(r.body, `href="/pages/hidden-`) {
+		t.Errorf("live and unpublished at once lists something: %s", r.body)
+	}
+	if r = b.get("/pages?status=unpublished"); strings.Count(r.body, `href="/pages/hidden-`) != 50 || !strings.Contains(r.body, `rel="next"`) {
+		t.Errorf("the hidden pages: %d rows", strings.Count(r.body, `href="/pages/hidden-`))
+	}
+}
+
+// Choosing the published version of a hidden page does not show the page,
+// and no sentence on the way says it does.
+func TestPagePublishVersionOfHiddenPage(t *testing.T) {
+	e, b := pagesEnv(t)
+	e.addVersion("ana", "hidden-one", "<h1>two</h1>")
+	if a := e.page("hidden-one"); a.UnpublishedAt == nil || a.PublishedVersion != 2 {
+		t.Fatalf("hidden-one: published version %d, hidden %v", a.PublishedVersion, a.UnpublishedAt != nil)
+	}
+	r := b.get("/pages/hidden-one/versions/1/publish")
+	for _, want := range []string{"Version 1 becomes the published version.", "The page stays hidden: hidden-one.art.test answers 404 until you publish the page again"} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("the confirmation lacks %q", want)
+		}
+	}
+	if strings.Contains(r.body, "shows version 1 from now on") {
+		t.Errorf("the confirmation says a hidden page shows a version: %s", r.body)
+	}
+	r = b.submit("/pages/hidden-one/versions/1/publish", nil)
+	if a := e.page("hidden-one"); a.UnpublishedAt == nil || a.PublishedVersion != 1 {
+		t.Fatalf("after the publish: published version %d, hidden %v", a.PublishedVersion, a.UnpublishedAt != nil)
+	}
+	if !strings.Contains(r.body, "The page is still hidden") || strings.Contains(r.body, "That version is now the published one.</p>") {
+		t.Errorf("the confirmation line of a hidden page: %s", r.body)
+	}
+	// The published version of a hidden page is published already, like
+	// any other.
+	if r := b.navigate("/pages/hidden-one/versions/1/publish"); r.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(r.body, "the page is hidden") {
+		t.Errorf("publishing the published version of a hidden page: status %d: %s", r.StatusCode, r.body)
+	}
+}
+
+// What is wrong with a share link's form stands beside the field it is
+// about, and the field points at it.
+func TestPageShareLinkFieldErrors(t *testing.T) {
+	_, b := pagesEnv(t)
+	b.get("/pages/members-one")
+	r := b.post("/pages/members-one/links", url.Values{"label": {"board"}, "days": {"0"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, `<p class="error" id="link-days-err">`) ||
+		!regexp.MustCompile(`<input[^>]+id="link-days"[^>]+aria-invalid="true" aria-describedby="link-days-err"`).MatchString(r.body) ||
+		strings.Contains(r.body, `id="link-label-err"`) {
+		t.Errorf("days out of range: status %d: %s", r.StatusCode, r.body)
+	}
+	r = b.post("/pages/members-one/links", url.Values{"label": {"two\nlines"}, "days": {"3"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, `<p class="error" id="link-label-err">`) ||
+		!regexp.MustCompile(`<input[^>]+id="link-label"[^>]+aria-invalid="true" aria-describedby="link-label-err"`).MatchString(r.body) ||
+		strings.Contains(r.body, `id="link-days-err"`) || strings.Contains(r.body, "artifact:") {
+		t.Errorf("a note of two lines: status %d: %s", r.StatusCode, r.body)
+	}
+	strictMarkup(t, "a refused share link", r.body)
 }

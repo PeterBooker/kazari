@@ -61,6 +61,7 @@ type config struct {
 	sessions httpapi.Sessions
 	backup   httpapi.BackupWriter
 	ready    httpapi.ReadyChecker
+	updates  httpapi.Updates
 }
 
 type env struct {
@@ -142,6 +143,7 @@ func newEnv(t *testing.T, c config) *env {
 		Sessions:  c.sessions,
 		Backup:    c.backup,
 		Ready:     c.ready,
+		Updates:   c.updates,
 		Settings:  func() map[string]any { return map[string]any{"base_domain": "art.test", "admin_token": "***"} },
 		Metrics: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, "kazari_up 1\n")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -53,9 +55,48 @@ func TestBackupTelemetry(t *testing.T) {
 	rec.Want("kazari.backup.duration", 2)
 	rec.Want("kazari.backup.size", 1)
 
+	// A reader that goes away is the caller's doing, not a fault here.
+	ctx, end = rec.Start("POST /v1/backup")
+	_, err = svc.Write(ctx, gone{}, backup.WriteOptions{Certs: true})
+	end()
+	if err == nil {
+		t.Fatal("a backup written to a reader that has gone reported success")
+	}
+	rec.Want("kazari.backup.duration", 1, attribute.String("error.type", "canceled"))
+	rec.Want("kazari.backup.duration", 0, attribute.String("error.type", "internal"))
+
 	// Without a recording parent a backup starts no trace of its own.
 	if _, err := svc.Write(context.Background(), io.Discard, backup.WriteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	rec.Want("kazari.backup.duration", 3)
+	rec.Want("kazari.backup.duration", 4)
+}
+
+// gone is a client that closed its connection.
+type gone struct{}
+
+func (gone) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// The summary says whether the certificates are in the archive, not whether
+// they were asked for: behind a proxy there are none to take.
+func TestSummaryCertificates(t *testing.T) {
+	in := newInstance(t)
+	svc := in.service(backup.Options{})
+	sum, err := svc.Write(context.Background(), io.Discard, backup.WriteOptions{Certs: true})
+	if err != nil || sum.Certificates {
+		t.Fatalf("asked for certificates with no certificate directory: %+v, %v", sum, err)
+	}
+	key := filepath.Join(in.dir, "certmagic", "certificates", "site.key")
+	if err := os.MkdirAll(filepath.Dir(key), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if sum, err = svc.Write(context.Background(), io.Discard, backup.WriteOptions{Certs: true}); err != nil || !sum.Certificates {
+		t.Errorf("asked for certificates with a certificate directory: %+v, %v", sum, err)
+	}
+	if sum, err = svc.Write(context.Background(), io.Discard, backup.WriteOptions{}); err != nil || sum.Certificates {
+		t.Errorf("not asked for certificates: %+v, %v", sum, err)
+	}
 }

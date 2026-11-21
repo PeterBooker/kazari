@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -73,8 +72,8 @@ type Updates interface {
 	Result() update.Result
 }
 
-// Deps are the dashboard's collaborators. Jobs, Ready, Backup, Updates and
-// Settings may be nil; what they show is then left out.
+// Deps are the dashboard's collaborators. Audit, Jobs, Ready, Backup,
+// Updates and Settings may be nil; what they show is then left out.
 type Deps struct {
 	Sessions  session.Provider
 	Users     *user.Service
@@ -171,6 +170,9 @@ func New(d Deps, o Options) http.Handler {
 	if d.Recorder == nil {
 		d.Recorder = audit.Nop{}
 	}
+	if d.Audit == nil {
+		d.Audit = noActivity{}
+	}
 	o.URL = strings.TrimSuffix(o.URL, "/")
 	s := &server{
 		d: d, o: o, log: d.Logger, now: o.Now, assets: theme.URLs(assetPrefix), auth: auth.NewSessions(o.Telemetry),
@@ -180,7 +182,7 @@ func New(d Deps, o Options) http.Handler {
 		}),
 	}
 	funcs := template.FuncMap{}
-	for _, m := range []template.FuncMap{commonFuncs, overviewFuncs, peopleFuncs, pagesFuncs, activityFuncs, systemFuncs} {
+	for _, m := range []template.FuncMap{commonFuncs, overviewFuncs, activityFuncs, systemFuncs} {
 		maps.Copy(funcs, m)
 	}
 	s.tmpl = template.Must(theme.Templates().Funcs(funcs).ParseFS(templateFS, "templates/*.html"))
@@ -197,11 +199,20 @@ func New(d Deps, o Options) http.Handler {
 		return notFound("There is nothing at this address.")
 	})
 
+	// The assets stand outside the pages' guard: they are the same for
+	// everyone, and a browser fetches them before any session exists.
 	mux := http.NewServeMux()
 	mux.Handle("GET "+assetPrefix, theme.Handler(assetPrefix))
 	mux.Handle("/", middleware.Pages(o.URL)(middleware.Routed(pages)))
-	return mux
+	return middleware.Routed(mux)
 }
+
+// noActivity is the activity log of an instance wired without one: every
+// page that lists events shows none, and none has to ask whether there is
+// a log.
+type noActivity struct{}
+
+func (noActivity) List(context.Context, audit.Query) (audit.Page, error) { return audit.Page{}, nil }
 
 // request is one request of a signed-in admin.
 type request struct {
@@ -252,7 +263,6 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 				s.sess.SignIn(w, r, r.URL.RequestURI())
 				return
 			}
-			middleware.SetErrorCode(ctx, api.CodeUnauthorized)
 			s.door(w, r, http.StatusUnauthorized, doorPage{Title: "Signed out",
 				Message: "Your sign-in has ended. Open the dashboard again to sign in.", Link: "/", LinkText: "Open the dashboard"})
 			return
@@ -265,7 +275,6 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 		}
 		if c == nil {
 			s.auth.Record(ctx, auth.ResultForbidden, nil)
-			middleware.SetErrorCode(ctx, api.CodeForbidden)
 			s.door(w, r, http.StatusForbidden, s.notAdmin(sess))
 			return
 		}
@@ -276,6 +285,7 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 				return
 			}
 			if !sess.ValidForm(r.PostForm.Get(tokenField)) {
+				s.auth.Record(ctx, auth.ResultForbidden, nil)
 				s.fail(w, r, c, &problem{status: http.StatusForbidden, title: "This form has expired",
 					message: "It was not sent from a page of this dashboard, or the page is from an earlier sign-in. Go back, reload the page and try again."})
 				return
@@ -388,6 +398,7 @@ func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
 	if err == nil && sess != nil {
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 		if perr := r.ParseForm(); perr != nil || !sess.ValidForm(r.PostForm.Get(tokenField)) {
+			s.auth.Record(ctx, auth.ResultForbidden, nil)
 			s.door(w, r, http.StatusForbidden, doorPage{Title: "This form has expired",
 				Message: "It was not sent from a page of this dashboard. Open the dashboard and sign out from there.",
 				Link:    "/", LinkText: "Open the dashboard"})
@@ -408,6 +419,9 @@ func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
 type problem struct {
 	status         int
 	title, message string
+	// code is the error code on the request's span, when the status alone
+	// would name a vaguer one.
+	code string
 }
 
 func (p *problem) Error() string { return p.title + ": " + p.message }
@@ -423,11 +437,9 @@ func refused(format string, args ...any) error {
 // fail writes the error page for err.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, c *request, err error) {
 	var p *problem
-	code := ""
 	if !errors.As(err, &p) {
 		status, body := present.Error(err)
-		code = body.Code
-		p = &problem{status: status, title: "That did not work", message: asSentence(body.Message)}
+		p = &problem{status: status, code: body.Code, title: "That did not work", message: asSentence(withoutPackage(body.Message))}
 		switch {
 		case status >= http.StatusInternalServerError:
 			s.log.ErrorContext(r.Context(), "dashboard: request failed", "method", r.Method, "route", r.Pattern, "err", err)
@@ -436,6 +448,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, c *request, err er
 			p.title = "Not found"
 		}
 	}
+	code := p.code
 	if code == "" {
 		code = present.PageCode(p.status)
 	}
@@ -450,12 +463,19 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, c *request, err er
 func (p *problem) Title() string   { return p.title }
 func (p *problem) Message() string { return p.message }
 
-// asSentence makes an error message read as one: without the package names
-// errors are wrapped in, with a capital and a full stop.
-func asSentence(msg string) string {
+// withoutPackage drops the package names an error from the user service is
+// wrapped in.
+func withoutPackage(msg string) string {
 	if i := strings.LastIndex(msg, "user: "); i >= 0 {
-		msg = msg[i+len("user: "):]
+		return msg[i+len("user: "):]
 	}
+	return msg
+}
+
+// asSentence makes a message read as a sentence of its own: a capital and
+// a full stop.
+func asSentence(msg string) string {
+	msg = strings.TrimSpace(msg)
 	if msg == "" {
 		return ""
 	}
@@ -539,7 +559,7 @@ func (s *server) done(w http.ResponseWriter, r *http.Request, to, flash string) 
 // own POST and nowhere else.
 var flashes = func() map[string]string {
 	all := map[string]string{}
-	for _, m := range []map[string]string{overviewFlashes, peopleFlashes, pagesFlashes, activityFlashes, systemFlashes} {
+	for _, m := range []map[string]string{peopleFlashes, pagesFlashes, systemFlashes} {
 		maps.Copy(all, m)
 	}
 	return all
@@ -560,6 +580,9 @@ func (s *server) door(w http.ResponseWriter, r *http.Request, status int, p door
 		Door                          doorPage
 		SignOutPath, TokenField, Host string
 	}{theme.Page{Title: p.Title, Assets: s.assets}, p, signOutPath, tokenField, hostOf(s.o.URL)}
+	if code := present.PageCode(status); code != "" {
+		middleware.SetErrorCode(r.Context(), code)
+	}
 	if err := theme.Render(w, r, s.tmpl, "door", status, data); err != nil {
 		s.log.ErrorContext(r.Context(), "dashboard: render page", "err", err)
 		http.Error(w, p.Title, status)

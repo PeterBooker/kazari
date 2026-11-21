@@ -102,8 +102,8 @@ func TestEventSentences(t *testing.T) {
 		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "role": "admin"}}, "boss made ben an admin"},
 		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "email": "b@example.com", "quota_bytes": "0"}}, "boss changed the email and quota of ben"},
 		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "role": "member", "display_name": "Ben"}}, "boss made ben a member and changed their name"},
-		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "identity": "link", "issuer": "https://idp", "subject": "x"}}, "boss linked an identity to ben"},
-		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "identity": "unlink"}}, "boss unlinked an identity from ben"},
+		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "identity": "link", "issuer": "https://idp", "subject": "x"}}, "boss linked a sign-in method to ben"},
+		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben", "identity": "unlink"}}, "boss unlinked a sign-in method from ben"},
 		{audit.Event{Actor: "admin", Action: audit.UserUpdate, Details: d{"handle": "admin-2", "renamed_from": "admin"}}, "the operator renamed admin to admin-2"},
 		{audit.Event{Actor: "boss", Action: audit.UserUpdate, Details: d{"handle": "ben"}}, "boss updated ben"},
 		{audit.Event{Actor: "ana", Action: audit.KeyIssue, Details: d{"handle": "ana", "prefix": "abcdefgh"}}, "ana issued key abcdefgh"},
@@ -127,12 +127,12 @@ func TestEventSentences(t *testing.T) {
 		{audit.Event{Actor: "boss", Action: audit.BackupCreate, Details: d{"files": "3"}}, "boss took a backup"},
 		{audit.Event{Actor: "ana", Action: "oauth.grant", Details: d{"client_id": "dcr_abc", "via": "password"}}, "ana connected the app dcr_abc"},
 		{audit.Event{Actor: "ana", Action: "oauth.grant", Details: d{"client_id": "dcr_abc", "via": "api_key", "key_prefix": "abcdefgh"}}, "ana connected the app dcr_abc with key abcdefgh"},
-		{audit.Event{Actor: "boss", Action: "oauth.revoke", Details: d{"grant": "7"}}, "boss disconnected an app, grant 7"},
+		{audit.Event{Actor: "boss", Action: "oauth.revoke", Details: d{"grant": "7"}}, "boss disconnected an app"},
 		{audit.Event{Actor: "boss", Action: "oauth.revoke", Details: d{"user": "ben"}}, "boss disconnected every app of ben and ended their sessions"},
 		{audit.Event{Actor: "ana", Action: "oauth.revoke", Details: d{"grant": "7", "client_id": "dcr_abc", "reason": "refresh_replay"}}, "ana lost the connection of the app dcr_abc: one of its tokens was used twice"},
 		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "password"}}, "ana signed in with their password"},
 		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "api_key", "key_prefix": "abcdefgh"}}, "ana signed in with key abcdefgh"},
-		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "oidc"}}, "ana signed in at the identity provider"},
+		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "oidc"}}, "ana signed in at the provider"},
 		// An action from a later version is not lost.
 		{audit.Event{Actor: "ana", Action: "artifact.version_delete", Slug: "q3-report"}, "ana did artifact.version_delete on q3-report"},
 		{audit.Event{Actor: "", Action: "something.new"}, "someone did something.new"},
@@ -141,8 +141,18 @@ func TestEventSentences(t *testing.T) {
 	for _, tt := range tests {
 		seen[tt.e.Action] = true
 		tt.e.At = time.Unix(0, 0)
-		if got := describe(tt.e).String(); got != tt.want {
+		got := describe(tt.e).String()
+		if got != tt.want {
 			t.Errorf("%s %v:\n got %q\nwant %q", tt.e.Action, tt.e.Details, got, tt.want)
+		}
+		// A sentence is written in the words of the pages around it: pages,
+		// apps and sign-in methods, never the names the code gives them.
+		if _, known := sentences[tt.e.Action]; known {
+			for _, word := range []string{"identity", "grant", "artifact"} {
+				if strings.Contains(strings.ToLower(got), word) {
+					t.Errorf("%s %v reads %q, which says %q", tt.e.Action, tt.e.Details, got, word)
+				}
+			}
 		}
 	}
 	for action := range sentences {

@@ -240,3 +240,39 @@ func TestHostileNames(t *testing.T) {
 	}
 	safe("message", body, "&lt;script&gt;alert(4)")
 }
+
+// The sign-in host says "pages", as every other page a person reads does,
+// and spells as the rest of Kazari spells. The scope names are the API's
+// and stay as they are.
+func TestPagesSpeakOfPages(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	e.person("ana", "", "")
+	const redirect = "https://app.example/cb"
+	clientID := e.register(redirect)
+	views := map[string]string{}
+	_, views["the API-key sign-in"] = e.get(signInQuery("demo", "/") + "&with=key")
+	e.get("/oauth/authorize?" + authorizeParams(clientID, redirect, "", newPKCE("verifier")).Encode())
+	_, views["the key consent"] = e.get(oauth.PathConsent + "?with=key")
+	e.signInForm(url.Values{"request_id": {e.requestCookie()}, "login": {"ana"}, "password": {password}})
+	_, consent := e.get(oauth.PathConsent)
+	views["the consent"] = consent
+
+	for _, want := range []string{
+		"<title>Authorise access", `<h1 class="title">Authorise <b>`,
+		`List and read your pages <span class="mono soft">artifacts:read</span>`, "Create and update pages",
+		"Change who can open pages, and create share links", "Delete pages", "its restriction to certain pages",
+	} {
+		if !strings.Contains(consent, want) {
+			t.Errorf("the consent page lacks %q:\n%s", want, consent)
+		}
+	}
+	scopeName := regexp.MustCompile(`artifacts:[a-z]+`)
+	for name, body := range views {
+		prose := strings.ToLower(scopeName.ReplaceAllString(body, ""))
+		for _, word := range []string{"artifact", "authoriz"} {
+			if strings.Contains(prose, word) {
+				t.Errorf("%s says %q", name, word)
+			}
+		}
+	}
+}

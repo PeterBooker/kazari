@@ -27,6 +27,12 @@
 <h1 class="title">Request <b>not accepted</b></h1>
 <p>This form was not sent from your account page, or the page had been open since before you last signed in. Nothing was changed.</p>
 <div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "link-forbidden"}}{{template "theme/door" (.Door "Request not accepted")}}
+<h1 class="title">Request <b>not accepted</b></h1>
+<p>This form was not sent from the page your link opened. Nothing was changed. Open the link again and fill in the form there.</p>
+{{- else if eq .Kind "busy"}}{{template "theme/door" (.Door "Busy")}}
+<h1 class="title">Busy, <b>try again</b></h1>
+<p>The server is checking as many passwords as it can at once. Nothing was changed. Go back and send the form again in a moment.</p>
 {{- else if eq .Kind "bad-form"}}{{template "theme/door" (.Door "Form not read")}}
 <h1 class="title">The form <b>could not be read</b></h1>
 <p>Go back and send it again.</p>
@@ -52,6 +58,7 @@
 <p>Using this link signs you out of every browser.</p>
 {{- end}}
 <form class="form" method="post" action="/account/{{.Purpose}}">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
 {{if eq .Purpose "setup" -}}
 <div class="field"><label for="handle">Handle</label>
 <input class="input input-mono" id="handle" name="handle" type="text" value="{{.NewHandle}}" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" aria-describedby="handle-help{{if .Err.handle}} handle-err{{end}}"{{if .Err.handle}} aria-invalid="true"{{end}}>

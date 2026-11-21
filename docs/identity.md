@@ -85,12 +85,15 @@ A link behaves the same whatever it is for:
 - It works once. Opening it changes nothing; setting the password uses it up.
 - An invite works for 7 days by default (`auth.local.invite_ttl`).
 - One link per person and purpose works at a time. Making a new one ends the one before it.
+- Setting a password ends the person's other links, whether the password is set with a link or changed on the account page. Disabling the person ends them too.
 
 Until the person sets a password, they show as `invited` in `kazari admin users list` and on the People page. To replace an invite that was lost or has lapsed, add `--replace`:
 
 ```sh
 kazari admin users invite ana --replace
 ```
+
+An invite link is for a person who has no password yet. For a person who has one, the command fails and names the [reset link](#resetting-a-password), which is what they need.
 
 To see the links that still work, or end one before it is used, list them and revoke one by its id:
 
@@ -163,13 +166,13 @@ A person issues, rotates and revokes their own API keys on the account page, wit
 
 The page revokes any of the person's keys. It rotates any but one that holds `admin`, which is rotated in the dashboard or on the admin API.
 
-A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count.
+A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count. A key can still be rotated at the limit, because the key it replaces does not count against it.
 
 ### Moving to an identity provider, or back
 
 To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords stop signing anyone in, and the invite, reset and setup pages answer `404`.
 
-Users, their pages, keys and connected apps stay. A person whose email at the provider is the one on their Kazari user links to it at their first sign-in ([Provisioning policy](#provisioning-policy)), which is why only an admin changes a user's email.
+Users, their pages, keys and connected apps stay. A person whose email at the provider is the one on their Kazari user links to it at their first sign-in ([Provisioning policy](#provisioning-policy)).
 
 To move back, remove `auth.oidc` and restart. The stored passwords work again, and a person who never had one needs a reset link.
 
@@ -505,7 +508,7 @@ Each entry is named for what the person or the server shows.
 
 ### "This link no longer works"
 
-An invite, reset or setup link was already used, was replaced by a newer one, was revoked or has expired, or its person was disabled. The page looks the same for each. Make a new link: `kazari admin users invite <handle> --replace` for a person who never set a password, `kazari admin users reset-password <handle>` for one who did, or `kazari admin setup-link` on a fresh instance.
+An invite, reset or setup link was already used, was replaced by a newer one, was revoked or has expired. A link also stops working when its person sets or changes their password another way, or is disabled. The page looks the same for each. Make a new link: `kazari admin users invite <handle> --replace` for a person who never set a password, `kazari admin users reset-password <handle>` for one who did, or `kazari admin setup-link` on a fresh instance.
 
 A setup link also stops working, with `404`, as soon as the instance has any user. After a link is opened, the page waits 15 minutes for the password; later than that, open the link again.
 

@@ -89,6 +89,9 @@ func (r *runner) printUser(u *api.User) error {
 	}
 	tw := newTable(r.stdout)
 	fmt.Fprintf(tw, "handle:\t%s\n", u.Handle)
+	if u.DisplayName != "" {
+		fmt.Fprintf(tw, "name:\t%s\n", oneLine(u.DisplayName))
+	}
 	fmt.Fprintf(tw, "email:\t%s\n", dash(oneLine(u.Email)))
 	fmt.Fprintf(tw, "role:\t%s\n", u.Role)
 	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(u.UsedBytes, u.QuotaBytes))
@@ -118,12 +121,13 @@ func (r *runner) printUser(u *api.User) error {
 type AdminUsersCreateCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 	Email  string `help:"Email address." placeholder:"EMAIL"`
+	Name   string `help:"Display name." placeholder:"NAME"`
 	Role   string `help:"member (default) or admin." placeholder:"ROLE"`
 	Quota  string `help:"Storage quota, such as 500MiB (default: the server's)." placeholder:"SIZE"`
 }
 
 func (c *AdminUsersCreateCmd) Run(r *runner) error {
-	req := api.CreateUserRequest{Handle: c.Handle, Email: c.Email, Role: c.Role}
+	req := api.CreateUserRequest{Handle: c.Handle, Email: c.Email, DisplayName: c.Name, Role: c.Role}
 	if c.Quota != "" {
 		n, err := parseSize(c.Quota)
 		if err != nil {
@@ -150,6 +154,7 @@ type AdminUsersUpdateCmd struct {
 	Role    *string `help:"member or admin." placeholder:"ROLE"`
 	Quota   *string `help:"Storage quota, such as 500MiB; 0 is unlimited." placeholder:"SIZE"`
 	Email   *string `help:"Email address." placeholder:"EMAIL"`
+	Name    *string `help:"Display name; an empty one clears it." placeholder:"NAME"`
 }
 
 func (c *AdminUsersUpdateCmd) Run(r *runner) error {
@@ -162,6 +167,7 @@ func (c *AdminUsersUpdateCmd) Run(r *runner) error {
 	}
 	req.Role = c.Role
 	req.Email = c.Email
+	req.DisplayName = c.Name
 	if c.Quota != nil {
 		n, err := parseSize(*c.Quota)
 		if err != nil {
@@ -248,7 +254,7 @@ func (c *AdminIdentitiesListCmd) Run(r *runner) error {
 	tw := newTable(r.stdout)
 	fmt.Fprintln(tw, "ISSUER\tSUBJECT\tEMAIL\tLAST SIGN-IN")
 	for _, id := range u.Identities {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", oneLine(id.Issuer), oneLine(id.Subject), dash(oneLine(id.Email)), fmtTime(id.LastLoginAt))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", oneLine(id.Issuer), oneLine(id.Subject), dash(oneLine(id.Email)), fmtTimePtr(id.LastLoginAt))
 	}
 	return tw.Flush()
 }
@@ -446,6 +452,7 @@ type AdminArtifactsCmd struct {
 // AdminArtifactsListCmd lists every artifact.
 type AdminArtifactsListCmd struct {
 	listFlags
+	Owner string `help:"Only artifacts this user owns." placeholder:"HANDLE"`
 }
 
 func (c *AdminArtifactsListCmd) Run(r *runner) error {
@@ -453,7 +460,10 @@ func (c *AdminArtifactsListCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	l, err := r.fetchList(&c.listFlags, func(p ListParams) (*api.ArtifactList, error) { return cl.AdminListArtifacts(r.ctx, p) })
+	l, err := r.fetchList(&c.listFlags, func(p ListParams) (*api.ArtifactList, error) {
+		p.Owner = c.Owner
+		return cl.AdminListArtifacts(r.ctx, p)
+	})
 	if err != nil {
 		return err
 	}

@@ -54,6 +54,12 @@ var (
 	ErrLinkNotFound = errors.New("user: link not found")
 	// ErrSetupDone is a first-run setup asked of an instance that has users.
 	ErrSetupDone = errors.New("user: the instance is already set up")
+	// ErrBusy is a password that was not checked or set because too many
+	// are being hashed and none finished in time. Trying again works.
+	ErrBusy = errors.New("user: too many passwords are being checked; try again in a moment")
+	// ErrHasPassword is an invite asked for a person who has set a
+	// password: what they need is a reset link.
+	ErrHasPassword = errors.New("user: the person already has a password")
 	// ErrLocalOff is a password or a link asked of an instance whose people
 	// sign in elsewhere (Options.LocalAccounts is off).
 	ErrLocalOff = errors.New("user: built-in accounts are off on this instance")
@@ -171,25 +177,35 @@ type Identity struct {
 type Store interface {
 	// CreateUser inserts u and sets u.ID. ErrHandleTaken, ErrEmailTaken.
 	CreateUser(ctx context.Context, u *User) error
+	// CreateInvited is CreateUser and CreateLink for u's invite l in one
+	// transaction: an invited person never exists without their link.
+	CreateInvited(ctx context.Context, u *User, l *Link) error
 	GetUser(ctx context.Context, handle string) (*User, error)
 	// GetUserByEmail matches case-insensitively. ErrNotFound.
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	// ListUsers returns every user ordered by handle.
 	ListUsers(ctx context.Context) ([]User, error)
-	// UpdateUser writes email, display name, role, quota and disabled_at.
-	// ErrLastAdmin, with nothing written, when the user is an active admin,
-	// u no longer is and no other active admin exists, checked in the same
-	// transaction so that two changes cannot each rely on the other's admin.
-	UpdateUser(ctx context.Context, u *User) error
+	// UpdateUser calls fn on the user's current row and, when it returns
+	// nil, writes the email, display name, role, quota and disabled_at fn
+	// left, in one transaction, so fields fn leaves alone keep concurrent
+	// changes. It returns the user as written. An error from fn writes
+	// nothing and is returned as is. ErrNotFound. ErrLastAdmin, with
+	// nothing written, when the user was an active admin, no longer is and
+	// no other active admin exists.
+	UpdateUser(ctx context.Context, handle string, fn func(u *User) error) (*User, error)
 
-	// CreateKey inserts k and sets k.ID. ErrKeyNotFound when k.IssuedBy
-	// names no key of the same user. ErrTooManyKeys, with nothing written,
+	// CreateKey inserts k and sets k.ID. Everything it depends on is read
+	// in its transaction, as of k.CreatedAt: ErrDisabled for a disabled
+	// user; ErrKeyNotFound when k.IssuedBy names no live key of the same
+	// user, so a key revoked a moment ago issues nothing; ErrTooManyKeys
 	// when maxLive > 0 and the user already holds that many keys that are
-	// neither revoked nor expired at k.CreatedAt.
+	// neither revoked nor expired. Nothing is written on an error.
 	CreateKey(ctx context.Context, k *APIKey, maxLive int) error
-	// RotateKey is CreateKey for the successor of the user's key with
+	// RotateKey is CreateKey for the successor of the user's live key with
 	// prefix, which in the same transaction is set to expire at expires
-	// unless it ends sooner. ErrKeyNotFound.
+	// unless it ends sooner. The key being replaced does not count against
+	// maxLive: a rotation adds no key once its overlap has passed.
+	// ErrKeyNotFound when the key is unknown, revoked or expired.
 	RotateKey(ctx context.Context, prefix string, k *APIKey, expires time.Time, maxLive int) error
 	// GetKey returns the key and its user by prefix, including revoked and
 	// expired keys; the caller decides. ErrKeyNotFound.
@@ -207,7 +223,8 @@ type Store interface {
 	// GetIdentity returns the user linked to (issuer, subject). ErrNotFound.
 	GetIdentity(ctx context.Context, issuer, subject string) (*User, error)
 	// LinkIdentity upserts the link, moving it from any other user and
-	// refreshing email_at_login and last_login_at. ErrNotFound.
+	// setting email_at_login and last_login_at. A zero LastLoginAt is a
+	// link made by hand, which nobody has signed in with. ErrNotFound.
 	LinkIdentity(ctx context.Context, handle string, id Identity) error
 	UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error
 	ListIdentities(ctx context.Context, handle string) ([]Identity, error)
@@ -232,13 +249,19 @@ type Store interface {
 	// GetLink returns the link whose token hashes to hash, in any state,
 	// with its user (nil for PurposeSetup). ErrLinkNotFound.
 	GetLink(ctx context.Context, hash string) (*Link, *User, error)
-	// ListLinks returns the links that are live at now, newest first.
+	// ListLinks returns the links that can be used at now, newest first:
+	// unused, unrevoked and unexpired, their person enabled, and a setup
+	// link only while no user exists.
 	ListLinks(ctx context.Context, now time.Time) ([]Link, error)
+	// RevokeUserLinks revokes every unused link of the user. ErrNotFound.
+	RevokeUserLinks(ctx context.Context, handle string, at time.Time) error
 	// RevokeLink revokes the link with id if it is live at the given time,
 	// and returns it. ErrLinkNotFound otherwise.
 	RevokeLink(ctx context.Context, id int64, at time.Time) (*Link, error)
-	// UseLink marks the link used at the given time and stores
-	// passwordHash for its user, in one transaction, and returns both.
+	// UseLink marks the link used at the given time, stores passwordHash
+	// for its user and revokes that user's other unused links, in one
+	// transaction, and returns the link and the user: a link that was
+	// passed over must not set the password again later.
 	// ErrLinkNotFound unless the link is live then and its user enabled.
 	// For a PurposeSetup link it first inserts first as a new user, and
 	// answers ErrSetupDone, with nothing written, if any user exists: of
@@ -249,6 +272,8 @@ type Store interface {
 	// ListAccounts returns every user's Account, ordered by handle, with
 	// keys counted as live at now.
 	ListAccounts(ctx context.Context, now time.Time) ([]Account, error)
+	// GetAccount is ListAccounts for one user. ErrNotFound.
+	GetAccount(ctx context.Context, handle string, now time.Time) (Account, error)
 }
 
 // Count is how many users have a role and disabled state.

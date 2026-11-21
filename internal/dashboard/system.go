@@ -5,15 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/update"
@@ -204,7 +207,10 @@ func updateOf(r update.Result) updateView {
 }
 
 type backupView struct {
-	Estimate   *backup.Estimate
+	// FileBytes is what the pages' files take on disk, the bulk of the
+	// archive. It is the database's own total: measuring the blob
+	// directory walks every file, which a page view must not do.
+	FileBytes  int64
 	Last       *audit.Event
 	BaseDomain string
 }
@@ -253,13 +259,11 @@ func (s *server) system(w http.ResponseWriter, r *http.Request, c *request) erro
 		d.Settings = settingsGroups(cfg)
 	}
 	if s.d.Backup != nil {
-		b := &backupView{BaseDomain: s.o.BaseDomain}
-		if est, err := s.d.Backup.Estimate(ctx); err != nil {
-			s.log.WarnContext(ctx, "dashboard: backup estimate", "err", err)
-		} else {
-			b.Estimate = &est
+		_, blobs, err := s.d.Artifacts.Storage(ctx)
+		if err != nil {
+			return err
 		}
-		var err error
+		b := &backupView{BaseDomain: s.o.BaseDomain, FileBytes: blobs.Bytes}
 		if b.Last, err = s.lastBackup(ctx); err != nil {
 			return err
 		}
@@ -271,9 +275,6 @@ func (s *server) system(w http.ResponseWriter, r *http.Request, c *request) erro
 
 // lastBackup returns the newest recorded backup, nil when there is none.
 func (s *server) lastBackup(ctx context.Context) (*audit.Event, error) {
-	if s.d.Audit == nil {
-		return nil, nil
-	}
 	p, err := s.d.Audit.List(ctx, audit.Query{Actions: []string{audit.BackupCreate}, Limit: 1})
 	if err != nil {
 		return nil, err
@@ -356,7 +357,7 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 		return notFound("This instance has no built-in backup.")
 	}
 	ctx := r.Context()
-	out := &backupDownload{w: w, name: "kazari-" + fileSafe(s.o.BaseDomain) + "-" + s.now().UTC().Format(backupTimeLayout) + ".tar"}
+	out := &backupDownload{w: w, out: middleware.Streaming(w, backupStall), name: "kazari-" + fileSafe(s.o.BaseDomain) + "-" + s.now().UTC().Format(backupTimeLayout) + ".tar"}
 	// Never with the certificates: the private key stays on the server.
 	_, err := s.d.Backup.Write(ctx, out, backup.WriteOptions{})
 	if err == nil {
@@ -371,7 +372,7 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 	}
 	switch {
 	case errors.Is(err, backup.ErrRunning):
-		return &problem{status: http.StatusConflict, title: "A backup is already running",
+		return &problem{status: http.StatusConflict, code: api.CodeBackupRunning, title: "A backup is already running",
 			message: "One backup is written at a time. Wait for the download in progress to finish, then try again."}
 	case errors.Is(err, backup.ErrNoSpace):
 		msg := "The server has too little free space for the temporary copy of the database. Free some space on the data disk, then try again."
@@ -379,7 +380,7 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 			msg = fmt.Sprintf("The copy of the database needs up to %s and the data disk has %s free. Free some space, then try again.",
 				humanBytes(est.DatabaseBytes), humanBytes(est.FreeBytes))
 		}
-		return &problem{status: http.StatusInsufficientStorage, title: "Not enough free space", message: msg}
+		return &problem{status: http.StatusInsufficientStorage, code: api.CodeNoSpace, title: "Not enough free space", message: msg}
 	}
 	return err
 }
@@ -388,18 +389,21 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 // refused before it writes anything can still be answered with a page.
 type backupDownload struct {
 	w       http.ResponseWriter
+	out     io.Writer
 	name    string
 	started bool
 }
+
+// backupStall is how long the browser may stop reading before the download
+// ends. A backup holds the one backup slot and keeps the collector waiting
+// until it is over.
+const backupStall = time.Minute
 
 func (d *backupDownload) start() {
 	if d.started {
 		return
 	}
 	d.started = true
-	// A large instance takes longer than the server gives a response. Where
-	// the deadline cannot be lifted the transfer ends at it, as any other.
-	_ = http.NewResponseController(d.w).SetWriteDeadline(time.Time{})
 	h := d.w.Header()
 	h.Set("Content-Type", "application/x-tar")
 	h.Set("Content-Disposition", `attachment; filename="`+d.name+`"`)
@@ -410,7 +414,7 @@ func (d *backupDownload) start() {
 
 func (d *backupDownload) Write(p []byte) (int, error) {
 	d.start()
-	return d.w.Write(p)
+	return d.out.Write(p)
 }
 
 // fileSafe keeps what a host name is made of, so the name needs no quoting.

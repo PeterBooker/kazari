@@ -70,6 +70,10 @@ func errorCode(err error) string {
 		return "not_found"
 	case errors.Is(err, ErrBadPassword):
 		return "unauthorized"
+	case errors.Is(err, ErrBusy):
+		return "busy"
+	case errors.Is(err, ErrHasPassword):
+		return "invalid_argument"
 	case errors.Is(err, ErrLastAdmin), errors.Is(err, ErrSetupDone), errors.Is(err, ErrTooManyKeys):
 		return "conflict"
 	case errors.Is(err, ErrHandleTaken):

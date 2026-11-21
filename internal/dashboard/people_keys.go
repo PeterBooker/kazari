@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -65,8 +66,18 @@ type peopleScope struct {
 type peopleKeyForm struct {
 	Label, Slugs, Days string
 	Scopes             []peopleScope
-	Error              string
+	// Errors names what was refused, by field: scopes, slugs, days, or
+	// form for what belongs to no field.
+	Errors map[string]string
 }
+
+// maxKeyLifeDays bounds the lifetime a form may ask for, the same on the
+// account page: ten years, past which "no expiry" is the honest choice.
+const maxKeyLifeDays = 3650
+
+// maxKeyDays is the longest a key may live on this instance in whole days,
+// 0 when the instance sets no limit.
+func (s *server) maxKeyDays() int { return int(s.o.MaxKeyTTL / (24 * time.Hour)) }
 
 // newPeopleKeyForm offers the scopes u's role allows, the member ones
 // ticked: an admin key is asked for by name.
@@ -76,32 +87,6 @@ func newPeopleKeyForm(u *user.User) peopleKeyForm {
 		f.Scopes = append(f.Scopes, peopleScope{Name: sc, Description: peopleScopeNames[sc], Checked: sc != auth.ScopeAdmin})
 	}
 	return f
-}
-
-// peopleSnippet is a block of text to copy, with what it is for.
-type peopleSnippet struct {
-	ID, Title, Text, Button string
-}
-
-// peopleOnce is the page that shows a new secret, a link or a key, in the
-// response to the POST that made it and never again.
-type peopleOnce struct {
-	Handle, Name string
-	Title        string
-	Lede         string
-	Label        string // of the field that holds the secret
-	Value        string
-	Button       string
-	Notes        []string
-	Snippets     []peopleSnippet
-}
-
-// peopleShowOnce renders the page that shows a secret. The response is never stored,
-// and the secret goes nowhere else: not into a redirect, a cookie or a
-// flash.
-func (s *server) peopleShowOnce(w http.ResponseWriter, r *http.Request, c *request, d peopleOnce) error {
-	w.Header().Set("Cache-Control", "no-store")
-	return s.render(w, r, c, http.StatusOK, "people-once", peoplePage(d.Title), d)
 }
 
 func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *request) error {
@@ -122,13 +107,25 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 			req.Scopes = append(req.Scopes, f.Scopes[i].Name)
 		}
 	}
-	switch {
-	case len(req.Scopes) == 0:
-		f.Error = "Tick at least one thing the key may do."
-	case f.Days != "":
+	// Each refusal is worded here and put beside its field: what the
+	// service would say names its own types, not the form's.
+	f.Errors = map[string]string{}
+	if len(req.Scopes) == 0 {
+		f.Errors["scopes"] = "Tick at least one thing the key may do."
+	}
+	if artifact.ValidateSlugPatterns(req.Slugs) != nil {
+		f.Errors["slugs"] = "Write each pattern as a slug, or a slug prefix ending in *, such as docs-*."
+	} else if len(req.Slugs) > 0 && slices.Contains(req.Scopes, auth.ScopeAdmin) {
+		f.Errors["slugs"] = "A key that administers the instance cannot be restricted to certain pages. Untick that, or leave this empty."
+	}
+	if f.Days != "" {
+		limit := maxKeyLifeDays
+		if n := s.maxKeyDays(); n > 0 {
+			limit = n
+		}
 		days, err := strconv.Atoi(f.Days)
-		if err != nil || days < 1 || days > 36500 {
-			f.Error = "Enter the number of days the key should work, or leave it empty."
+		if err != nil || days < 1 || days > limit {
+			f.Errors["days"] = "Enter a number of days from 1 to " + strconv.Itoa(limit) + ", or leave it empty."
 		}
 		req.ExpiresIn = time.Duration(days) * 24 * time.Hour
 	}
@@ -136,17 +133,22 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 		k      *user.APIKey
 		secret string
 	)
-	if f.Error == "" {
+	if len(f.Errors) == 0 {
 		k, secret, err = s.d.Users.IssueKey(ctx, req)
 		switch {
-		case errors.Is(err, user.ErrInvalidKey), errors.Is(err, user.ErrInvalidScope), errors.Is(err, user.ErrTooManyKeys),
-			errors.Is(err, user.ErrDisabled):
-			f.Error = peopleKeyProblem(err)
+		case errors.Is(err, user.ErrTooManyKeys):
+			f.Errors["form"] = "They hold as many live keys as a person may. Revoke one first."
+		case errors.Is(err, user.ErrDisabled):
+			f.Errors["form"] = "They are disabled, and a disabled person gets no key."
+		case errors.Is(err, user.ErrInvalidScope):
+			f.Errors["scopes"] = "Their role does not allow that combination. Tick only what is offered."
+		case errors.Is(err, user.ErrInvalidKey):
+			f.Errors["slugs"] = "Those patterns were not accepted. Write each as a slug, or a slug prefix ending in *."
 		case err != nil:
 			return err
 		}
 	}
-	if f.Error != "" {
+	if len(f.Errors) > 0 {
 		d, err := s.peoplePersonData(ctx, c, u)
 		if err != nil {
 			return err
@@ -155,18 +157,6 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 		return s.render(w, r, c, http.StatusUnprocessableEntity, "people-person", peoplePage(d.Row.Name), d)
 	}
 	return s.peopleShowKey(w, r, c, u, k, secret, "New key for "+u.Handle, nil)
-}
-
-// peopleKeyProblem turns a refusal of the user service into the sentence
-// shown above the key form.
-func peopleKeyProblem(err error) string {
-	switch {
-	case errors.Is(err, user.ErrTooManyKeys):
-		return "They hold as many live keys as a person may. Revoke one first."
-	case errors.Is(err, user.ErrDisabled):
-		return "They are disabled, and a disabled person gets no key."
-	}
-	return asSentence(err.Error())
 }
 
 func (s *server) peopleShowKey(w http.ResponseWriter, r *http.Request, c *request, u *user.User, k *user.APIKey, secret, title string, notes []string) error {
@@ -185,12 +175,12 @@ func (s *server) peopleShowKey(w http.ResponseWriter, r *http.Request, c *reques
 	if name == "" {
 		name = u.Handle
 	}
-	return s.peopleShowOnce(w, r, c, peopleOnce{
-		Handle: u.Handle, Name: name, Title: title,
+	return s.showOnce(w, r, c, shownOnce{
+		Handle: u.Handle, Back: "Done, back to " + name, Title: title,
 		Lede:  "Copy the key now and hand it to " + name + " over a channel you trust. It acts as them.",
 		Label: "API key", Value: secret, Button: "Copy the key",
 		Notes: notes,
-		Snippets: []peopleSnippet{
+		Snippets: []snippet{
 			{ID: "key-connect", Title: "Connect an agent with it", Button: "Copy the command",
 				Text: "claude mcp add --transport http kazari " + s.o.MCPURL + " \\\n  --header \"Authorization: Bearer " + secret + "\""},
 			{ID: "key-header", Title: "Or send it as a header", Button: "Copy the header",
@@ -239,12 +229,12 @@ func (s *server) peopleKeyRotateConfirm(w http.ResponseWriter, r *http.Request, 
 		return err
 	}
 	name := user.KeyPrefix + k.Prefix
-	sel := &peopleSelect{Name: "overlap", Label: "The old key", Help: "Time to put the new key where the old one is used."}
+	sel := &confirmSelect{Name: "overlap", Label: "The old key", Help: "Time to put the new key where the old one is used."}
 	for _, o := range peopleOverlaps {
-		sel.Options = append(sel.Options, peopleOption{Value: o.value, Label: o.label, Selected: o.d == user.DefaultRotateOverlap})
+		sel.Options = append(sel.Options, confirmOption{Value: o.value, Label: o.label, Selected: o.d == user.DefaultRotateOverlap})
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: u.Handle,
+	return s.confirm(w, r, c, confirmation{
+		Handle:     u.Handle,
 		Title:      "Rotate " + name,
 		Lede:       "Rotating gives the key a new secret. The new key has the same label, scopes and slug patterns, and is shown once on the next page.",
 		EndsTitle:  "What ends",
@@ -275,7 +265,7 @@ func (s *server) peopleKeyRotate(w http.ResponseWriter, r *http.Request, c *requ
 	case errors.Is(err, user.ErrKeyNotFound):
 		return refused("%s%s is revoked or expired, and a key that has ended is not rotated. Issue a new one.", user.KeyPrefix, k.Prefix)
 	case errors.Is(err, user.ErrTooManyKeys):
-		return refused("%s", peopleKeyProblem(err))
+		return refused("They hold as many live keys as a person may. Revoke one first.")
 	case err != nil:
 		return err
 	}
@@ -309,8 +299,8 @@ func (s *server) peopleKeyRevokeConfirm(w http.ResponseWriter, r *http.Request, 
 	if len(issued) > 0 {
 		ends = append(ends, "Issued with it now: "+strings.Join(issued, ", ")+".")
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: u.Handle,
+	return s.confirm(w, r, c, confirmation{
+		Handle:    u.Handle,
 		Title:     "Revoke " + name,
 		Lede:      "A revoked key cannot be brought back. To replace a key that is in use, rotate it instead.",
 		EndsTitle: "What ends for good", Ends: ends,
@@ -391,8 +381,8 @@ func (s *server) peopleAppRevokeConfirm(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		return err
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: u.Handle,
+	return s.confirm(w, r, c, confirmation{
+		Handle:     u.Handle,
 		Title:      "Disconnect " + app.Client,
 		Lede:       "The app loses its access to this instance as " + u.Handle + ".",
 		EndsTitle:  "What ends for good",

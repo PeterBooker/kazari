@@ -84,8 +84,8 @@ func (s *server) peopleShowLink(w http.ResponseWriter, r *http.Request, c *reque
 	if name == "" {
 		name = u.Handle
 	}
-	d := peopleOnce{
-		Handle: u.Handle, Name: name,
+	d := shownOnce{
+		Handle: u.Handle, Back: "Done, back to " + name,
 		Value:  s.d.Links.AccountLinkURL(l.Purpose, token),
 		Button: "Copy the link",
 		Notes: []string{
@@ -109,7 +109,7 @@ func (s *server) peopleShowLink(w http.ResponseWriter, r *http.Request, c *reque
 			"It lets whoever opens it set the password of this account."
 		d.Notes = append(d.Notes, "Until they use it, "+u.Handle+" is listed as invited and cannot sign in.")
 	}
-	return s.peopleShowOnce(w, r, c, d)
+	return s.showOnce(w, r, c, d)
 }
 
 // peopleLocalUser loads the person a path names on an instance with
@@ -123,16 +123,11 @@ func (s *server) peopleLocalUser(r *http.Request) (*user.User, error) {
 
 // hasPassword reports whether the person has set a password.
 func (s *server) peopleHasPassword(r *http.Request, handle string) (bool, error) {
-	accounts, err := s.d.Users.Accounts(r.Context())
+	acc, err := s.d.Users.Account(r.Context(), handle)
 	if err != nil {
 		return false, err
 	}
-	for _, a := range accounts {
-		if a.Handle == handle {
-			return a.HasPassword, nil
-		}
-	}
-	return false, nil
+	return acc.HasPassword, nil
 }
 
 func (s *server) peopleReplaceConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
@@ -143,8 +138,8 @@ func (s *server) peopleReplaceConfirm(w http.ResponseWriter, r *http.Request, c 
 	if err := s.peopleInvitable(r, u); err != nil {
 		return err
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: u.Handle,
+	return s.confirm(w, r, c, confirmation{
+		Handle:    u.Handle,
 		Title:     "New invite link for " + u.Handle,
 		Lede:      "For an invite that was lost or has lapsed. The new link is shown once on the next page.",
 		EndsTitle: "What ends for good",
@@ -177,6 +172,9 @@ func (s *server) peopleReplace(w http.ResponseWriter, r *http.Request, c *reques
 		return err
 	}
 	l, token, err := s.d.Users.IssueLink(r.Context(), u.Handle, user.PurposeInvite, false)
+	if errors.Is(err, user.ErrHasPassword) {
+		return refused("%s has set a password already. Create a reset link instead.", u.Handle)
+	}
 	if err != nil {
 		return err
 	}
@@ -195,9 +193,9 @@ func (s *server) peopleResetConfirm(w http.ResponseWriter, r *http.Request, c *r
 	if u.DisabledAt != nil {
 		return refused("%s is disabled. Enable them first.", u.Handle)
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: u.Handle,
-		Title: "Reset link for " + u.Handle,
+	return s.confirm(w, r, c, confirmation{
+		Handle: u.Handle,
+		Title:  "Reset link for " + u.Handle,
 		Lede: "For a person who lost their password, or who signed in with a key until now and has none. " +
 			"The link is shown once on the next page; nothing changes for them until they use it.",
 		EndsTitle: "What ends when the link is used",
@@ -207,7 +205,7 @@ func (s *server) peopleResetConfirm(w http.ResponseWriter, r *http.Request, c *r
 		},
 		StaysTitle: "What ends now",
 		Stays:      []string{"Any reset link made for them before: only the new one works."},
-		Check: &peopleCheck{Name: peopleRevokeAllField, Label: "Also disconnect their apps and revoke their keys",
+		Check: &confirmCheck{Name: peopleRevokeAllField, Label: "Also disconnect their apps and revoke their keys",
 			Help: "For an account someone else may have got into. Leave it off for a forgotten password."},
 		Action: peoplePath(u.Handle) + "/reset", Button: "Create the reset link", Cancel: peoplePath(u.Handle),
 	})
@@ -247,13 +245,20 @@ func (s *server) peopleLinkOf(r *http.Request) (*peopleLink, error) {
 	return nil, gone
 }
 
+// A revoke that was started on a person's page says so, and ends there
+// again. The value is a word, never an address to go to.
+const (
+	peopleFromField  = "from"
+	peopleFromPerson = "person"
+)
+
 func (s *server) peopleLinkRevokeConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
 	l, err := s.peopleLinkOf(r)
 	if err != nil {
 		return err
 	}
-	d := peopleConfirm{
-		Handle: l.Handle, Name: l.Handle,
+	d := confirmation{
+		Handle:     l.Handle,
 		Title:      "Revoke the " + peopleLinkName(l.Purpose) + " for " + l.Handle,
 		Lede:       "For a link that went to the wrong place. A revoked link cannot be brought back, only replaced with a new one.",
 		EndsTitle:  "What ends for good",
@@ -261,12 +266,15 @@ func (s *server) peopleLinkRevokeConfirm(w http.ResponseWriter, r *http.Request,
 		StaysTitle: "What stays",
 		Action:     "/invites/" + strconv.FormatInt(l.ID, 10) + "/revoke", Button: "Revoke the link", Danger: true, Cancel: "/people",
 	}
+	if r.URL.Query().Get(peopleFromField) == peopleFromPerson {
+		d.Cancel, d.Hidden = peoplePath(l.Handle), map[string]string{peopleFromField: peopleFromPerson}
+	}
 	if l.Purpose == user.PurposeInvite {
 		d.Stays = []string{l.Handle + " stays listed as invited, without a way to sign in until you make a new link."}
 	} else {
 		d.Stays = []string{l.Handle + " keeps their account, their password if they have one, their keys and their apps."}
 	}
-	return s.peopleConfirmPage(w, r, c, d)
+	return s.confirm(w, r, c, d)
 }
 
 func (s *server) peopleLinkRevoke(w http.ResponseWriter, r *http.Request, _ *request) error {
@@ -280,6 +288,9 @@ func (s *server) peopleLinkRevoke(w http.ResponseWriter, r *http.Request, _ *req
 	}
 	if err != nil {
 		return err
+	}
+	if r.PostForm.Get(peopleFromField) == peopleFromPerson {
+		return s.done(w, r, peoplePath(l.Handle), "people-link-revoked")
 	}
 	return s.done(w, r, "/people", "people-link-revoked")
 }

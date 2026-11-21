@@ -133,6 +133,9 @@ type envOptions struct {
 	// passwords turns the built-in accounts on, as an instance without an
 	// identity provider has them.
 	passwords bool
+	// checker replaces the service that checks passwords, to count or hold
+	// its calls.
+	checker oauth.Passwords
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -170,6 +173,9 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	var passwords oauth.Passwords
 	if eo.passwords {
 		passwords = e.users
+	}
+	if eo.checker != nil {
+		passwords = eo.checker
 	}
 
 	e.srv = httptest.NewUnstartedServer(nil)

@@ -148,6 +148,9 @@ type ListQuery struct {
 	Metadata map[string]string // every pair must match
 	Stale    string            // "", "include" (default), "exclude", "only"
 	Deleted  string            // "", "exclude" (default), "include", "only"
+	// Published keeps only the artifacts that are not unpublished, whatever
+	// their visibility.
+	Published bool
 	// Search keeps the artifacts whose slug or name contains it, ignoring
 	// ASCII case; at most MaxSearchLen bytes.
 	Search string

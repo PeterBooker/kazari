@@ -19,7 +19,10 @@ var commonFuncs = template.FuncMap{
 	"dict":    dict,
 }
 
-const timeLayout = "2 Jan 2006, 15:04 UTC"
+const (
+	timeLayout = "2 Jan 2006, 15:04 UTC"
+	dayLayout  = "2 Jan 2006"
+)
 
 // when renders a time as a <time> element in absolute UTC, which the script
 // rewrites as a relative time in the browser's zone. A nil or zero time is
@@ -56,7 +59,7 @@ func day(v any) template.HTML {
 		return "—"
 	}
 	t = t.UTC()
-	return template.HTML(`<time datetime="` + t.Format(time.RFC3339) + `">` + t.Format("2 Jan 2006") + `</time>`)
+	return template.HTML(`<time datetime="` + t.Format(time.RFC3339) + `">` + t.Format(dayLayout) + `</time>`)
 }
 
 // humanBytes renders a size in binary units, as the configuration writes

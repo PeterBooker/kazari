@@ -114,7 +114,7 @@ func TestUserStoreNotFound(t *testing.T) {
 		{"GetUser", func() error { _, err := s.GetUser(ctx, "nobody"); return err }, user.ErrNotFound},
 		{"GetUserByEmail", func() error { _, err := s.GetUserByEmail(ctx, "x@example.com"); return err }, user.ErrNotFound},
 		{"UpdateUser", func() error {
-			return s.UpdateUser(ctx, &user.User{Handle: "nobody", Role: user.RoleMember})
+			return userSet(s, ctx, &user.User{Handle: "nobody", Role: user.RoleMember})
 		}, user.ErrNotFound},
 		{"CreateKey", func() error {
 			return s.CreateKey(ctx, &user.APIKey{UserHandle: "nobody", Prefix: "aaaaaaaa", CreatedAt: userT0}, 0)
@@ -191,7 +191,7 @@ func TestUserStoreUpdateUser(t *testing.T) {
 	u.Role = user.RoleAdmin
 	u.QuotaBytes = 7
 	u.DisabledAt = &disabled
-	if err := s.UpdateUser(ctx, u); err != nil {
+	if err := userSet(s, ctx, u); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetUser(ctx, "alice")
@@ -204,7 +204,7 @@ func TestUserStoreUpdateUser(t *testing.T) {
 
 	u.Email = ""
 	u.DisabledAt = nil
-	if err := s.UpdateUser(ctx, u); err != nil {
+	if err := userSet(s, ctx, u); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ = s.GetUser(ctx, "alice"); got.Email != "" || got.DisabledAt != nil {
@@ -212,7 +212,7 @@ func TestUserStoreUpdateUser(t *testing.T) {
 	}
 
 	u.Email = "bob@example.com"
-	if err := s.UpdateUser(ctx, u); !errors.Is(err, user.ErrEmailTaken) {
+	if err := userSet(s, ctx, u); !errors.Is(err, user.ErrEmailTaken) {
 		t.Errorf("UpdateUser to taken email = %v, want ErrEmailTaken", err)
 	}
 }
@@ -401,7 +401,7 @@ func TestUserStoreCountUsers(t *testing.T) {
 	carol := userMustCreate(t, s, "carol", "", user.RoleMember)
 	disabled := userT0
 	carol.DisabledAt = &disabled
-	if err := s.UpdateUser(ctx, carol); err != nil {
+	if err := userSet(s, ctx, carol); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := s.CountUsers(ctx)
@@ -415,4 +415,14 @@ func TestUserStoreCountUsers(t *testing.T) {
 	if want := map[string]int64{"admin/false": 1, "member/false": 1, "member/true": 1}; !maps.Equal(got, want) {
 		t.Errorf("CountUsers = %v, want %v", got, want)
 	}
+}
+
+// userSet writes u's mutable fields over the stored row, as a caller that
+// made its change inside the store's transaction would.
+func userSet(s *UserStore, ctx context.Context, u *user.User) error {
+	_, err := s.UpdateUser(ctx, u.Handle, func(cur *user.User) error {
+		cur.Email, cur.DisplayName, cur.Role, cur.QuotaBytes, cur.DisabledAt = u.Email, u.DisplayName, u.Role, u.QuotaBytes, u.DisabledAt
+		return nil
+	})
+	return err
 }

@@ -6,7 +6,7 @@
 {{$handle := .Handle}}{{range .Keys}}<tr>
 <td data-label="Key"><span class="mono nowrap">{{.Name}}</span>{{with .Label}}<br><span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="May"><span class="mono">{{join .Scopes " "}}</span><br>{{if .Slugs}}<span class="soft">on pages matching</span> <span class="mono">{{join .Slugs " "}}</span>{{else}}<span class="soft">on any page of theirs</span>{{end}}</td>
-<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">an admin</span>{{end}}</td>
+<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">a sign-in or an admin</span>{{end}}</td>
 <td data-label="Created">{{when .CreatedAt}}</td>
 <td data-label="Last used">{{if .LastUsedAt}}{{when .LastUsedAt}}{{else}}<span class="soft">never</span>{{end}}</td>
 <td data-label="Expires">{{if .ExpiresAt}}{{when .ExpiresAt}}{{else}}<span class="soft">never</span>{{end}}</td>
@@ -69,10 +69,10 @@
 <dl class="kv">
 {{if .Data.Local}}<dt>Password</dt><dd>{{if .Data.HasPassword}}Set{{else if eq $p.Status "invited"}}Not set yet: they are invited{{else}}Not set{{end}}
 {{if ne $p.Status "disabled"}}<br>{{if .Data.HasPassword}}<a class="link" href="/people/{{$h}}/reset">Create a reset link</a>{{else if eq $p.Status "invited"}}<a class="link" href="/people/{{$h}}/invite">Make a new invite link</a>{{else}}<a class="link" href="/people/{{$h}}/reset">Create a reset link, so they can set one</a>{{end}}{{end}}</dd>
-{{range .Data.Pending}}<dt>{{if eq .Purpose "reset"}}Reset link{{else}}Invite link{{end}}</dt><dd>Waiting to be used until {{when .ExpiresAt}} <a class="link link-danger" href="/invites/{{.ID}}/revoke">Revoke</a></dd>
+{{range .Data.Pending}}<dt>{{if eq .Purpose "reset"}}Reset link{{else}}Invite link{{end}}</dt><dd>Waiting to be used until {{when .ExpiresAt}} <a class="link link-danger" href="/invites/{{.ID}}/revoke?from=person">Revoke</a></dd>
 {{end}}{{end}}
 <dt>Provider sign-in</dt><dd>{{if .Data.Identities}}<ul class="dash">{{range .Data.Identities}}<li><span class="mono">{{.Subject}}</span> at <span class="mono">{{.Issuer}}</span>{{with .EmailAtLogin}}, as {{.}}{{end}}, last used {{when .LastLoginAt}}
-<form class="inline" method="post" action="/people/{{$h}}/identities/unlink">{{template "token" $}}<input type="hidden" name="issuer" value="{{.Issuer}}"><input type="hidden" name="subject" value="{{.Subject}}"><button type="submit" class="link link-danger">Unlink</button></form></li>{{end}}</ul>{{else}}<span class="soft">No sign-in at a provider is linked.</span>{{end}}</dd>
+<a class="link link-danger" href="/people/{{$h}}/identities/unlink?issuer={{.Issuer}}&amp;subject={{.Subject}}">Unlink<span class="sr-only"> {{.Subject}}</span></a></li>{{end}}</ul>{{else}}<span class="soft">No sign-in at a provider is linked.</span>{{end}}</dd>
 <dt>API keys</dt><dd>{{len .Data.Keys}} live, listed below</dd>
 <dt>Sessions</dt><dd>{{.Data.Sessions}} open in browsers{{if .Data.Sessions}} <form class="inline" method="post" action="/people/{{$h}}/sessions/end">{{template "token" .}}<button type="submit" class="link">Sign out everywhere</button></form>{{end}}</dd>
 </dl>
@@ -96,19 +96,19 @@
 {{else}}<div class="empty"><p>{{$h}} has no live key. A key lets an agent or a script act as them without a browser; issue one below and hand it over.</p></div>{{end}}
 {{if .Data.PastKeys}}<details class="more"><summary>Revoked and expired keys ({{len .Data.PastKeys}})</summary>
 {{template "people-keys" dict "Handle" $h "Keys" .Data.PastKeys}}</details>{{end}}
-{{if ne $p.Status "disabled"}}<details class="more"{{if .Data.KeyForm.Error}} open{{end}}><summary>Issue a key</summary>
-{{with .Data.KeyForm.Error}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}No key was issued</p><p>{{.}}</p></div>{{end}}
+{{$ke := .Data.KeyForm.Errors}}{{if ne $p.Status "disabled"}}<details class="more"{{if $ke}} open{{end}}><summary>Issue a key</summary>
+{{if $ke}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}No key was issued</p><p>{{with $ke.form}}{{.}}{{else}}Check the field marked below.{{end}}</p></div>{{end}}
 <form class="form" method="post" action="/people/{{$h}}/keys">
 {{template "token" .}}
 <div class="field"><label for="key-label">Label <span class="optional">(optional)</span></label><input class="input" id="key-label" name="label" type="text" value="{{.Data.KeyForm.Label}}" autocomplete="off" aria-describedby="key-label-help">
 <p class="help" id="key-label-help">What the key is for, such as the name of the machine or the agent that holds it.</p></div>
-<fieldset class="fieldset"><legend>What the key may do</legend>
-{{range .Data.KeyForm.Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}><span>{{.Description}} <span class="mono soft">{{.Name}}</span></span></label>
-{{end}}</fieldset>
-<div class="field"><label for="key-slugs">Slug patterns <span class="optional">(optional)</span></label><input class="input input-mono" id="key-slugs" name="slugs" type="text" value="{{.Data.KeyForm.Slugs}}" autocomplete="off" spellcheck="false" aria-describedby="key-slugs-help">
-<p class="help" id="key-slugs-help">Restricts the key to pages whose slug matches: an exact slug, or a prefix ending in *, such as docs-*. Several are separated by spaces. Empty is every page they may touch.</p></div>
-<div class="field"><label for="key-days">Days until it expires <span class="optional">(optional)</span></label><input class="input" id="key-days" name="days" type="number" min="1"{{if .Data.MaxKeyDays}} max="{{.Data.MaxKeyDays}}"{{end}} value="{{.Data.KeyForm.Days}}" autocomplete="off" aria-describedby="key-days-help">
-<p class="help" id="key-days-help">{{if .Data.MaxKeyDays}}At most {{.Data.MaxKeyDays}} on this instance; empty gets that.{{else}}Empty is a key that works until it is revoked.{{end}}</p></div>
+<fieldset class="fieldset"{{if $ke.scopes}} aria-describedby="key-scopes-err"{{end}}><legend>What the key may do</legend>
+{{range .Data.KeyForm.Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}{{if $ke.scopes}} aria-invalid="true"{{end}}><span>{{.Description}} <span class="mono soft">{{.Name}}</span></span></label>
+{{end}}{{with $ke.scopes}}<p class="error" id="key-scopes-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</fieldset>
+<div class="field"><label for="key-slugs">Slug patterns <span class="optional">(optional)</span></label><input class="input input-mono" id="key-slugs" name="slugs" type="text" value="{{.Data.KeyForm.Slugs}}" autocomplete="off" spellcheck="false" aria-describedby="key-slugs-help{{if $ke.slugs}} key-slugs-err{{end}}"{{if $ke.slugs}} aria-invalid="true"{{end}}>
+{{with $ke.slugs}}<p class="error" id="key-slugs-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}<p class="help" id="key-slugs-help">Restricts the key to pages whose slug matches: an exact slug, or a prefix ending in *, such as docs-*. Several are separated by spaces. Empty is every page they may touch.</p></div>
+<div class="field"><label for="key-days">Days until it expires <span class="optional">(optional)</span></label><input class="input" id="key-days" name="days" type="number" min="1"{{if .Data.MaxKeyDays}} max="{{.Data.MaxKeyDays}}"{{end}} value="{{.Data.KeyForm.Days}}" autocomplete="off" aria-describedby="key-days-help{{if $ke.days}} key-days-err{{end}}"{{if $ke.days}} aria-invalid="true"{{end}}>
+{{with $ke.days}}<p class="error" id="key-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}<p class="help" id="key-days-help">{{if .Data.MaxKeyDays}}At most {{.Data.MaxKeyDays}} on this instance; empty gets that.{{else}}Empty is a key that works until it is revoked.{{end}}</p></div>
 <div class="actions"><button type="submit" class="btn">Issue the key</button></div>
 </form></details>{{end}}
 </section>
@@ -133,30 +133,22 @@
 
 <section class="section" aria-labelledby="person-pages">
 <div class="section-head"><h2 class="h2" id="person-pages">Their pages</h2>
-{{if .Data.Pages}}<a class="link" href="/pages?owner={{$h}}">All of their pages</a>{{end}}</div>
+{{if .Data.Owns}}<a class="link" href="/pages?owner={{$h}}">All of their pages</a>{{end}}</div>
 {{if .Data.Pages}}<table class="table">
 <thead><tr><th>Page</th><th>Name</th><th>Visibility</th><th>Updated</th></tr></thead>
 <tbody>
 {{range .Data.Pages}}<tr>
 <td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></td>
 <td data-label="Name">{{.Name}}</td>
-<td data-label="Visibility">{{.Visibility}}</td>
+<td data-label="Visibility">{{.Open}}{{if ne .State.Key "live"}} <span class="status {{.State.Tone}}">{{.State.Label}}</span>{{end}}</td>
 <td data-label="Updated">{{when .Updated}}</td>
 </tr>
 {{end}}</tbody>
 </table>
 {{if .Data.MorePages}}<p class="soft">These are the 50 changed most recently. <a href="/pages?owner={{$h}}">See all of them</a>.</p>{{end}}
-{{if .Data.Others}}<details class="more"><summary>Hand all their pages to someone else</summary>
-<form class="form" method="post" action="/people/{{$h}}/handover">
-{{template "token" .}}
-<div class="field"><label for="person-handover">New owner</label><select class="input" id="person-handover" name="transfer_to" required aria-describedby="person-handover-help">
-<option value="">Choose a person</option>
-{{range .Data.Others}}<option value="{{.Handle}}">{{.Name}} ({{.Handle}})</option>
-{{end}}</select>
-<p class="help" id="person-handover-help">Every page {{$h}} owns moves, those in the bin too, and counts against the new owner's quota. The pages stay online at their addresses. Each can be handed back from its own page.</p></div>
-<div class="actions"><button type="submit" class="btn">Hand over their pages</button></div>
-</form></details>{{end}}
+{{else if .Data.Owns}}<div class="empty"><p>Every page {{$h}} owns is in the bin. <a href="/pages?owner={{$h}}&amp;status=bin">See them</a>.</p></div>
 {{else}}<div class="empty"><p>{{$h}} owns no page. Pages appear here once they, or an agent acting as them, publish one.</p></div>{{end}}
+{{if .Data.Owns}}<p><a class="link" href="/people/{{$h}}/handover">Hand all their pages to someone else</a></p>{{end}}
 </section>
 
 <section class="section" aria-labelledby="person-activity">

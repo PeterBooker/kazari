@@ -151,6 +151,7 @@ func New(store Store, rec audit.Recorder, opts Options) *Service {
 		},
 		params: opts.Argon2,
 		slots:  make(chan struct{}, opts.MaxHashes),
+		wait:   slotWait,
 		// Made on first use: a hash costs too much for every start to pay.
 		dummy: sync.OnceValue(func() string {
 			h, err := hashPassword(opts.Argon2, "")
@@ -181,6 +182,19 @@ type CreateUserRequest struct {
 func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (_ *User, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.create")
 	defer func() { endSpan(span, err) }()
+	u, err := s.newUser(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.CreateUser(ctx, u); err != nil {
+		return nil, err
+	}
+	s.recordCreated(ctx, u)
+	return u, nil
+}
+
+// newUser validates req and returns the user it describes, not yet stored.
+func (s *Service) newUser(req CreateUserRequest) (*User, error) {
 	if err := ValidateHandle(req.Handle); err != nil {
 		return nil, err
 	}
@@ -195,22 +209,21 @@ func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (_ *Use
 	if req.QuotaBytes != nil {
 		quota = *req.QuotaBytes
 	}
-	u := &User{
+	return &User{
 		Handle:      req.Handle,
 		Email:       normalizeEmail(req.Email),
 		DisplayName: strings.TrimSpace(req.DisplayName),
 		Role:        role,
 		QuotaBytes:  quota,
 		CreatedAt:   s.now(),
-	}
-	if err := s.store.CreateUser(ctx, u); err != nil {
-		return nil, err
-	}
+	}, nil
+}
+
+func (s *Service) recordCreated(ctx context.Context, u *User) {
 	s.record(ctx, actorFrom(ctx, "admin"), audit.UserCreate, map[string]string{
 		"handle": u.Handle, "email": u.Email, "role": string(u.Role),
 		"quota_bytes": strconv.FormatInt(u.QuotaBytes, 10),
 	})
-	return u, nil
 }
 
 func validateRole(r Role) error {
@@ -260,51 +273,59 @@ type UpdateUserRequest struct {
 func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (_ *User, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.update")
 	defer func() { endSpan(span, err) }()
-	u, err := s.store.GetUser(ctx, handle)
-	if err != nil {
-		return nil, err
-	}
-	disables := req.Disabled != nil && *req.Disabled
-	demotes := req.Role != nil && *req.Role != RoleAdmin && u.Role == RoleAdmin
-	if p, ok := auth.FromContext(ctx); ok && p.Handle == handle && (disables || demotes) {
-		return nil, ErrSelf
-	}
-	details := map[string]string{"handle": handle}
-	if req.Email != nil {
-		u.Email = normalizeEmail(*req.Email)
-		details["email"] = u.Email
-	}
-	if req.DisplayName != nil {
-		u.DisplayName = strings.TrimSpace(*req.DisplayName)
-		details["display_name"] = u.DisplayName
-	}
 	if req.Role != nil {
 		if err := validateRole(*req.Role); err != nil {
 			return nil, err
 		}
-		u.Role = *req.Role
-		details["role"] = string(u.Role)
 	}
-	if req.QuotaBytes != nil {
-		u.QuotaBytes = *req.QuotaBytes
-		details["quota_bytes"] = strconv.FormatInt(u.QuotaBytes, 10)
-	}
+	caller, _ := auth.FromContext(ctx)
 	now := s.now()
-	if req.Disabled != nil {
-		if *req.Disabled {
-			if u.DisabledAt == nil {
+	details := map[string]string{"handle": handle}
+	// The change is made on the row as it is inside the store's
+	// transaction: one built from an earlier read would write back what
+	// another admin has changed since, such as a disable.
+	u, err := s.store.UpdateUser(ctx, handle, func(u *User) error {
+		disables := req.Disabled != nil && *req.Disabled
+		demotes := req.Role != nil && *req.Role != RoleAdmin && u.Role == RoleAdmin
+		if caller.Handle == handle && (disables || demotes) {
+			return ErrSelf
+		}
+		if req.Email != nil {
+			u.Email = normalizeEmail(*req.Email)
+			details["email"] = u.Email
+		}
+		if req.DisplayName != nil {
+			u.DisplayName = strings.TrimSpace(*req.DisplayName)
+			details["display_name"] = u.DisplayName
+		}
+		if req.Role != nil {
+			u.Role = *req.Role
+			details["role"] = string(u.Role)
+		}
+		if req.QuotaBytes != nil {
+			u.QuotaBytes = *req.QuotaBytes
+			details["quota_bytes"] = strconv.FormatInt(u.QuotaBytes, 10)
+		}
+		if req.Disabled != nil {
+			if !*req.Disabled {
+				u.DisabledAt = nil
+			} else if u.DisabledAt == nil {
 				u.DisabledAt = &now
 			}
-		} else {
-			u.DisabledAt = nil
+			details["disabled"] = strconv.FormatBool(*req.Disabled)
 		}
-		details["disabled"] = strconv.FormatBool(*req.Disabled)
-	}
-	if err := s.store.UpdateUser(ctx, u); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	if req.Disabled != nil && *req.Disabled {
 		if err := s.store.RevokeAllKeys(ctx, handle, now); err != nil {
+			return nil, fmt.Errorf("user: disable %q: %w", handle, err)
+		}
+		// Their links too: one left live would work again the moment the
+		// person is enabled.
+		if err := s.store.RevokeUserLinks(ctx, handle, now); err != nil {
 			return nil, fmt.Errorf("user: disable %q: %w", handle, err)
 		}
 		if s.opts.OnDisable != nil {
@@ -889,7 +910,6 @@ func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, ema
 		Issuer:       issuer,
 		Subject:      subject,
 		EmailAtLogin: normalizeEmail(email),
-		LastLoginAt:  s.now(),
 	})
 	if err != nil {
 		return err

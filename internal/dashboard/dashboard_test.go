@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,7 +62,37 @@ type env struct {
 	jobs      *scheduler.Scheduler
 	admin     *httptest.Server // the dashboard
 	signIn    *httptest.Server // the sign-in host
+	deps      dashboard.Deps
 	opts      dashboard.Options
+	// wide counts the queries that read every person or every owner.
+	wide atomic.Int64
+}
+
+// wideUsers and wideArtifacts are the stores, counting the queries whose
+// cost grows with the instance.
+type wideUsers struct {
+	user.Store
+	n *atomic.Int64
+}
+
+func (s wideUsers) ListUsers(ctx context.Context) ([]user.User, error) {
+	s.n.Add(1)
+	return s.Store.ListUsers(ctx)
+}
+
+func (s wideUsers) ListAccounts(ctx context.Context, now time.Time) ([]user.Account, error) {
+	s.n.Add(1)
+	return s.Store.ListAccounts(ctx, now)
+}
+
+type wideArtifacts struct {
+	artifact.Store
+	n *atomic.Int64
+}
+
+func (s wideArtifacts) OwnerUsage(ctx context.Context) ([]artifact.OwnerUsage, error) {
+	s.n.Add(1)
+	return s.Store.OwnerUsage(ctx)
 }
 
 // newEnv starts an instance. mutate, when not nil, changes the dashboard's
@@ -80,7 +111,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 		t.Fatal(err)
 	}
 	e := &env{t: t, clock: &clock{now: t0}, audit: sqlite.NewAuditStore(db)}
-	e.users = user.New(sqlite.NewUserStore(db), e.audit, user.Options{
+	e.users = user.New(wideUsers{sqlite.NewUserStore(db), &e.wide}, e.audit, user.Options{
 		Now:           e.clock.Now,
 		LocalAccounts: true,
 		// The real parameters cost 64 MiB a hash.
@@ -93,7 +124,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 		},
 		RevokeGrants: func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 	})
-	e.artifacts = artifact.New(sqlite.NewArtifactStore(db), blobs, e.audit, artifact.Options{
+	e.artifacts = artifact.New(wideArtifacts{sqlite.NewArtifactStore(db), &e.wide}, blobs, e.audit, artifact.Options{
 		Quotas: e.users, Now: e.clock.Now, Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour,
 		DefaultGrace: 14 * 24 * time.Hour, MaxShareLinkTTL: 90 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
@@ -133,6 +164,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	if mutate != nil {
 		mutate(&deps, &e.opts)
 	}
+	e.deps = deps
 	// As internal/app mounts it: the control hosts' default headers first.
 	e.admin.Config.Handler = middleware.SecurityHeaders()(dashboard.New(deps, e.opts))
 	e.admin.Start()

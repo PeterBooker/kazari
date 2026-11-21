@@ -187,7 +187,7 @@ To see the configuration a running server uses, ask the admin API:
 kazari admin settings
 ```
 
-It prints the effective configuration, with secrets redacted. The same is available as `GET /v1/settings` on the [admin API](api.md#admin-api).
+It prints the effective configuration, with secrets redacted. A key whose default depends on another shows the value in use: `auth.local.enabled` is `true` or `false` there, whether or not the file sets it. The same is available as `GET /v1/settings` on the [admin API](api.md#admin-api).
 
 ## Keys
 
@@ -449,7 +449,7 @@ The admin socket for this host, an optional separate listener for the admin host
 | `socket`       | string | `admin.sock` | Unix socket serving the admin API without a credential; relative to `data_dir` unless absolute. `""` disables it. |
 | `listen`       | string | `""`         | Optional plain-HTTP listener for the admin host: the admin API, the dashboard, `/health` and `/metrics`, such as `127.0.0.1:9443`. |
 | `dashboard`    | bool   | `true`       | Serve the dashboard at the root of the admin host.                                            |
-| `url`          | string | `""`         | The address a browser uses for the admin host. Empty means `https://admin.<base_domain>`.     |
+| `public_url`   | string | `""`         | The address a browser uses for the admin host. Empty means `https://admin.<base_domain>`.     |
 | `update_check` | bool   | `true`       | Ask GitHub once a day for the newest release.                                                 |
 
 #### The admin socket
@@ -482,6 +482,8 @@ admin:
 ```
 
 The value is an origin: a scheme, a host and an optional port, with no path. Plain `http` is accepted only for `localhost`, a name under it, or a loopback address. Any other address must be `https`, which a TLS proxy in front of `admin.listen` provides. [Reaching the dashboard](dashboard.md#reaching-the-dashboard) has the steps.
+
+The same rule holds for the default address. If `external_scheme` is `http` and the base domain is not `localhost`, the default is plain `http` on a public name, and the dashboard is off. The start-up log says so; the admin API is served as before.
 
 #### The update check
 

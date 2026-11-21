@@ -91,6 +91,9 @@ type WriteOptions struct {
 type Summary struct {
 	Files int   // entries written
 	Bytes int64 // their content, without the tar framing
+	// Certificates reports whether the archive holds the certificate
+	// directory: it was asked for and there was one.
+	Certificates bool
 }
 
 // Estimate is what a backup would hold and what room its temporary copy
@@ -168,9 +171,13 @@ func (s *Service) instruments(m metric.Meter) {
 	}, last))
 }
 
-// errorCode names the refusals a caller can act on; anything else is
-// internal.
-func errorCode(err error) string {
+// codeCanceled is a backup that ended because its reader did: a download
+// stopped in the browser, a command interrupted.
+const codeCanceled = "canceled"
+
+// errorCode names the outcomes that are the caller's doing; anything else
+// is internal. gone reports that writing to the caller failed.
+func errorCode(err error, gone bool) string {
 	switch {
 	case err == nil:
 		return ""
@@ -178,15 +185,32 @@ func errorCode(err error) string {
 		return api.CodeBackupRunning
 	case errors.Is(err, ErrNoSpace):
 		return api.CodeNoSpace
+	case gone, errors.Is(err, context.Canceled):
+		return codeCanceled
 	}
 	return instrument.CodeInternal
 }
 
+// sink notes whether a write to the caller failed, which tells a reader
+// that went away from a fault of the server's.
+type sink struct {
+	w      io.Writer
+	failed bool
+}
+
+func (s *sink) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	if err != nil {
+		s.failed = true
+	}
+	return n, err
+}
+
 // observe ends a backup's span and records how it went.
-func (s *Service) observe(ctx context.Context, span trace.Span, began time.Time, sum Summary, o WriteOptions, err error) {
-	code := errorCode(err)
+func (s *Service) observe(ctx context.Context, span trace.Span, began time.Time, sum Summary, gone bool, err error) {
+	code := errorCode(err, gone)
 	if span.IsRecording() {
-		span.SetAttributes(filesKey.Int(sum.Files), sizeKey.Int64(sum.Bytes), certsKey.Bool(o.Certs && s.opts.CertDir != ""))
+		span.SetAttributes(filesKey.Int(sum.Files), sizeKey.Int64(sum.Bytes), certsKey.Bool(sum.Certificates))
 	}
 	instrument.End(span, err, code)
 	var attrs []attribute.KeyValue
@@ -257,7 +281,8 @@ func (s *Service) databaseBytes() (int64, error) {
 func (s *Service) Write(ctx context.Context, w io.Writer, o WriteOptions) (sum Summary, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "backup.write")
 	began := time.Now()
-	defer func() { s.observe(ctx, span, began, sum, o, err) }()
+	out := &sink{w: w}
+	defer func() { s.observe(ctx, span, began, sum, out.failed, err) }()
 	if !s.running.CompareAndSwap(false, true) {
 		return Summary{}, ErrRunning
 	}
@@ -294,7 +319,7 @@ func (s *Service) Write(ctx context.Context, w io.Writer, o WriteOptions) (sum S
 		return Summary{}, fmt.Errorf("backup: copy database: %w", err)
 	}
 
-	a := &archive{ctx: ctx, tw: tar.NewWriter(w)}
+	a := &archive{ctx: ctx, tw: tar.NewWriter(out)}
 	if err := a.file(copyPath, filepath.Base(s.opts.DBPath), s.opts.Now()); err != nil {
 		return a.sum, err
 	}
@@ -303,18 +328,20 @@ func (s *Service) Write(ctx context.Context, w io.Writer, o WriteOptions) (sum S
 		return a.sum, err
 	}
 	if o.Certs && s.opts.CertDir != "" {
+		before := a.sum.Files
 		if err := a.tree(s.opts.CertDir, false); err != nil {
 			return a.sum, err
 		}
+		a.sum.Certificates = a.sum.Files > before
 	}
 	if err := a.tw.Close(); err != nil {
 		return a.sum, fmt.Errorf("backup: finish archive: %w", err)
 	}
-	s.record(ctx, a.sum, o)
+	s.record(ctx, a.sum)
 	return a.sum, nil
 }
 
-func (s *Service) record(ctx context.Context, sum Summary, o WriteOptions) {
+func (s *Service) record(ctx context.Context, sum Summary) {
 	if s.opts.Audit == nil {
 		return
 	}
@@ -323,7 +350,7 @@ func (s *Service) record(ctx context.Context, sum Summary, o WriteOptions) {
 		actor = p.Handle
 	}
 	err := s.opts.Audit.Record(ctx, audit.Event{At: s.opts.Now(), Actor: actor, Action: audit.BackupCreate, Details: map[string]string{
-		"files": strconv.Itoa(sum.Files), "bytes": strconv.FormatInt(sum.Bytes, 10), "certificates": strconv.FormatBool(o.Certs && s.opts.CertDir != ""),
+		"files": strconv.Itoa(sum.Files), "bytes": strconv.FormatInt(sum.Bytes, 10), "certificates": strconv.FormatBool(sum.Certificates),
 	}})
 	if err != nil {
 		s.log.WarnContext(ctx, "backup: audit", "err", err)

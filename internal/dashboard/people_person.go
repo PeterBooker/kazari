@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,10 +21,12 @@ type peopleForm struct {
 	Errors                   map[string]string
 }
 
-// peopleOwnedPage is one of a person's pages.
+// peopleOwnedPage is one of a person's pages, with who can open it and its
+// state in the words of the Pages list.
 type peopleOwnedPage struct {
 	Slug, Name string
-	Visibility string
+	Open       string
+	State      pageState
 	Updated    time.Time
 }
 
@@ -54,8 +57,9 @@ type peoplePersonData struct {
 
 	Pages     []peopleOwnedPage
 	MorePages bool
-	// Others are the people their pages can be handed to.
-	Others []peopleRow
+	// Owns is whether they own any page at all, those in the bin included:
+	// what a hand-over would move.
+	Owns bool
 
 	Events []audit.Event
 }
@@ -80,27 +84,25 @@ func peopleQuotaText(n int64) string {
 	return humanBytes(n)
 }
 
+// peoplePersonData builds one person's page from queries about that person
+// alone: the page is opened, and rebuilt for every refused form, on
+// instances of any size.
 func (s *server) peoplePersonData(ctx context.Context, c *request, u *user.User) (*peoplePersonData, error) {
-	rows, err := s.peopleRows(ctx)
+	acc, err := s.d.Users.Account(ctx, u.Handle)
+	if err != nil {
+		return nil, err
+	}
+	used, err := s.d.Artifacts.Usage(ctx, u.Handle)
 	if err != nil {
 		return nil, err
 	}
 	d := &peoplePersonData{
+		Row:       newPeopleRow(u, acc, artifact.OwnerUsage{Handle: u.Handle, Bytes: used}),
 		CreatedAt: u.CreatedAt, DisabledAt: u.DisabledAt, Self: u.Handle == c.me.Handle, Local: s.o.LocalAccounts,
-		Form:       peopleForm{Name: u.DisplayName, Email: u.Email, Role: string(u.Role), Quota: peopleQuotaText(u.QuotaBytes)},
-		KeyForm:    newPeopleKeyForm(u),
-		MaxKeyDays: int(s.o.MaxKeyTTL / (24 * time.Hour)),
-	}
-	for _, p := range rows {
-		switch {
-		case p.Handle == u.Handle:
-			d.Row = p
-		case p.Status != peopleDisabled:
-			d.Others = append(d.Others, p)
-		}
-	}
-	for _, m := range d.Row.Methods {
-		d.HasPassword = d.HasPassword || m == "password"
+		Form:        peopleForm{Name: u.DisplayName, Email: u.Email, Role: string(u.Role), Quota: peopleQuotaText(u.QuotaBytes)},
+		KeyForm:     newPeopleKeyForm(u),
+		MaxKeyDays:  s.maxKeyDays(),
+		HasPassword: acc.HasPassword,
 	}
 	links, err := s.peopleLinks(ctx)
 	if err != nil {
@@ -141,12 +143,17 @@ func (s *server) peoplePersonData(ctx context.Context, c *request, u *user.User)
 		return nil, err
 	}
 	d.MorePages = owned.NextCursor != ""
-	for _, a := range owned.Items {
-		p := peopleOwnedPage{Slug: a.Slug, Name: a.Name, Visibility: string(a.Visibility), Updated: a.UpdatedAt}
-		if a.UnpublishedAt != nil {
-			p.Visibility = string(artifact.Unpublished)
+	for i := range owned.Items {
+		a := &owned.Items[i]
+		row := s.pageRow(a)
+		d.Pages = append(d.Pages, peopleOwnedPage{Slug: a.Slug, Name: a.Name, Open: row.Open, State: row.State, Updated: a.UpdatedAt})
+	}
+	if d.Owns = len(d.Pages) > 0; !d.Owns {
+		binned, err := s.d.Artifacts.List(ctx, c.actor, artifact.ListQuery{All: true, Owner: u.Handle, Deleted: "only", Limit: 1})
+		if err != nil {
+			return nil, err
 		}
-		d.Pages = append(d.Pages, p)
+		d.Owns = len(binned.Items) > 0
 	}
 	events, err := s.d.Audit.List(ctx, audit.Query{Actor: u.Handle, Limit: 10})
 	if err != nil {
@@ -154,6 +161,30 @@ func (s *server) peoplePersonData(ctx context.Context, c *request, u *user.User)
 	}
 	d.Events = events.Events
 	return d, nil
+}
+
+// peopleName is the name a person is called by on a page about them.
+func peopleName(u *user.User) string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	return u.Handle
+}
+
+// peopleOthers are the people who can take over handle's pages: everyone
+// else who is not disabled.
+func (s *server) peopleOthers(ctx context.Context, handle string) ([]user.User, error) {
+	users, err := s.d.Users.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	others := users[:0]
+	for _, o := range users {
+		if o.Handle != handle && o.DisabledAt == nil {
+			others = append(others, o)
+		}
+	}
+	return others, nil
 }
 
 // peopleEdit changes a person's name, email, role and quota. Only what the
@@ -211,42 +242,6 @@ func (s *server) peopleEdit(w http.ResponseWriter, r *http.Request, c *request) 
 	return s.render(w, r, c, http.StatusUnprocessableEntity, "people-person", peoplePage(d.Row.Name), d)
 }
 
-// peopleConfirm is a confirmation page: what the change ends, what stays, and
-// the one button that does it.
-type peopleConfirm struct {
-	Handle, Name string // the person, for the way back
-	Title        string
-	Lede         string
-	EndsTitle    string
-	Ends         []string
-	StaysTitle   string
-	Stays        []string
-	Select       *peopleSelect
-	Check        *peopleCheck
-	Action       string
-	Button       string
-	Danger       bool
-	Cancel       string
-}
-
-type peopleSelect struct {
-	Name, Label, Help string
-	Options           []peopleOption
-}
-
-type peopleOption struct {
-	Value, Label string
-	Selected     bool
-}
-
-type peopleCheck struct {
-	Name, Label, Help string
-}
-
-func (s *server) peopleConfirmPage(w http.ResponseWriter, r *http.Request, c *request, d peopleConfirm) error {
-	return s.render(w, r, c, http.StatusOK, "people-confirm", peoplePage(d.Title), d)
-}
-
 // peopleHandOverField is the form field that names who gets a person's pages.
 const peopleHandOverField = "transfer_to"
 
@@ -261,21 +256,22 @@ func (s *server) peopleDisableConfirm(w http.ResponseWriter, r *http.Request, c 
 	if u.DisabledAt != nil {
 		return refused("%s is disabled already.", u.Handle)
 	}
-	d, err := s.peoplePersonData(r.Context(), c, u)
+	others, err := s.peopleOthers(r.Context(), u.Handle)
 	if err != nil {
 		return err
 	}
-	sel := &peopleSelect{
+	sel := &confirmSelect{
 		Name: peopleHandOverField, Label: "Their pages",
 		Help:    "Their pages stay online either way. Handing them over gives them an owner who can still sign in.",
-		Options: []peopleOption{{Value: "", Label: "Leave their pages with them", Selected: true}},
+		Options: []confirmOption{{Value: "", Label: "Leave their pages with them", Selected: true}},
 	}
-	for _, o := range d.Others {
-		sel.Options = append(sel.Options, peopleOption{Value: o.Handle, Label: "Hand them all to " + o.Name + " (" + o.Handle + ")"})
+	for i := range others {
+		o := &others[i]
+		sel.Options = append(sel.Options, confirmOption{Value: o.Handle, Label: "Hand them all to " + peopleName(o) + " (" + o.Handle + ")"})
 	}
-	return s.peopleConfirmPage(w, r, c, peopleConfirm{
-		Handle: u.Handle, Name: d.Row.Name,
-		Title: "Disable " + d.Row.Name,
+	return s.confirm(w, r, c, confirmation{
+		Handle: u.Handle,
+		Title:  "Disable " + peopleName(u),
 		Lede: "Disabling is how a person leaves this instance. There is no way to delete a person: " +
 			"their name stays on what they published and in the activity log.",
 		EndsTitle: "What ends for good",
@@ -353,6 +349,46 @@ func (s *server) peopleEnable(w http.ResponseWriter, r *http.Request, _ *request
 	return s.done(w, r, peoplePath(u.Handle), "people-enabled")
 }
 
+// peopleHandOverConfirm asks who gets every page a person owns, and says
+// what moving them does, before any of them moves.
+func (s *server) peopleHandOverConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
+	u, err := s.peopleUser(r)
+	if err != nil {
+		return err
+	}
+	others, err := s.peopleOthers(r.Context(), u.Handle)
+	if err != nil {
+		return err
+	}
+	if len(others) == 0 {
+		return refused("There is nobody else to hand the pages to. Invite or enable a person first.")
+	}
+	sel := &confirmSelect{Name: peopleHandOverField, Label: "New owner", Required: true,
+		Options: []confirmOption{{Value: "", Label: "Choose a person", Selected: true}}}
+	for i := range others {
+		o := &others[i]
+		sel.Options = append(sel.Options, confirmOption{Value: o.Handle, Label: peopleName(o) + " (" + o.Handle + ")"})
+	}
+	return s.confirm(w, r, c, confirmation{
+		Handle:    u.Handle,
+		Title:     "Hand over the pages of " + peopleName(u),
+		Lede:      "Every page " + u.Handle + " owns gets the owner you choose, in one step.",
+		EndsTitle: "What changes",
+		Ends: []string{
+			"Every page they own moves, those in the bin too.",
+			"The pages count against the new owner's quota from then on.",
+			"They can be handed back only one at a time, each from its own page.",
+		},
+		StaysTitle: "What stays",
+		Stays: []string{
+			"The pages stay online at their addresses, with their versions and share links.",
+			u.Handle + " keeps their account and whatever they could do before.",
+		},
+		Select: sel,
+		Action: peoplePath(u.Handle) + "/handover", Button: "Hand over their pages", Cancel: peoplePath(u.Handle),
+	})
+}
+
 func (s *server) peopleHandOver(w http.ResponseWriter, r *http.Request, c *request) error {
 	u, err := s.peopleUser(r)
 	if err != nil {
@@ -409,6 +445,42 @@ func (s *server) peopleIdentityLink(w http.ResponseWriter, r *http.Request, _ *r
 		return err
 	}
 	return s.done(w, r, peoplePath(u.Handle), "people-linked")
+}
+
+// peopleIdentityUnlinkConfirm shows the sign-in about to be unlinked. Its
+// issuer and subject are what links it again, and after the unlink no page
+// shows them.
+func (s *server) peopleIdentityUnlinkConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
+	u, err := s.peopleUser(r)
+	if err != nil {
+		return err
+	}
+	issuer, subject := r.URL.Query().Get("issuer"), r.URL.Query().Get("subject")
+	ids, err := s.d.Users.ListIdentities(r.Context(), u.Handle)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(ids, func(id user.Identity) bool { return id.Issuer == issuer && id.Subject == subject }) {
+		return notFound("That sign-in is not linked to " + u.Handle + ".")
+	}
+	return s.confirm(w, r, c, confirmation{
+		Handle:    u.Handle,
+		Title:     "Unlink a sign-in of " + peopleName(u),
+		Lede:      "Signing in at the provider with this account will no longer open " + u.Handle + ".",
+		EndsTitle: "What is unlinked",
+		Ends: []string{
+			"Issuer: " + issuer,
+			"Subject: " + subject,
+			"Note both down if the sign-in may be linked again: after this, no page shows them.",
+		},
+		StaysTitle: "What stays",
+		Stays: []string{
+			"Their sessions, keys and connected apps, until they end or are ended.",
+			"Any other way they sign in.",
+		},
+		Hidden: map[string]string{"issuer": issuer, "subject": subject},
+		Action: peoplePath(u.Handle) + "/identities/unlink", Button: "Unlink the sign-in", Danger: true, Cancel: peoplePath(u.Handle),
+	})
 }
 
 func (s *server) peopleIdentityUnlink(w http.ResponseWriter, r *http.Request, _ *request) error {

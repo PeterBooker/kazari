@@ -55,7 +55,7 @@ type view struct {
 type titled interface{ tabTitle() string }
 
 func (m messagePage) tabTitle() string { return m.Title }
-func (consentPage) tabTitle() string   { return "Authorize access" }
+func (consentPage) tabTitle() string   { return "Authorise access" }
 func (p signInPage) tabTitle() string  { return p.Title }
 
 type messagePage struct {
@@ -102,10 +102,10 @@ type signInPage struct {
 }
 
 var scopeDescriptions = map[string]string{
-	auth.ScopeRead:   "List and read your artifacts",
-	auth.ScopeWrite:  "Create and update artifacts",
-	auth.ScopeShare:  "Change who can open artifacts, and create share links",
-	auth.ScopeDelete: "Delete artifacts",
+	auth.ScopeRead:   "List and read your pages",
+	auth.ScopeWrite:  "Create and update pages",
+	auth.ScopeShare:  "Change who can open pages, and create share links",
+	auth.ScopeDelete: "Delete pages",
 }
 
 func scopeViews(scopes []string) []scopeView {

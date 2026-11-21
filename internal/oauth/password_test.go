@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,5 +603,105 @@ func TestControlSessionWithKey(t *testing.T) {
 	}
 	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token); !errors.Is(err, oauth.ErrNotFound) {
 		t.Errorf("ControlSession after the key was revoked: err = %v, want ErrNotFound", err)
+	}
+}
+
+// heldChecker refuses every password, after waiting to be released: it
+// stands in for the hash, which takes long enough for a burst of requests
+// to arrive while the first is still being checked.
+type heldChecker struct {
+	mu      sync.Mutex
+	calls   int
+	release chan struct{}
+	err     error
+}
+
+func (h *heldChecker) CheckPassword(ctx context.Context, _, _ string) (*user.User, error) {
+	h.mu.Lock()
+	h.calls++
+	h.mu.Unlock()
+	if h.release != nil {
+		<-h.release
+	}
+	if h.err != nil {
+		return nil, h.err
+	}
+	return nil, user.ErrBadPassword
+}
+
+func (h *heldChecker) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
+}
+
+// Guesses sent all at once get no further than guesses sent in turn: the
+// attempts under way are counted before their passwords are checked.
+func TestPasswordDelaysHoldAgainstABurst(t *testing.T) {
+	checker := &heldChecker{release: make(chan struct{})}
+	e := newEnv(t, envOptions{noIDP: true, passwords: true, checker: checker})
+	const burst = 30
+	statuses := make(chan int, burst)
+	for range burst {
+		go func() {
+			v := url.Values{"host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(browserNonce)}, "login": {"ana"}, "password": {"a wrong password"}}
+			req, _ := http.NewRequest(http.MethodPost, e.url(oauth.PathSignIn), strings.NewReader(v.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", e.srv.URL)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	// Every request but the ones being checked is answered at once.
+	refused := 0
+	for refused < burst-3 {
+		if got := <-statuses; got != http.StatusTooManyRequests {
+			t.Fatalf("a request of the burst was answered %d while others were being checked, want 429", got)
+		}
+		refused++
+	}
+	if got := checker.count(); got != 3 {
+		t.Errorf("%d passwords were checked for one account in a burst of %d, want the 3 free attempts", got, burst)
+	}
+	close(checker.release)
+	for range 3 {
+		if got := <-statuses; got != http.StatusUnauthorized {
+			t.Errorf("an admitted attempt was answered %d, want 401", got)
+		}
+	}
+}
+
+// A person's handle and their email are one account to the delays.
+func TestPasswordDelaysCountHandleAndEmailTogether(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	e.person("ana", "ana@example.org", "")
+	for i, login := range []string{"ana", "ana@example.org", "ANA", "Ana@Example.org"} {
+		if resp, _ := e.passwordSignIn("demo", login, "a wrong password"); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("failure %d as %q: status %d, want 401", i+1, login, resp.StatusCode)
+		}
+	}
+	for _, login := range []string{"ana", "ana@example.org"} {
+		if resp, _ := e.passwordSignIn("demo", login, password); resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("after four failures under both names, %q: status %d, want 429", login, resp.StatusCode)
+		}
+	}
+}
+
+func TestPasswordSignInWhenBusy(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true, checker: &heldChecker{err: user.ErrBusy}})
+	for range 5 {
+		resp, body := e.passwordSignIn("demo", "ana", password)
+		if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" || !strings.Contains(body, "busy") {
+			t.Fatalf("status %d, Retry-After %q: %s", resp.StatusCode, resp.Header.Get("Retry-After"), body)
+		}
+	}
+	// A server too busy to check a password has not seen a wrong one.
+	if resp, _ := e.passwordSignIn("demo", "ana", password); resp.StatusCode == http.StatusTooManyRequests {
+		t.Error("attempts the server could not check were counted as failures")
 	}
 }

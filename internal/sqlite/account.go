@@ -69,39 +69,57 @@ func (s *UserStore) TouchPassword(ctx context.Context, handle string, at time.Ti
 func (s *UserStore) CreateLink(ctx context.Context, l *user.Link) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateLink")
 	defer func() { end(err) }()
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		var uid sql.NullInt64
-		if l.Purpose == user.PurposeSetup {
-			if err := userNoneExist(ctx, tx); err != nil {
-				return err
-			}
-		} else {
-			id, err := userLookupID(ctx, tx, l.UserHandle)
-			if err != nil {
-				return err
-			}
-			uid = sql.NullInt64{Int64: id, Valid: true}
-		}
-		// IS, not =: a setup link's user is NULL.
-		if _, err := tx.ExecContext(ctx, `UPDATE invite SET revoked_at = ?
-			WHERE user_id IS ? AND purpose = ? AND used_at IS NULL AND revoked_at IS NULL`,
-			toNanos(l.CreatedAt), uid, string(l.Purpose)); err != nil {
-			return err
-		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO invite
-			(user_id, purpose, token_hash, revoke_all, created_by, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			uid, string(l.Purpose), l.Hash, l.RevokeAll, l.CreatedBy, toNanos(l.CreatedAt), toNanos(l.ExpiresAt))
-		if err != nil {
-			return err
-		}
-		l.ID, err = res.LastInsertId()
-		return err
-	})
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertLink(ctx, tx, l) })
 	if err != nil {
 		return fmt.Errorf("sqlite: create %s link: %w", l.Purpose, err)
 	}
 	return nil
+}
+
+// CreateInvited implements user.Store.
+func (s *UserStore) CreateInvited(ctx context.Context, u *user.User, l *user.Link) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.CreateInvited")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if err := userInsert(ctx, tx, u); err != nil {
+			return err
+		}
+		return userInsertLink(ctx, tx, l)
+	})
+	if err != nil {
+		return fmt.Errorf("sqlite: invite: %w", err)
+	}
+	return nil
+}
+
+func userInsertLink(ctx context.Context, tx *sql.Tx, l *user.Link) error {
+	var uid sql.NullInt64
+	if l.Purpose == user.PurposeSetup {
+		if err := userNoneExist(ctx, tx); err != nil {
+			return err
+		}
+	} else {
+		id, err := userLookupID(ctx, tx, l.UserHandle)
+		if err != nil {
+			return err
+		}
+		uid = sql.NullInt64{Int64: id, Valid: true}
+	}
+	// IS, not =: a setup link's user is NULL.
+	if _, err := tx.ExecContext(ctx, `UPDATE invite SET revoked_at = ?
+		WHERE user_id IS ? AND purpose = ? AND used_at IS NULL AND revoked_at IS NULL`,
+		toNanos(l.CreatedAt), uid, string(l.Purpose)); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO invite
+		(user_id, purpose, token_hash, revoke_all, created_by, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		uid, string(l.Purpose), l.Hash, l.RevokeAll, l.CreatedBy, toNanos(l.CreatedAt), toNanos(l.ExpiresAt))
+	if err != nil {
+		return err
+	}
+	l.ID, err = res.LastInsertId()
+	return err
 }
 
 // userNoneExist returns user.ErrSetupDone once the user table has a row.
@@ -180,6 +198,8 @@ func (s *UserStore) ListLinks(ctx context.Context, now time.Time) (_ []user.Link
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, linkSelect+`
 		WHERE v.used_at IS NULL AND v.revoked_at IS NULL AND v.expires_at > ?
+		  AND u.disabled_at IS NULL
+		  AND (v.purpose <> 'setup' OR NOT EXISTS (SELECT 1 FROM user))
 		ORDER BY v.created_at DESC, v.id DESC`, toNanos(now))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list links: %w", err)
@@ -197,6 +217,25 @@ func (s *UserStore) ListLinks(ctx context.Context, now time.Time) (_ []user.Link
 		return nil, fmt.Errorf("sqlite: list links: %w", err)
 	}
 	return links, nil
+}
+
+// RevokeUserLinks implements user.Store.
+func (s *UserStore) RevokeUserLinks(ctx context.Context, handle string, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.RevokeUserLinks")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		uid, err := userLookupID(ctx, tx, handle)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE invite SET revoked_at = ?
+			WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL`, toNanos(at), uid)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("sqlite: revoke links: %w", err)
+	}
+	return nil
 }
 
 // RevokeLink implements user.Store.
@@ -251,20 +290,17 @@ func (s *UserStore) UseLink(ctx context.Context, hash string, at time.Time, pass
 			if err := userNoneExist(ctx, tx); err != nil {
 				return err
 			}
-			res, err := tx.ExecContext(ctx, `INSERT INTO user
-				(handle, email, display_name, role, quota_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-				first.Handle, userNullEmail(first.Email), first.DisplayName, string(first.Role), first.QuotaBytes,
-				toNanos(first.CreatedAt))
-			if err != nil {
-				return userUniqueErr(err)
-			}
-			if first.ID, err = res.LastInsertId(); err != nil {
+			if err := userInsert(ctx, tx, first); err != nil {
 				return err
 			}
 			u = first
 		}
 		if u.DisabledAt != nil {
 			return user.ErrLinkNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE invite SET revoked_at = ?
+			WHERE user_id = ? AND id <> ? AND used_at IS NULL AND revoked_at IS NULL`, toNanos(at), u.ID, l.ID); err != nil {
+			return err
 		}
 		return userSetPassword(ctx, tx, u.ID, passwordHash, at)
 	})
@@ -274,39 +310,62 @@ func (s *UserStore) UseLink(ctx context.Context, hash string, at time.Time, pass
 	return l, u, nil
 }
 
+const accountSelect = `SELECT u.handle, p.user_id IS NOT NULL, p.last_login_at,
+		(SELECT MAX(NULLIF(i.last_login_at, 0)) FROM user_identity i WHERE i.user_id = u.id),
+		(SELECT COUNT(*) FROM user_identity i WHERE i.user_id = u.id),
+		(SELECT MAX(k.last_used_at) FROM api_key k WHERE k.user_id = u.id),
+		(SELECT COUNT(*) FROM api_key k WHERE k.user_id = u.id AND k.revoked_at IS NULL
+			AND (k.expires_at IS NULL OR k.expires_at > ?)),
+		EXISTS (SELECT 1 FROM invite v WHERE v.user_id = u.id AND v.purpose = 'invite' AND v.used_at IS NULL)
+	FROM user u LEFT JOIN user_password p ON p.user_id = u.id`
+
+func scanAccount(row userRowScanner, a *user.Account) error {
+	var (
+		password, identity, key sql.NullInt64
+		invited                 bool
+	)
+	if err := row.Scan(&a.Handle, &a.HasPassword, &password, &identity, &a.Identities, &key, &a.LiveKeys, &invited); err != nil {
+		return err
+	}
+	a.Invited = invited && !a.HasPassword
+	a.PasswordLoginAt, a.IdentityLoginAt, a.KeyUsedAt = ptrTime(password), ptrTime(identity), ptrTime(key)
+	return nil
+}
+
 // ListAccounts implements user.Store.
 func (s *UserStore) ListAccounts(ctx context.Context, now time.Time) (_ []user.Account, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListAccounts")
 	defer func() { end(err) }()
-	rows, err := s.db.QueryContext(ctx, `SELECT u.handle, p.user_id IS NOT NULL, p.last_login_at,
-			(SELECT MAX(i.last_login_at) FROM user_identity i WHERE i.user_id = u.id),
-			(SELECT COUNT(*) FROM user_identity i WHERE i.user_id = u.id),
-			(SELECT MAX(k.last_used_at) FROM api_key k WHERE k.user_id = u.id),
-			(SELECT COUNT(*) FROM api_key k WHERE k.user_id = u.id AND k.revoked_at IS NULL
-				AND (k.expires_at IS NULL OR k.expires_at > ?)),
-			EXISTS (SELECT 1 FROM invite v WHERE v.user_id = u.id AND v.purpose = 'invite' AND v.used_at IS NULL)
-		FROM user u LEFT JOIN user_password p ON p.user_id = u.id
-		ORDER BY u.handle`, toNanos(now))
+	rows, err := s.db.QueryContext(ctx, accountSelect+` ORDER BY u.handle`, toNanos(now))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list accounts: %w", err)
 	}
 	defer rows.Close()
 	var out []user.Account
 	for rows.Next() {
-		var (
-			a                       user.Account
-			password, identity, key sql.NullInt64
-			invited                 bool
-		)
-		if err := rows.Scan(&a.Handle, &a.HasPassword, &password, &identity, &a.Identities, &key, &a.LiveKeys, &invited); err != nil {
+		var a user.Account
+		if err := scanAccount(rows, &a); err != nil {
 			return nil, fmt.Errorf("sqlite: list accounts: %w", err)
 		}
-		a.Invited = invited && !a.HasPassword
-		a.PasswordLoginAt, a.IdentityLoginAt, a.KeyUsedAt = ptrTime(password), ptrTime(identity), ptrTime(key)
 		out = append(out, a)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list accounts: %w", err)
 	}
 	return out, nil
+}
+
+// GetAccount implements user.Store.
+func (s *UserStore) GetAccount(ctx context.Context, handle string, now time.Time) (_ user.Account, err error) {
+	ctx, end := s.db.op(ctx, "UserStore.GetAccount")
+	defer func() { end(err) }()
+	var a user.Account
+	err = scanAccount(s.db.QueryRowContext(ctx, accountSelect+` WHERE u.handle = ?`, toNanos(now), handle), &a)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = user.ErrNotFound
+	}
+	if err != nil {
+		return user.Account{}, fmt.Errorf("sqlite: get account: %w", err)
+	}
+	return a, nil
 }

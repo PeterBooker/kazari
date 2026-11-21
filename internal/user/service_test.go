@@ -361,7 +361,7 @@ func TestKeyStatus(t *testing.T) {
 	}
 	// Disabled in the store so bob's key stays unrevoked.
 	bobs, _ := f.mustIssue(t, "bob", nil, 0)
-	if err := f.store.UpdateUser(ctx, &user.User{Handle: "bob", Role: user.RoleMember, DisabledAt: ptr(t0)}); err != nil {
+	if _, err := f.store.UpdateUser(ctx, "bob", func(u *user.User) error { u.DisabledAt = ptr(t0); return nil }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -992,7 +992,8 @@ func TestIdentityLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []user.Identity{{Issuer: "https://idp.example.com", Subject: "sub-1", EmailAtLogin: "alice@example.com", LastLoginAt: t0}}
+	// Linked by hand: nobody has signed in with it yet.
+	want := []user.Identity{{Issuer: "https://idp.example.com", Subject: "sub-1", EmailAtLogin: "alice@example.com"}}
 	if diff := cmp.Diff(want, ids); diff != "" {
 		t.Errorf("identities (-want +got):\n%s", diff)
 	}

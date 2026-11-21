@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/account"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -360,5 +361,56 @@ func TestLinkPagesOffWithoutLocalAccounts(t *testing.T) {
 		if resp, _ = b.post("/account/"+purpose, url.Values{"password": {password}, "confirm": {password}}); resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s posted: status %d, want 404", purpose, resp.StatusCode)
 		}
+	}
+}
+
+// A link's form is accepted only from the page that link opened: the
+// cookie alone goes with any request to this host. The check comes before
+// the link is looked up, so a form without the value uses nothing up and
+// earns no wait.
+func TestLinkFormCarriesItsToken(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	token := e.invite("ana", "")
+	b := e.browser()
+	resp, body := b.openLink("invite", token)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `<input type="hidden" name="form_token" value="`+account.LinkFormToken(token)+`">`) {
+		t.Fatalf("the form: status %d: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, token) {
+		t.Error("the form holds the link's token itself")
+	}
+	other := account.LinkFormToken(user.LinkPrefix + strings.Repeat("a", 52))
+	for name, form := range map[string]url.Values{
+		"no value":             {"password": {password}, "confirm": {password}, "form_token": nil},
+		"an empty value":       {"password": {password}, "confirm": {password}, "form_token": {""}},
+		"another link's value": {"password": {password}, "confirm": {password}, "form_token": {other}},
+		"the link's own token": {"password": {password}, "confirm": {password}, "form_token": {token}},
+	} {
+		// More often than failures are free: a refused form is not one.
+		for range 7 {
+			resp, body := b.post("/account/invite", form)
+			if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "not sent from the page your link opened") {
+				t.Fatalf("%s: status %d: %s", name, resp.StatusCode, body)
+			}
+		}
+	}
+	if _, u, err := e.users.Link(context.Background(), token); err != nil || u.Handle != "ana" {
+		t.Fatalf("the refused forms used the link: %v", err)
+	}
+	if acc, err := e.users.Account(context.Background(), "ana"); err != nil || acc.HasPassword {
+		t.Fatalf("the refused forms set a password: %+v, %v", acc, err)
+	}
+	resp, _ = b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the form as its page wrote it: status %d", resp.StatusCode)
+	}
+
+	// A form that is refused for what it says is shown again with the value.
+	token = e.invite("ben", "")
+	b = e.browser()
+	b.openLink("invite", token)
+	resp, body = b.post("/account/invite", url.Values{"password": {password}, "confirm": {password + "x"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, `name="form_token" value="`+account.LinkFormToken(token)+`"`) {
+		t.Errorf("the form shown again: status %d: %s", resp.StatusCode, body)
 	}
 }

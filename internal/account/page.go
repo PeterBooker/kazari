@@ -173,9 +173,14 @@ func (s *server) apps(ctx context.Context, handle string) ([]appRow, error) {
 	for _, g := range grants {
 		name, ok := names[g.ClientID]
 		if !ok {
-			// A client that is gone leaves its id to show.
-			if c, err := s.d.Grants.GetClient(ctx, g.ClientID); err == nil {
+			// A client that is gone leaves its id to show; any other
+			// failure is not a reason to show an app under the wrong name.
+			c, err := s.d.Grants.GetClient(ctx, g.ClientID)
+			switch {
+			case err == nil:
 				name = c.Name
+			case !errors.Is(err, oauth.ErrNotFound):
+				return nil, err
 			}
 			names[g.ClientID] = name
 		}
@@ -197,8 +202,8 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request, v visit)
 		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"confirm": "mismatch"}})
 		return
 	}
-	ip := ratelimit.IPKey(r)
-	if d := max(s.passwordDelay.Wait(r.Context(), v.user.Handle), s.addressDelay.Wait(r.Context(), ip)); d > 0 {
+	attempt, d := ratelimit.BeginPair(r.Context(), s.passwordDelay, v.user.Handle, s.addressDelay, ratelimit.IPKey(r))
+	if d > 0 {
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(d))
 		refuse(http.StatusTooManyRequests, accountPageData{
 			Err: map[string]string{"current": "wait"}, Seconds: max(1, int((d+time.Second-1)/time.Second)),
@@ -206,14 +211,20 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request, v visit)
 		return
 	}
 	err := s.d.Users.ChangePassword(r.Context(), v.user.Handle, f.Get("current"), f.Get("new"), v.sess.SessionID)
+	if errors.Is(err, user.ErrBadPassword) {
+		attempt.Failed()
+	} else {
+		attempt.Done()
+	}
 	switch {
 	case errors.Is(err, user.ErrBadPassword):
-		s.passwordDelay.Fail(v.user.Handle)
-		s.addressDelay.Fail(ip)
 		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"current": "wrong"}})
 		return
 	case errors.Is(err, user.ErrWeakPassword):
 		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"new": "weak"}})
+		return
+	case errors.Is(err, user.ErrBusy):
+		s.busy(w, r)
 		return
 	case err != nil:
 		s.fail(w, r, "change password", err)

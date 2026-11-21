@@ -1,0 +1,52 @@
+{{/* The confirmation before a change that ends something, and the page that shows a secret once. */}}
+
+{{define "crumb"}}<p class="crumb">{{if .Slug}}<a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a>{{else}}<a href="/people">People</a>{{with .Handle}} / <a href="/people/{{.}}">{{.}}</a>{{end}}{{end}}</p>{{end}}
+
+{{define "confirm"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+<header class="head">
+{{template "crumb" .Data}}
+<div class="head-row"><h1 class="title">{{.Data.Title}}</h1></div>
+{{with .Data.Lede}}<p class="lede">{{.}}</p>{{end}}
+</header>
+<div class="cols">
+{{if .Data.Ends}}<div class="box section"><h2 class="h3">{{.Data.EndsTitle}}</h2>
+<ul class="dash">{{range .Data.Ends}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Data.Stays}}<div class="box section"><h2 class="h3">{{.Data.StaysTitle}}</h2>
+<ul class="dash">{{range .Data.Stays}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+</div>
+<form class="form" method="post" action="{{.Data.Action}}">
+{{template "token" .}}
+{{range $name, $value := .Data.Hidden}}<input type="hidden" name="{{$name}}" value="{{$value}}">
+{{end}}{{with .Data.Select}}<div class="field"><label for="confirm-select">{{.Label}}</label>
+<select class="input" id="confirm-select" name="{{.Name}}"{{if .Required}} required{{end}}{{if .Help}} aria-describedby="confirm-select-help"{{end}}>
+{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+{{with .Help}}<p class="help" id="confirm-select-help">{{.}}</p>{{end}}</div>{{end}}
+{{with .Data.Check}}{{if .Legend}}<fieldset class="fieldset"><legend>{{.Legend}}</legend>
+{{template "confirm-check" .}}</fieldset>{{else}}<div class="field">{{template "confirm-check" .}}</div>{{end}}{{end}}
+{{with .Data.Note}}<p class="soft">{{.}}</p>{{end}}
+<div class="actions"><button type="submit" class="btn {{if .Data.Danger}}btn-danger{{else}}btn-primary{{end}}">{{.Data.Button}}</button><a class="link" href="{{.Data.Cancel}}">Cancel</a></div>
+</form>
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "confirm-check"}}<label class="check"><input type="checkbox" name="{{.Name}}" value="1"{{if .Checked}} checked{{end}}{{if .Help}} aria-describedby="confirm-check-help"{{end}}><span>{{.Label}}</span></label>
+{{with .Help}}<p class="help" id="confirm-check-help">{{.}}</p>{{end}}{{end}}
+
+{{define "once"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+<header class="head">
+{{template "crumb" .Data}}
+<div class="head-row"><h1 class="title">{{.Data.Title}}</h1><span class="status tone-note">Shown once</span></div>
+<p class="lede">{{.Data.Lede}}</p>
+</header>
+<section class="box section" aria-labelledby="once-secret">
+<h2 class="h2" id="once-secret">{{.Data.Label}}</h2>
+<div class="copy"><label class="sr-only" for="once-value">{{.Data.Label}}</label><input class="input input-mono" id="once-value" type="text" readonly value="{{.Data.Value}}" autocomplete="off" spellcheck="false">
+<button type="button" class="btn btn-primary" data-copy-target="once-value" hidden>{{.Data.Button}}</button></div>
+<ul class="dash soft">{{range .Data.Notes}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{range .Data.Snippets}}<section class="section" aria-labelledby="{{.ID}}-title">
+<h2 class="h3" id="{{.ID}}-title">{{.Title}}</h2>
+<div class="snippet"><pre><code id="{{.ID}}">{{.Text}}</code></pre><button type="button" class="btn btn-sm" data-copy-target="{{.ID}}" hidden>{{.Button}}</button></div>
+</section>{{end}}
+<div class="actions"><a class="btn" href="{{if .Data.Slug}}/pages/{{.Data.Slug}}{{else}}/people/{{.Data.Handle}}{{end}}">{{.Data.Back}}</a></div>
+</div>{{template "theme/shell-close"}}{{end}}

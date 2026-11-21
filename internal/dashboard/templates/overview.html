@@ -76,7 +76,7 @@
 <ol class="steps">
 <li><strong>{{if .Data.LocalAccounts}}Invite a person{{else}}Add a person{{end}}</strong>{{if .Data.Invited.Done}} <span class="status tone-ok">Done</span>{{end}}
 {{if .Data.LocalAccounts}}<span class="soft">You get a link to copy and send. It works once, and Kazari sends no email.</span>
-{{if not .Data.Invited.Done}}<a class="btn btn-primary" href="/people/invite">Invite a person</a>{{else}}<a class="link" href="/people/invite">Invite another</a>{{end}}
+{{if not .Data.Invited.Done}}<a class="btn btn-primary" href="/invites/new">Invite a person</a>{{else}}<a class="link" href="/invites/new">Invite another</a>{{end}}
 {{else}}<span class="soft">People sign in at your identity provider. Whoever it admits appears under People at their first sign-in.</span>
 <a class="link" href="/people">See people</a>{{end}}</li>
 <li><strong>Connect an agent</strong>{{if .Data.Connected.Done}} <span class="status tone-ok">Done</span>{{end}}
