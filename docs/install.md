@@ -1,6 +1,6 @@
 # Installing Kazari
 
-This guide takes a fresh server to a first published page. It covers the DNS records, running Kazari with Docker Compose, from a package or from the binary, the preflight check, the first admin user and key, and a first publish. To try Kazari on your own machine first, the [quick start](quickstart.md) needs none of this.
+This guide takes a fresh server to a first published page. It covers the DNS records, running Kazari with Docker Compose, from a package or from the binary, the preflight check, the first admin and a key, and a first publish. To try Kazari on your own machine first, the [quick start](quickstart.md) needs none of this.
 
 The examples use `art.example.com` as the base domain. Replace it with yours.
 
@@ -51,7 +51,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-The log shows `kazari started`, then `serving` with the addresses, then `no users yet` with the next command, and within a minute `certificate obtained` for `*.art.example.com`. Compose waits for the health check, which asks the server over its socket.
+The log shows `kazari started`, then `serving` with the addresses, then the setup link for the first admin and a `no users yet` line, and within a minute `certificate obtained` for `*.art.example.com`. Compose waits for the health check, which asks the server over its socket.
 
 To check the DNS records and the token from inside the running container, run the [preflight check](#checking-the-setup):
 
@@ -59,7 +59,7 @@ To check the DNS records and the token from inside the running container, run th
 docker compose exec kazari kazari check
 ```
 
-The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION` in `.env`. Then go on to [creating the first admin user and key](#creating-the-first-admin-user-and-key).
+The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION` in `.env`. Then go on to [creating the first admin](#creating-the-first-admin).
 
 ## Installing the package
 
@@ -78,7 +78,7 @@ sudo systemctl enable --now kazari
 journalctl -u kazari -f
 ```
 
-`kazari check` reports on the configuration, the DNS records, the token and the ports before anything runs ([checking the setup](#checking-the-setup)). The log then shows the same lines as under Compose. Go on to [creating the first admin user and key](#creating-the-first-admin-user-and-key).
+`kazari check` reports on the configuration, the DNS records, the token and the ports before anything runs ([checking the setup](#checking-the-setup)). The log then shows the same lines as under Compose. Go on to [creating the first admin](#creating-the-first-admin).
 
 ## Installing the binary
 
@@ -196,16 +196,66 @@ ports        ok    :443 is free
 ports        ok    :80 is free
 admin socket ok    /var/lib/kazari/admin.sock (no server listening yet)
 metrics      warn  /metrics is not served on admin.art.example.com without telemetry.metrics.token; set it, or scrape admin.listen on a private address
+dashboard    ok    https://admin.art.example.com
 telemetry    skip  no OTLP endpoint is set; nothing is exported
 
 all checks passed, 1 warning(s)
 ```
 
-The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, a port is in use while Kazari runs, and the metrics warning only matters once Prometheus scrapes the instance ([metrics](ops.md#metrics)). A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
+The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, a port is in use while Kazari runs, and the metrics warning only matters once Prometheus scrapes the instance ([metrics](ops.md#metrics)). The `dashboard` line names the address a browser uses for the [dashboard](dashboard.md), and warns when `admin.listen` is set without `admin.public_url`. A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
 
-## Creating the first admin user and key
+Once the server runs, `kazari admin ready` repeats the checks that still apply and adds the certificate and the disk ([checking readiness](ops.md#checking-readiness)).
 
-A fresh instance has no users. Create the first admin and issue it a key on the server, where the `kazari` command reaches the admin API over a Unix socket in the data directory and needs no token. Under systemd, run it as root:
+## Creating the first admin
+
+A fresh instance has no users. How the first admin comes to exist depends on how people sign in to the instance.
+
+### With the setup link
+
+By default, an instance signs people in with [built-in accounts](identity.md#built-in-accounts), and a fresh one prints a setup link when it starts:
+
+```text
+Kazari has no users yet. Open this link to create the first admin:
+
+    https://art.example.com/account/setup?token=kzl_...
+
+It works once, until 14:05 UTC. For a fresh one run: kazari admin setup-link
+```
+
+The link is written to standard error, beside the log and not as a log record. It shows in `journalctl -u kazari` and `docker compose logs`, and is not among the logs Kazari exports over OTLP.
+
+Open the link in a browser. The page asks for a handle, an optional name and email, and a password of at least 15 characters. It creates the admin, then sends you to the [dashboard](dashboard.md), where you sign in with the handle and password you chose. With the dashboard off, it sends you to your account page instead.
+
+The link works once and for 1 hour, and only while the instance has no user. If it has lapsed, or the log is out of reach, print a fresh one on the server:
+
+```sh
+sudo kazari admin setup-link
+docker compose exec kazari kazari admin setup-link     # under Compose
+```
+
+From the dashboard, invite everyone else ([inviting a person](identity.md#inviting-a-person)). To publish from the command line or connect an agent with a key, issue yourself one on your [account page](identity.md#the-account-page), `https://art.example.com/account/`, or on the server:
+
+```sh
+sudo kazari admin keys issue peter --label laptop        # prints kzk_... once
+```
+
+The key is shown exactly once, so copy it now. A key issued without `--scopes` carries the member scopes (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`) and acts as a member, even for an admin user.
+
+### With an identity provider
+
+With an `auth.oidc` section, people sign in at your identity provider and no setup link is printed. List your own address under `admin_emails`, and your first sign-in creates your user as an admin ([provisioning policy](identity.md#provisioning-policy)):
+
+```yaml
+auth:
+  oidc:
+    admin_emails: [peter@example.com]
+```
+
+[Connecting an identity provider](identity.md#connecting-an-identity-provider) has the rest of the section.
+
+### With two commands
+
+On any instance, the first admin can also be created on the server, where the `kazari` command reaches the admin API over a Unix socket in the data directory and needs no token. This is the only way on an instance with `auth.local.enabled: false` and no identity provider. Under systemd, run it as root:
 
 ```sh
 sudo kazari admin users create peter --email peter@example.com --role admin
@@ -219,7 +269,7 @@ docker compose exec kazari kazari admin users create peter --email peter@example
 docker compose exec kazari kazari admin keys issue peter --label laptop
 ```
 
-The key is shown exactly once, so copy it now. A key issued without `--scopes` carries the member scopes (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`) and acts as a member, even for an admin user.
+On an instance with built-in accounts, a user created this way has no password until you give them a reset link with `kazari admin users reset-password peter`.
 
 ### Administering from another machine
 
@@ -234,7 +284,7 @@ export KAZARI_ADMIN_URL=https://admin.art.example.com KAZARI_ADMIN_TOKEN=kzk_...
 kazari admin users list
 ```
 
-An instance can also accept a fixed admin token, `KAZARI_AUTH_ADMIN_TOKEN` in the dotenv file, for scripts that run before any user exists; [the admin token](configuration.md#the-admin-token) covers it. If you set `admin.listen`, the admin host is served only on that address, and a remote CLI reaches it through an SSH tunnel.
+An instance can also accept a fixed admin token, `KAZARI_AUTH_ADMIN_TOKEN` in the dotenv file, for scripts that run before any user exists; [the admin token](configuration.md#the-admin-token) covers it. If you set `admin.listen`, the admin host is served only on that address. A remote CLI then reaches it through an SSH tunnel, and the dashboard needs `admin.public_url` ([reaching the dashboard](dashboard.md#reaching-the-dashboard)).
 
 ## Verifying with a first publish
 
@@ -255,7 +305,8 @@ The `curl` shows the published page's response headers, served under the wildcar
 ## Next steps
 
 - [MCP server](mcp.md): connect your agent to the instance.
-- [Sign-in and identity](identity.md): let people sign in with their organisation account through an identity provider.
+- [Dashboard](dashboard.md): run the instance day to day from a browser.
+- [Sign-in and identity](identity.md): invite people to built-in accounts, or let them sign in with their organisation account through an identity provider.
 - [DNS and certificates](certificates.md): the records, the providers, other providers and proxy configurations.
 - [Configuration](configuration.md): every key, its default and how to set it from the environment.
 - [Operations](ops.md): backups, upgrades, logs, metrics and troubleshooting.

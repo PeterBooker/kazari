@@ -890,3 +890,140 @@ func TestAdminTokenLength(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalAccounts(t *testing.T) {
+	on, off := true, false
+	oidc := &OIDC{Issuer: "https://idp.example.com", ClientID: "id", ClientSecret: "secret"}
+	tests := []struct {
+		name    string
+		enabled *bool
+		oidc    *OIDC
+		want    bool
+		invalid bool
+	}{
+		{name: "default without a provider", want: true},
+		{name: "default with a provider", oidc: oidc},
+		{name: "off without a provider", enabled: &off},
+		{name: "off with a provider", enabled: &off, oidc: oidc},
+		{name: "on without a provider", enabled: &on, want: true},
+		{name: "on with a provider", enabled: &on, oidc: oidc, want: true, invalid: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := valid()
+			c.Auth.Local.Enabled, c.Auth.OIDC = tt.enabled, tt.oidc
+			if got := c.LocalAccounts(); got != tt.want {
+				t.Errorf("LocalAccounts() = %v, want %v", got, tt.want)
+			}
+			err := c.Validate()
+			if tt.invalid != (err != nil && strings.Contains(err.Error(), "auth.local.enabled")) {
+				t.Errorf("Validate() = %v, want an auth.local.enabled error: %v", err, tt.invalid)
+			}
+		})
+	}
+}
+
+func TestLocalAccountsEnv(t *testing.T) {
+	env := map[string]string{"KAZARI_BASE_DOMAIN": "art.example.com", "KAZARI_DATA_DIR": t.TempDir(),
+		"KAZARI_LISTEN_PROXY_MODE": "true", "KAZARI_AUTH_LOCAL_ENABLED": "false", "KAZARI_AUTH_LOCAL_INVITE_TTL": "3d"}
+	c, err := LoadWith("", EnvLookup(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LocalAccounts() || c.Auth.Local.InviteTTL != Duration(3*day) || c.Auth.Local.MinPasswordLength != 15 {
+		t.Errorf("auth.local = %+v, LocalAccounts() = %v", c.Auth.Local, c.LocalAccounts())
+	}
+}
+
+func TestLocalAuthBounds(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"auth.local.min_password_length": func(c *Config) { c.Auth.Local.MinPasswordLength = 7 },
+		"auth.local.invite_ttl":          func(c *Config) { c.Auth.Local.InviteTTL = 0 },
+		"auth.local.reset_ttl":           func(c *Config) { c.Auth.Local.ResetTTL = -1 },
+	} {
+		c := valid()
+		mutate(&c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("Validate() = %v, want an error about %s", err, name)
+		}
+	}
+}
+
+func TestAdminURL(t *testing.T) {
+	tests := []struct {
+		name, listen, url, want string
+		dashboard               bool
+	}{
+		{name: "default", want: "https://admin.art.example.com", dashboard: true},
+		{name: "private listener without an address", listen: "127.0.0.1:9443"},
+		{name: "private listener through a tunnel", listen: "127.0.0.1:9443", url: "http://localhost:9443/", want: "http://localhost:9443", dashboard: true},
+		{name: "another name", url: "https://kazari-admin.vpn.example.com", want: "https://kazari-admin.vpn.example.com", dashboard: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := valid()
+			c.Admin.Listen, c.Admin.PublicURL = tt.listen, tt.url
+			if err := c.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if got := c.AdminURL(); got != tt.want {
+				t.Errorf("AdminURL() = %q, want %q", got, tt.want)
+			}
+			if got := c.DashboardEnabled(); got != tt.dashboard {
+				t.Errorf("DashboardEnabled() = %v, want %v", got, tt.dashboard)
+			}
+			c.Admin.Dashboard = false
+			if c.DashboardEnabled() {
+				t.Error("DashboardEnabled() with admin.dashboard off")
+			}
+		})
+	}
+}
+
+func TestCheckAdminURL(t *testing.T) {
+	for _, ok := range []string{"https://admin.example.com", "https://admin.example.com:8443/", "http://localhost:9443",
+		"http://admin.localhost:8080", "http://127.0.0.1:9443", "http://[::1]:9443"} {
+		if err := CheckAdminURL(ok); err != nil {
+			t.Errorf("CheckAdminURL(%q) = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"admin.example.com", "ftp://admin.example.com", "http://admin.example.com", "http://10.0.0.5:9443",
+		"https://admin.example.com/dashboard", "https://admin.example.com/?x=1", "https://user@admin.example.com", "https://"} {
+		if err := CheckAdminURL(bad); err == nil {
+			t.Errorf("CheckAdminURL(%q) = nil", bad)
+		}
+		c := valid()
+		c.Admin.PublicURL = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "admin.public_url") {
+			t.Errorf("Validate() with admin.public_url %q = %v", bad, err)
+		}
+	}
+}
+
+// The dashboard's address has a name of its own: KAZARI_ADMIN_URL is the
+// command line's, and must not move the server's setting.
+func TestAdminPublicURLEnv(t *testing.T) {
+	base := map[string]string{"KAZARI_BASE_DOMAIN": "art.example.com", "KAZARI_DATA_DIR": t.TempDir(), "KAZARI_LISTEN_PROXY_MODE": "true"}
+	withEnv := func(k, v string) Config {
+		t.Helper()
+		m := map[string]string{k: v}
+		for bk, bv := range base {
+			m[bk] = bv
+		}
+		c, err := LoadWith("", EnvLookup(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if c := withEnv("KAZARI_ADMIN_PUBLIC_URL", "http://localhost:9443"); c.Admin.PublicURL != "http://localhost:9443" || c.AdminURL() != "http://localhost:9443" {
+		t.Errorf("KAZARI_ADMIN_PUBLIC_URL: admin.public_url = %q", c.Admin.PublicURL)
+	}
+	if c := withEnv("KAZARI_ADMIN_URL", "http://127.0.0.1:1"); c.Admin.PublicURL != "" || c.AdminURL() != "https://admin.art.example.com" {
+		t.Errorf("KAZARI_ADMIN_URL moved admin.public_url to %q", c.Admin.PublicURL)
+	}
+	path := writeYAML(t, "base_domain: art.example.com\ndata_dir: /srv/k\nadmin:\n  url: http://localhost:9443\n")
+	if _, err := LoadWith(path, env(nil)); err == nil || !strings.Contains(err.Error(), "admin.url") {
+		t.Errorf("the key admin.url: err = %v, want it refused as unknown", err)
+	}
+}

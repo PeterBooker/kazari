@@ -1,0 +1,188 @@
+{{template "theme/shell" .}}
+<div class="page">
+
+<header class="head">
+<p class="crumb"><a href="#">People</a> / mira</p>
+<div class="head-row">
+<h1 class="title">Overview <b>of art.example.com</b></h1>
+<span class="ja" lang="ja" aria-hidden="true">概要</span>
+<span class="mono soft">mira</span>
+<span class="status tone-ok">Active</span>
+<div class="head-actions"><a class="btn btn-primary" href="#">{{template "icon/plus"}}Invite a person</a></div>
+</div>
+<p class="lede">Every component of the theme on one page. A page in the dashboard uses the classes as this one does.</p>
+</header>
+
+<p class="flash status tone-ok" role="status">leila is invited. Copy the link now.</p>
+
+<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}Two things need fixing</p>
+<ul>
+<li><a href="#handle">The handle is taken.</a></li>
+<li><a href="#quota">The quota must be a number.</a></li>
+</ul>
+</div>
+
+<div class="notice tone-warn">
+<p class="notice-title">Keep a backup as a secret</p>
+<p>The archive holds every password hash, key hash and page.</p>
+</div>
+
+<section class="box section" aria-labelledby="start">
+<h2 class="h2" id="start">Getting started</h2>
+<p class="soft">This instance is new. Three steps and the first page is live.</p>
+<ol class="steps">
+<li><strong>Invite a person</strong><span class="soft">You get a link to send them. It works once, for seven days.</span><a class="btn btn-primary" href="#">Invite a person</a></li>
+<li><strong>Connect an agent</strong><span class="soft">Add this address as a connector in your AI agent, then sign in when it asks.</span>
+<div class="snippet"><pre><code id="connector">https://mcp.art.example.com/</code></pre><button type="button" class="btn btn-sm" data-copy-target="connector" hidden>Copy the address</button></div></li>
+<li><strong>Publish a first page</strong><span class="soft">Ask the agent for a page and tell it to publish with Kazari.</span><a class="link" href="#">See pages</a></li>
+</ol>
+</section>
+
+<section class="box section" aria-labelledby="attn">
+<h2 class="h2" id="attn">Needs attention</h2>
+<ul class="attention">
+<li><span class="status tone-danger">Job failed</span><p>The clean-up job <span class="mono">gc</span> failed 41 minutes ago. Removed pages keep their disk space until it runs.</p><a href="#">See the job and run it again</a></li>
+<li><span class="status tone-warn">Quota</span><p>Mira Okafor has used 94% of a 2 GiB quota. A large publish from them will be refused.</p><a href="#">Raise the quota</a></li>
+<li><span class="status tone-note">New version</span><p>Kazari 0.8.1 is out. This instance runs 0.8.0.</p><a href="#">How to upgrade</a></li>
+</ul>
+</section>
+
+<section class="tiles" aria-label="Counts">
+<div class="box tile"><span class="label">People</span><span class="big">7</span>
+<ul class="dash soft"><li>4 active, 2 invited, 1 disabled</li><li>1 admin</li></ul>
+<a class="link" href="#">All people</a></div>
+<div class="box tile"><span class="label">Pages</span><span class="big">12</span>
+<ul class="dash soft"><li>8 live, 2 stale, 1 unpublished, 1 in the bin</li></ul>
+<a class="link" href="#">All pages</a></div>
+<div class="box tile"><span class="label">Storage</span><span class="big">2.1 GiB</span>
+<meter min="0" max="100" low="75" high="90" optimum="0" value="14">14%</meter>
+<ul class="dash soft"><li>21.6 GiB free of 25 GiB on the data disk</li></ul></div>
+<div class="box tile"><span class="label">Certificate</span><span class="big">68 days</span>
+<ul class="dash soft"><li><span class="mono">*.art.example.com</span></li><li>Expires <time datetime="2027-01-28T00:00:00Z">2027-01-28 00:00 UTC</time></li></ul></div>
+</section>
+
+<section class="section" aria-labelledby="people">
+<div class="section-head">
+<h2 class="h2" id="people">People</h2>
+<a class="link" href="#">Pending invites</a>
+</div>
+<form class="filters" method="get" action="#">
+<div class="field field-search"><label for="q">Search</label><input class="input" id="q" name="q" type="search" placeholder="Name, handle or email"></div>
+<div class="field"><label for="role">Role</label><select class="input" id="role" name="role"><option>Any</option><option>Admin</option><option>Member</option></select></div>
+<div class="field"><label for="st">Status</label><select class="input" id="st" name="status"><option>Any</option><option>Active</option><option>Invited</option><option>Disabled</option></select></div>
+<button type="submit" class="btn">Filter</button>
+</form>
+<table class="table">
+<thead><tr><th>Person</th><th>Role</th><th>Status</th><th>Usage</th><th class="num">Pages</th><th>Last active</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+<tr><td data-label="Person"><a href="#">Ana Sousa</a> <span class="mono soft">ana</span></td><td data-label="Role">Admin</td><td data-label="Status"><span class="status tone-ok">Active</span></td>
+<td data-label="Usage"><div class="usage"><span>0.3 of 2 GiB</span><meter min="0" max="100" low="75" high="90" optimum="0" value="15">15%</meter></div></td>
+<td class="num" data-label="Pages">4</td><td data-label="Last active"><time datetime="2026-11-21T09:14:00Z">2026-11-21 09:14 UTC</time></td>
+<td class="row-actions"><a class="link" href="#">Open</a></td></tr>
+<tr><td data-label="Person"><a href="#">Mira Okafor</a> <span class="mono soft">mira</span></td><td data-label="Role">Member</td><td data-label="Status"><span class="status tone-ok">Active</span></td>
+<td data-label="Usage"><div class="usage"><span>1.6 of 2 GiB <span class="tone-warn">(80%)</span></span><meter min="0" max="100" low="75" high="90" optimum="0" value="80">80%</meter></div></td>
+<td class="num" data-label="Pages">5</td><td data-label="Last active"><time datetime="2026-11-20T16:40:00Z">2026-11-20 16:40 UTC</time></td>
+<td class="row-actions"><a class="link" href="#">Open</a></td></tr>
+<tr><td data-label="Person"><a href="#">Jonas Berg</a> <span class="mono soft">jonas</span></td><td data-label="Role">Member</td><td data-label="Status"><span class="status tone-warn">Invited</span></td>
+<td data-label="Usage"><div class="usage"><span>1.88 of 2 GiB <span class="tone-danger">(94%)</span></span><meter min="0" max="100" low="75" high="90" optimum="0" value="94">94%</meter></div></td>
+<td class="num" data-label="Pages">0</td><td data-label="Last active"><span class="soft">never</span></td>
+<td class="row-actions"><a class="link" href="#">Open</a><form class="inline" method="post" action="#"><button type="submit" class="link link-danger">Revoke</button></form></td></tr>
+<tr><td data-label="Person"><a href="#">Tomas Lind</a> <span class="mono soft">tomas</span></td><td data-label="Role">Member</td><td data-label="Status"><span class="status tone-danger">Disabled</span></td>
+<td data-label="Usage"><div class="usage"><span>0 of 2 GiB</span><meter min="0" max="100" low="75" high="90" optimum="0" value="0">0%</meter></div></td>
+<td class="num" data-label="Pages">0</td><td data-label="Last active"><time datetime="2026-10-02T11:02:00Z">2026-10-02 11:02 UTC</time></td>
+<td class="row-actions"><a class="link" href="#">Open</a></td></tr>
+</tbody>
+</table>
+<nav class="pager" aria-label="Pages of people">
+<a class="btn btn-sm" href="#" rel="prev">Newer</a>
+<span class="label">51 to 100</span>
+<a class="btn btn-sm" href="#" rel="next">Older</a>
+</nav>
+</section>
+
+<section class="section" aria-labelledby="statuses">
+<h2 class="h2" id="statuses">Status</h2>
+<p class="actions">
+<span class="status tone-ok">Live</span>
+<span class="status tone-warn">Stale</span>
+<span class="status tone-danger">In the bin</span>
+<span class="status tone-note">Note</span>
+<span class="status tone-version">Version 7</span>
+<span class="status tone-neutral">Unpublished</span>
+</p>
+</section>
+
+<section class="section" aria-labelledby="none">
+<h2 class="h2" id="none">Pending invites</h2>
+<div class="empty">
+<p>Nobody is waiting to accept an invite. An invite is a link you copy and send; it works once, for seven days.</p>
+<a class="btn" href="#">Invite a person</a>
+</div>
+</section>
+
+<div class="cols">
+<section class="box section" aria-labelledby="profile">
+<h2 class="h2" id="profile">Profile, role and quota</h2>
+<form class="form-grid" method="post" action="#">
+<div class="field span-2"><label for="name">Name</label><input class="input" id="name" name="name" type="text" value="Mira Okafor"></div>
+<div class="field"><label for="handle">Handle</label><input class="input input-mono" id="handle" name="handle" type="text" value="ana" aria-invalid="true" aria-describedby="handle-err">
+<p class="error" id="handle-err">{{template "icon/alert"}}<span>That handle is taken. Choose another.</span></p></div>
+<div class="field"><label for="email">Email <span class="optional">(optional)</span></label><input class="input" id="email" name="email" type="email">
+<p class="help">A name for the account. Kazari sends nothing to it.</p></div>
+<div class="field"><label for="role2">Role</label><select class="input" id="role2" name="role"><option>Member</option><option>Admin</option></select></div>
+<div class="field"><label for="quota">Quota, in GiB</label><input class="input" id="quota" name="quota" type="number" min="0" step="0.5" value="2"></div>
+<div class="field span-2"><label for="note">Note</label><textarea class="input" id="note" name="note"></textarea></div>
+<fieldset class="fieldset span-2"><legend>When the link is used</legend>
+<label class="check"><input type="checkbox" name="revoke"><span>Also disconnect their apps and revoke their keys</span></label>
+<label class="check"><input type="radio" name="scope" checked><span>Sign them out everywhere</span></label>
+<label class="check"><input type="radio" name="scope"><span>Leave other sessions alone</span></label>
+</fieldset>
+<div class="actions"><button type="submit" class="btn btn-primary">Save changes</button><a class="link" href="#">Cancel</a><button type="button" class="btn" disabled>Disabled</button></div>
+</form>
+</section>
+
+<section class="box section" aria-labelledby="signin">
+<h2 class="h2" id="signin">Sign-in methods</h2>
+<dl class="kv">
+<dt>Password</dt><dd>Set on <time datetime="2026-10-14T08:00:00Z">2026-10-14 08:00 UTC</time></dd>
+<dt>Linked identities</dt><dd class="soft">None. This instance uses built-in accounts.</dd>
+<dt>Sessions</dt><dd>2 open <form class="inline" method="post" action="#"><button type="submit" class="link">Sign out everywhere</button></form></dd>
+<dt>Key</dt><dd><code>kzk_8c1d03ab</code> with <span class="mono">artifacts:read artifacts:write</span></dd>
+</dl>
+<details class="more"><summary>Approve with an API key instead</summary>
+<p class="soft">For a connection that should do less than you can, such as a scheduled agent.</p></details>
+</section>
+</div>
+
+<section class="box section" aria-labelledby="link">
+<h2 class="h2" id="link">Invite link, shown once</h2>
+<div class="copy"><input class="input" id="invite-link" type="text" readonly value="https://art.example.com/account/invite?token=kzi_3mq7v2xw9c4tjd8ahs5n">
+<button type="button" class="btn btn-primary" data-copy-target="invite-link" hidden>Copy the link</button></div>
+<ul class="dash soft">
+<li>It works once and stops working in 7 days.</li>
+<li>Kazari keeps no copy. After you leave this page it cannot be shown again.</li>
+</ul>
+<div class="snippet"><pre><code id="setup">claude mcp add --transport http kazari https://mcp.art.example.com/ \
+  --header "Authorization: Bearer kzk_8c1d03ab_…"</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="setup" hidden>Copy the command</button></div>
+</section>
+
+<section class="section page-narrow" aria-labelledby="remove">
+<h2 class="h2" id="remove">Remove launch-checklist for good</h2>
+<p>This cannot be undone. To keep the choice of restoring it for 30 days, <a href="#">move it to the bin</a> instead.</p>
+<div class="cols">
+<div class="box section"><h3 class="h3">What is deleted</h3>
+<ul class="dash"><li>The page at <span class="mono">launch-checklist.art.example.com</span></li><li>All 5 versions and the address of each</li></ul></div>
+<div class="box section"><h3 class="h3">What stays for a while</h3>
+<ul class="dash"><li>Copies that browsers and CDNs already hold, for up to 90 days</li><li>Its files on the server's disk, until the clean-up job next runs</li></ul></div>
+</div>
+<form class="form" method="post" action="#">
+<div class="field"><label for="slug">Type the slug, <span class="mono">launch-checklist</span>, to confirm</label>
+<input class="input input-mono" id="slug" name="slug" type="text" autocomplete="off" spellcheck="false"></div>
+<div class="actions"><button type="submit" class="btn btn-danger">Remove for good</button><button type="submit" class="btn btn-danger btn-sm">Revoke</button><a class="link" href="#">Cancel</a></div>
+</form>
+</section>
+
+</div>
+{{template "theme/shell-close"}}

@@ -1,0 +1,21 @@
+{{/* Pieces every page shares. A page template is
+     {{define "name"}}{{template "theme/shell" .Shell}}<div class="page">…</div>{{template "theme/shell-close"}}{{end}}
+     and reads .Data for its own data, .Token for its forms and .Flash for the confirmation line. */}}
+
+{{define "flash"}}{{with .Flash}}<p class="flash status tone-ok" role="status">{{.}}</p>
+{{end}}{{end}}
+
+{{define "token"}}<input type="hidden" name="form_token" value="{{.Token}}">{{end}}
+
+{{define "problem"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+<header class="head"><div class="head-row"><h1 class="title">{{.Data.Title}}</h1></div></header>
+<div class="notice tone-danger" role="alert"><p>{{.Data.Message}}</p></div>
+<div class="actions"><a class="btn" href="/">Back to the overview</a></div>
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "door"}}{{template "theme/door" .Page}}<h1 class="title">{{.Door.Title}}</h1>
+<p>{{.Door.Message}}</p>
+{{if .Door.SignOut}}<form method="post" action="{{.SignOutPath}}"><input type="hidden" name="{{.TokenField}}" value="{{.Door.SignOut}}">
+<div class="actions"><button type="submit" class="btn btn-primary">Sign out</button></div></form>
+{{end}}{{if .Door.Link}}<div class="door-alt"><a class="link" href="{{.Door.Link}}">{{.Door.LinkText}}</a></div>
+{{end}}{{template "theme/door-close" .Host}}{{end}}

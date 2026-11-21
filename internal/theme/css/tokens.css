@@ -1,0 +1,34 @@
+/* The Ma tokens of site/assets/css/main.css, with the accent held at gentian: a tool keeps one colour. */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#edefea, #191c1a);
+  --bg-soft: light-dark(#f6f7f3, #1f2320);
+  --surface: light-dark(#f6f7f3, #1f2320);
+  --well: light-dark(#e6e9e2, #282d29);
+  --text: light-dark(#222621, #e4e7e1);
+  --text-soft: light-dark(#50574d, #a9b0a5);
+  --muted: light-dark(#5e655b, #8e968a);
+  --border: light-dark(#c9cfc4, #2e332f);
+  --border-strong: light-dark(#adb5a8, #444b45);
+  --field-border: light-dark(#798174, #6c746c); /* 3:1 on every ground a field sits on */
+  --box-border: light-dark(transparent, #2e332f); /* light boxes are fills, dark ones outlines */
+  --code-bg: light-dark(#e4e7df, #141715);
+  --ghost: light-dark(#dee2d9, #232724);      /* decoration only */
+  --rest: light-dark(#c9cfc4, #363c37);
+
+  --season: light-dark(#5b57a3, #a5a4f7);
+  --season-mark: light-dark(#5b57a3, #a5a4f7);  /* decoration only */
+  --season-soft: color-mix(in srgb, var(--season) 10%, var(--surface));
+
+  /* meaning, never the accent */
+  --ai: light-dark(#3b5a8f, #9db6e3);
+  --matsu: light-dark(#3e6b4f, #93c7a3);
+  --fuji: light-dark(#6b5aa6, #b3a6ec);
+  --kuchiba: light-dark(#8a5a12, #e0a768);
+  --beni: light-dark(#b0283f, #f08c9a);
+
+  --font-sans: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-ja: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}

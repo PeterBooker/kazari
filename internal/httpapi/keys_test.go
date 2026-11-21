@@ -196,10 +196,10 @@ func TestRotateOwnKey(t *testing.T) {
 	e.apiErr(rotate(laptopKey, rotated.APIKey.Prefix, ""), http.StatusNotFound, api.CodeNotFound)
 	e.apiErr(rotate(laptopKey, "zzzzzzzz", ""), http.StatusNotFound, api.CodeNotFound)
 
-	var events []api.AuditEvent
+	var events api.AuditList
 	e.call(http.MethodGet, e.a("/v1/audit"), adminToken, nil, http.StatusOK, &events)
 	rotations := 0
-	for _, ev := range events {
+	for _, ev := range events.Events {
 		if ev.Action == audit.KeyRotate {
 			rotations++
 		}

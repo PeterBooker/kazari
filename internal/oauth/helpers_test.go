@@ -130,6 +130,9 @@ type envOptions struct {
 	logger           *slog.Logger
 	maxUnusedClients int
 	reuseWindow      time.Duration
+	// passwords turns the built-in accounts on, as an instance without an
+	// identity provider has them.
+	passwords bool
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -149,12 +152,24 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		AdminEmails:    []string{"boss@example.com"},
 		// As internal/app wires it.
 		OnDisable: func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
+		EndSessions: func(ctx context.Context, handle string, keep int64) error {
+			return e.svc.EndSessions(ctx, handle, keep)
+		},
+		RevokeGrants:  func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
+		LocalAccounts: eo.passwords,
+		// The real parameters cost 64 MiB a hash.
+		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1},
 	})
 	var idp oauth.IdentityProvider
 	if !eo.noIDP {
 		e.idp = &fakeIDP{identity: auth.Identity{Issuer: "https://idp.example", Subject: "alice-sub",
 			Email: "alice@example.com", EmailVerified: true, Name: "Alice"}}
 		idp = e.idp
+	}
+
+	var passwords oauth.Passwords
+	if eo.passwords {
+		passwords = e.users
 	}
 
 	e.srv = httptest.NewUnstartedServer(nil)
@@ -169,6 +184,8 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		Logger:             eo.logger,
 		InsecureCookies:    true,
 		ViewCallback:       viewCallback,
+		ControlCallback:    controlCallback,
+		Passwords:          passwords,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()
@@ -188,6 +205,18 @@ func viewCallback(host string) (string, bool) {
 	switch host {
 	case "demo", "demo--v2", "other":
 		return "https://" + host + ".art.test/.kazari/callback", true
+	}
+	return "", false
+}
+
+// controlCallback knows the two control hosts, as internal/app builds them
+// from the configuration.
+func controlCallback(host string) (string, bool) {
+	switch host {
+	case oauth.HostAdmin:
+		return "https://admin.art.test/session/callback", true
+	case oauth.HostAccount:
+		return "https://art.test/account/callback", true
 	}
 	return "", false
 }

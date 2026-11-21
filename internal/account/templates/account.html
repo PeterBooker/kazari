@@ -1,0 +1,360 @@
+{{define "key-scope"}}<span class="mono">{{range $i, $s := .Scopes}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{end}}
+
+{{define "event"}}
+{{- $d := .Details -}}
+{{- if eq .Action "oauth.signin"}}Signed in {{if eq (index $d "via") "password"}}with the password{{else if eq (index $d "via") "api_key"}}with the API key <span class="mono">{{index $d "key_prefix"}}</span>{{else}}at the identity provider{{end}}
+{{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Changed the password{{else if eq (index $d "via") "reset"}}Set a new password through a reset link{{else}}Set the first password{{end}}
+{{- else if eq .Action "invite.use"}}Used {{if eq (index $d "purpose") "reset"}}a reset link{{else if eq (index $d "purpose") "setup"}}the setup link{{else}}an invite link{{end}}
+{{- else if eq .Action "key.issue"}}Issued the API key <span class="mono">{{index $d "prefix"}}</span>{{with index $d "label"}} ({{.}}){{end}}
+{{- else if eq .Action "key.rotate"}}Rotated the API key <span class="mono">{{index $d "prefix"}}</span> into <span class="mono">{{index $d "new_prefix"}}</span>
+{{- else if eq .Action "key.revoke"}}Revoked the API key <span class="mono">{{index $d "prefix"}}</span>
+{{- else if eq .Action "oauth.grant"}}Connected the app <span class="mono">{{index $d "client_id"}}</span>
+{{- else if eq .Action "oauth.revoke"}}{{if index $d "grant"}}Disconnected an app{{else}}Disconnected every app{{end}}
+{{- else if eq .Action "session.revoke"}}Signed out of {{if eq (index $d "sessions") "1"}}one other session{{else}}{{index $d "sessions"}} other sessions{{end}}
+{{- else}}<span class="mono">{{.Action}}</span>
+{{- end}}{{end}}
+
+{{define "account"}}{{template "theme/shell" (.Shell "Account" "Account" "Your account")}}
+<div class="page">
+
+<header class="head">
+<div class="head-row">
+<h1 class="title">Account <b>of {{.Person}}</b></h1>
+<span class="ja" lang="ja" aria-hidden="true">アカウント</span>
+<span class="mono soft">{{.User.Handle}}</span>
+</div>
+<p class="lede">How you sign in to this Kazari instance, and what acts in your name: your API keys and the apps you connected.</p>
+</header>
+
+{{if eq .Flash "password-set"}}<p class="flash status tone-ok" role="status">Your password is set.</p>
+{{else if eq .Flash "password-changed"}}<p class="flash status tone-ok" role="status">Your password is changed. Every other browser was signed out.</p>
+{{else if eq .Flash "sessions-ended"}}<p class="flash status tone-ok" role="status">Every other browser is signed out. This one stays signed in.</p>
+{{else if eq .Flash "key-revoked"}}<p class="flash status tone-ok" role="status">The key is revoked, with every key issued with it and every app approved with one of them.</p>
+{{else if eq .Flash "app-revoked"}}<p class="flash status tone-ok" role="status">The app is disconnected.</p>
+{{end}}
+
+{{if .KeySession}}<div class="notice tone-note">
+<p class="notice-title">Signed in with the API key <span class="mono">{{.KeyPrefix}}</span></p>
+<p>A key issued from this session gets no scope, slug or lifetime that key lacks, and ends when it is revoked.</p>
+</div>
+{{end}}
+
+<div class="cols">
+<section class="box section" aria-labelledby="profile">
+<h2 class="h2" id="profile">Profile</h2>
+<dl class="kv">
+<dt>Handle</dt><dd class="mono">{{.User.Handle}}</dd>
+<dt>Name</dt><dd>{{with .User.DisplayName}}{{.}}{{else}}<span class="soft">Not set</span>{{end}}</dd>
+<dt>Email</dt><dd>{{with .User.Email}}{{.}}{{else}}<span class="soft">Not set</span>{{end}}</dd>
+<dt>Role</dt><dd>{{if eq .Role "admin"}}Admin{{else}}Member{{end}}</dd>
+</dl>
+<p class="help">Only an admin of this instance changes these. Kazari sends nothing to the email address.</p>
+</section>
+
+<section class="box section" aria-labelledby="recent">
+<h2 class="h2" id="recent">Recent sign-ins</h2>
+{{if .SignIns}}<dl class="kv">
+{{range $i, $e := .SignIns}}<dt>{{if $i}}Before that{{else}}Latest{{end}}</dt><dd>{{template "time" $e.At}}<br><span class="soft">{{template "event" $e}}</span></dd>
+{{end}}</dl>
+<p class="help">Nobody is told of a sign-in by email. If one of these was not you, change your password and tell an admin.</p>
+{{else}}<p class="soft">No sign-in is on record yet.</p>
+{{end}}</section>
+</div>
+
+{{if .Local}}<section class="box section" aria-labelledby="password-h">
+<h2 class="h2" id="password-h">Password</h2>
+<form class="form-grid" method="post" action="/account/password">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<input type="text" name="username" value="{{.User.Handle}}" autocomplete="username" hidden>
+<div class="field span-2"><label for="current">Current password</label>
+<input class="input" id="current" name="current" type="password" autocomplete="current-password" required{{if .Err.current}} aria-invalid="true" aria-describedby="current-err"{{end}}>
+{{if eq .Err.current "wrong"}}<p class="error" id="current-err">{{template "icon/alert"}}<span>That is not your current password. Nothing was changed.</span></p>
+{{else if eq .Err.current "wait"}}<p class="error" id="current-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
+{{end}}</div>
+<div class="field"><label for="new">New password</label>
+<input class="input" id="new" name="new" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="new-help{{if .Err.new}} new-err{{end}}"{{if .Err.new}} aria-invalid="true"{{end}}>
+{{if .Err.new}}<p class="error" id="new-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and 256 characters.</span></p>
+{{end}}<p class="help" id="new-help">At least {{.MinLength}} characters. Length is the only rule.</p></div>
+<div class="field"><label for="confirm">The new password again</label>
+<input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if .Err.confirm}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
+{{if .Err.confirm}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two new passwords are not the same. Enter both again.</span></p>
+{{end}}</div>
+<div class="actions"><button type="submit" class="btn btn-primary">Change the password</button></div>
+</form>
+<ul class="dash soft">
+<li>Changing it signs you out of every other browser. Your API keys and connected apps keep working.</li>
+<li>Lost it? An admin of this instance makes a reset link. Kazari sends no email.</li>
+</ul>
+<form class="inline" method="post" action="/account/sessions/end">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<button type="submit" class="btn">Sign out of my other sessions</button>
+</form>
+</section>
+{{end}}
+
+<section class="section" aria-labelledby="keys">
+<div class="section-head">
+<h2 class="h2" id="keys">API keys</h2>
+</div>
+<p class="soft">A key lets a script or an agent act as you without a browser. Its secret is shown once, when the key is made.</p>
+{{if .Keys}}<table class="table">
+<thead><tr><th>Key</th><th>May</th><th>Slugs</th><th>Issued with</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Keys}}<tr>
+<td data-label="Key"><span class="mono nowrap">kzk_{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="May">{{template "key-scope" .}}</td>
+<td data-label="Slugs">{{if .Slugs}}<span class="mono">{{range $i, $s := .Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any</span>{{end}}</td>
+<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">A sign-in</span>{{end}}</td>
+<td data-label="Created">{{template "time" .CreatedAt}}</td>
+<td data-label="Last used">{{with .LastUsedAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
+<td data-label="Expires">{{with .ExpiresAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
+<td class="row-actions">{{if not .Admin}}<a class="link" href="/account/keys/{{.Prefix}}/rotate">Rotate<span class="sr-only"> kzk_{{.Prefix}}</span></a>{{end}}<a class="link link-danger" href="/account/keys/{{.Prefix}}/revoke">Revoke<span class="sr-only"> kzk_{{.Prefix}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+<p>You hold no live key. Make one below for a script, a scheduled agent or the <span class="mono">kazari</span> command line.</p>
+</div>
+{{end}}
+{{if .OldKeys}}<details class="more"><summary>Revoked and expired keys</summary>
+<table class="table">
+<thead><tr><th>Key</th><th>State</th><th>Created</th><th>Last used</th></tr></thead>
+<tbody>
+{{range .OldKeys}}<tr>
+<td data-label="Key"><span class="mono nowrap">kzk_{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="State">{{if .RevokedAt}}<span class="status tone-danger">Revoked</span> {{template "time" .RevokedAt}}{{else}}<span class="status tone-neutral">Expired</span> {{template "time" .ExpiresAt}}{{end}}</td>
+<td data-label="Created">{{template "time" .CreatedAt}}</td>
+<td data-label="Last used">{{with .LastUsedAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</details>
+{{end}}
+
+<section class="box section" aria-labelledby="new-key">
+<h3 class="h3" id="new-key">Make a key</h3>
+{{if eq .Err.key "too-wide"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}That key cannot be made from this session</p>
+<p>You signed in with an API key, and a key made here gets no scope, slug or lifetime that key lacks. Leave the slugs and the expiry empty to take them from it, or sign in with your password.</p>
+</div>
+{{else if eq .Err.key "too-many"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}You hold as many live keys as a person may</p>
+<p>Revoke one you no longer use, then make the new one.</p>
+</div>
+{{end}}
+<form class="form-grid" method="post" action="/account/keys">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="field span-2"><label for="label">Label <span class="optional">(optional)</span></label>
+<input class="input" id="label" name="label" type="text" value="{{.Key.Label}}" maxlength="100" autocomplete="off" aria-describedby="label-help">
+<p class="help" id="label-help">What it is for, such as weekly-report. It shows in this list and in the activity log.</p></div>
+<div class="field"><label for="slugs">Slugs <span class="optional">(optional)</span></label>
+<input class="input input-mono" id="slugs" name="slugs" type="text" value="{{.Key.Slugs}}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="slugs-help{{if .Err.slugs}} slugs-err{{end}}"{{if .Err.slugs}} aria-invalid="true"{{end}}>
+{{if .Err.slugs}}<p class="error" id="slugs-err">{{template "icon/alert"}}<span>A pattern is a slug, such as q3-report, or the start of one followed by *, such as weekly-*. Separate several with spaces.</span></p>
+{{end}}<p class="help" id="slugs-help">Limits the key to pages whose slug matches, such as <span class="mono">weekly-*</span>. Empty means every page you may touch.</p></div>
+<div class="field"><label for="days">Expires after, in days <span class="optional">(optional)</span></label>
+<input class="input" id="days" name="days" type="number" inputmode="numeric" min="1"{{if .MaxKeyDays}} max="{{.MaxKeyDays}}"{{end}} step="1" value="{{.Key.Days}}" aria-describedby="days-help{{if .Err.days}} days-err{{end}}"{{if .Err.days}} aria-invalid="true"{{end}}>
+{{if .Err.days}}<p class="error" id="days-err">{{template "icon/alert"}}<span>Enter a whole number of days{{if .MaxKeyDays}}, {{.MaxKeyDays}} at most{{end}}.</span></p>
+{{end}}<p class="help" id="days-help">{{if .MaxKeyDays}}Empty means {{.MaxKeyDays}} days, the longest a key lives on this instance.{{else}}Empty means the key does not expire.{{end}}</p></div>
+<div class="actions"><button type="submit" class="btn btn-primary">{{template "icon/key"}}Make the key</button></div>
+</form>
+<p class="help">The key can read, write, share and delete your pages{{if .KeySession}}, as far as the key you signed in with can{{end}}. A key that administers the instance comes from the dashboard.</p>
+</section>
+</section>
+
+<section class="section" aria-labelledby="apps">
+<h2 class="h2" id="apps">Connected apps</h2>
+{{if .Apps}}<table class="table">
+<thead><tr><th>App</th><th>May</th><th>Approved with</th><th>Last refresh</th><th>Lapses</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Apps}}<tr>
+<td data-label="App">{{if .Client}}{{.Client}}{{else}}<span class="mono">{{.ClientID}}</span>{{end}}</td>
+<td data-label="May">{{template "key-scope" .}}</td>
+<td data-label="Approved with">{{if .KeyPrefix}}<span class="mono nowrap">kzk_{{.KeyPrefix}}</span>{{else}}<span class="soft">A sign-in</span>{{end}}</td>
+<td data-label="Last refresh">{{template "time" .Refreshed}}</td>
+<td data-label="Lapses">{{template "time" .Lapses}}</td>
+<td class="row-actions"><a class="link link-danger" href="/account/apps/{{.ID}}/revoke">Disconnect<span class="sr-only"> {{if .Client}}{{.Client}}{{else}}{{.ClientID}}{{end}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+<p class="help">An app that goes unused lapses by itself, at the time in the last column; each use moves that time on.</p>
+{{else}}<div class="empty">
+<p>No app is connected. An AI agent connects when you add this instance to it as a connector and approve it after signing in.</p>
+</div>
+{{end}}</section>
+
+{{if .Events}}<section class="section" aria-labelledby="events">
+<h2 class="h2" id="events">Recent security events</h2>
+<table class="table">
+<thead><tr><th>When</th><th>What you did</th></tr></thead>
+<tbody>
+{{range .Events}}<tr><td data-label="When">{{template "time" .At}}</td><td data-label="What you did">{{template "event" .}}</td></tr>
+{{end}}</tbody>
+</table>
+</section>
+{{end}}
+
+<section class="section" aria-labelledby="pages">
+<h2 class="h2" id="pages">Your pages</h2>
+{{if .Pages}}<table class="table">
+<thead><tr><th>Page</th><th>Open to</th><th>Updated</th></tr></thead>
+<tbody>
+{{range .Pages}}<tr>
+<td data-label="Page"><a href="{{.URL}}">{{if .Name}}{{.Name}}{{else}}{{.Slug}}{{end}}</a> <span class="mono soft">{{.Slug}}</span></td>
+<td data-label="Open to">{{if eq .Visibility "public"}}Anyone{{else if eq .Visibility "unlisted"}}Anyone with the address{{else if eq .Visibility "members"}}Members{{else}}<span class="status tone-neutral">Unpublished</span>{{end}}</td>
+<td data-label="Updated">{{template "time" .UpdatedAt}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+<p>You own no page yet. Ask a connected agent to publish one with Kazari.</p>
+</div>
+{{end}}</section>
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "key"}}{{template "theme/shell" (.Shell "New API key" "Account" "Your account")}}
+<div class="page page-narrow">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / API keys</p>
+<div class="head-row">
+<h1 class="title">{{if .Old}}The key <b>is rotated</b>{{else}}Your new <b>API key</b>{{end}}</h1>
+<span class="mono soft">kzk_{{.Key.Prefix}}</span>
+</div>
+<p class="lede">Copy it now. Kazari keeps no copy, and after you leave this page it cannot be shown again.</p>
+</header>
+
+<section class="box section" aria-labelledby="secret-h">
+<h2 class="h2" id="secret-h">The key, shown once</h2>
+<div class="copy"><input class="input" id="secret" type="text" readonly value="{{.Secret}}" aria-labelledby="secret-h" autocomplete="off" spellcheck="false">
+<button type="button" class="btn btn-primary" data-copy-target="secret" hidden>{{template "icon/copy"}}Copy the key</button></div>
+<dl class="kv">
+{{with .Key.Label}}<dt>Label</dt><dd>{{.}}</dd>
+{{end}}<dt>May</dt><dd>{{template "key-scope" .Key}}</dd>
+<dt>Slugs</dt><dd>{{if .Key.Slugs}}<span class="mono">{{range $i, $s := .Key.Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any page you may touch</span>{{end}}</dd>
+<dt>Expires</dt><dd>{{with .Key.ExpiresAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</dd>
+{{with .Old}}<dt>The old key</dt><dd><span class="mono">kzk_{{.Prefix}}</span> works until {{template "time" .ExpiresAt}}</dd>
+{{end}}</dl>
+</section>
+
+<section class="section" aria-labelledby="use">
+<h2 class="h2" id="use">Use it</h2>
+<h3 class="h3">An agent, over MCP</h3>
+<p class="soft">Add the connector with the key as its bearer token. In Claude Code:</p>
+<div class="snippet"><pre><code id="use-mcp">claude mcp add --transport http kazari {{.MCPURL}} \
+  --header "Authorization: Bearer {{.Secret}}"</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="use-mcp" hidden>Copy the command</button></div>
+<h3 class="h3">The command line</h3>
+<div class="snippet"><pre><code id="use-cli">export KAZARI_URL={{.APIURL}}
+export KAZARI_TOKEN={{.Secret}}
+kazari me</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="use-cli" hidden>Copy the lines</button></div>
+<h3 class="h3">Any HTTP client</h3>
+<div class="snippet"><pre><code id="use-http">Authorization: Bearer {{.Secret}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="use-http" hidden>Copy the header</button></div>
+</section>
+
+<div class="actions"><a class="btn" href="/account/">I have copied it</a></div>
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "rotate"}}{{template "theme/shell" (.Shell "Rotate a key" "Account" "Your account")}}
+<div class="page page-narrow">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / API keys</p>
+<div class="head-row">
+<h1 class="title">Rotate <b>the key</b></h1>
+<span class="mono soft">kzk_{{.Key.Prefix}}</span>
+</div>
+<p class="lede">You get a new key with the same label, scopes and slugs. The old one keeps working for as long as you choose, so you can swap it where it is used.</p>
+</header>
+
+{{if eq .Err "too-wide"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}This key cannot be rotated here</p>
+<p>{{if .Key.Admin}}A key that administers the instance is rotated on the admin API or in the dashboard.{{else}}You signed in with an API key that holds less than this one. Sign in with your password to rotate it.{{end}}</p>
+</div>
+{{else if eq .Err "too-many"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}You hold as many live keys as a person may</p>
+<p>The old key counts until it ends. Choose "at once" below, or revoke a key you no longer use.</p>
+</div>
+{{else if eq .Err "ended"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}This key has ended</p>
+<p>It was revoked or has expired, so there is nothing to rotate. Make a new key on your account page.</p>
+</div>
+{{end}}
+
+<form class="form" method="post" action="/account/keys/{{.Key.Prefix}}/rotate">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<fieldset class="fieldset"><legend>The old key stops working</legend>
+<label class="check"><input type="radio" name="overlap" value="now"><span>At once</span></label>
+<label class="check"><input type="radio" name="overlap" value="hour"><span>In an hour</span></label>
+<label class="check"><input type="radio" name="overlap" value="day" checked><span>In a day</span></label>
+<label class="check"><input type="radio" name="overlap" value="week"><span>In a week</span></label>
+</fieldset>
+<div class="actions"><button type="submit" class="btn btn-primary">Rotate the key</button><a class="link" href="/account/">Cancel</a></div>
+</form>
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "confirm"}}
+{{- if eq .Kind "key"}}{{template "theme/shell" (.Shell "Revoke a key" "Account" "Your account")}}
+<div class="page page-narrow">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / API keys</p>
+<div class="head-row">
+<h1 class="title">Revoke <b>the key</b></h1>
+<span class="mono soft">kzk_{{.Key.Prefix}}</span>
+</div>
+<p class="lede">{{if .Key.Live}}This cannot be undone. Whatever uses the key stops working at once.{{else}}This key has already ended. Revoking it changes nothing more.{{end}}</p>
+</header>
+
+<section class="box section" aria-labelledby="ends">
+<h2 class="h2" id="ends">What ends</h2>
+<ul class="dash">
+<li>The key <span class="mono">kzk_{{.Key.Prefix}}</span>{{with .Key.Label}} ({{.}}){{end}}</li>
+<li>Every key issued with it and every app approved with one of them ends too{{if or .Issued .Apps}}:{{else}}. Right now there are none.{{end}}</li>
+{{range .Issued}}<li>The key <span class="mono">kzk_{{.Prefix}}</span>{{with .Label}} ({{.}}){{end}}</li>
+{{end}}{{range .Apps}}<li>The app {{if .Client}}{{.Client}}{{else}}<span class="mono">{{.ClientID}}</span>{{end}}</li>
+{{end}}{{if .Own}}<li>Your sign-in in this browser: you signed in with this key</li>
+{{end}}</ul>
+</section>
+
+<form class="form" method="post" action="/account/keys/{{.Key.Prefix}}/revoke">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="actions"><button type="submit" class="btn btn-danger">Revoke the key</button><a class="link" href="/account/">Cancel</a></div>
+</form>
+
+</div>
+{{- else}}{{template "theme/shell" (.Shell "Disconnect an app" "Account" "Your account")}}
+<div class="page page-narrow">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / Connected apps</p>
+<div class="head-row">
+<h1 class="title">Disconnect <b>{{if .App.Client}}{{.App.Client}}{{else}}the app{{end}}</b></h1>
+<span class="mono soft">{{.App.ClientID}}</span>
+</div>
+<p class="lede">This cannot be undone, but the app can be connected again by signing in from it.</p>
+</header>
+
+<section class="box section" aria-labelledby="ends">
+<h2 class="h2" id="ends">What ends</h2>
+<ul class="dash">
+<li>The app can no longer act as you on this instance, at once</li>
+<li>Pages it published stay as they are</li>
+</ul>
+</section>
+
+<form class="form" method="post" action="/account/apps/{{.App.ID}}/revoke">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="actions"><button type="submit" class="btn btn-danger">Disconnect the app</button><a class="link" href="/account/">Cancel</a></div>
+</form>
+
+</div>
+{{- end}}
+{{template "theme/shell-close"}}{{end}}

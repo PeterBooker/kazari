@@ -371,11 +371,11 @@ func TestKeyStatus(t *testing.T) {
 		advance time.Duration
 		want    user.KeyStatus
 	}{
-		{"live", live.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true}},
-		{"before expiry", expiring.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true, ExpiresAt: expiring.ExpiresAt}},
-		{"revoked", revoked.Prefix, 0, user.KeyStatus{Handle: "alice"}},
-		{"disabled owner", bobs.Prefix, 0, user.KeyStatus{Handle: "bob"}},
-		{"at expiry", expiring.Prefix, time.Hour, user.KeyStatus{Handle: "alice", ExpiresAt: expiring.ExpiresAt}},
+		{"live", live.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true, Scopes: auth.MemberScopes}},
+		{"before expiry", expiring.Prefix, 0, user.KeyStatus{Handle: "alice", Active: true, ExpiresAt: expiring.ExpiresAt, Scopes: auth.MemberScopes}},
+		{"revoked", revoked.Prefix, 0, user.KeyStatus{Handle: "alice", Scopes: auth.MemberScopes}},
+		{"disabled owner", bobs.Prefix, 0, user.KeyStatus{Handle: "bob", Scopes: auth.MemberScopes}},
+		{"at expiry", expiring.Prefix, time.Hour, user.KeyStatus{Handle: "alice", ExpiresAt: expiring.ExpiresAt, Scopes: auth.MemberScopes}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -547,6 +547,7 @@ func TestAuthenticateDemotedAdminLosesAdminScope(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})
 	f.mustCreate(t, "boss", "", user.RoleAdmin)
+	f.mustCreate(t, "chief", "", user.RoleAdmin)
 	_, secret := f.mustIssue(t, "boss", auth.AllScopes, 0)
 	if _, err := f.svc.UpdateUser(ctx, "boss", user.UpdateUserRequest{Role: ptr(user.RoleMember)}); err != nil {
 		t.Fatal(err)

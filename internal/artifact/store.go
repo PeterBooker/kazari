@@ -39,6 +39,13 @@ type Store interface {
 	// alone keep concurrent changes. An error from fn writes nothing.
 	Update(ctx context.Context, slug, by string, fn func(a *Artifact) error) error
 
+	// TransferOwned gives every artifact from owns, soft-deleted ones
+	// included and tombstones not, to the handle to, sets their updated_at
+	// to at and marks `by` an updater unless empty, in one transaction. It
+	// returns the slugs moved, sorted. ErrInvalidArgument for an unknown
+	// handle, with nothing written.
+	TransferOwned(ctx context.Context, from, to, by string, at time.Time) ([]string, error)
+
 	// Involved reports whether the handle created or updated the artifact
 	// (the actor rows behind ListQuery.Mine); false for an unknown slug or
 	// handle.
@@ -121,6 +128,11 @@ type Store interface {
 	// and sets its last use to at. ErrLinkNotFound.
 	UseShareLink(ctx context.Context, slug, prefix string, at time.Time) error
 
+	// OwnerUsage returns, for every user who owns an artifact that is not a
+	// tombstone, how many they own and their usage as Usage counts it,
+	// ordered by handle.
+	OwnerUsage(ctx context.Context) ([]OwnerUsage, error)
+
 	// CountArtifacts counts every artifact, tombstones included, by Status
 	// and visibility.
 	CountArtifacts(ctx context.Context) ([]StatusCount, error)
@@ -150,6 +162,14 @@ type StatusCount struct {
 	Status     string
 	Visibility Visibility
 	Count      int64
+}
+
+// OwnerUsage is what one user owns: the artifacts that are not tombstones,
+// and the bytes charged to their quota.
+type OwnerUsage struct {
+	Handle    string
+	Artifacts int64
+	Bytes     int64
 }
 
 // Totals is a count and a size in bytes.

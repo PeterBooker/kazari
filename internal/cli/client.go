@@ -29,6 +29,9 @@ type Client struct {
 	token     string
 	hc        *http.Client
 	userAgent string
+	// local marks a client on the admin Unix socket, which reaches a server
+	// on this host and nothing else.
+	local bool
 }
 
 // NewClient returns a client for the host root baseURL, without /v1. An empty
@@ -237,12 +240,14 @@ func writeMultipart(mw *multipart.Writer, manifest any, bundle io.Reader) error 
 
 // ListParams filters GET /artifacts. Zero fields are omitted.
 type ListParams struct {
-	Mine     string // created | updated | any
-	Metadata map[string]string
-	Stale    string // include | exclude | only
-	Deleted  string
-	Cursor   string
-	Limit    int
+	Mine       string // created | updated | any
+	Metadata   map[string]string
+	Stale      string // include | exclude | only
+	Deleted    string
+	Search     string // text in the slug or the name
+	Visibility string // public | unlisted | members | unpublished
+	Cursor     string
+	Limit      int
 }
 
 func (p ListParams) values() url.Values {
@@ -258,6 +263,8 @@ func (p ListParams) values() url.Values {
 	}
 	set("stale", p.Stale)
 	set("deleted", p.Deleted)
+	set("q", p.Search)
+	set("visibility", p.Visibility)
 	set("cursor", p.Cursor)
 	if p.Limit > 0 {
 		q.Set("limit", strconv.Itoa(p.Limit))

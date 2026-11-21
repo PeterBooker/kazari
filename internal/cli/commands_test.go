@@ -253,11 +253,15 @@ func TestRunUsageErrors(t *testing.T) {
 		{"update nothing", []string{"update", "demo"}, 2, "update: nothing to update"},
 		{"files without cat", []string{"files", "ls"}, 2, "Usage: kazari files <command>"},
 		{"admin unknown", []string{"admin", "nuke"}, 2, "kazari: unexpected argument nuke"},
-		{"admin users missing action", []string{"admin", "users"}, 2, `expected one of "list", "create", "update"`},
+		{"admin users missing action", []string{"admin", "users"}, 2, `expected one of "list", "show", "create"`},
 		{"admin enable and disable", []string{"admin", "users", "update", "ann", "--enable", "--disable"}, 2, "are exclusive"},
 		{"admin update nothing", []string{"admin", "users", "update", "ann"}, 2, "nothing to change"},
 		{"admin bad quota", []string{"admin", "users", "create", "ann", "--quota", "lots"}, 2, `invalid size "lots"`},
 		{"admin audit since", []string{"admin", "audit", "--since", "yesterday"}, 2, "--since"},
+		{"admin audit until", []string{"admin", "audit", "--until", "tomorrow"}, 2, "--until"},
+		{"admin identities link without a subject", []string{"admin", "identities", "link", "ann", "--issuer", "https://idp.test"}, 2, "--subject"},
+		{"admin users transfer without an owner", []string{"admin", "users", "transfer", "ann"}, 2, `expected "<owner>"`},
+		{"restore without slug", []string{"restore"}, 2, `kazari: expected "<slug>"`},
 		{"missing url", []string{"me"}, 2, "kazari: no API URL: set --url, KAZARI_URL or url in"},
 		{"missing token", []string{"--url", "http://x", "me"}, 2, "kazari: no API token"},
 	}
@@ -617,6 +621,7 @@ func TestRunSimpleCommands(t *testing.T) {
 		"POST /v1/artifacts/demo/stale":   record(200, api.StaleResult{StaleAt: staleAt, ExpiresAt: expires, Artifact: demo}),
 		"DELETE /v1/artifacts/demo/stale": record(200, demo),
 		"PATCH /v1/artifacts/demo":        record(200, api.PublishResult{URL: demo.URL, Version: 2, Artifact: demo}),
+		"PATCH /v1/artifacts/bin":         record(200, api.PublishResult{URL: "https://bin.art.test", Version: 2, Artifact: demo}),
 		"POST /v1/artifacts/demo/publish": record(200, api.PublishResult{URL: demo.URL, Version: 1, Artifact: demo}),
 		"GET /v1/me":                      record(200, api.Me{Handle: "peter", Scopes: []string{"read", "write"}, Source: "api_key", QuotaBytes: 100 << 20, UsedBytes: 1536}),
 		"GET /v1/me/keys":                 record(200, []api.APIKey{{Prefix: "abc123", Label: "laptop", Scopes: []string{"read", "write"}, CreatedAt: t0, LastUsedAt: &lastUsed}}),
@@ -636,6 +641,7 @@ func TestRunSimpleCommands(t *testing.T) {
 		{[]string{"stale", "demo", "--grace", "336h"}, "demo is stale since 2026-10-01T14:00:00+02:00 and expires at 2026-10-15T14:00:00+02:00\n", `{"grace":"336h"}`},
 		{[]string{"unstale", "demo"}, "demo is no longer stale\n", ""},
 		{[]string{"visibility", "demo", "unpublished"}, "demo is now unpublished\n", `{"visibility":"unpublished"}`},
+		{[]string{"restore", "bin"}, "restored bin: https://bin.art.test\n", `{"restore":true}`},
 		{[]string{"rollback", "demo", "1"}, "demo now serves version 1: https://demo.art.test\n", `{"version":1}`},
 		{[]string{"files", "cat", "demo", "css/site.css", "--version", "2"}, "body{color:red}", "version=2"},
 		{[]string{"me"}, "handle:   peter\nadmin:    false\nscopes:   read, write\nsource:   api_key\nstorage:  1.5 KiB of 100.0 MiB used\n", ""},
@@ -657,6 +663,17 @@ func TestRunSimpleCommands(t *testing.T) {
 				t.Errorf("request body = %q, want %q", body, tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestRunRestorePurged(t *testing.T) {
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+		"PATCH /v1/artifacts/gone": replyWith(http.StatusGone, api.ErrorResponse{
+			Error: api.Error{Code: api.CodeGone, Message: `artifact "gone" was purged`}}),
+	})
+	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "restore", "gone")
+	if r.code != 1 || r.stdout != "" || r.stderr != "kazari: gone: artifact \"gone\" was purged\n" {
+		t.Errorf("restore of a purged artifact: %+v", r)
 	}
 }
 
@@ -694,9 +711,15 @@ func TestRunAdmin(t *testing.T) {
 		"GET /v1/settings":                 record(map[string]any{"server": map[string]any{"base_domain": "art.test", "listen": []string{":443"}}, "auth": map[string]any{"admin_token": "[redacted]"}, "debug": false}),
 		"GET /v1/jobs":                     record([]api.JobStatus{{Name: "gc", Every: "1h0m0s", LastRun: &disabled, LastError: "disk full"}}),
 		"POST /v1/jobs/gc/run":             record(api.OK{OK: true}),
-		"GET /v1/audit":                    record([]api.AuditEvent{{At: t0, Actor: "ann", Action: "artifact.create", Slug: "demo", Details: map[string]string{"version": "1", "a": "b"}}}),
-		"GET /v1/health":                   record(api.Health{Status: "ok", Version: "1.2.3"}),
-		"GET /v1/artifacts":                record(api.ArtifactList{Items: []api.Artifact{demo}}),
+		"GET /v1/audit": record(api.AuditList{NextCursor: "c2", Events: []api.AuditEvent{
+			{At: t0, Actor: "ann", Action: "artifact.create", Slug: "demo", Details: map[string]string{"version": "1", "a": "b"}}}}),
+		"GET /v1/users/bob": record(api.User{Handle: "bob", Role: "member", CreatedAt: t0, Identities: []api.Identity{
+			{Issuer: "https://idp.test", Subject: "sub-1", Email: "bob@x.test", LastLoginAt: t0}}}),
+		"POST /v1/users/bob/identities":        record(nil),
+		"POST /v1/users/bob/identities/unlink": record(nil),
+		"POST /v1/users/ann/transfer":          record(api.TransferredArtifacts{Transferred: []string{"demo", "notes"}}),
+		"GET /v1/health":                       record(api.Health{Status: "ok", Version: "1.2.3"}),
+		"GET /v1/artifacts":                    record(api.ArtifactList{Items: []api.Artifact{demo}}),
 	})
 	tests := []struct {
 		args       []string
@@ -705,8 +728,8 @@ func TestRunAdmin(t *testing.T) {
 		wantBody   string
 		wantQuery  string
 	}{
-		{args: []string{"users", "list"}, wantOut: "HANDLE  EMAIL       ROLE   USED     QUOTA    DISABLED                   CREATED\n" +
-			"ann     ann@x.test  admin  2.0 KiB  1.0 GiB  2026-10-01T14:00:00+02:00  2026-10-01T14:00:00+02:00\n"},
+		{args: []string{"users", "list"}, wantOut: "HANDLE  EMAIL       ROLE   STATE     USED     QUOTA    LAST ACTIVE  CREATED\n" +
+			"ann     ann@x.test  admin  disabled  2.0 KiB  1.0 GiB  -            2026-10-01T14:00:00+02:00\n"},
 		{args: []string{"users", "create", "bob", "--quota", "500MiB", "--role", "member"},
 			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500.0 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
 			wantBody: `{"handle":"bob","role":"member","quota_bytes":524288000}`},
@@ -727,9 +750,24 @@ func TestRunAdmin(t *testing.T) {
 		{args: []string{"audit", "--since", "2026-10-01T00:00:00+02:00", "--slug", "demo", "--limit", "5"},
 			wantOut: "AT                         ACTOR  ACTION           SLUG  DETAILS\n" +
 				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  a=b, version=1\n",
-			wantQuery: "limit=5&since=2026-10-01T00%3A00%3A00%2B02%3A00&slug=demo"},
+			wantStderr: "more results: --cursor c2\n",
+			wantQuery:  "limit=5&since=2026-10-01T00%3A00%3A00%2B02%3A00&slug=demo"},
+		{args: []string{"audit", "--until", "2026-10-02T00:00:00Z", "--actor", "ann", "--action", "artifact.", "--action", "key.issue", "--cursor", "c1"},
+			wantOut: "AT                         ACTOR  ACTION           SLUG  DETAILS\n" +
+				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  a=b, version=1\n",
+			wantStderr: "more results: --cursor c2\n",
+			wantQuery:  "action=artifact.&action=key.issue&actor=ann&cursor=c1&until=2026-10-02T00%3A00%3A00Z"},
+		{args: []string{"users", "transfer", "ann", "bob"}, wantOut: "2 artifacts of ann now belong to bob\ndemo\nnotes\n",
+			wantBody: `{"owner":"bob"}`},
+		{args: []string{"identities", "list", "bob"}, wantOut: "ISSUER            SUBJECT  EMAIL       LAST SIGN-IN\n" +
+			"https://idp.test  sub-1    bob@x.test  2026-10-01T14:00:00+02:00\n"},
+		{args: []string{"identities", "link", "bob", "--issuer", "https://idp.test", "--subject", "sub-1", "--email", "bob@x.test"},
+			wantOut: "linked sub-1 to bob\n", wantBody: `{"issuer":"https://idp.test","subject":"sub-1","email":"bob@x.test"}`},
+		{args: []string{"identities", "unlink", "bob", "--issuer", "https://idp.test", "--subject", "sub-1"},
+			wantOut: "unlinked sub-1 from bob\n", wantBody: `{"issuer":"https://idp.test","subject":"sub-1"}`},
 		{args: []string{"health"}, wantOut: "ok (server 1.2.3)\n"},
-		{args: []string{"artifacts", "list", "--deleted", "only"}, wantQuery: "deleted=only",
+		{args: []string{"artifacts", "list", "--deleted", "only", "--search", "q3 report", "--visibility", "members"},
+			wantQuery: "deleted=only&q=q3+report&visibility=members",
 			wantOut: "OWNER  SLUG  VERSION  VISIBILITY  STATE  SIZE     UPDATED                    NAME\n" +
 				"peter  demo  2/3      public      live   1.5 KiB  2026-10-01T15:00:00+02:00  Demo page\n"},
 	}

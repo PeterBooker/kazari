@@ -28,7 +28,8 @@ type GrantStore interface {
 }
 
 // AdminDeps are the collaborators of the admin API. Jobs, Grants, Audit,
-// Settings and Metrics may be nil; their routes are then absent.
+// Sessions, Backup, Ready, Settings and Metrics may be nil; their routes are
+// then absent.
 type AdminDeps struct {
 	Artifacts *artifact.Service
 	Users     *user.Service
@@ -36,6 +37,9 @@ type AdminDeps struct {
 	Audit     audit.Reader
 	Jobs      *scheduler.Scheduler
 	Grants    GrantStore
+	Sessions  Sessions
+	Backup    BackupWriter
+	Ready     ReadyChecker
 	Settings  func() map[string]any // effective config, secrets redacted
 	Metrics   http.Handler          // mounted at /metrics, behind AdminOptions.MetricsToken
 	Links     present.Links
@@ -59,22 +63,29 @@ type AdminOptions struct {
 	// MetricsToken is the bearer token /metrics requires; empty leaves it
 	// open.
 	MetricsToken string
-	Telemetry    instrument.Providers
+	// BackupName names the instance in the file name of a backup, as in
+	// kazari-<name>-<time>.tar; the base domain.
+	BackupName string
+	Telemetry  instrument.Providers
 }
 
 type adminAPI struct {
 	base
 	d AdminDeps
+	o AdminOptions
 }
 
 // NewAdminAPI returns the admin host handler: /v1 behind the admin token or an
 // admin-role key (or open, with AdminOptions.Local), /health open and
 // /metrics behind AdminOptions.MetricsToken.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
-	h := &adminAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d}
 	if o.IPRatePerMinute == 0 {
 		o.IPRatePerMinute = DefaultIPRatePerMinute
 	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	h := &adminAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o}
 
 	v1 := http.NewServeMux()
 	handle := func(pattern string, fn apiFunc) { v1.Handle(pattern, h.serve(fn)) }
@@ -88,6 +99,21 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	handle("POST /v1/users/{handle}/keys/{prefix}/rotate", h.rotateKey)
 	handle("POST /v1/users/{handle}/identities", h.linkIdentity)
 	handle("POST /v1/users/{handle}/identities/unlink", h.unlinkIdentity)
+	handle("POST /v1/users/{handle}/transfer", h.transferAll)
+	handle("POST /v1/users/{handle}/links", h.issueLink)
+	handle("POST /v1/invites", h.invite)
+	handle("GET /v1/invites", h.listLinks)
+	handle("DELETE /v1/invites/{id}", h.revokeLink)
+	handle("POST /v1/setup-link", h.setupLink)
+	if d.Sessions != nil {
+		handle("DELETE /v1/users/{handle}/sessions", h.endSessions)
+	}
+	if d.Backup != nil {
+		handle("POST /v1/backup", h.backup)
+	}
+	if d.Ready != nil {
+		handle("GET /v1/ready", h.ready)
+	}
 	if d.Grants != nil {
 		handle("GET /v1/users/{handle}/grants", h.listGrants)
 		handle("DELETE /v1/grants/{id}", h.revokeGrant)
@@ -142,9 +168,13 @@ func (h *adminAPI) listUsers(w http.ResponseWriter, r *http.Request, _ auth.Prin
 	if err != nil {
 		return err
 	}
+	accounts, err := h.accounts(r.Context())
+	if err != nil {
+		return err
+	}
 	out := make([]api.User, 0, len(users))
 	for i := range users {
-		u := present.User(&users[i])
+		u := present.WithAccount(present.User(&users[i]), accounts[users[i].Handle])
 		if u.UsedBytes, err = h.d.Artifacts.Usage(r.Context(), u.Handle); err != nil {
 			return err
 		}
@@ -183,15 +213,39 @@ func (h *adminAPI) getUser(w http.ResponseWriter, r *http.Request, _ auth.Princi
 	if err != nil {
 		return err
 	}
-	out := present.User(u)
+	accounts, err := h.accounts(r.Context())
+	if err != nil {
+		return err
+	}
+	out := present.WithAccount(present.User(u), accounts[handle])
 	for _, id := range ids {
 		out.Identities = append(out.Identities, present.Identity(id))
 	}
 	if out.UsedBytes, err = h.d.Artifacts.Usage(r.Context(), handle); err != nil {
 		return err
 	}
+	if h.d.Sessions != nil {
+		n, err := h.d.Sessions.CountSessions(r.Context(), handle)
+		if err != nil {
+			return err
+		}
+		out.Sessions = &n
+	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// accounts returns how every person signs in, by handle.
+func (h *adminAPI) accounts(ctx context.Context) (map[string]user.Account, error) {
+	all, err := h.d.Users.Accounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[string]user.Account, len(all))
+	for _, a := range all {
+		by[a.Handle] = a
+	}
+	return by, nil
 }
 
 func (h *adminAPI) updateUser(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
@@ -347,6 +401,23 @@ func (h *adminAPI) transfer(w http.ResponseWriter, r *http.Request, p auth.Princ
 	return nil
 }
 
+// transferAll hands every artifact of the user in the path to another owner.
+func (h *adminAPI) transferAll(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	var req api.TransferRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, false); err != nil {
+		return err
+	}
+	moved, err := h.d.Artifacts.TransferAll(r.Context(), present.Actor(p), r.PathValue("handle"), req.Owner)
+	if err != nil {
+		return err
+	}
+	if moved == nil {
+		moved = []string{}
+	}
+	writeJSON(w, http.StatusOK, api.TransferredArtifacts{Transferred: moved})
+	return nil
+}
+
 func (h *adminAPI) hide(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	a, err := h.d.Artifacts.SetVisibility(r.Context(), present.Actor(p), r.PathValue("slug"), artifact.Unpublished)
 	if err != nil {
@@ -404,21 +475,28 @@ func (h *adminAPI) listAudit(w http.ResponseWriter, r *http.Request, _ auth.Prin
 	if err != nil {
 		return err
 	}
-	aq := audit.Query{Slug: q.Get("slug"), Actor: q.Get("actor"), Limit: limit}
-	if s := q.Get("since"); s != "" {
+	aq := audit.Query{Slug: q.Get("slug"), Actor: q.Get("actor"), Actions: q["action"], Cursor: q.Get("cursor"), Limit: limit}
+	for _, bound := range []struct {
+		name string
+		dst  *time.Time
+	}{{"since", &aq.Since}, {"until", &aq.Until}} {
+		s := q.Get(bound.name)
+		if s == "" {
+			continue
+		}
 		t, err := time.Parse(time.RFC3339, s)
 		if err != nil {
-			return invalid("since must be an RFC 3339 time")
+			return invalid("%s must be an RFC 3339 time", bound.name)
 		}
-		aq.Since = t
+		*bound.dst = t
 	}
-	events, err := h.d.Audit.List(r.Context(), aq)
+	page, err := h.d.Audit.List(r.Context(), aq)
 	if err != nil {
 		return err
 	}
-	out := make([]api.AuditEvent, 0, len(events))
-	for _, e := range events {
-		out = append(out, present.AuditEvent(e))
+	out := api.AuditList{Events: make([]api.AuditEvent, 0, len(page.Events)), NextCursor: page.NextCursor}
+	for _, e := range page.Events {
+		out.Events = append(out.Events, present.AuditEvent(e))
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil

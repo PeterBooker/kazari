@@ -88,6 +88,32 @@ func TestRedactAdminPath(t *testing.T) {
 		"/v1/users":                        "/v1/users",
 		"/v1/artifacts/q3-report/transfer": "/v1/artifacts/q3-report/transfer",
 		"/metrics":                         "/metrics",
+		"/v1/users/peter/sessions":         "/v1/users/REDACTED/sessions",
+		"/v1/users/peter/links":            "/v1/users/REDACTED/links",
+		"/v1/invites":                      "/v1/invites",
+		"/v1/invites/7":                    "/v1/invites/REDACTED",
+		// The dashboard, on the same host.
+		"/":                                  "/",
+		"/people":                            "/people",
+		"/people/peter":                      "/people/REDACTED",
+		"/people/peter/disable":              "/people/REDACTED/disable",
+		"/people/peter/keys":                 "/people/REDACTED/keys",
+		"/people/peter/keys/ab12cd34/revoke": "/people/REDACTED/keys/REDACTED/revoke",
+		"/people/peter/apps/42/revoke":       "/people/REDACTED/apps/REDACTED/revoke",
+		"/people/peter/identities/unlink":    "/people/REDACTED/identities/unlink",
+		"/invites/new":                       "/invites/new",
+		"/invites/7/revoke":                  "/invites/REDACTED/revoke",
+		"/pages/q3-report":                   "/pages/q3-report",
+		"/system/jobs/gc/run":                "/system/jobs/gc/run",
+		"/users/peter":                       "/users/peter",
+		"/v1/people/peter":                   "/v1/people/peter",
+		// The account pages.
+		"/account/":                     "/account/",
+		"/account/keys":                 "/account/keys",
+		"/account/keys/ab12cd34/rotate": "/account/keys/REDACTED/rotate",
+		"/account/apps/42/revoke":       "/account/apps/REDACTED/revoke",
+		"/account/invite":               "/account/invite",
+		"/v1/account/keys/ab12cd34":     "/v1/account/keys/ab12cd34",
 	} {
 		if got := RedactAdminPath(in); got != want {
 			t.Errorf("RedactAdminPath(%q) = %q, want %q", in, got, want)

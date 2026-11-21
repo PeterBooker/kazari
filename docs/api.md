@@ -5,7 +5,7 @@ Kazari has two REST APIs, each on its own host:
 | API                     | Base URL                  | What it is for                                |
 | ----------------------- | ------------------------- | --------------------------------------------- |
 | [User API](#user-api)   | `https://api.<base>/v1`   | Publishing and managing artifacts             |
-| [Admin API](#admin-api) | `https://admin.<base>/v1` | Users, keys, jobs, settings and the audit log |
+| [Admin API](#admin-api) | `https://admin.<base>/v1` | Users, invites, keys, jobs, settings, backups and the audit log |
 
 `<base>` is the instance's base domain, such as `art.example.com`. Both APIs speak JSON (`Content-Type: application/json`) unless a route says otherwise. The MCP server and the CLI use the same wire types, so an artifact looks the same everywhere.
 
@@ -300,6 +300,8 @@ The query takes these parameters:
 | Parameter        | Values                               | Default    |
 | ---------------- | ------------------------------------ | ---------- |
 | `mine`           | `created`, `updated`, `any`          | No filter  |
+| `q`              | Text to find in the slug or the name, ignoring the case of ASCII letters; at most 100 bytes | No filter |
+| `visibility`     | `public`, `unlisted`, `members`, `unpublished` | No filter |
 | `metadata.<key>` | Exact value; repeat for several keys | No filter  |
 | `stale`          | `include`, `exclude`, `only`         | `include`  |
 | `deleted`        | `exclude`, `include`, `only`         | `exclude`  |
@@ -307,6 +309,8 @@ The query takes these parameters:
 | `limit`          | 1 to 200                             | 50         |
 
 You see public and `members` artifacts that are published and live, plus every artifact you own, created or updated, whatever its visibility. Purged artifacts never appear.
+
+`visibility=unpublished` keeps the artifacts that are offline; each of the other three values keeps the artifacts with that visibility that are not.
 
 The response holds the page and a cursor for the next one:
 
@@ -759,6 +763,8 @@ The new key is bounded by the key that issued it:
 
 A request for more is `403 forbidden`. Revoking a key revokes every key issued with it.
 
+A person holds 50 live keys at most, counting every key that is neither revoked nor expired, however it was issued. At that number a new key is refused with `403 too_many_keys`.
+
 #### Rotate a key: `POST /me/keys/{prefix}/rotate`
 
 Issues a key with the same label, scopes, restriction and lifetime as the key with that prefix, and sets the old key to expire when the overlap ends. Both keys work in between, so the new one can be put in place first. The body is optional:
@@ -777,7 +783,7 @@ Revokes the key with that prefix at once, and with it every key that was issued 
 
 ## Admin API
 
-The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials). `/health` and `/v1/health` need no credential. On the public listener, `/metrics` needs the scrape token, `telemetry.metrics.token`, as a bearer token, and is absent while that is empty ([metrics](ops.md#metrics)). On the server's host the same API is served on the admin socket in the data directory, where no credential is needed; the CLI uses it ([the admin socket](cli.md#the-admin-socket)).
+The admin API's base URL is `https://admin.<base>/v1`. Every `/v1` route needs the admin token or an [admin credential](#admin-credentials) as a bearer token; the session cookie of the [dashboard](dashboard.md), which the same host serves at `/`, is not one. `/health` and `/v1/health` need no credential. On the public listener, `/metrics` needs the scrape token, `telemetry.metrics.token`, as a bearer token, and is absent while that is empty ([metrics](ops.md#metrics)). On the server's host the same API is served on the admin socket in the data directory, where no credential is needed; the CLI uses it ([the admin socket](cli.md#the-admin-socket)).
 
 These are its routes, with the body or query parameters each takes and its response on success:
 
@@ -785,8 +791,15 @@ These are its routes, with the body or query parameters each takes and its respo
 | -------- | ----------------------------------- | --------------------------------------------------------- | --------------------------------------- |
 | `GET`    | `/users`                            |                                                           | `200` users                             |
 | `POST`   | `/users`                            | `{handle, email?, display_name?, role?, quota_bytes?}`    | `201` user                              |
-| `GET`    | `/users/{handle}`                   |                                                           | `200` user with `identities` and `used_bytes` |
+| `GET`    | `/users/{handle}`                   |                                                           | `200` user with `identities`, `used_bytes` and `sessions` |
 | `PATCH`  | `/users/{handle}`                   | `{email?, display_name?, role?, quota_bytes?, disabled?}` | `200` user                              |
+| `POST`   | `/users/{handle}/transfer`          | `{owner}`                                                 | `200` `{transferred}`                   |
+| `POST`   | `/users/{handle}/links`             | `{purpose, revoke_all?}`                                  | `201` created link                      |
+| `DELETE` | `/users/{handle}/sessions`          |                                                           | `204`                                   |
+| `POST`   | `/invites`                          | `{handle, email?, display_name?, role?, quota_bytes?}`    | `201` `{user, link}`                    |
+| `GET`    | `/invites`                          |                                                           | `200` links                             |
+| `DELETE` | `/invites/{id}`                     |                                                           | `204`                                   |
+| `POST`   | `/setup-link`                       |                                                           | `201` created link                      |
 | `GET`    | `/users/{handle}/keys`              |                                                           | `200` keys                              |
 | `POST`   | `/users/{handle}/keys`              | `{label?, scopes?, slugs?, expires_in?}`                  | `201` issued key                        |
 | `POST`   | `/users/{handle}/keys/{prefix}/rotate` | `{overlap?}`                                           | `201` issued key                        |
@@ -801,7 +814,9 @@ These are its routes, with the body or query parameters each takes and its respo
 | `GET`    | `/settings`                         |                                                           | `200` effective config                  |
 | `GET`    | `/jobs`                             |                                                           | `200` job statuses                      |
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
-| `GET`    | `/audit`                            | `since`, `slug`, `actor`, `limit`                         | `200` events                            |
+| `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
+| `POST`   | `/backup`                           | `certs`                                                   | `200` tar archive                       |
+| `GET`    | `/ready`                            | `fresh`                                                   | `200` `{ready, checked_at, checks}`     |
 | `GET`    | `/health` (also `/v1/health`)       |                                                           | `200` `{"status":"ok","version":"..."}` |
 | `GET`    | `/metrics`                          | `Authorization: Bearer <telemetry.metrics.token>`         | Prometheus text or OpenMetrics          |
 
@@ -828,6 +843,53 @@ A user's fields follow these rules:
 
 `"disabled": true` stamps `disabled_at` and revokes every API key and OAuth grant of the user and every share link they created. `false` re-enables the user, but all of these stay revoked.
 
+Two changes are refused. Disabling or demoting the last active admin is `409 last_admin`. A person disabling or demoting their own account, with their own admin key, is `403 forbidden`; the admin token and the admin socket are no person and are not stopped by this.
+
+On `GET /users` and `GET /users/{handle}`, a user also carries how they sign in:
+
+| Field            | Meaning                                                                    |
+| ---------------- | -------------------------------------------------------------------------- |
+| `password`       | `true` when the user has set a password                                    |
+| `invited`        | `true` when an invite was made for the user and no password is set yet     |
+| `keys`           | The number of live API keys                                                |
+| `last_active_at` | The latest of the last password sign-in, sign-in at the identity provider and key use |
+| `sessions`       | The number of browser sessions, on `GET /users/{handle}` only              |
+
+Fields that are `false`, `0` or unknown are left out.
+
+`POST /users/{handle}/transfer` gives every artifact the user owns, soft-deleted ones included, to the user named in `owner`, and answers with their slugs. An unknown handle, or the same user twice, is `422`:
+
+```json
+{ "transferred": ["q3-report", "weekly-2026-47"] }
+```
+
+`DELETE /users/{handle}/sessions` ends every browser session of the user, on every host. Their API keys and OAuth grants stay.
+
+### Invites and links
+
+On an instance with [built-in accounts](identity.md#built-in-accounts), a person sets their password through a link. These routes make, list and revoke the links. With built-in accounts off, the three that make a link answer `403 forbidden`.
+
+`POST /invites` creates a user without a password, with the [fields of a user](#users), and the invite link for them. Only an admin credential can invite with `"role": "admin"`. The response carries the link's address this once only:
+
+```json
+{
+  "user": { "handle": "ana", "role": "member", "invited": true, ... },
+  "link": {
+    "id": 12, "user": "ana", "purpose": "invite", "created_by": "peter",
+    "created_at": "2026-11-21T14:05:00Z", "expires_at": "2026-11-28T14:05:00Z",
+    "url": "https://art.example.com/account/invite?token=kzl_..."
+  }
+}
+```
+
+`POST /users/{handle}/links` makes a link for a user who exists. `purpose` is `invite`, to replace an invite that was lost or has lapsed, or `reset`, for a new password. With `"revoke_all": true`, using a reset link also revokes the user's API keys and OAuth grants. Any other `purpose` is `422`, and a disabled user is `403`.
+
+`POST /setup-link` makes the link that creates the first admin of a fresh instance. Once any user exists it answers `409 setup_done`.
+
+Every response that carries a `url` is sent with `Cache-Control: no-store`. Making a link ends the earlier unused link of the same user and purpose.
+
+`GET /invites` lists the links that can still be used, of every purpose, newest first, with `id`, `user`, `purpose`, `revoke_all`, `created_by`, `created_at` and `expires_at`, never the address. `DELETE /invites/{id}` ends one; a link that is used, revoked or expired, or an unknown id, is `404`.
+
 ### Keys
 
 A key's fields follow these rules:
@@ -849,7 +911,7 @@ The response carries the secret, this once only:
 
 ### Identities
 
-`POST /users/{handle}/identities` links an upstream `(issuer, subject)` to a user before they sign in, or moves one from another user. `POST /users/{handle}/identities/unlink` removes it. [Admin-created users](identity.md#admin-created-users) explains when to use them.
+`POST /users/{handle}/identities` links an upstream `(issuer, subject)` to a user before they sign in, or moves one from another user. `POST /users/{handle}/identities/unlink` removes it. [Admin-created users](identity.md#admin-created-users) explains when to use them, and [`kazari admin identities`](cli.md#identities) is the command for both.
 
 ### Grants
 
@@ -877,7 +939,66 @@ A job status has `name`, `every`, `last_run`, `last_error`, `next_run` and `runn
 
 ### Audit log
 
-`GET /audit` returns events newest first, each with `at`, `actor`, `action`, `slug` and `details`. `since` is an RFC 3339 time, and `limit` defaults to 100, at most 1000.
+`GET /audit` returns one page of events, newest first, each with `at`, `actor`, `action`, `slug` and `details`. For example, this reads what `ana` did to keys and pages since the start of October:
+
+```sh
+curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" \
+  "https://admin.art.example.com/v1/audit?actor=ana&action=key.&action=artifact.&since=2026-10-01T00:00:00Z"
+```
+
+The query takes these parameters:
+
+| Parameter | Values                                                                 | Default    |
+| --------- | ---------------------------------------------------------------------- | ---------- |
+| `since`   | An RFC 3339 time; events at or after it                                | No filter  |
+| `until`   | An RFC 3339 time; events before it                                     | No filter  |
+| `slug`    | An exact slug                                                          | No filter  |
+| `actor`   | A handle, `admin` or `scheduler`                                       | No filter  |
+| `action`  | An exact action, or a prefix ending in a dot such as `artifact.`; repeat for several, up to 32 | No filter |
+| `cursor`  | `next_cursor` of the previous page                                     | First page |
+| `limit`   | 1 to 1000                                                              | 100        |
+
+The response holds the page and a cursor for the next one:
+
+```json
+{ "events": [ { "at": "2026-11-21T14:05:00Z", "actor": "ana", "action": "key.issue", "details": { ... } } ], "next_cursor": "eyJ..." }
+```
+
+`next_cursor` is absent on the last page. A malformed `cursor` or time is `422`.
+
+### Backup
+
+`POST /backup` answers a backup of the instance as an uncompressed tar stream: the database as `kazari.db`, then every blob under `blobs/`. The response has `Content-Type: application/x-tar` and a `Content-Disposition` that names the file `kazari-<base_domain>-<date>.tar`:
+
+```sh
+curl -sS -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -o kazari.tar \
+  https://admin.art.example.com/v1/backup
+```
+
+`certs=true` adds `certmagic/`, the certificate with its private key. It is honoured on the admin socket alone and is `403 forbidden` anywhere else.
+
+Two refusals come before any byte of the archive: `409 backup_running` while another backup is written, and `507 no_space` when the data directory's `tmp/` cannot hold the copy of the database. A failure after the stream began closes the connection, so a transfer that ends early is not a complete archive.
+
+[`kazari admin backup`](cli.md#backups) calls this route and unpacks the stream; [backing up and restoring](ops.md#backing-up-and-restoring) covers the rest.
+
+### Readiness
+
+`GET /ready` reports whether the running server is set up correctly. It answers `200` whether or not a check failed; `ready` is `false` when one did:
+
+```json
+{
+  "ready": true,
+  "checked_at": "2026-11-21T14:05:00Z",
+  "checks": [
+    { "check": "config", "status": "ok", "detail": "the configuration is valid" },
+    { "check": "certificate", "status": "ok", "detail": "valid until 2027-02-12 (83 days)" }
+  ]
+}
+```
+
+A check's `status` is `ok`, `warn`, `fail` or `skip`, and the `detail` of a `warn` or `fail` ends with what to do next. The server answers from its last run when that is under 15 minutes old; `fresh=true` runs the checks now, which can take a minute. [Checking readiness](ops.md#checking-readiness) lists the checks.
+
+Unlike `/health`, this route needs an admin credential.
 
 ### Settings
 
@@ -889,7 +1010,7 @@ Every control-plane host applies token buckets. When a bucket is empty, the host
 
 ### Per client IP
 
-Before authentication, each client IP can make 120 requests a minute, with a burst of 120. The user API, the `mcp.` host and the admin API's `/v1/` routes each have their own bucket; on the `mcp.` host, the MCP endpoint and the OAuth endpoints share one.
+Before authentication, each client IP can make 120 requests a minute, with a burst of 120. The user API, the `mcp.` host, the admin API's `/v1/` routes and the account pages under `/account/` on the apex each have their own bucket; on the `mcp.` host, the MCP endpoint and the OAuth endpoints share one.
 
 IPv6 clients share one bucket per `/64`. `/health` and `/metrics` are not limited.
 
@@ -930,7 +1051,8 @@ These are the codes, with their HTTP status and meaning:
 | `forbidden`              | 403    | Missing scope, a slug outside the credential's restriction, write policy, disabled user, admin role required, or a key asked for more than the key making the request holds |
 | `quota_exceeded`         | 403    | The owner's storage quota would be exceeded                                        |
 | `too_many_uploads`       | 403    | The caller already has `limits.max_open_uploads` open uploads                      |
-| `not_found`              | 404    | No such artifact, user, key, grant, job or route; also a soft-deleted artifact on write routes |
+| `too_many_keys`          | 403    | The user already holds 50 live API keys                                            |
+| `not_found`              | 404    | No such artifact, user, key, grant, link, job or route; also a soft-deleted artifact on write routes |
 | `version_not_found`      | 404    | No such version                                                                    |
 | `file_not_found`         | 404    | No such file in the version                                                        |
 | `upload_not_found`       | 404    | Unknown, expired or someone else's upload                                          |
@@ -942,9 +1064,13 @@ These are the codes, with their HTTP status and meaning:
 | `handle_taken`           | 409    | Admin API: handle exists                                                           |
 | `email_taken`            | 409    | Admin API: another user has the email                                              |
 | `job_running`            | 409    | Admin API: the job is already running                                              |
+| `backup_running`         | 409    | Admin API: another backup is being written                                         |
+| `last_admin`             | 409    | Admin API: the change would disable or demote the last active admin                |
+| `setup_done`             | 409    | Admin API: the instance already has users, so no setup link is made                |
 | `gone`                   | 410    | The artifact has been purged                                                       |
 | `fetch_failed`           | 502    | A URL named by `url` or `source_url` could not be fetched; the message says why    |
 | `version_conflict`       | 412    | `expected_version` / `If-Match` is not the latest version                          |
 | `too_large`              | 413    | A file, imported page, version, chunk, upload, manifest or request body is over its limit |
 | `rate_limited`           | 429    | Too many requests; see `Retry-After` and [Rate limits](#rate-limits)               |
 | `internal`               | 500    | Server fault; details are logged, never returned                                   |
+| `no_space`               | 507    | Admin API: too little free space for a backup's copy of the database               |

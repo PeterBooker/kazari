@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -134,6 +135,69 @@ func TestAdminArtifacts(t *testing.T) {
 	if a.UnpublishedAt == nil {
 		t.Errorf("hidden artifact = %+v", a)
 	}
+
+	for query, want := range map[string][]string{
+		"?q=HID":                   {"hidden"},
+		"?q=nothing":               {},
+		"?visibility=unlisted":     {"hidden"},
+		"?visibility=unpublished":  {"shown"},
+		"?visibility=public":       {},
+		"?visibility=":             {"hidden", "shown"},
+		"?q=h&visibility=unlisted": {"hidden"},
+	} {
+		e.call(http.MethodGet, e.a("/v1/artifacts"+query), adminToken, nil, http.StatusOK, &l)
+		got := []string{}
+		for _, it := range l.Items {
+			got = append(got, it.Slug)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("admin list %s = %v, want %v", query, got, want)
+		}
+	}
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/artifacts?visibility=private"), token: adminToken}), 422, api.CodeInvalidArgument)
+	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/artifacts?q=" + strings.Repeat("a", 101)), token: adminToken}), 422, api.CodeInvalidArgument)
+}
+
+func TestAdminTransferAll(t *testing.T) {
+	e := newEnv(t, config{})
+	bob := e.member("bob", nil)
+	e.create(e.alice, "one")
+	e.create(e.alice, "two")
+	e.create(bob, "kept")
+	transfer := func(token, from, body string) *http.Response {
+		return e.send(req{method: http.MethodPost, url: e.a("/v1/users/" + from + "/transfer"), token: token,
+			contentType: "application/json", body: strings.NewReader(body)})
+	}
+
+	e.apiErr(transfer(e.alice, "alice", `{"owner":"bob"}`), 403, api.CodeForbidden)
+	e.apiErr(transfer(adminToken, "alice", `{"owner":"nobody"}`), 422, api.CodeInvalidArgument)
+	e.apiErr(transfer(adminToken, "nobody", `{"owner":"bob"}`), 422, api.CodeInvalidArgument)
+	e.apiErr(transfer(adminToken, "alice", `{"owner":"alice"}`), 422, api.CodeInvalidArgument)
+	e.apiErr(transfer(adminToken, "alice", `{}`), 422, api.CodeInvalidArgument)
+
+	var out api.TransferredArtifacts
+	e.expect(transfer(adminToken, "alice", `{"owner":"bob"}`), http.StatusOK, &out)
+	if !slices.Equal(out.Transferred, []string{"one", "two"}) {
+		t.Errorf("transferred = %v, want one and two", out.Transferred)
+	}
+	var l api.ArtifactList
+	e.call(http.MethodGet, e.a("/v1/artifacts?owner=bob"), adminToken, nil, http.StatusOK, &l)
+	if len(l.Items) != 3 {
+		t.Errorf("bob owns %d artifacts, want 3", len(l.Items))
+	}
+	var events api.AuditList
+	e.call(http.MethodGet, e.a("/v1/audit?action=artifact.transfer"), adminToken, nil, http.StatusOK, &events)
+	if len(events.Events) != 2 || events.Events[0].Details["from"] != "alice" || events.Events[0].Details["to"] != "bob" {
+		t.Errorf("transfer events = %+v", events.Events)
+	}
+
+	resp := transfer(adminToken, "alice", `{"owner":"bob"}`)
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || strings.TrimSpace(string(raw)) != `{"transferred":[]}` {
+		t.Errorf("second transfer = %d %s, want an empty list", resp.StatusCode, raw)
+	}
 }
 
 func TestAdminJobsAuditSettingsHealth(t *testing.T) {
@@ -152,16 +216,46 @@ func TestAdminJobsAuditSettingsHealth(t *testing.T) {
 	}
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.a("/v1/jobs/nope/run"), token: adminToken}), 404, api.CodeNotFound)
 
-	var events []api.AuditEvent
-	e.call(http.MethodGet, e.a("/v1/audit?slug=demo"), adminToken, nil, http.StatusOK, &events)
-	if len(events) != 1 || events[0].Action != audit.ArtifactCreate || events[0].Actor != "alice" {
+	auditList := func(query string) api.AuditList {
+		t.Helper()
+		var l api.AuditList
+		e.call(http.MethodGet, e.a("/v1/audit"+query), adminToken, nil, http.StatusOK, &l)
+		return l
+	}
+	if events := auditList("?slug=demo").Events; len(events) != 1 || events[0].Action != audit.ArtifactCreate || events[0].Actor != "alice" {
 		t.Errorf("audit = %+v", events)
 	}
-	e.call(http.MethodGet, e.a("/v1/audit?actor=alice&limit=10&since="+t0.Add(-time.Hour).Format(time.RFC3339)), adminToken, nil, http.StatusOK, &events)
-	if len(events) != 2 { // the key issued in setup and the create
-		t.Errorf("audit by actor = %+v", events)
+	hourAgo, hourAhead := t0.Add(-time.Hour).Format(time.RFC3339), t0.Add(time.Hour).Format(time.RFC3339)
+	byActor := auditList("?actor=alice&limit=10&since=" + hourAgo)
+	if len(byActor.Events) != 2 || byActor.NextCursor != "" { // the key issued in setup and the create
+		t.Errorf("audit by actor = %+v", byActor)
 	}
-	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/audit?since=yesterday"), token: adminToken}), 422, api.CodeInvalidArgument)
+	if events := auditList("?actor=alice&until=" + hourAgo).Events; events == nil || len(events) != 0 {
+		t.Errorf("audit until an hour ago = %#v, want an empty list", events)
+	}
+	if events := auditList("?actor=alice&until=" + hourAhead).Events; len(events) != 2 {
+		t.Errorf("audit until an hour ahead = %+v", events)
+	}
+	if events := auditList("?action=artifact.").Events; len(events) != 1 || events[0].Action != audit.ArtifactCreate {
+		t.Errorf("audit by action prefix = %+v", events)
+	}
+	if events := auditList("?action=key.issue&action=artifact.create&actor=alice").Events; len(events) != 2 {
+		t.Errorf("audit by two actions = %+v", events)
+	}
+	if events := auditList("?action=artifact.publish").Events; len(events) != 0 {
+		t.Errorf("audit by an action nobody took = %+v", events)
+	}
+	first := auditList("?actor=alice&limit=1")
+	if len(first.Events) != 1 || first.NextCursor == "" {
+		t.Fatalf("first audit page = %+v, want one event and a cursor", first)
+	}
+	second := auditList("?actor=alice&limit=1&cursor=" + first.NextCursor)
+	if len(second.Events) != 1 || second.NextCursor != "" || second.Events[0].Action == first.Events[0].Action {
+		t.Errorf("second audit page = %+v after %+v", second, first)
+	}
+	for _, q := range []string{"?since=yesterday", "?until=tomorrow", "?cursor=nope", "?action="} {
+		e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/audit" + q), token: adminToken}), 422, api.CodeInvalidArgument)
+	}
 
 	var settings map[string]any
 	e.call(http.MethodGet, e.a("/v1/settings"), adminToken, nil, http.StatusOK, &settings)

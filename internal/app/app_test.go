@@ -24,6 +24,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/app"
 	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 const adminToken = "test-admin"
@@ -67,6 +68,10 @@ func testConfig(t testing.TB) config.Config {
 	return cfg
 }
 
+// cheapArgon2 keeps password hashing out of the tests' run time: the real
+// parameters cost 64 MiB a hash.
+var cheapArgon2 = user.Argon2{Memory: 64, Time: 1, Threads: 1}
+
 type instance struct {
 	app   *app.App
 	clock *clock
@@ -84,7 +89,16 @@ func startWith(t testing.TB, cfg config.Config, opts app.Options) *instance {
 	t.Helper()
 	clk := &clock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 	ctx, cancel := context.WithCancel(context.Background())
-	opts.Now, opts.Logger = clk.Now, testLogger()
+	opts.Now = clk.Now
+	if opts.Logger == nil {
+		opts.Logger = testLogger()
+	}
+	if opts.Stderr == nil {
+		opts.Stderr = io.Discard
+	}
+	if opts.Argon2 == (user.Argon2{}) {
+		opts.Argon2 = cheapArgon2
+	}
 	a, err := app.New(ctx, cfg, opts)
 	if err != nil {
 		cancel()

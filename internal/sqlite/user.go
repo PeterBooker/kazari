@@ -150,15 +150,38 @@ func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
 func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.UpdateUser")
 	defer func() { end(err) }()
-	res, err := s.db.ExecContext(ctx, `UPDATE user
-		SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
-		WHERE handle = ?`,
-		userNullEmail(u.Email), u.DisplayName, string(u.Role), u.QuotaBytes,
-		nullNanos(u.DisabledAt), u.Handle)
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		var (
+			role     string
+			disabled sql.NullInt64
+		)
+		err := tx.QueryRowContext(ctx, `SELECT role, disabled_at FROM user WHERE handle = ?`, u.Handle).Scan(&role, &disabled)
+		if errors.Is(err, sql.ErrNoRows) {
+			return user.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		wasAdmin := user.Role(role) == user.RoleAdmin && !disabled.Valid
+		if wasAdmin && (u.Role != user.RoleAdmin || u.DisabledAt != nil) {
+			var others int
+			err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user
+				WHERE role = 'admin' AND disabled_at IS NULL AND handle <> ?`, u.Handle).Scan(&others)
+			if err != nil {
+				return err
+			}
+			if others == 0 {
+				return user.ErrLastAdmin
+			}
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE user
+			SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
+			WHERE handle = ?`,
+			userNullEmail(u.Email), u.DisplayName, string(u.Role), u.QuotaBytes,
+			nullNanos(u.DisabledAt), u.Handle)
+		return userUniqueErr(err)
+	})
 	if err != nil {
-		return fmt.Errorf("sqlite: update user %q: %w", u.Handle, userUniqueErr(err))
-	}
-	if err := userOneRow(res, user.ErrNotFound); err != nil {
 		return fmt.Errorf("sqlite: update user %q: %w", u.Handle, err)
 	}
 	return nil
@@ -179,11 +202,25 @@ func userJoinScopes(scopes []string) string { return strings.Join(scopes, " ") }
 
 func userSplitScopes(s string) []string { return strings.Fields(s) }
 
-// userInsertKey resolves k.IssuedBy among the keys of the same user.
-func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey) error {
+// userInsertKey resolves k.IssuedBy among the keys of the same user, and
+// counts their live keys against maxLive inside the caller's transaction, so
+// concurrent requests cannot pass the limit together.
+func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey, maxLive int) error {
 	uid, err := userLookupID(ctx, tx, k.UserHandle)
 	if err != nil {
 		return err
+	}
+	if maxLive > 0 {
+		var live int
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_key
+			WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+			uid, toNanos(k.CreatedAt)).Scan(&live)
+		if err != nil {
+			return err
+		}
+		if live >= maxLive {
+			return fmt.Errorf("%w: %d is the limit; revoke one first", user.ErrTooManyKeys, maxLive)
+		}
 	}
 	var issuer sql.NullInt64
 	if k.IssuedBy != "" {
@@ -210,17 +247,17 @@ func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey) error {
 	return err
 }
 
-func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) (err error) {
+func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey, maxLive int) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateKey")
 	defer func() { end(err) }()
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertKey(ctx, tx, k) })
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertKey(ctx, tx, k, maxLive) })
 	if err != nil {
 		return fmt.Errorf("sqlite: create key for %q: %w", k.UserHandle, err)
 	}
 	return nil
 }
 
-func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey, expires time.Time) (err error) {
+func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey, expires time.Time, maxLive int) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.RotateKey")
 	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -234,7 +271,7 @@ func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey
 		if err != nil {
 			return err
 		}
-		return userInsertKey(ctx, tx, k)
+		return userInsertKey(ctx, tx, k, maxLive)
 	})
 	if err != nil {
 		return fmt.Errorf("sqlite: rotate key %q of %q: %w", prefix, k.UserHandle, err)

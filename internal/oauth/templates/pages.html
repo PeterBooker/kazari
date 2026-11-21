@@ -1,97 +1,71 @@
-{{define "head"}}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>{{.}} · Kazari</title>
-<style>
-  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f6f6f4; --card: #fff; --muted: #66666b; --line: #deded9; --accent: #2457c5; --err: #b3261e; }
-  @media (prefers-color-scheme: dark) { :root { --fg: #ececea; --bg: #161617; --card: #222224; --muted: #a0a0a6; --line: #38383b; --accent: #7aa2ff; --err: #ff8a80; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 48px 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
-  main { max-width: 440px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
-  h1 { font-size: 1.3rem; margin: 0 0 12px; }
-  p { margin: 0 0 12px; }
-  .muted { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
-  .error { color: var(--err); }
-  ul { margin: 0 0 16px; padding-left: 20px; }
-  code { font-size: .9em; }
-  label { display: block; font-weight: 600; margin: 16px 0 6px; }
-  details { margin-top: 16px; }
-  summary { cursor: pointer; color: var(--accent); }
-  input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
-  .actions { display: flex; gap: 12px; margin-top: 20px; }
-  button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-</style>
-</head>
-<body>
-<main>
-{{end}}
-
-{{define "foot"}}</main>
-</body>
-</html>
-{{end}}
-
-{{define "message"}}{{template "head" .Title}}
-<h1>{{.Title}}</h1>
+{{define "message"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">{{.Title}}</h1>
 <p>{{.Message}}</p>
-{{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
-{{template "foot"}}{{end}}
+{{if .Detail}}<p class="help mono">{{.Detail}}</p>
+{{end}}{{end}}{{template "theme/door-close" .Foot}}{{end}}
 
-{{define "consent"}}{{template "head" "Authorize access"}}
-<h1>Authorize {{.ClientName}}</h1>
+{{define "alert"}}<p class="error" role="alert">{{template "icon/alert"}}<span>{{.}}</span></p>
+{{end}}
+
+{{define "consent"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">Authorize <b>{{.ClientName}}</b></h1>
 {{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Kazari instance.</p>
-{{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Kazari instance.</p>{{end}}
-<p class="muted">Client: {{.ClientID}}<br>Returns to: {{.RedirectHost}}</p>
+{{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Kazari instance.</p>
+{{end}}<p class="soft">Returns to <span class="mono">{{.RedirectHost}}</span><br>Client <span class="mono">{{.ClientID}}</span></p>
+<div>
 <p>It will be allowed to:</p>
-<ul>
-{{range .Scopes}}<li>{{.Description}} <span class="muted">(<code>{{.Name}}</code>)</span></li>
+<ul class="dash">
+{{range .Scopes}}<li>{{.Description}} <span class="mono soft">{{.Name}}</span></li>
 {{end}}</ul>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<form method="post" action="/oauth/consent">
+</div>
+{{if .Error}}{{template "alert" .Error}}{{end}}<form method="post" action="/oauth/consent">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
-{{if .AskKey}}<label for="api_key">API key</label>
-<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
-<p class="muted">The connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked.</p>{{end}}
-{{if .OfferKey}}<details{{if .Error}} open{{end}}>
+{{if .AskKey}}<div class="field"><label for="api_key">API key</label>
+<input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" aria-describedby="api_key_help">
+<p class="help" id="api_key_help">The connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked.</p></div>
+{{end}}{{if .OfferKey}}<details{{if .Error}} open{{end}} class="more">
 <summary>Approve with an API key instead</summary>
-<label for="api_key">API key</label>
-<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
-<p class="muted">For a connection that should do less than you can, such as a scheduled agent. With one of your own keys here, the connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked. Leave it empty to approve as yourself.</p>
-</details>{{end}}
-<div class="actions">
-<button type="submit" name="action" value="deny">Deny</button>
-<button type="submit" name="action" value="approve" class="primary">Approve</button>
+<div class="field"><label for="api_key">API key</label>
+<input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" aria-describedby="api_key_help">
+<p class="help" id="api_key_help">For a connection that should do less than you can, such as a scheduled agent. With one of your own keys here, the connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked. Leave it empty to approve as yourself.</p></div>
+</details>
+{{end}}<div class="actions">
+<button type="submit" class="btn" name="action" value="deny">Deny</button>
+<button type="submit" class="btn btn-primary" name="action" value="approve">Approve</button>
 </div>
 </form>
-{{template "foot"}}{{end}}
+{{end}}{{template "theme/door-close" .Foot}}{{end}}
 
-{{define "signout"}}{{template "head" "Sign out"}}
-<h1>Sign out</h1>
+{{define "signout"}}{{template "theme/door" .Page}}<h1 class="title">Sign out</h1>
 <p>Sign out of this Kazari instance in this browser? Every page you have open here will ask you to sign in again.</p>
 <form method="post" action="/oauth/signout">
 <div class="actions">
-<button type="submit" class="primary">Sign out</button>
+<button type="submit" class="btn btn-primary">Sign out</button>
 </div>
 </form>
-{{template "foot"}}{{end}}
+{{template "theme/door-close" .Foot}}{{end}}
 
-{{define "signin"}}{{template "head" "Sign in"}}
-<h1>Sign in to view this page</h1>
-<p><strong>{{.Site}}</strong> is only open to members of this Kazari instance.</p>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<form method="post" action="/oauth/signin">
-<input type="hidden" name="host" value="{{.Host}}">
+{{define "signin"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">{{.Title}}</h1>
+{{if .Site}}<p><strong>{{.Site}}</strong> is only open to members of this Kazari instance.</p>
+{{else}}<p>{{.Lede}}</p>
+{{end}}{{if .Error}}{{template "alert" .Error}}{{end}}<form method="post" action="/oauth/signin">
+{{if .RequestID}}<input type="hidden" name="request_id" value="{{.RequestID}}">
+{{else}}<input type="hidden" name="host" value="{{.Host}}">
 <input type="hidden" name="path" value="{{.Path}}">
 <input type="hidden" name="nonce" value="{{.Nonce}}">
-<label for="api_key">API key</label>
-<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
-<p class="muted">Any of your keys that can read artifacts works. You stay signed in for {{.Lifetime}}, or until the key is revoked.</p>
-<div class="actions">
-<button type="submit" class="primary">Sign in</button>
+{{end}}{{if .Password}}<div class="field"><label for="login">Handle or email</label>
+<input class="input" type="text" id="login" name="login" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+<div class="field"><label for="password">Password</label>
+<input class="input" type="password" id="password" name="password" autocomplete="current-password" required aria-describedby="password_help">
+<p class="help" id="password_help">You stay signed in for {{.Lifetime}}.</p></div>
+{{else}}<div class="field"><label for="api_key">API key</label>
+<input class="input input-mono" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…" required aria-describedby="api_key_help">
+<p class="help" id="api_key_help">{{if eq .Host "@admin"}}A key that holds the admin scope opens the dashboard.{{else}}Any of your keys that can read artifacts works.{{end}} You stay signed in for {{.Lifetime}}, or until the key is revoked.</p></div>
+{{end}}<div class="actions">
+<button type="submit" class="btn btn-primary">Sign in</button>
 </div>
 </form>
-{{template "foot"}}{{end}}
+{{if or .Password .Switch}}<div class="door-alt">
+{{if .Switch}}<a class="link" href="{{.Switch}}">{{if .Password}}Use an API key instead{{else}}Use your password instead{{end}}</a>
+{{end}}{{if and .RequestID .KeyConsent}}<a class="link" href="/oauth/consent?with=key">Use an API key instead</a>
+{{end}}{{if .Password}}<p class="help">No password yet, or lost it? Ask an admin of this instance for a link. Kazari sends no email.</p>
+{{end}}</div>
+{{end}}{{end}}{{template "theme/door-close" .Foot}}{{end}}

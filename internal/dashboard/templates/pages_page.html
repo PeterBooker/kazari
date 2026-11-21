@@ -1,0 +1,227 @@
+{{define "pages_page"}}{{template "theme/shell" .Shell}}<div class="page">
+{{with .Data}}
+<header class="head">
+<p class="crumb"><a href="/pages">Pages</a> / <span class="mono">{{.Page.Slug}}</span></p>
+<div class="head-row">
+<h1 class="title">{{if .Page.Name}}{{.Page.Name}}{{else}}{{.Page.Slug}}{{end}}</h1>
+<span class="mono soft">{{.Page.Slug}}</span>
+<span class="status {{.Page.State.Tone}}">{{.Page.State.Label}}</span>
+</div>
+{{with .Page.Description}}<p class="lede">{{.}}</p>{{end}}
+</header>
+{{end}}
+{{template "flash" .}}
+{{with .Data}}
+<div class="cols">
+<section class="box section" aria-labelledby="page-address">
+<h2 class="h2" id="page-address">Address and access</h2>
+<dl class="kv">
+<dt>Address</dt><dd>{{if eq .Page.State.Key "live" "stale"}}<a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a>{{else}}<span class="mono">{{.Host}}</span> <span class="soft">answers 404 for now</span>{{end}}</dd>
+<dt>Versions</dt><dd class="soft">Each version also has an address of its own, listed below.</dd>
+<dt>Owner</dt><dd><a class="mono" href="/people/{{.Page.OwnerHandle}}">{{.Page.OwnerHandle}}</a></dd>
+{{if eq .Page.State.Key "bin"}}<dt>Open to</dt><dd>{{.Page.Open}} <span class="soft">once it is restored</span></dd>
+{{end}}<dt>Size</dt><dd>{{bytes .Page.SizeBytes}} over {{.Page.LatestVersion}} {{if eq .Page.LatestVersion 1}}version{{else}}versions{{end}}</dd>
+</dl>
+{{if ne .Page.State.Key "bin"}}
+<form class="form" method="post" action="/pages/{{.Page.Slug}}/visibility">
+{{template "token" $}}
+<div class="field"><label for="visibility">{{if eq .Page.State.Key "unpublished"}}Publish it again, open to{{else}}Who can open it{{end}}</label>
+<select class="input" id="visibility" name="visibility" aria-describedby="visibility-help">{{range .Visibilities}}<option value="{{.Key}}"{{if eq .Key (print $.Data.Page.Artifact.Visibility)}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+<p class="help" id="visibility-help">Public pages are listed for members. Unlisted ones open for anyone with the address. Members-only pages ask for a sign-in or a share link.</p></div>
+<div class="actions"><button type="submit" class="btn">{{if eq .Page.State.Key "unpublished"}}Publish again{{else}}Change{{end}}</button></div>
+</form>
+{{end}}
+</section>
+
+<section class="box section" aria-labelledby="page-life">
+<h2 class="h2" id="page-life">Lifecycle</h2>
+<dl class="kv">
+<dt>Created</dt><dd>{{when .Page.CreatedAt}}</dd>
+<dt>Updated</dt><dd>{{when .Page.UpdatedAt}}</dd>
+{{if .Page.UnpublishedAt}}<dt>Hidden since</dt><dd>{{when .Page.UnpublishedAt}}</dd>{{end}}
+{{if .Page.StaleAt}}<dt>Stale since</dt><dd>{{when .Page.StaleAt}}</dd>{{end}}
+{{if and .Page.ExpiresAt (not .Page.DeletedAt)}}<dt>Moves to the bin on</dt><dd>{{day .Page.ExpiresAt}}</dd>{{end}}
+{{if .Page.DeletedAt}}<dt>In the bin since</dt><dd>{{when .Page.DeletedAt}}</dd>
+<dt>Removed for good on</dt><dd>{{day .Page.StepAt}}</dd>{{end}}
+</dl>
+{{if .Page.DeletedAt}}
+<p class="soft">Nobody can open the page while it is in the bin. Restoring it puts it back as it was.</p>
+<form method="post" action="/pages/{{.Page.Slug}}/restore">{{template "token" $}}
+<div class="actions"><button type="submit" class="btn btn-primary">Restore the page</button></div></form>
+{{else if .Page.StaleAt}}
+<p class="soft">Someone marked the page stale. It keeps serving until the date above, then moves to the bin unless it is kept.</p>
+<form method="post" action="/pages/{{.Page.Slug}}/keep">{{template "token" $}}
+<div class="actions"><button type="submit" class="btn btn-primary">Keep the page</button></div></form>
+{{else}}
+<p class="soft">Nothing is due. A page only moves to the bin when someone marks it stale or deletes it.</p>
+{{end}}
+</section>
+</div>
+
+<section class="section" aria-labelledby="page-versions">
+<h2 class="h2" id="page-versions">Versions</h2>
+<table class="table">
+<thead><tr><th>Version</th><th>Added</th><th>By</th><th class="num">Size</th><th>Its own address</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Versions}}<tr>
+<td data-label="Version"><span class="status tone-version">Version {{.Number}}</span>{{if .Published}} <span class="status tone-ok">Published</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Added" class="nowrap">{{when .CreatedAt}}</td>
+<td data-label="By">{{if .CreatedBy}}<a class="mono" href="/people/{{.CreatedBy}}">{{.CreatedBy}}</a>{{else}}<span class="soft">unknown</span>{{end}}</td>
+<td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
+<td data-label="Its own address"><a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a></td>
+<td class="row-actions">{{if and (not .Published) (not $.Data.Page.DeletedAt)}}<a class="link" href="/pages/{{$.Data.Page.Slug}}/versions/{{.Number}}/publish">Publish this version</a>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</section>
+
+{{if not .Page.DeletedAt}}
+<section class="section" aria-labelledby="page-links">
+<h2 class="h2" id="page-links">Share links</h2>
+<p class="soft">A share link opens a members-only page for someone who cannot sign in, until it expires or is revoked.</p>
+{{if .Links}}<table class="table">
+<thead><tr><th>Link</th><th>Created</th><th>State</th><th>Expires</th><th class="num">Opened</th><th>Last opened</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Links}}<tr>
+<td data-label="Link"><span class="mono">{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Created">{{when .CreatedAt}}{{with .CreatedBy}} by <a class="mono" href="/people/{{.}}">{{.}}</a>{{end}}</td>
+<td data-label="State"><span class="status {{.State.Tone}}">{{.State.Label}}</span></td>
+<td data-label="Expires" class="nowrap">{{day .ExpiresAt}}</td>
+<td class="num" data-label="Opened">{{.Uses}}</td>
+<td data-label="Last opened">{{if .LastUsedAt}}{{when .LastUsedAt}}{{else}}<span class="soft">never</span>{{end}}</td>
+<td class="row-actions">{{if eq .State.Key "active"}}<a class="link link-danger" href="/pages/{{$.Data.Page.Slug}}/links/{{.Prefix}}/revoke">Revoke<span class="sr-only"> link {{.Prefix}}</span></a>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty"><p>This page has no share link. Create one below when someone outside the instance needs to open it.</p></div>{{end}}
+<form class="filters" method="post" action="/pages/{{.Page.Slug}}/links">
+{{template "token" $}}
+<div class="field field-search"><label for="link-label">Who it is for <span class="optional">(optional)</span></label><input class="input" id="link-label" name="label" type="text" maxlength="200" value="{{.LinkLabel}}"></div>
+<div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .LinkError}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
+{{with .LinkError}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<button type="submit" class="btn">Create a share link</button>
+</form>
+<p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days.</p>
+</section>
+{{end}}
+
+<section class="section" aria-labelledby="page-activity">
+<div class="section-head">
+<h2 class="h2" id="page-activity">Activity</h2>
+<a class="link" href="/activity?slug={{.Page.Slug}}">All activity for this page</a>
+</div>
+{{template "events" .Events}}
+</section>
+
+<section class="section" aria-labelledby="page-actions">
+<h2 class="h2" id="page-actions">Hand over, hide and remove</h2>
+<div class="cols">
+<div class="box section">
+<h3 class="h3">Hand over</h3>
+<p class="soft">Give the page to another person. Its size then counts against their quota.</p>
+{{if .Owners}}<form class="form" method="post" action="/pages/{{.Page.Slug}}/owner">
+{{template "token" $}}
+<div class="field"><label for="owner">New owner</label><select class="input" id="owner" name="owner" required>{{range .Owners}}<option value="{{.Handle}}">{{.Handle}}{{with .DisplayName}} ({{.}}){{end}}</option>{{end}}</select></div>
+<div class="actions"><button type="submit" class="btn">Hand over</button></div>
+</form>{{else}}<p class="soft">There is nobody else to hand it to yet.</p>{{end}}
+</div>
+{{if not .Page.DeletedAt}}
+<div class="box section">
+<h3 class="h3">Hide or bin</h3>
+{{if eq .Page.State.Key "unpublished"}}<p class="soft">The page is hidden: its address answers 404. Publish it again under “Address and access” above.</p>
+{{else}}<p class="soft">Hiding takes the page offline at once and deletes nothing. Publishing it again under “Address and access” brings it back.</p>
+<form method="post" action="/pages/{{.Page.Slug}}/hide">{{template "token" $}}
+<div class="actions"><button type="submit" class="btn">Hide the page</button></div></form>{{end}}
+<p class="soft">In the bin nobody can open the page, and it can be restored for a while before it is removed for good.</p>
+<form method="post" action="/pages/{{.Page.Slug}}/bin">{{template "token" $}}
+<div class="actions"><button type="submit" class="btn">Move to the bin</button></div></form>
+</div>
+{{end}}
+<div class="box section">
+<h3 class="h3">Take down or remove</h3>
+{{if not .Page.DeletedAt}}<p class="soft">Taking a page down hides it and can disable its owner, for a page that must go offline and stay offline.</p>
+<div class="actions"><a class="btn btn-danger" href="/pages/{{.Page.Slug}}/takedown">Take down…</a></div>{{end}}
+<p class="soft">Removing a page for good deletes every version. Nothing brings it back.</p>
+<div class="actions"><a class="btn btn-danger" href="/pages/{{.Page.Slug}}/remove">Remove for good…</a></div>
+</div>
+</div>
+</section>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "pages_confirm"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+{{with .Data}}
+<header class="head">
+<p class="crumb"><a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></p>
+<div class="head-row"><h1 class="title">{{.Heading}}</h1></div>
+{{with .Intro}}<p class="lede">{{.}}</p>{{end}}
+</header>
+<div class="cols">
+<div class="box section"><h2 class="h3">What happens</h2>
+<ul class="dash">{{range .Does}}<li>{{.}}</li>{{end}}</ul></div>
+{{if .Keeps}}<div class="box section"><h2 class="h3">What stays as it is</h2>
+<ul class="dash">{{range .Keeps}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+</div>
+<form class="form" method="post" action="{{.Action}}">
+{{template "token" $}}
+{{with .Check}}<fieldset class="fieldset"><legend>The owner</legend>
+<label class="check"><input type="checkbox" name="{{.Name}}" value="yes" checked aria-describedby="check-help"><span>{{.Label}}</span></label>
+<p class="help" id="check-help">{{.Help}}</p>
+</fieldset>{{end}}
+{{with .Note}}<p class="soft">{{.}}</p>{{end}}
+<div class="actions"><button type="submit" class="btn {{if .Danger}}btn-danger{{else}}btn-primary{{end}}">{{.Button}}</button><a class="link" href="/pages/{{.Slug}}">Cancel</a></div>
+</form>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "pages_remove"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+{{with .Data}}
+<header class="head">
+<p class="crumb"><a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Page.Slug}}">{{.Page.Slug}}</a></p>
+<div class="head-row"><h1 class="title">Remove <b>{{.Page.Slug}}</b> for good</h1></div>
+<p class="lede">This cannot be undone.{{if not .Page.DeletedAt}} To keep the choice of restoring it for {{span .Retention}}, move it to the bin instead, from <a href="/pages/{{.Page.Slug}}">its page</a>.{{end}}</p>
+</header>
+<div class="cols">
+<div class="box section"><h2 class="h3">What is deleted</h2>
+<ul class="dash">
+<li>The page at <span class="mono">{{.Host}}</span></li>
+<li>{{if eq .Page.LatestVersion 1}}Its one version and that version's address{{else}}All {{.Page.LatestVersion}} versions and the address of each{{end}}</li>
+<li>Its share links</li>
+</ul></div>
+<div class="box section"><h2 class="h3">What stays for a while</h2>
+<ul class="dash">
+<li>Copies that browsers and CDNs already hold, for up to {{span .Tombstone}}</li>
+<li>The slug <span class="mono">{{.Page.Slug}}</span>, which no new page can take for those {{span .Tombstone}}</li>
+<li>Its files on the server's disk, until the clean-up job <span class="mono">gc</span> next runs</li>
+<li>The lines about it under Activity</li>
+</ul></div>
+</div>
+<form class="form" method="post" action="/pages/{{.Page.Slug}}/remove">
+{{template "token" $}}
+<div class="field"><label for="slug">Type the slug, <span class="mono">{{.Page.Slug}}</span>, to confirm</label>
+<input class="input input-mono" id="slug" name="slug" type="text" value="{{.Typed}}" autocomplete="off" autocapitalize="none" spellcheck="false" required{{if .Error}} aria-invalid="true" aria-describedby="slug-err"{{end}}>
+{{with .Error}}<p class="error" id="slug-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<div class="actions"><button type="submit" class="btn btn-danger">Remove for good</button><a class="link" href="/pages/{{.Page.Slug}}">Cancel</a></div>
+</form>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "pages_link"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+{{with .Data}}
+<header class="head">
+<p class="crumb"><a href="/pages">Pages</a> / <a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></p>
+<div class="head-row"><h1 class="title">Share link, <b>shown once</b></h1></div>
+<p class="lede">Copy it now and send it over a channel you trust. Whoever has it can open <span class="mono">{{.Host}}</span> without signing in.</p>
+</header>
+<section class="box section" aria-labelledby="link-once">
+<h2 class="h2" id="link-once">The link{{with .Link.Label}} for {{.}}{{end}}</h2>
+<div class="copy"><input class="input input-mono" id="share-link" type="text" readonly value="{{.URL}}" aria-label="Share link">
+<button type="button" class="btn btn-primary" data-copy-target="share-link" hidden>Copy the link</button></div>
+<ul class="dash soft">
+<li>It works until {{day .Link.ExpiresAt}}, or until it is revoked from the page's own page.</li>
+<li>Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.</li>
+</ul>
+</section>
+<div class="actions"><a class="btn" href="/pages/{{.Slug}}">Back to the page</a></div>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}

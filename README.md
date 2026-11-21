@@ -19,9 +19,10 @@ The documentation and guides are at <https://kazari.io/docs/>.
 - **Members-only pages and share links.** A `members` page opens only for people who sign in to the instance in their browser, on every version's host too. A share link with an expiry opens it for someone outside, and one call revokes it. Each host gets its own `HttpOnly` cookie through a single-use handshake with the sign-in host, so no cookie spans artifacts.
 - **Large bundles.** Inline JSON for small pages, `multipart` with a `tar.gz` bundle for sites, chunked uploads for MCP clients with no shell, and a one-time archive URL for agents with a shell but no key.
 - **Lifecycle.** Mark an artifact stale with a grace period. When the grace period lapses the artifact is soft-deleted, it is purged after the retention period, and its slug is freed after the tombstone period. Every step is reversible until the purge and lands in the audit log.
-- **Sign-in through your identity provider.** An OAuth 2.1 authorization server for MCP clients (PKCE, Dynamic Client Registration, Client ID Metadata Documents, refresh-token rotation) federates to one OpenID Connect provider: Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik and others. No passwords are stored, and API keys work everywhere too.
+- **Sign-in your way.** An OAuth 2.1 authorization server for MCP clients (PKCE, Dynamic Client Registration, Client ID Metadata Documents, refresh-token rotation) federates to one OpenID Connect provider: Microsoft Entra ID, Google Workspace, Okta, Keycloak, Authentik and others. Without a provider, people sign in with built-in accounts: a password each, set through an invite link, with no email server needed. API keys work everywhere too.
+- **A dashboard.** An admin runs the instance day to day from a browser on the admin host: people and invites, pages and the bin, the activity log, health checks, jobs and a backup download. It does nothing the `kazari admin` commands cannot.
 - **Keys for one job.** An API key can be restricted to the artifacts whose slug matches a pattern, issued without the right to share or delete, and given an expiry, so a scheduled agent holds no more than its task needs. People issue and rotate their own keys, and the same key can stand behind an OAuth connection.
-- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start. SQLite and a blob directory are the only state. OpenTelemetry traces, metrics and logs over OTLP, Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
+- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start, and `kazari admin ready` checks a running server. SQLite and a blob directory are the only state, and `kazari admin backup` writes both as one archive. OpenTelemetry traces, metrics and logs over OTLP, Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
 
 ## Quick start
 
@@ -43,10 +44,10 @@ curl -fsSLO https://kazari.io/deploy/compose.yml
 curl -fsSLO https://kazari.io/deploy/kazari.yaml                     # edit: your domain, email and DNS provider
 curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env       # edit: the DNS provider's token
 docker compose up -d
-docker compose exec kazari kazari admin users create peter --role admin
+docker compose logs kazari       # prints the setup link that creates the first admin
 ```
 
-The [installation guide](docs/install.md) has every path, the preflight check and the first publish, and [DNS and certificates](docs/certificates.md) the records, the providers and the proxy configurations.
+The [installation guide](docs/install.md) has every path, the preflight check, the first admin and the first publish, and [DNS and certificates](docs/certificates.md) the records, the providers and the proxy configurations.
 
 ## Configuration at a glance
 
@@ -79,7 +80,7 @@ Kazari works with any agent that can use a remote MCP server over Streamable HTT
 
 ### Cloud agents
 
-Add a custom connector with the URL `https://mcp.art.example.com/`. The agent discovers the authorization server, sends you to your organisation's identity provider and shows Kazari's consent page. With no identity provider configured, the consent page asks for an API key instead.
+Add a custom connector with the URL `https://mcp.art.example.com/`. The agent discovers the authorization server, sends you to sign in and shows Kazari's consent page. You sign in at your organisation's identity provider or, with none configured, with the password of your built-in account; an API key works in its place.
 
 In claude.ai, for example, custom connectors are under **Settings → Connectors**.
 
@@ -124,7 +125,7 @@ kazari list --mine any --stale exclude                        # what you created
 kazari --json me                                              # your account, as JSON
 ```
 
-On the server, `sudo kazari admin ...` administers the instance over its socket with no token. The [CLI reference](docs/cli.md) lists every command and flag.
+On the server, `sudo kazari admin ...` administers the instance over its socket with no token, and the [dashboard](docs/dashboard.md) at `https://admin.art.example.com/` does the same from a browser. The [CLI reference](docs/cli.md) lists every command and flag.
 
 ## Developing Kazari
 
@@ -147,14 +148,15 @@ The documentation, with guides for publishing with an agent and from code, is pu
 
 | Page                                         | Contents                                                       |
 | -------------------------------------------- | -------------------------------------------------------------- |
-| [Installing Kazari](docs/install.md)         | Compose, packages, the binary, the preflight check, the first user |
+| [Installing Kazari](docs/install.md)         | Compose, packages, the binary, the preflight check, the first admin |
 | [DNS and certificates](docs/certificates.md) | DNS records, DNS-01 providers, other providers, proxy examples |
 | [Configuration](docs/configuration.md)       | YAML keys, `${}` references, dotenv files, overrides, validation |
 | [Operating Kazari](docs/ops.md)              | Data layout, backup, upgrades, logs, metrics, tracing, jobs, abuse |
+| [Dashboard](docs/dashboard.md)               | The web dashboard: people, pages, activity and system          |
 | [REST API](docs/api.md)                      | REST reference for the user and admin APIs                     |
 | [MCP server](docs/mcp.md)                    | MCP tools, resources, prompt and chunked uploads               |
 | [CLI](docs/cli.md)                           | The `kazari` server and client commands                        |
-| [Identity and sign-in](docs/identity.md)     | OAuth, OpenID Connect providers and user provisioning          |
+| [Identity and sign-in](docs/identity.md)     | Built-in accounts, OAuth, OpenID Connect providers and provisioning |
 | [Developing Kazari](docs/development.md)     | Running from source, tests, releases, the website              |
 
 ## Status

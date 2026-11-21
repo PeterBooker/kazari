@@ -1,23 +1,32 @@
 # Identity and sign-in
 
-Kazari stores no passwords. It accepts two kinds of credential: API keys, which an admin issues, and OAuth access tokens, which MCP clients obtain by sending a person through a sign-in flow. People who open a `members` page in a browser sign in through the same identity provider and the same callback.
+People sign in to Kazari in one of two ways, chosen for the whole instance: with a built-in account, a password that Kazari keeps, or at your organisation's identity provider. Agents and scripts use API keys, or OAuth access tokens that an MCP client obtains by sending a person through that sign-in.
 
-This page explains how sign-in works, connects an identity provider, sets who is let in, and covers token lifetimes, revoking access and troubleshooting. It assumes a running instance ([installation guide](install.md)).
+This page explains how sign-in works, covers built-in accounts and the account page, connects an identity provider, sets who is let in, and covers token lifetimes, revoking access and troubleshooting. It assumes a running instance ([installation guide](install.md)).
 
 ## How sign-in works
 
-Kazari is an OAuth 2.1 authorization server towards MCP clients and an OpenID Connect relying party towards one identity provider (IdP) per instance.
+Kazari is an OAuth 2.1 authorization server towards MCP clients. Towards people it is either the keeper of their password or an OpenID Connect relying party of one identity provider (IdP) per instance.
+
+### How people sign in
+
+An instance signs people in one way, never both:
+
+- **Built-in accounts** are the default. A person signs in with their handle or email and a password, which they set through a link an admin sends them ([Built-in accounts](#built-in-accounts)).
+- **An identity provider** takes over once the configuration has an `auth.oidc` section. People then sign in with their organisation account, and Kazari keeps no password ([Connecting an identity provider](#connecting-an-identity-provider)).
+
+One sign-in page, on `mcp.<base>`, serves every place a person signs in: connecting an MCP client, opening a `members` page, the [account page](#the-account-page) and the [dashboard](dashboard.md).
 
 ### Credentials
 
-Kazari has two kinds of credential:
+Software acts for a person with one of two credentials:
 
-- **API keys** (`kzk_...`) are issued by an admin and sent as `Authorization: Bearer`. They work on every surface and suit the CLI, scripts and agents that take a key in their configuration.
-- **OAuth access tokens** are what MCP clients obtain by sending the person through a sign-in flow. This covers cloud agents' connectors, and agents on your machine configured without a key. Most of this page is about these.
+- **API keys** (`kzk_...`) are issued by an admin or by the person themselves, and sent as `Authorization: Bearer`. They work on every surface and suit the CLI, scripts and agents that take a key in their configuration.
+- **OAuth access tokens** are what MCP clients obtain by sending the person through a sign-in flow. This covers cloud agents' connectors, and agents on your machine configured without a key.
 
 ### The OAuth flow
 
-An MCP client without a token goes through these steps:
+An MCP client without a token goes through these steps. The diagram shows an instance with an identity provider; with built-in accounts, step 4 is Kazari's own sign-in page ([signing in with a password](#signing-in-with-a-password)):
 
 ```text
 MCP client ──1──▶ mcp.<base>/            401 + resource_metadata
@@ -52,7 +61,117 @@ The scopes granted are those the client asked for, capped at what the user's rol
 
 A person who wants a connection to do less than they can [approves it with an API key](#approving-with-an-api-key), which caps the grant at that key's scopes.
 
-An OAuth token always acts as a member, so it never opens the admin host. Kazari never offers the `admin` scope (`scopes_supported` does not list it) and never grants it, even to admins; asking for it gets `invalid_scope`. Administer the instance over the admin socket on the server, with an admin-scoped API key, or with the admin token.
+An OAuth token always acts as a member, so it never opens the admin host. Kazari never offers the `admin` scope (`scopes_supported` does not list it) and never grants it, even to admins; asking for it gets `invalid_scope`. Administer the instance in the [dashboard](dashboard.md), over the admin socket on the server, with an admin-scoped API key, or with the admin token.
+
+## Built-in accounts
+
+A built-in account is a user with a password. Built-in accounts are on by default when the configuration has no `auth.oidc` section, and off when it has one ([`auth.local`](configuration.md#authlocal)).
+
+Kazari sends no email. Every step that another product would do by email is a link that an admin copies and sends: an invite for a new person, a reset for a lost password, and the setup link that creates the first admin of a fresh instance ([creating the first admin](install.md#creating-the-first-admin)).
+
+### Inviting a person
+
+An invite creates the user and a link that lets them choose a password. Invite a person from the dashboard's People page, or with the CLI:
+
+```sh
+kazari admin users invite ana --email ana@example.com --name "Ana Lima"
+```
+
+The command prints the link, `https://art.example.com/account/invite?token=kzl_...`, on stdout. Send it to the person over a channel you trust.
+
+A link behaves the same whatever it is for:
+
+- It is shown once, when it is made. Kazari keeps only a hash of it, so a lost link is replaced, not shown again.
+- It works once. Opening it changes nothing; setting the password uses it up.
+- An invite works for 7 days by default (`auth.local.invite_ttl`).
+- One link per person and purpose works at a time. Making a new one ends the one before it.
+
+Until the person sets a password, they show as `invited` in `kazari admin users list` and on the People page. To replace an invite that was lost or has lapsed, add `--replace`:
+
+```sh
+kazari admin users invite ana --replace
+```
+
+To see the links that still work, or end one before it is used, list them and revoke one by its id:
+
+```sh
+kazari admin invites list
+kazari admin invites revoke 12
+```
+
+Only an admin can invite an admin: add `--role admin`. The person's email, when given, is a second name to sign in with. Only an admin changes it.
+
+### Passwords
+
+A password has at least 15 characters by default (`auth.local.min_password_length`) and at most 256. Length is the only rule: no character classes are required, and a password manager's output or a few unrelated words both work.
+
+Setting a password does not sign the person in. The next page is the sign-in page, where they enter it once more.
+
+### Signing in with a password
+
+The sign-in page asks for a handle or an email, and the password. A browser stays signed in for 12 hours.
+
+When an MCP client connects, `/oauth/authorize` shows this sign-in page first, unless the browser is already signed in. The consent page follows, naming the client, the account and the scopes, with **Approve** and **Deny**. A grant approved this way lasts as one approved after a provider sign-in does: no key bounds it.
+
+**Use an API key instead**, under the form, opens the form that takes a key in place of the password ([Signing in with an API key](#signing-in-with-an-api-key)).
+
+After several wrong passwords the page asks the person to wait before the next attempt, a second at first and never more than a minute. A wait ends by itself, and no account is ever locked.
+
+### Resetting a password
+
+A person who has lost their password asks an admin for a reset link, which works for 24 hours by default (`auth.local.reset_ttl`). Make one on the person's page in the dashboard, or with the CLI:
+
+```sh
+kazari admin users reset-password ana
+```
+
+Using a reset link sets the new password and signs the person out of every browser. Their API keys and connected apps keep working.
+
+To end those as well, for example when someone else may have used the account, add `--revoke-all`. Using the link then also revokes every API key of the person and disconnects every app:
+
+```sh
+kazari admin users reset-password ana --revoke-all
+```
+
+An instance that used API keys before built-in accounts existed keeps working after an upgrade. The People page and `kazari admin users list` show who has no password yet, and a reset link gives each of them one.
+
+### The account page
+
+Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows:
+
+- their profile: handle, name, email and role, which only an admin changes;
+- their recent sign-ins and the recent security events of the account, such as a changed password or a new key, since nobody is told of these by email;
+- the password form, on an instance with built-in accounts;
+- their API keys, with issue, rotate and revoke;
+- their connected apps, each of which they can disconnect;
+- the pages they own.
+
+On an instance with an identity provider the page has no password form, and everything else is the same.
+
+#### Changing a password
+
+The password form asks for the current password and the new one twice. Changing it signs the person out of every other browser and keeps the session it was changed in. API keys and connected apps keep working.
+
+**Sign out of my other sessions** does the same without a new password.
+
+#### Keys from the account page
+
+A person issues, rotates and revokes their own API keys on the account page, without a key in hand. What a new key can hold depends on how they signed in:
+
+- After signing in with a password or at the identity provider, a new key holds the member scopes at most (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`), for an admin too. A key with the `admin` scope comes from the dashboard or from `kazari admin keys issue`.
+- After signing in with an API key, a new key is bounded by that key, as on [`/me/keys`](api.md#your-own-keys-mekeys): no scope it lacks, a restriction inside its own, and an expiry no later.
+
+The page revokes any of the person's keys. It rotates any but one that holds `admin`, which is rotated in the dashboard or on the admin API.
+
+A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count.
+
+### Moving to an identity provider, or back
+
+To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords stop signing anyone in, and the invite, reset and setup pages answer `404`.
+
+Users, their pages, keys and connected apps stay. A person whose email at the provider is the one on their Kazari user links to it at their first sign-in ([Provisioning policy](#provisioning-policy)), which is why only an admin changes a user's email.
+
+To move back, remove `auth.oidc` and restart. The stored passwords work again, and a person who never had one needs a reset link.
 
 ## Connecting an identity provider
 
@@ -173,29 +292,40 @@ To let someone in ahead of their first sign-in, create their user with their ema
 kazari admin users create jdoe --email jane.doe@example.com
 ```
 
-An admin created this way signs in by email only if `admin_emails` lists the address. Otherwise, and to pin any user to a specific IdP account whatever its email, link the identity with the admin API. There is no CLI command for this yet:
+An admin created this way signs in by email only if `admin_emails` lists the address. Otherwise, and to pin any user to a specific IdP account whatever its email, link the identity by its issuer and subject, the `sub` claim:
 
 ```sh
-curl -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  https://admin.art.example.com/v1/users/jdoe/identities \
-  -d '{"issuer":"https://login.microsoftonline.com/<tenant-id>/v2.0","subject":"<sub claim>"}'
+kazari admin identities link jdoe \
+  --issuer https://login.microsoftonline.com/<tenant-id>/v2.0 --subject <sub claim>
 ```
 
-To remove the link, send the same body to `POST /v1/users/{handle}/identities/unlink`. `GET /v1/users/{handle}` lists a user's identities with their last sign-in.
+An identity linked to another user moves to this one. To see a user's identities with their last sign-in, or to remove one:
+
+```sh
+kazari admin identities list jdoe
+kazari admin identities unlink jdoe \
+  --issuer https://login.microsoftonline.com/<tenant-id>/v2.0 --subject <sub claim>
+```
+
+The dashboard has the same on a person's page, and the [admin API](api.md#identities) has the routes.
 
 ## Signing in with an API key
 
-When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user.
+On an instance without an identity provider, an API key signs a person in wherever a password does. With built-in accounts on, the sign-in page offers it as **Use an API key instead**. With `auth.local.enabled: false`, the key form is the only one.
 
-A one-person or small instance can therefore connect a cloud agent with no IdP set up: issue yourself a key, add the connector and paste the key once.
+The form takes any of the person's keys that holds `artifacts:read`. The browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. A key [restricted to some artifacts](api.md#restricted-credentials) is refused there, because a session opens every members page.
 
-Opening a `members` page works the same way. The sign-in page asks for an API key with `artifacts:read`, and the browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. A key [restricted to some artifacts](api.md#restricted-credentials) is refused there, because a session opens every members page. Browser sign-ins are recorded as `oauth.signin`, with `via: oidc` or `via: api_key`.
+What the session can do follows the key. It opens the dashboard only when the key holds the `admin` scope, and a key issued from it on the account page is [bounded by it](#keys-from-the-account-page).
+
+When an MCP client connects, the same link leads to a consent page with an API key field in place of a sign-in. Approving with a valid key binds the grant to that key's user and to the key ([Approving with an API key](#approving-with-an-api-key)).
+
+Browser sign-ins are recorded as `oauth.signin`, with `via: oidc`, `via: password` or `via: api_key`.
 
 ### Approving with an API key
 
 A grant approved with an API key is that key over OAuth. It is for a connection that should do less than the person can, such as a [scheduled agent](mcp.md#scheduled-and-unattended-agents) whose host speaks only OAuth.
 
-On an instance with an IdP, the consent page offers it after sign-in: open **Approve with an API key instead**, paste one of your own keys and approve. A key of another user is refused. Left empty, the form approves as yourself, as before.
+After a sign-in, at the identity provider or with a password, the consent page offers it: open **Approve with an API key instead**, paste one of your own keys and approve. A key of another user is refused. Left empty, the form approves as yourself.
 
 The grant takes everything from the key:
 
@@ -217,14 +347,14 @@ A browser that opens a members page without a view session goes through these st
 browser ──1──▶ team.<base>/report       no view cookie: 302, sets a nonce cookie on team.
         ──2──▶ mcp.<base>/oauth/signin  ?host=team&path=/report&nonce=<S256 of the nonce>
                    │  signed in here already? skip to 4
-                   └──3──▶ your IdP  (or, without one, a form asking for an API key)
+                   └──3──▶ your IdP  (or, without one, Kazari's own sign-in page)
         ◀──4── 302 team.<base>/.kazari/callback?code=...   single use, 1 minute, for team. only
         ──5──▶ team. redeems the code with its nonce cookie, sets __Host-kazari_view, 302 /report
 ```
 
 1. A page navigation to a `members` artifact without a valid view cookie is redirected to the MCP host. Anything else, such as a script, an image, a `fetch`, a frame or `curl`, gets `401` with a short explanation instead, since a sign-in page is no use to it. A service worker's script request is the exception: it gets a script that removes the worker ([Service workers](ops.md#service-workers)).
 2. The MCP host keeps its own sign-in session, `__Host-kazari_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, path `/`). If the browser has a live one, it is sent straight back with a code, and the person sees nothing.
-3. Otherwise the person signs in at the IdP, which returns to the same `https://mcp.<base>/oauth/callback` that MCP clients use, so nothing changes in the IdP's configuration. Without an IdP, a page asks for an API key with `artifacts:read`, and that session ends with the key.
+3. Otherwise the person signs in at the IdP, which returns to the same `https://mcp.<base>/oauth/callback` that MCP clients use, so nothing changes in the IdP's configuration. Without an IdP, the sign-in page asks for the password of their [built-in account](#signing-in-with-a-password), or for an [API key](#signing-in-with-an-api-key), and a session opened with a key ends with the key.
 4. The code is single use and lives one minute. It works only on the host it was issued for, and only in the browser holding the matching nonce cookie, so a code started by someone else cannot sign a visitor in as them.
 5. The artifact host turns the code into a view session of its own: the cookie `__Host-kazari_view`, sent only to that host and never readable by the page's script. The next host, such as another artifact or `team--v2.<base>`, repeats steps 1, 2, 4 and 5 without the IdP.
 
@@ -235,9 +365,11 @@ Every response to a `GET` on a members host, whether a page, an error, the redir
 
 Every sign-in session lasts 12 hours, and every view session it opened ends with it. A disabled user, or a revoked API key, loses access on the next request.
 
+The account page and the dashboard are opened the same way, each with a cookie of its own on its own host: `__Host-kazari_account` on the apex and `__Host-kazari_admin` on the admin host.
+
 ### Signing out
 
-To sign out, open `https://mcp.<base>/oauth/signout` and press the button. That ends every sign-in of this browser, including one finished in a second tab, and every view session they opened, on every host. Other browsers stay signed in. Only that page can: artifact hosts run member-authored script, so a sign-in cannot be ended from one.
+To sign out, open `https://mcp.<base>/oauth/signout` and press the button. That ends every sign-in of this browser, including one finished in a second tab, and every view session they opened, on every host. Other browsers stay signed in. **Sign out** on the account page and in the dashboard does the same. An artifact host cannot end a sign-in.
 
 `/.kazari/signout` on an artifact host, for example `https://<slug>.<base>/.kazari/signout`, ends that host's access only: its view session and cookie, or a share link's cookie. The sign-in stays, so opening a members page there again needs no prompt. The page links to the sign-out page on the MCP host.
 
@@ -296,11 +428,14 @@ Each credential and session in the sign-in flows has a fixed lifetime:
 | Refresh token           | 90 days                        | `auth.tokens.refresh_ttl`. Rotated on every use              |
 | API key                 | Until revoked, unless issued with an expiry | Up to `auth.tokens.max_key_ttl`, when that is set |
 | Browser sign-in session | 12 hours                       | On the MCP host; ends sooner with the API key that opened it |
-| View session            | Until its sign-in session ends | One per artifact host, on that host only                     |
+| View session            | Until its sign-in session ends | One per artifact host, on that host only; the account page and the dashboard each hold one too |
+| Invite link             | 7 days                         | `auth.local.invite_ttl`. Single use; replaced by a newer one |
+| Reset link              | 24 hours                       | `auth.local.reset_ttl`. Single use; replaced by a newer one  |
+| Setup link              | 1 hour                         | Single use; works only while the instance has no user        |
 | Sign-in code            | 1 minute                       | Single use, one host, bound to the browser's nonce cookie    |
 | Share link              | 7 days by default              | Up to `serve.share_link_max_ttl` (90 days); revocable        |
 
-The lifetimes with a key are set under [`auth.tokens`](configuration.md#authtokens); the others are fixed in this version.
+The lifetimes with a key are set under [`auth.tokens`](configuration.md#authtokens) and [`auth.local`](configuration.md#authlocal); the others are fixed in this version.
 
 A connection has no fixed end. Each refresh returns a new access token and a new refresh token with a full lifetime, so a client that refreshes at least once every `auth.tokens.refresh_ttl` stays connected. A client that pauses for longer must sign in again.
 
@@ -327,7 +462,17 @@ kazari admin grants revoke 17
 
 The list shows each connection's client, scopes, last refresh and expiry. The id is the number in the `oauth:<id>` credential that the [audit log](ops.md#audit-log) records for every change the connection made, so a line there leads to the grant to revoke. The [admin API](api.md#grants) has the same two calls.
 
-A grant approved with an API key also ends when that key is revoked.
+A grant approved with an API key also ends when that key is revoked. A person disconnects their own apps on the [account page](#the-account-page).
+
+### Signing a person out everywhere
+
+To end every browser session of a person, on every host, and leave their keys and connected apps alone:
+
+```sh
+kazari admin users sign-out jdoe
+```
+
+The audit log records it as `session.revoke`. The dashboard has the same on a person's page.
 
 ### Revoking everything a user holds
 
@@ -357,6 +502,20 @@ Removing the person from the IdP stops new sign-ins, but an existing refresh tok
 ## Troubleshooting
 
 Each entry is named for what the person or the server shows.
+
+### "This link no longer works"
+
+An invite, reset or setup link was already used, was replaced by a newer one, was revoked or has expired, or its person was disabled. The page looks the same for each. Make a new link: `kazari admin users invite <handle> --replace` for a person who never set a password, `kazari admin users reset-password <handle>` for one who did, or `kazari admin setup-link` on a fresh instance.
+
+A setup link also stops working, with `404`, as soon as the instance has any user. After a link is opened, the page waits 15 minutes for the password; later than that, open the link again.
+
+### "That name or password was not accepted."
+
+The handle or email is unknown, the password is wrong, the account has no password yet or the user is disabled. The page gives one answer for all four. `kazari admin users show <handle>` says whether the user has a password, has an invite waiting or is disabled.
+
+### "Too many attempts. Try again in ... seconds."
+
+Several sign-ins with a wrong password came for this account, or from this address, shortly before. The wait starts at a second, doubles with each further failure and is never more than a minute. It ends by itself, and a sign-in with the right password clears the account's count.
 
 ### Kazari does not start: `oidc: discover <issuer>: ...`
 

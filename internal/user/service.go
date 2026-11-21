@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"regexp"
 	"slices"
@@ -62,10 +63,34 @@ type Options struct {
 	// an expiry gets it, and a longer one is refused. Keys issued before it
 	// was set keep what they have.
 	MaxKeyTTL time.Duration
+	// MaxKeys is how many live keys a person may hold, however they are
+	// issued (default DefaultMaxKeys).
+	MaxKeys int
 	// OnDisable, if set, runs after a user is disabled and their keys revoked,
 	// to revoke credentials held elsewhere (OAuth grants, share links). An
 	// error fails the update; the user stays disabled.
 	OnDisable func(ctx context.Context, handle string) error
+
+	// LocalAccounts turns the built-in accounts on: passwords and the links
+	// that set them. Off, their methods answer ErrLocalOff and no password
+	// signs anyone in.
+	LocalAccounts bool
+	// MinPasswordLength is the shortest password accepted (default
+	// DefaultMinPasswordLength).
+	MinPasswordLength int
+	// How long an invite, a reset and the setup link work (default
+	// DefaultInviteTTL, DefaultResetTTL, DefaultSetupTTL).
+	InviteTTL, ResetTTL, SetupTTL time.Duration
+	// Argon2 are the parameters of new password hashes (default
+	// DefaultArgon2); MaxHashes how many are computed at once (default
+	// DefaultMaxHashes).
+	Argon2    Argon2
+	MaxHashes int
+	// EndSessions, if set, ends the user's browser sessions except the one
+	// with id keep (0 keeps none) after their password changed. RevokeGrants,
+	// if set, revokes their OAuth grants and every session.
+	EndSessions  func(ctx context.Context, handle string, keep int64) error
+	RevokeGrants func(ctx context.Context, handle string) error
 	// Now defaults to time.Now.
 	Now       func() time.Time
 	Telemetry instrument.Providers
@@ -74,11 +99,13 @@ type Options struct {
 // Service manages users, API keys and identity links. Audit events are
 // best-effort: a failure to record one does not fail the operation.
 type Service struct {
-	store  Store
-	audit  audit.Recorder
-	opts   Options
-	now    func() time.Time
-	tracer trace.Tracer
+	store   Store
+	audit   audit.Recorder
+	opts    Options
+	now     func() time.Time
+	tracer  trace.Tracer
+	m       metrics
+	hashing hashing
 
 	mu      sync.Mutex
 	touched map[string]time.Time // key prefix -> last last_used_at write
@@ -95,10 +122,50 @@ func New(store Store, rec audit.Recorder, opts Options) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Service{store: store, audit: rec, opts: opts, now: now, tracer: opts.Telemetry.Tracer(scope), touched: map[string]time.Time{}}
+	if opts.MaxKeys <= 0 {
+		opts.MaxKeys = DefaultMaxKeys
+	}
+	if opts.MinPasswordLength <= 0 {
+		opts.MinPasswordLength = DefaultMinPasswordLength
+	}
+	if opts.InviteTTL <= 0 {
+		opts.InviteTTL = DefaultInviteTTL
+	}
+	if opts.ResetTTL <= 0 {
+		opts.ResetTTL = DefaultResetTTL
+	}
+	if opts.SetupTTL <= 0 {
+		opts.SetupTTL = DefaultSetupTTL
+	}
+	if opts.Argon2 == (Argon2{}) {
+		opts.Argon2 = DefaultArgon2
+	}
+	if opts.MaxHashes <= 0 {
+		opts.MaxHashes = DefaultMaxHashes
+	}
+	s := &Service{store: store, audit: rec, opts: opts, now: now, tracer: opts.Telemetry.Tracer(scope),
+		m: newMetrics(opts.Telemetry.Meter(scope)), touched: map[string]time.Time{}}
+	s.hashing = hashing{
+		took: func(ctx context.Context, operation string, d time.Duration) {
+			s.m.hashes.Record(ctx, d.Seconds(), metric.WithAttributes(hashOperationKey.String(operation)))
+		},
+		params: opts.Argon2,
+		slots:  make(chan struct{}, opts.MaxHashes),
+		// Made on first use: a hash costs too much for every start to pay.
+		dummy: sync.OnceValue(func() string {
+			h, err := hashPassword(opts.Argon2, "")
+			if err != nil {
+				panic(err) // crypto/rand does not fail
+			}
+			return h
+		}),
+	}
 	s.observeUsers(opts.Telemetry.Meter(scope))
 	return s
 }
+
+// DefaultMaxKeys is how many live keys a person may hold.
+const DefaultMaxKeys = 50
 
 // CreateUserRequest describes a new user.
 type CreateUserRequest struct {
@@ -186,13 +253,21 @@ type UpdateUserRequest struct {
 
 // UpdateUser applies req. Disabling stamps DisabledAt, revokes every key and
 // runs Options.OnDisable; enabling clears DisabledAt (revoked keys, grants and
-// share links stay revoked).
+// share links stay revoked). ErrSelf when the caller disables or demotes
+// their own account, ErrLastAdmin when the change would leave no active
+// admin: the admin socket and the admin token, which are no person, then
+// stay the way back in.
 func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserRequest) (_ *User, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.update")
 	defer func() { endSpan(span, err) }()
 	u, err := s.store.GetUser(ctx, handle)
 	if err != nil {
 		return nil, err
+	}
+	disables := req.Disabled != nil && *req.Disabled
+	demotes := req.Role != nil && *req.Role != RoleAdmin && u.Role == RoleAdmin
+	if p, ok := auth.FromContext(ctx); ok && p.Handle == handle && (disables || demotes) {
+		return nil, ErrSelf
 	}
 	details := map[string]string{"handle": handle}
 	if req.Email != nil {
@@ -267,8 +342,13 @@ type IssueKeyRequest struct {
 	// issues a key for themselves. The new key is then bounded by it: no
 	// scope it lacks, never admin, a restriction no wider and an expiry no
 	// later; and revoking it revokes the new key. "" is an admin, who is
-	// bounded by the owner's role alone.
+	// bounded by the owner's role alone, unless Session is set.
 	With string
+	// Session marks a request a person makes from their own browser session,
+	// opened with a password or at the identity provider. No key bounds it,
+	// so the role does, short of admin: a stolen session mints no admin
+	// key. A session opened with an API key sets With instead.
+	Session bool
 }
 
 // IssueKey creates an API key and returns it with the key string, which is
@@ -301,6 +381,9 @@ func (s *Service) IssueKey(ctx context.Context, req IssueKeyRequest) (_ *APIKey,
 	for _, sc := range scopes {
 		if !slices.Contains(auth.AllScopes, sc) {
 			return nil, "", fmt.Errorf("%w: unknown scope %q", ErrInvalidScope, sc)
+		}
+		if req.Session && with == nil && sc == auth.ScopeAdmin {
+			return nil, "", fmt.Errorf("%w: a browser session issues no key with %q, an admin does", ErrKeyTooWide, sc)
 		}
 		if !slices.Contains(allowed, sc) {
 			return nil, "", fmt.Errorf("%w: role %s may not hold %q", ErrInvalidScope, u.Role, sc)
@@ -347,7 +430,7 @@ func (s *Service) IssueKey(ctx context.Context, req IssueKeyRequest) (_ *APIKey,
 		return nil, "", err
 	}
 	k.Prefix, k.Hash = prefix, HashKey(key)
-	if err := s.store.CreateKey(ctx, k); err != nil {
+	if err := s.store.CreateKey(ctx, k, s.opts.MaxKeys); err != nil {
 		return nil, "", err
 	}
 	s.record(ctx, actorFrom(ctx, req.Handle), audit.KeyIssue, keyDetails(k))
@@ -483,11 +566,14 @@ func (s *Service) ListKeys(ctx context.Context, handle string) ([]APIKey, error)
 
 // KeyRef names one of a user's keys for a change. With is the prefix of the
 // API key making the request, when a person acts on their own keys: the key
-// named must then be no wider than it. "" is an admin, who is not bounded.
+// named must then be no wider than it. "" is an admin, who is not bounded,
+// or with Session a person in their own browser session, who revokes any of
+// their keys and rotates any but one that holds admin.
 type KeyRef struct {
-	Handle string
-	Prefix string
-	With   string
+	Handle  string
+	Prefix  string
+	With    string
+	Session bool
 }
 
 // target loads the key ref names and, for a person's request, checks the
@@ -563,8 +649,8 @@ func (s *Service) RotateKey(ctx context.Context, ref KeyRef, overlap time.Durati
 	if !keyActive(old, u, now) {
 		return nil, "", nil, fmt.Errorf("user: rotate key %q: it is revoked or expired: %w", ref.Prefix, ErrKeyNotFound)
 	}
-	if with != nil && slices.Contains(old.Scopes, auth.ScopeAdmin) {
-		return nil, "", nil, fmt.Errorf("%w: no key rotates a key with %q, an admin does", ErrKeyTooWide, auth.ScopeAdmin)
+	if (with != nil || ref.Session) && slices.Contains(old.Scopes, auth.ScopeAdmin) {
+		return nil, "", nil, fmt.Errorf("%w: a key with %q is rotated on the admin API alone", ErrKeyTooWide, auth.ScopeAdmin)
 	}
 
 	k := &APIKey{
@@ -597,7 +683,7 @@ func (s *Service) RotateKey(ctx context.Context, ref KeyRef, overlap time.Durati
 	}
 	k.Prefix, k.Hash = prefix, HashKey(key)
 	ends := now.Add(overlap)
-	if err := s.store.RotateKey(ctx, old.Prefix, k, ends); err != nil {
+	if err := s.store.RotateKey(ctx, old.Prefix, k, ends, s.opts.MaxKeys); err != nil {
 		return nil, "", nil, err
 	}
 	if old.ExpiresAt == nil || ends.Before(*old.ExpiresAt) {
@@ -665,7 +751,9 @@ func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, erro
 	if err != nil {
 		return KeyStatus{}, err
 	}
-	return KeyStatus{Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt, Slugs: k.Slugs}, nil
+	return KeyStatus{
+		Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt, Slugs: k.Slugs, Scopes: effectiveScopes(k, u),
+	}, nil
 }
 
 func keyActive(k *APIKey, u *User, now time.Time) bool {

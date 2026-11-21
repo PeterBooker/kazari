@@ -14,23 +14,33 @@ import (
 // AdminCmd groups the admin API commands. On the server's host they use the
 // admin socket and need no token.
 type AdminCmd struct {
-	Users     AdminUsersCmd     `cmd:"" help:"List, create and update users."`
-	Keys      AdminKeysCmd      `cmd:"" help:"List, issue, rotate and revoke a user's API keys."`
-	Grants    AdminGrantsCmd    `cmd:"" help:"List and revoke a user's OAuth grants, the connections of MCP clients."`
-	Artifacts AdminArtifactsCmd `cmd:"" help:"Artifacts of every owner."`
-	Jobs      AdminJobsCmd      `cmd:"" help:"The maintenance jobs."`
-	Transfer  AdminTransferCmd  `cmd:"" help:"Give an artifact to another user."`
-	Hide      AdminHideCmd      `cmd:"" help:"Unpublish an artifact at once."`
-	Settings  AdminSettingsCmd  `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
-	Audit     AdminAuditCmd     `cmd:"" help:"Read the audit log."`
-	Health    AdminHealthCmd    `cmd:"" help:"Check the server is up; needs no token."`
+	Users      AdminUsersCmd      `cmd:"" help:"List, show, create, invite and update users, reset a password, end sessions and hand a user's artifacts over."`
+	Invites    AdminInvitesCmd    `cmd:"" help:"List and revoke the invite and reset links that have not been used."`
+	SetupLink  AdminSetupLinkCmd  `cmd:"" name:"setup-link" help:"Print a link that creates the first admin of a fresh instance."`
+	Keys       AdminKeysCmd       `cmd:"" help:"List, issue, rotate and revoke a user's API keys."`
+	Identities AdminIdentitiesCmd `cmd:"" help:"List, link and unlink the identities a user signs in with at the identity provider."`
+	Grants     AdminGrantsCmd     `cmd:"" help:"List and revoke a user's OAuth grants, the connections of MCP clients."`
+	Artifacts  AdminArtifactsCmd  `cmd:"" help:"Artifacts of every owner."`
+	Jobs       AdminJobsCmd       `cmd:"" help:"The maintenance jobs."`
+	Transfer   AdminTransferCmd   `cmd:"" help:"Give an artifact to another user."`
+	Hide       AdminHideCmd       `cmd:"" help:"Unpublish an artifact at once."`
+	Settings   AdminSettingsCmd   `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
+	Audit      AdminAuditCmd      `cmd:"" help:"Read the audit log."`
+	Backup     AdminBackupCmd     `cmd:"" help:"Write a backup of the database and every blob into a directory."`
+	Ready      AdminReadyCmd      `cmd:"" help:"Check the running server is set up correctly: configuration, DNS, certificate, disk."`
+	Health     AdminHealthCmd     `cmd:"" help:"Check the server is up; needs no token."`
 }
 
 // AdminUsersCmd manages users.
 type AdminUsersCmd struct {
-	List   AdminUsersListCmd   `cmd:"" help:"List every user with usage and quota."`
-	Create AdminUsersCreateCmd `cmd:"" help:"Create a user."`
-	Update AdminUsersUpdateCmd `cmd:"" help:"Change a user's role, quota, email or disabled state."`
+	List          AdminUsersListCmd          `cmd:"" help:"List every user with usage, quota, state and last activity."`
+	Show          AdminUsersShowCmd          `cmd:"" help:"Show one user: how they sign in, their keys, sessions and last activity."`
+	Create        AdminUsersCreateCmd        `cmd:"" help:"Create a user."`
+	Invite        AdminUsersInviteCmd        `cmd:"" help:"Create a user and print the link that lets them set a password."`
+	ResetPassword AdminUsersResetPasswordCmd `cmd:"" name:"reset-password" help:"Print a link that lets a user set a new password."`
+	SignOut       AdminUsersSignOutCmd       `cmd:"" name:"sign-out" help:"End every browser session of a user; keys and connected apps stay."`
+	Update        AdminUsersUpdateCmd        `cmd:"" help:"Change a user's role, quota, email or disabled state."`
+	Transfer      AdminUsersTransferCmd      `cmd:"" help:"Give every artifact a user owns to another user."`
 }
 
 // AdminUsersListCmd lists users.
@@ -49,16 +59,28 @@ func (c *AdminUsersListCmd) Run(r *runner) error {
 		return r.printJSON(users)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "HANDLE\tEMAIL\tROLE\tUSED\tQUOTA\tDISABLED\tCREATED")
+	fmt.Fprintln(tw, "HANDLE\tEMAIL\tROLE\tSTATE\tUSED\tQUOTA\tLAST ACTIVE\tCREATED")
 	for _, u := range users {
 		quota := "-"
 		if u.QuotaBytes > 0 {
 			quota = humanSize(u.QuotaBytes)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(oneLine(u.Email)), u.Role, humanSize(u.UsedBytes),
-			quota, fmtTimePtr(u.DisabledAt), fmtTime(u.CreatedAt))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(oneLine(u.Email)), u.Role, userState(&u),
+			humanSize(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
 	}
 	return tw.Flush()
+}
+
+// userState is disabled, invited (an invite waits for the person to set a
+// password) or active.
+func userState(u *api.User) string {
+	switch {
+	case u.DisabledAt != nil:
+		return "disabled"
+	case u.Invited:
+		return "invited"
+	}
+	return "active"
 }
 
 func (r *runner) printUser(u *api.User) error {
@@ -72,6 +94,21 @@ func (r *runner) printUser(u *api.User) error {
 	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(u.UsedBytes, u.QuotaBytes))
 	if u.DisabledAt != nil {
 		fmt.Fprintf(tw, "disabled:\t%s\n", fmtTime(*u.DisabledAt))
+	}
+	switch {
+	case u.Password:
+		fmt.Fprintf(tw, "password:\tset\n")
+	case u.Invited:
+		fmt.Fprintf(tw, "password:\tnot set, invited\n")
+	}
+	if u.Keys > 0 {
+		fmt.Fprintf(tw, "keys:\t%d\n", u.Keys)
+	}
+	if u.LastActiveAt != nil {
+		fmt.Fprintf(tw, "last active:\t%s\n", fmtTime(*u.LastActiveAt))
+	}
+	if u.Sessions != nil {
+		fmt.Fprintf(tw, "sessions:\t%d\n", *u.Sessions)
 	}
 	fmt.Fprintf(tw, "created:\t%s\n", fmtTime(u.CreatedAt))
 	return tw.Flush()
@@ -144,6 +181,122 @@ func (c *AdminUsersUpdateCmd) Run(r *runner) error {
 		return err
 	}
 	return r.printUser(u)
+}
+
+// AdminUsersTransferCmd hands a user's artifacts over.
+type AdminUsersTransferCmd struct {
+	Handle string `arg:"" help:"The handle of the user who owns the artifacts."`
+	Owner  string `arg:"" help:"The new owner's handle."`
+}
+
+func (c *AdminUsersTransferCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	out, err := cl.TransferAll(r.ctx, c.Handle, c.Owner)
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(out)
+	}
+	if len(out.Transferred) == 0 {
+		fmt.Fprintf(r.stdout, "%s owns no artifacts\n", c.Handle)
+		return nil
+	}
+	noun := "artifacts"
+	if len(out.Transferred) == 1 {
+		noun = "artifact"
+	}
+	fmt.Fprintf(r.stdout, "%d %s of %s now belong to %s\n", len(out.Transferred), noun, c.Handle, c.Owner)
+	for _, slug := range out.Transferred {
+		fmt.Fprintln(r.stdout, slug)
+	}
+	return nil
+}
+
+// AdminIdentitiesCmd manages the links between users and the identity
+// provider's accounts.
+type AdminIdentitiesCmd struct {
+	List   AdminIdentitiesListCmd   `cmd:"" help:"List a user's identities with their last sign-in."`
+	Link   AdminIdentitiesLinkCmd   `cmd:"" help:"Link an identity to a user, moving it from any other user."`
+	Unlink AdminIdentitiesUnlinkCmd `cmd:"" help:"Remove one of a user's identities."`
+}
+
+// AdminIdentitiesListCmd lists a user's identities.
+type AdminIdentitiesListCmd struct {
+	Handle string `arg:"" help:"The user's handle."`
+}
+
+func (c *AdminIdentitiesListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	u, err := cl.GetUser(r.ctx, c.Handle)
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		ids := u.Identities
+		if ids == nil {
+			ids = []api.Identity{}
+		}
+		return r.printJSON(ids)
+	}
+	tw := newTable(r.stdout)
+	fmt.Fprintln(tw, "ISSUER\tSUBJECT\tEMAIL\tLAST SIGN-IN")
+	for _, id := range u.Identities {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", oneLine(id.Issuer), oneLine(id.Subject), dash(oneLine(id.Email)), fmtTime(id.LastLoginAt))
+	}
+	return tw.Flush()
+}
+
+// AdminIdentitiesLinkCmd links an identity to a user.
+type AdminIdentitiesLinkCmd struct {
+	Handle  string `arg:"" help:"The user's handle."`
+	Issuer  string `required:"" help:"The identity provider's issuer URL, as in auth.oidc.issuer." placeholder:"URL"`
+	Subject string `required:"" help:"The person's subject at the provider, the sub claim." placeholder:"SUB"`
+	Email   string `help:"The email address to show with the identity." placeholder:"EMAIL"`
+}
+
+func (c *AdminIdentitiesLinkCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	req := api.LinkIdentityRequest{Issuer: c.Issuer, Subject: c.Subject, Email: c.Email}
+	if err := cl.LinkIdentity(r.ctx, c.Handle, req); err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(api.OK{OK: true})
+	}
+	fmt.Fprintf(r.stdout, "linked %s to %s\n", oneLine(c.Subject), c.Handle)
+	return nil
+}
+
+// AdminIdentitiesUnlinkCmd removes an identity from a user.
+type AdminIdentitiesUnlinkCmd struct {
+	Handle  string `arg:"" help:"The user's handle."`
+	Issuer  string `required:"" help:"The identity's issuer, from identities list." placeholder:"URL"`
+	Subject string `required:"" help:"The identity's subject, from identities list." placeholder:"SUB"`
+}
+
+func (c *AdminIdentitiesUnlinkCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	if err := cl.UnlinkIdentity(r.ctx, c.Handle, c.Issuer, c.Subject); err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(api.OK{OK: true})
+	}
+	fmt.Fprintf(r.stdout, "unlinked %s from %s\n", oneLine(c.Subject), c.Handle)
+	return nil
 }
 
 // AdminKeysCmd manages API keys.
@@ -441,7 +594,7 @@ func (c *AdminJobsListCmd) Run(r *runner) error {
 
 // AdminJobsRunCmd runs one job.
 type AdminJobsRunCmd struct {
-	Name string `arg:"" help:"sweep, gc, uploads-expire or oauth-cleanup."`
+	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup or update-check."`
 }
 
 func (c *AdminJobsRunCmd) Run(r *runner) error {
@@ -461,39 +614,62 @@ func (c *AdminJobsRunCmd) Run(r *runner) error {
 
 // AdminAuditCmd reads the audit log.
 type AdminAuditCmd struct {
-	Since string `help:"Only events after this RFC 3339 time, or this Go duration ago (such as 24h)." placeholder:"WHEN"`
-	Slug  string `help:"Only events for this artifact." placeholder:"SLUG"`
-	Limit int    `help:"Maximum events." placeholder:"N"`
+	Since  string   `help:"Only events from this RFC 3339 time on, or from this Go duration ago (such as 24h)." placeholder:"WHEN"`
+	Until  string   `help:"Only events before this RFC 3339 time, or before this Go duration ago." placeholder:"WHEN"`
+	Slug   string   `help:"Only events for this artifact." placeholder:"SLUG"`
+	Actor  string   `help:"Only events by this handle, or by admin or scheduler." placeholder:"HANDLE"`
+	Action []string `help:"Only events with this action, such as key.issue, or this prefix, such as artifact. (repeatable)." sep:"none" placeholder:"ACTION"`
+	Cursor string   `help:"Page cursor from a previous audit." placeholder:"CURSOR"`
+	Limit  int      `help:"Maximum events." placeholder:"N"`
+}
+
+// when reads an RFC 3339 time, or a duration counted back from now.
+func (r *runner) when(flag, v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.Format(time.RFC3339), nil
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return r.now().Add(-d).UTC().Format(time.RFC3339), nil
+	}
+	return "", usagef("admin audit: %s: want an RFC 3339 time or a duration, got %q", flag, v)
 }
 
 func (c *AdminAuditCmd) Run(r *runner) error {
-	since := ""
-	if c.Since != "" {
-		if t, err := time.Parse(time.RFC3339, c.Since); err == nil {
-			since = t.Format(time.RFC3339)
-		} else if d, derr := time.ParseDuration(c.Since); derr == nil {
-			since = r.now().Add(-d).UTC().Format(time.RFC3339)
-		} else {
-			return usagef("admin audit: --since: want an RFC 3339 time or a duration, got %q", c.Since)
-		}
+	since, err := r.when("--since", c.Since)
+	if err != nil {
+		return err
+	}
+	until, err := r.when("--until", c.Until)
+	if err != nil {
+		return err
 	}
 	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	events, err := cl.Audit(r.ctx, since, c.Slug, c.Limit)
+	l, err := cl.Audit(r.ctx, AuditParams{Since: since, Until: until, Slug: c.Slug, Actor: c.Actor,
+		Actions: c.Action, Cursor: c.Cursor, Limit: c.Limit})
 	if err != nil {
 		return err
 	}
 	if r.g.JSON {
-		return r.printJSON(events)
+		return r.printJSON(l)
 	}
 	tw := newTable(r.stdout)
 	fmt.Fprintln(tw, "AT\tACTOR\tACTION\tSLUG\tDETAILS")
-	for _, e := range events {
+	for _, e := range l.Events {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(oneLine(fmtMap(e.Details))))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if l.NextCursor != "" {
+		fmt.Fprintf(r.stderr, "more results: --cursor %s\n", l.NextCursor)
+	}
+	return nil
 }
 
 // AdminHealthCmd checks liveness.

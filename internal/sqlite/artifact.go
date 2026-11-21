@@ -473,6 +473,57 @@ func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *
 	return artifactErrOrNil("update", err)
 }
 
+func (s *ArtifactStore) TransferOwned(ctx context.Context, from, to, by string, at time.Time) (_ []string, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.TransferOwned")
+	defer func() { end(err) }()
+	var moved []string
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		fromID, err := artifactUserID(ctx, tx, from)
+		if err != nil {
+			return err
+		}
+		toID, err := artifactUserID(ctx, tx, to)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `UPDATE artifact SET owner_id = ?, updated_at = ?
+			WHERE owner_id = ? AND purged_at IS NULL RETURNING id, slug`, toID, toNanos(at), fromID)
+		if err != nil {
+			return err
+		}
+		var ids []int64
+		for rows.Next() {
+			var (
+				id   int64
+				slug string
+			)
+			if err := rows.Scan(&id, &slug); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+			moved = append(moved, slug)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		if by == "" {
+			return nil
+		}
+		for _, id := range ids {
+			if err := markArtifactActor(ctx, tx, id, by, false, at); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, artifactErr("transfer owned", err)
+	}
+	slices.Sort(moved)
+	return moved, nil
+}
+
 func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (_ bool, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.Involved")
 	defer func() { end(err) }()
@@ -535,6 +586,9 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 			OR u.handle = ? OR `+involved("")+`)`)
 		args = append(args, q.Viewer, q.Viewer)
 	}
+	if err := q.Validate(); err != nil {
+		return artifact.ListPage{}, err
+	}
 	switch q.Mine {
 	case "":
 	case "created":
@@ -546,8 +600,6 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 	case "any":
 		where = append(where, involved(""))
 		args = append(args, q.Viewer)
-	default:
-		return artifact.ListPage{}, artifact.Errorf(artifact.ErrInvalidArgument, "mine must be created, updated or any")
 	}
 	if q.Owner != "" {
 		where = append(where, "u.handle = ?")
@@ -588,17 +640,26 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 		where = append(where, "a.stale_at IS NULL")
 	case "only":
 		where = append(where, "a.stale_at IS NOT NULL")
-	default:
-		return artifact.ListPage{}, artifact.Errorf(artifact.ErrInvalidArgument, "stale must be include, exclude or only")
 	}
 	switch q.Deleted {
 	case "", "exclude":
 		where = append(where, "a.deleted_at IS NULL")
-	case "include":
 	case "only":
 		where = append(where, "a.deleted_at IS NOT NULL")
+	}
+	switch q.Visibility {
+	case "":
+	case artifact.Unpublished:
+		where = append(where, "a.unpublished_at IS NOT NULL")
 	default:
-		return artifact.ListPage{}, artifact.Errorf(artifact.ErrInvalidArgument, "deleted must be exclude, include or only")
+		where = append(where, "a.visibility = ? AND a.unpublished_at IS NULL")
+		args = append(args, q.Visibility)
+	}
+	if q.Search != "" {
+		// instr rather than LIKE: no character of the text is ever read as
+		// a wildcard.
+		where = append(where, "(instr(lower(a.slug), lower(?)) > 0 OR instr(lower(a.name), lower(?)) > 0)")
+		args = append(args, q.Search, q.Search)
 	}
 	if q.Cursor != "" {
 		c, err := decodeArtifactCursor(q.Cursor)
@@ -911,6 +972,33 @@ const artifactStatus = `CASE
 	WHEN stale_at IS NOT NULL THEN 'stale'
 	ELSE 'published'
 END`
+
+func (s *ArtifactStore) OwnerUsage(ctx context.Context) (_ []artifact.OwnerUsage, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.OwnerUsage")
+	defer func() { end(err) }()
+	rows, err := s.db.QueryContext(ctx, `SELECT u.handle, COUNT(*), COALESCE(SUM(
+			(SELECT COALESCE(SUM(v.size_bytes + ? * (SELECT COUNT(*) FROM version_file f WHERE f.version_id = v.id)), 0)
+			 FROM version v WHERE v.artifact_id = a.id)), 0)
+		FROM artifact a JOIN user u ON u.id = a.owner_id
+		WHERE a.purged_at IS NULL
+		GROUP BY u.id ORDER BY u.handle`, artifact.FileChargeBytes)
+	if err != nil {
+		return nil, artifactErr("owner usage", err)
+	}
+	defer rows.Close()
+	var out []artifact.OwnerUsage
+	for rows.Next() {
+		var o artifact.OwnerUsage
+		if err := rows.Scan(&o.Handle, &o.Artifacts, &o.Bytes); err != nil {
+			return nil, artifactErr("owner usage", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, artifactErr("owner usage", err)
+	}
+	return out, nil
+}
 
 func (s *ArtifactStore) CountArtifacts(ctx context.Context) (_ []artifact.StatusCount, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.CountArtifacts")

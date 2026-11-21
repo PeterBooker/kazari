@@ -17,7 +17,7 @@ Kazari is installed. To start it:
      and /etc/kazari/kazari.env (the DNS provider's token).
   2. sudo kazari check
   3. sudo systemctl enable --now kazari
-  4. sudo kazari admin users create <handle> --role admin
-     sudo kazari admin keys issue <handle> --label laptop
+  4. sudo kazari admin setup-link
+     and open the link it prints to create the first admin.
 Guide: https://kazari.io/docs/install/
 MSG

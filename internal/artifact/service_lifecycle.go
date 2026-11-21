@@ -69,20 +69,9 @@ func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (_ ListPag
 	q.Viewer = actor.Handle
 	q.All = q.All && actor.Admin
 	q.Slugs = actor.Slugs
-	switch q.Mine {
-	case "", "created", "updated", "any":
-	default:
-		return ListPage{}, Errorf(ErrInvalidArgument, "mine must be created, updated or any")
-	}
-	switch q.Stale {
-	case "", "include", "exclude", "only":
-	default:
-		return ListPage{}, Errorf(ErrInvalidArgument, "stale must be include, exclude or only")
-	}
-	switch q.Deleted {
-	case "", "exclude", "include", "only":
-	default:
-		return ListPage{}, Errorf(ErrInvalidArgument, "deleted must be exclude, include or only")
+	q.Search = strings.TrimSpace(q.Search)
+	if err := q.Validate(); err != nil {
+		return ListPage{}, err
 	}
 	for k := range q.Metadata {
 		if err := ValidateMetadataKey(k); err != nil {
@@ -198,6 +187,42 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 		a.OwnerHandle = newOwner
 		return map[string]string{"from": from, "to": newOwner}, nil
 	})
+}
+
+// TransferAll gives every artifact from owns, soft-deleted ones included,
+// to newOwner in one step, for handing a person's work over before they
+// leave. Like Transfer it is for admins alone, and a credential restricted
+// to certain slugs cannot reach every artifact, so it is refused. It returns
+// the slugs moved, in order. An unknown handle is ErrInvalidArgument.
+func (s *Service) TransferAll(ctx context.Context, actor Actor, from, newOwner string) (_ []string, err error) {
+	ctx, span := s.span(ctx, "artifact.transfer_all", "")
+	defer func() { endSpan(span, err) }()
+	if from == "" || newOwner == "" {
+		return nil, Errorf(ErrInvalidArgument, "the current owner and a new owner are required")
+	}
+	if from == newOwner {
+		return nil, Errorf(ErrInvalidArgument, "%q already owns these artifacts", from)
+	}
+	if !actor.Admin {
+		return nil, Errorf(ErrForbidden, "only an admin may transfer the artifacts of %q", from)
+	}
+	if len(actor.Slugs) > 0 {
+		return nil, Errorf(ErrForbidden, "this credential is restricted to slugs matching %s, so it cannot transfer every artifact of %q",
+			strings.Join(actor.Slugs, ", "), from)
+	}
+	by := actor.Handle
+	if actor.Operator {
+		by = ""
+	}
+	moved, err := s.store.TransferOwned(ctx, from, newOwner, by, s.now())
+	if err != nil {
+		return nil, err
+	}
+	details := map[string]string{"from": from, "to": newOwner}
+	for _, slug := range moved {
+		s.record(ctx, actor, audit.ArtifactTransfer, slug, details)
+	}
+	return moved, nil
 }
 
 // Delete soft-deletes the artifact, restorable until retention ends, or
@@ -481,4 +506,29 @@ func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool
 // Usage sums every version of the handle's artifacts, for quota reporting.
 func (s *Service) Usage(ctx context.Context, ownerHandle string) (int64, error) {
 	return s.store.Usage(ctx, ownerHandle)
+}
+
+// OwnerUsage returns what every owner holds: their artifacts, soft-deleted
+// ones included, and the bytes charged to their quota. A user who owns
+// nothing is absent.
+func (s *Service) OwnerUsage(ctx context.Context) ([]OwnerUsage, error) {
+	return s.store.OwnerUsage(ctx)
+}
+
+// Census counts every artifact, tombstones included, by Status and
+// visibility.
+func (s *Service) Census(ctx context.Context) ([]StatusCount, error) {
+	return s.store.CountArtifacts(ctx)
+}
+
+// Storage returns the versions with their logical size, which quotas count,
+// and the blobs with what they occupy once each is stored once.
+func (s *Service) Storage(ctx context.Context) (versions, blobs Totals, err error) {
+	if versions, err = s.store.VersionTotals(ctx); err != nil {
+		return Totals{}, Totals{}, err
+	}
+	if blobs, err = s.store.BlobTotals(ctx); err != nil {
+		return Totals{}, Totals{}, err
+	}
+	return versions, blobs, nil
 }

@@ -169,7 +169,7 @@ func (s *surfaceObserver) startSpan(ctx context.Context, r *http.Request, method
 		return ctx, span
 	}
 	path := r.URL.Path
-	if s.surface == instrument.SurfaceAdmin {
+	if s.surface == instrument.SurfaceAdmin || s.surface == instrument.SurfaceAccount {
 		path = instrument.RedactAdminPath(path)
 	}
 	attrs := make([]attribute.KeyValue, 0, 12)

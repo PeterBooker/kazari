@@ -16,6 +16,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/gate"
+	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -277,6 +278,46 @@ func User(u *user.User) api.User {
 	}
 }
 
+// WithAccount adds how the person signs in to their wire type.
+func WithAccount(u api.User, a user.Account) api.User {
+	u.Password, u.Invited, u.Keys, u.LastActiveAt = a.HasPassword, a.Invited, a.LiveKeys, a.LastActive()
+	return u
+}
+
+// AccountLinkURL is the address on the apex that a link's token opens. The
+// token travels in the query string, which the access log and the spans
+// leave out, never in the path.
+func (l Links) AccountLinkURL(purpose user.Purpose, token string) string {
+	return l.URL("") + "account/" + string(purpose) + "?token=" + url.QueryEscape(token)
+}
+
+// Link converts a link without its token.
+func Link(l *user.Link) api.Link {
+	return api.Link{
+		ID:        l.ID,
+		User:      l.UserHandle,
+		Purpose:   string(l.Purpose),
+		RevokeAll: l.RevokeAll,
+		CreatedBy: l.CreatedBy,
+		CreatedAt: l.CreatedAt,
+		ExpiresAt: l.ExpiresAt,
+	}
+}
+
+// CreatedLink converts a link that was just made, with its address.
+func (l Links) CreatedLink(link *user.Link, token string) api.CreatedLink {
+	return api.CreatedLink{Link: Link(link), URL: l.AccountLinkURL(link.Purpose, token)}
+}
+
+// Ready converts a readiness report.
+func Ready(r preflight.Report) api.Ready {
+	out := api.Ready{Ready: !r.Failed(), CheckedAt: r.At, Checks: make([]api.Check, 0, len(r.Findings))}
+	for _, f := range r.Findings {
+		out.Checks = append(out.Checks, api.Check{Check: f.Check, Status: string(f.Status), Detail: f.Detail})
+	}
+	return out
+}
+
 // Identity converts a linked identity.
 func Identity(id user.Identity) api.Identity {
 	return api.Identity{Issuer: id.Issuer, Subject: id.Subject, Email: id.EmailAtLogin, LastLoginAt: id.LastLoginAt}
@@ -374,12 +415,49 @@ func Error(err error) (int, api.Error) {
 		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
 	case errors.Is(err, user.ErrNotProvisioned):
 		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
+	case errors.Is(err, user.ErrLastAdmin):
+		return http.StatusConflict, api.Error{Code: api.CodeLastAdmin, Message: "the last active admin cannot be disabled or demoted; make another person an admin first"}
+	case errors.Is(err, user.ErrSelf):
+		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: "nobody disables or demotes their own account; ask another admin"}
+	case errors.Is(err, user.ErrTooManyKeys):
+		return http.StatusForbidden, api.Error{Code: api.CodeTooManyKeys, Message: err.Error()}
+	case errors.Is(err, user.ErrSetupDone):
+		return http.StatusConflict, api.Error{Code: api.CodeSetupDone, Message: "the instance already has users; an admin invites the others"}
+	case errors.Is(err, user.ErrLocalOff):
+		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: "built-in accounts are off on this instance; people sign in at the identity provider"}
+	case errors.Is(err, user.ErrLinkNotFound):
+		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "link not found, or it was used, replaced or has expired"}
+	case errors.Is(err, user.ErrWeakPassword):
+		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}
+	case errors.Is(err, user.ErrBadPassword):
+		return http.StatusUnauthorized, api.Error{Code: api.CodeUnauthorized, Message: "wrong name or password"}
 	}
 	var mbe *http.MaxBytesError
 	if errors.As(err, &mbe) {
 		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: fmt.Sprintf("request body exceeds %d bytes", mbe.Limit)}
 	}
 	return http.StatusInternalServerError, api.Error{Code: api.CodeInternal, Message: "internal error"}
+}
+
+// PageCode is the error code an HTML page's status stands for on its
+// request's span, in the API's vocabulary, so a trace reads the same
+// whichever surface failed. A 2xx or 3xx has none.
+func PageCode(status int) string {
+	switch {
+	case status < http.StatusBadRequest:
+		return ""
+	case status == http.StatusUnauthorized:
+		return api.CodeUnauthorized
+	case status == http.StatusForbidden:
+		return api.CodeForbidden
+	case status == http.StatusNotFound:
+		return api.CodeNotFound
+	case status == http.StatusTooManyRequests:
+		return api.CodeRateLimited
+	case status >= http.StatusInternalServerError:
+		return api.CodeInternal
+	}
+	return api.CodeInvalidArgument
 }
 
 func statusFor(code string) int {

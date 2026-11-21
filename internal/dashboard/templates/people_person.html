@@ -1,0 +1,167 @@
+{{/* One person: profile, keys, connected apps, sign-in methods, sessions, pages and activity. */}}
+
+{{define "people-keys"}}<table class="table">
+<thead><tr><th>Key</th><th>May</th><th>Issued with</th><th>Created</th><th>Last used</th><th>Expires</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{$handle := .Handle}}{{range .Keys}}<tr>
+<td data-label="Key"><span class="mono nowrap">{{.Name}}</span>{{with .Label}}<br><span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="May"><span class="mono">{{join .Scopes " "}}</span><br>{{if .Slugs}}<span class="soft">on pages matching</span> <span class="mono">{{join .Slugs " "}}</span>{{else}}<span class="soft">on any page of theirs</span>{{end}}</td>
+<td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">an admin</span>{{end}}</td>
+<td data-label="Created">{{when .CreatedAt}}</td>
+<td data-label="Last used">{{if .LastUsedAt}}{{when .LastUsedAt}}{{else}}<span class="soft">never</span>{{end}}</td>
+<td data-label="Expires">{{if .ExpiresAt}}{{when .ExpiresAt}}{{else}}<span class="soft">never</span>{{end}}</td>
+<td data-label="State" class="nowrap"><span class="status {{.Tone}}">{{.StateWord}}</span></td>
+<td class="row-actions">{{if eq .State "live"}}<a class="link" href="/people/{{$handle}}/keys/{{.Prefix}}/rotate">Rotate<span class="sr-only"> {{.Name}}</span></a> <a class="link link-danger" href="/people/{{$handle}}/keys/{{.Prefix}}/revoke">Revoke<span class="sr-only"> {{.Name}}</span></a>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>{{end}}
+
+{{define "people-person"}}{{template "theme/shell" .Shell}}<div class="page">
+{{$p := .Data.Row}}{{$h := $p.Handle}}
+<header class="head">
+<p class="crumb"><a href="/people">People</a> / {{$h}}</p>
+<div class="head-row">
+<h1 class="title">{{$p.Name}}</h1>
+<span class="mono soft">{{$h}}</span>
+{{template "people-status" $p}}
+<div class="head-actions">
+{{if eq $p.Status "disabled"}}<form class="inline" method="post" action="/people/{{$h}}/enable">{{template "token" .}}<button type="submit" class="btn">Enable</button></form>
+{{else if not .Data.Self}}<a class="btn btn-danger" href="/people/{{$h}}/disable">Disable</a>{{end}}
+</div>
+</div>
+{{if .Data.Self}}<p class="lede">This is you. Nobody disables or demotes their own account: another admin does.</p>{{end}}
+</header>
+{{template "flash" .}}
+
+<div class="cols">
+<section class="box section" aria-labelledby="person-profile">
+<h2 class="h2" id="person-profile">Profile, role and quota</h2>
+{{with .Data.Form.Errors}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}The changes were not saved</p><p>Correct the marked field and save again.</p></div>{{end}}
+<form class="form-grid" method="post" action="/people/{{$h}}">
+{{template "token" .}}
+<div class="field span-2"><label for="person-name">Name</label><input class="input" id="person-name" name="name" type="text" value="{{.Data.Form.Name}}" autocomplete="off"></div>
+<div class="field span-2"><label for="person-email">Email <span class="optional">(optional)</span></label>
+<input class="input" id="person-email" name="email" type="email" value="{{.Data.Form.Email}}" autocomplete="off" aria-describedby="person-email-help{{if .Data.Form.Errors.email}} person-email-err{{end}}"{{if .Data.Form.Errors.email}} aria-invalid="true"{{end}}>
+{{with .Data.Form.Errors.email}}<p class="error" id="person-email-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="person-email-help">A name for the account that they can sign in with. Kazari sends nothing to it.</p></div>
+<div class="field"><label for="person-role">Role</label>
+<select class="input" id="person-role" name="role"{{if .Data.Form.Errors.role}} aria-invalid="true" aria-describedby="person-role-err"{{end}}>
+<option value="member"{{if eq .Data.Form.Role "member"}} selected{{end}}>Member</option>
+<option value="admin"{{if eq .Data.Form.Role "admin"}} selected{{end}}>Admin</option>
+</select>
+{{with .Data.Form.Errors.role}}<p class="error" id="person-role-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<div class="field"><label for="person-quota">Quota</label>
+<input class="input" id="person-quota" name="quota" type="text" value="{{.Data.Form.Quota}}" autocomplete="off" spellcheck="false" aria-describedby="person-quota-help{{if .Data.Form.Errors.quota}} person-quota-err{{end}}"{{if .Data.Form.Errors.quota}} aria-invalid="true"{{end}}>
+{{with .Data.Form.Errors.quota}}<p class="error" id="person-quota-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="person-quota-help">A size such as 500 MiB or 2 GiB. 0 is no limit.</p></div>
+<div class="actions span-2"><button type="submit" class="btn btn-primary">Save changes</button></div>
+</form>
+<dl class="kv">
+<dt>Storage</dt><dd>{{template "people-usage" $p}}</dd>
+<dt>Added</dt><dd>{{when .Data.CreatedAt}}</dd>
+{{if .Data.DisabledAt}}<dt>Disabled</dt><dd>{{when .Data.DisabledAt}}</dd>{{end}}
+<dt>Last active</dt><dd>{{if $p.LastActive}}{{when $p.LastActive}}{{else}}<span class="soft">never</span>{{end}}</dd>
+</dl>
+</section>
+
+<section class="box section" aria-labelledby="person-signin">
+<h2 class="h2" id="person-signin">Sign-in methods</h2>
+<dl class="kv">
+{{if .Data.Local}}<dt>Password</dt><dd>{{if .Data.HasPassword}}Set{{else if eq $p.Status "invited"}}Not set yet: they are invited{{else}}Not set{{end}}
+{{if ne $p.Status "disabled"}}<br>{{if .Data.HasPassword}}<a class="link" href="/people/{{$h}}/reset">Create a reset link</a>{{else if eq $p.Status "invited"}}<a class="link" href="/people/{{$h}}/invite">Make a new invite link</a>{{else}}<a class="link" href="/people/{{$h}}/reset">Create a reset link, so they can set one</a>{{end}}{{end}}</dd>
+{{range .Data.Pending}}<dt>{{if eq .Purpose "reset"}}Reset link{{else}}Invite link{{end}}</dt><dd>Waiting to be used until {{when .ExpiresAt}} <a class="link link-danger" href="/invites/{{.ID}}/revoke">Revoke</a></dd>
+{{end}}{{end}}
+<dt>Provider sign-in</dt><dd>{{if .Data.Identities}}<ul class="dash">{{range .Data.Identities}}<li><span class="mono">{{.Subject}}</span> at <span class="mono">{{.Issuer}}</span>{{with .EmailAtLogin}}, as {{.}}{{end}}, last used {{when .LastLoginAt}}
+<form class="inline" method="post" action="/people/{{$h}}/identities/unlink">{{template "token" $}}<input type="hidden" name="issuer" value="{{.Issuer}}"><input type="hidden" name="subject" value="{{.Subject}}"><button type="submit" class="link link-danger">Unlink</button></form></li>{{end}}</ul>{{else}}<span class="soft">No sign-in at a provider is linked.</span>{{end}}</dd>
+<dt>API keys</dt><dd>{{len .Data.Keys}} live, listed below</dd>
+<dt>Sessions</dt><dd>{{.Data.Sessions}} open in browsers{{if .Data.Sessions}} <form class="inline" method="post" action="/people/{{$h}}/sessions/end">{{template "token" .}}<button type="submit" class="link">Sign out everywhere</button></form>{{end}}</dd>
+</dl>
+{{if .Data.CanLink}}<details class="more"><summary>Link a sign-in at the provider</summary>
+<p class="soft">For a person the provider knows under an address this instance does not: afterwards that sign-in opens this account.</p>
+<form class="form" method="post" action="/people/{{$h}}/identities">
+{{template "token" .}}
+<div class="field"><label for="person-issuer">Issuer</label><input class="input input-mono" id="person-issuer" name="issuer" type="url" required autocomplete="off" spellcheck="false" aria-describedby="person-issuer-help">
+<p class="help" id="person-issuer-help">The provider's address, as in the configuration.</p></div>
+<div class="field"><label for="person-subject">Subject</label><input class="input input-mono" id="person-subject" name="subject" type="text" required autocomplete="off" spellcheck="false" aria-describedby="person-subject-help">
+<p class="help" id="person-subject-help">The provider's own id for the person, not their email.</p></div>
+<div class="field"><label for="person-idemail">Email at the provider <span class="optional">(optional)</span></label><input class="input" id="person-idemail" name="email" type="email" autocomplete="off"></div>
+<div class="actions"><button type="submit" class="btn">Link the sign-in</button></div>
+</form></details>{{end}}
+</section>
+</div>
+
+<section class="section" aria-labelledby="person-keys">
+<h2 class="h2" id="person-keys">API keys</h2>
+{{if .Data.Keys}}{{template "people-keys" dict "Handle" $h "Keys" .Data.Keys}}
+{{else}}<div class="empty"><p>{{$h}} has no live key. A key lets an agent or a script act as them without a browser; issue one below and hand it over.</p></div>{{end}}
+{{if .Data.PastKeys}}<details class="more"><summary>Revoked and expired keys ({{len .Data.PastKeys}})</summary>
+{{template "people-keys" dict "Handle" $h "Keys" .Data.PastKeys}}</details>{{end}}
+{{if ne $p.Status "disabled"}}<details class="more"{{if .Data.KeyForm.Error}} open{{end}}><summary>Issue a key</summary>
+{{with .Data.KeyForm.Error}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}No key was issued</p><p>{{.}}</p></div>{{end}}
+<form class="form" method="post" action="/people/{{$h}}/keys">
+{{template "token" .}}
+<div class="field"><label for="key-label">Label <span class="optional">(optional)</span></label><input class="input" id="key-label" name="label" type="text" value="{{.Data.KeyForm.Label}}" autocomplete="off" aria-describedby="key-label-help">
+<p class="help" id="key-label-help">What the key is for, such as the name of the machine or the agent that holds it.</p></div>
+<fieldset class="fieldset"><legend>What the key may do</legend>
+{{range .Data.KeyForm.Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}><span>{{.Description}} <span class="mono soft">{{.Name}}</span></span></label>
+{{end}}</fieldset>
+<div class="field"><label for="key-slugs">Slug patterns <span class="optional">(optional)</span></label><input class="input input-mono" id="key-slugs" name="slugs" type="text" value="{{.Data.KeyForm.Slugs}}" autocomplete="off" spellcheck="false" aria-describedby="key-slugs-help">
+<p class="help" id="key-slugs-help">Restricts the key to pages whose slug matches: an exact slug, or a prefix ending in *, such as docs-*. Several are separated by spaces. Empty is every page they may touch.</p></div>
+<div class="field"><label for="key-days">Days until it expires <span class="optional">(optional)</span></label><input class="input" id="key-days" name="days" type="number" min="1"{{if .Data.MaxKeyDays}} max="{{.Data.MaxKeyDays}}"{{end}} value="{{.Data.KeyForm.Days}}" autocomplete="off" aria-describedby="key-days-help">
+<p class="help" id="key-days-help">{{if .Data.MaxKeyDays}}At most {{.Data.MaxKeyDays}} on this instance; empty gets that.{{else}}Empty is a key that works until it is revoked.{{end}}</p></div>
+<div class="actions"><button type="submit" class="btn">Issue the key</button></div>
+</form></details>{{end}}
+</section>
+
+<section class="section" aria-labelledby="person-apps">
+<h2 class="h2" id="person-apps">Connected apps</h2>
+{{if .Data.Apps}}<table class="table">
+<thead><tr><th>App</th><th>May</th><th>Last refreshed</th><th>Lapses unless refreshed by</th><th>Approved with</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Data.Apps}}<tr>
+<td data-label="App">{{.Client}}</td>
+<td data-label="May"><span class="mono">{{join .Scopes " "}}</span></td>
+<td data-label="Last refreshed">{{when .Refreshed}}</td>
+<td data-label="Lapses unless refreshed by">{{when .Lapses}}</td>
+<td data-label="Approved with">{{if .KeyPrefix}}<span class="mono">kzk_{{.KeyPrefix}}</span>{{else}}<span class="soft">their sign-in</span>{{end}}</td>
+<td class="row-actions"><a class="link link-danger" href="/people/{{$h}}/apps/{{.ID}}/revoke">Disconnect<span class="sr-only"> {{.Client}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty"><p>{{$h}} has connected no app. An app is an agent, such as Claude, that they signed in from and approved; it is listed here until it is disconnected or stops refreshing.</p></div>{{end}}
+</section>
+
+<section class="section" aria-labelledby="person-pages">
+<div class="section-head"><h2 class="h2" id="person-pages">Their pages</h2>
+{{if .Data.Pages}}<a class="link" href="/pages?owner={{$h}}">All of their pages</a>{{end}}</div>
+{{if .Data.Pages}}<table class="table">
+<thead><tr><th>Page</th><th>Name</th><th>Visibility</th><th>Updated</th></tr></thead>
+<tbody>
+{{range .Data.Pages}}<tr>
+<td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></td>
+<td data-label="Name">{{.Name}}</td>
+<td data-label="Visibility">{{.Visibility}}</td>
+<td data-label="Updated">{{when .Updated}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+{{if .Data.MorePages}}<p class="soft">These are the 50 changed most recently. <a href="/pages?owner={{$h}}">See all of them</a>.</p>{{end}}
+{{if .Data.Others}}<details class="more"><summary>Hand all their pages to someone else</summary>
+<form class="form" method="post" action="/people/{{$h}}/handover">
+{{template "token" .}}
+<div class="field"><label for="person-handover">New owner</label><select class="input" id="person-handover" name="transfer_to" required aria-describedby="person-handover-help">
+<option value="">Choose a person</option>
+{{range .Data.Others}}<option value="{{.Handle}}">{{.Name}} ({{.Handle}})</option>
+{{end}}</select>
+<p class="help" id="person-handover-help">Every page {{$h}} owns moves, those in the bin too, and counts against the new owner's quota. The pages stay online at their addresses. Each can be handed back from its own page.</p></div>
+<div class="actions"><button type="submit" class="btn">Hand over their pages</button></div>
+</form></details>{{end}}
+{{else}}<div class="empty"><p>{{$h}} owns no page. Pages appear here once they, or an agent acting as them, publish one.</p></div>{{end}}
+</section>
+
+<section class="section" aria-labelledby="person-activity">
+<div class="section-head"><h2 class="h2" id="person-activity">Recent activity</h2>
+<a class="link" href="/activity?person={{$h}}">All of their activity</a></div>
+{{template "events" .Data.Events}}
+</section>
+</div>{{template "theme/shell-close"}}{{end}}

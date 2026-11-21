@@ -24,7 +24,7 @@
   [[sections.pages]]
     title = "Install"
     path = "/docs/install"
-    description = "Install Kazari on your own server: DNS and a wildcard certificate, the release binary under systemd or Docker, proxy mode, and the first admin user and key."
+    description = "Install Kazari on your own server: DNS and a wildcard certificate, the release binary under systemd or Docker, proxy mode, and the first admin."
   [[sections.pages]]
     title = "DNS and certificates"
     path = "/docs/certificates"
@@ -36,11 +36,15 @@
   [[sections.pages]]
     title = "Sign-in and identity"
     path = "/docs/identity"
-    description = "How people and agents sign in to Kazari: API keys, OAuth 2.1 for MCP clients, OpenID Connect providers such as Entra ID and Google, and provisioning."
+    description = "How people and agents sign in to Kazari: built-in accounts, API keys, OAuth 2.1 for MCP clients, OpenID Connect providers and provisioning."
+  [[sections.pages]]
+    title = "Dashboard"
+    path = "/docs/dashboard"
+    description = "Run a Kazari instance from a browser: reaching the dashboard, signing in, people and invites, pages and the bin, activity, health, jobs and backups."
   [[sections.pages]]
     title = "Operations"
     path = "/docs/ops"
-    description = "Running Kazari: data layout, backups, upgrades, logs, metrics, OpenTelemetry tracing, jobs, the page lifecycle, quotas, abuse and the audit log."
+    description = "Running Kazari: data layout, backups, readiness, upgrades, logs, metrics, tracing, jobs, the page lifecycle, quotas, abuse and the audit log."
 
 [[sections]]
   title = "Reference"

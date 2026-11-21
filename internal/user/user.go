@@ -35,7 +35,85 @@ var (
 	ErrKeyTooWide     = errors.New("user: the key making the request is too narrow")
 	ErrDisabled       = errors.New("user: disabled")
 	ErrNotProvisioned = errors.New("user: identity is not allowed on this instance")
+	// ErrLastAdmin is a change that would leave the instance without an
+	// active admin.
+	ErrLastAdmin = errors.New("user: the last active admin cannot be disabled or demoted")
+	// ErrSelf is a person disabling or demoting their own account.
+	ErrSelf = errors.New("user: nobody disables or demotes their own account")
+	// ErrTooManyKeys is a key refused because its owner holds
+	// Options.MaxKeys live ones.
+	ErrTooManyKeys = errors.New("user: too many live keys")
+	// ErrBadPassword is a refused sign-in: an unknown name, an account
+	// without a password, a disabled one or a wrong password, never told
+	// apart.
+	ErrBadPassword = errors.New("user: wrong name or password")
+	// ErrWeakPassword is a new password outside the length limits.
+	ErrWeakPassword = errors.New("user: password not accepted")
+	// ErrLinkNotFound is a link that sets no password: unknown, used,
+	// replaced, revoked or expired, or its person disabled.
+	ErrLinkNotFound = errors.New("user: link not found")
+	// ErrSetupDone is a first-run setup asked of an instance that has users.
+	ErrSetupDone = errors.New("user: the instance is already set up")
+	// ErrLocalOff is a password or a link asked of an instance whose people
+	// sign in elsewhere (Options.LocalAccounts is off).
+	ErrLocalOff = errors.New("user: built-in accounts are off on this instance")
 )
+
+// Purpose is what a Link is for.
+type Purpose string
+
+const (
+	PurposeInvite Purpose = "invite" // a new person sets their first password
+	PurposeReset  Purpose = "reset"  // a person sets a new password
+	PurposeSetup  Purpose = "setup"  // the first admin of a fresh instance is created
+)
+
+// Link is a single-use link that sets a password. Its token is shown once,
+// when the link is made; only Hash (hex SHA-256 of the token) is stored.
+type Link struct {
+	ID         int64
+	UserHandle string // "" for PurposeSetup
+	Purpose    Purpose
+	Hash       string
+	// RevokeAll makes using a reset link revoke the person's keys and OAuth
+	// grants too.
+	RevokeAll bool
+	CreatedBy string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	RevokedAt *time.Time
+}
+
+// Live reports whether the link can still be used at now.
+func (l *Link) Live(now time.Time) bool {
+	return l.UsedAt == nil && l.RevokedAt == nil && now.Before(l.ExpiresAt)
+}
+
+// Account is how a person signs in and when they last did.
+type Account struct {
+	Handle      string
+	HasPassword bool
+	// Invited is a person who was sent an invite and has not set a password.
+	Invited         bool
+	Identities      int
+	LiveKeys        int
+	PasswordLoginAt *time.Time
+	IdentityLoginAt *time.Time
+	KeyUsedAt       *time.Time
+}
+
+// LastActive is the latest of the last password sign-in, sign-in at the
+// identity provider and key use; nil when there is none.
+func (a Account) LastActive() *time.Time {
+	var last *time.Time
+	for _, t := range []*time.Time{a.PasswordLoginAt, a.IdentityLoginAt, a.KeyUsedAt} {
+		if t != nil && (last == nil || t.After(*last)) {
+			last = t
+		}
+	}
+	return last
+}
 
 // User is a member or admin of the instance.
 type User struct {
@@ -78,6 +156,7 @@ type KeyStatus struct {
 	Active    bool       // neither revoked nor expired, and the owner is not disabled
 	ExpiresAt *time.Time // nil when the key never expires
 	Slugs     []string   // the key's restriction, empty when it has none
+	Scopes    []string   // what the key acts with now: its scopes, capped at its owner's role
 }
 
 // Identity links an upstream (issuer, subject) pair to a user.
@@ -98,15 +177,20 @@ type Store interface {
 	// ListUsers returns every user ordered by handle.
 	ListUsers(ctx context.Context) ([]User, error)
 	// UpdateUser writes email, display name, role, quota and disabled_at.
+	// ErrLastAdmin, with nothing written, when the user is an active admin,
+	// u no longer is and no other active admin exists, checked in the same
+	// transaction so that two changes cannot each rely on the other's admin.
 	UpdateUser(ctx context.Context, u *User) error
 
 	// CreateKey inserts k and sets k.ID. ErrKeyNotFound when k.IssuedBy
-	// names no key of the same user.
-	CreateKey(ctx context.Context, k *APIKey) error
+	// names no key of the same user. ErrTooManyKeys, with nothing written,
+	// when maxLive > 0 and the user already holds that many keys that are
+	// neither revoked nor expired at k.CreatedAt.
+	CreateKey(ctx context.Context, k *APIKey, maxLive int) error
 	// RotateKey is CreateKey for the successor of the user's key with
 	// prefix, which in the same transaction is set to expire at expires
 	// unless it ends sooner. ErrKeyNotFound.
-	RotateKey(ctx context.Context, prefix string, k *APIKey, expires time.Time) error
+	RotateKey(ctx context.Context, prefix string, k *APIKey, expires time.Time, maxLive int) error
 	// GetKey returns the key and its user by prefix, including revoked and
 	// expired keys; the caller decides. ErrKeyNotFound.
 	GetKey(ctx context.Context, prefix string) (*APIKey, *User, error)
@@ -129,6 +213,42 @@ type Store interface {
 	ListIdentities(ctx context.Context, handle string) ([]Identity, error)
 	// CountUsers counts users by role and whether they are disabled.
 	CountUsers(ctx context.Context) ([]Count, error)
+
+	// PasswordHash returns the user's password hash, or "" when the user
+	// has no password or does not exist.
+	PasswordHash(ctx context.Context, handle string) (string, error)
+	// SetPassword stores hash as the user's password. ErrNotFound.
+	SetPassword(ctx context.Context, handle, hash string, at time.Time) error
+	// TouchPassword records a sign-in with the password. A user without a
+	// password is not an error.
+	TouchPassword(ctx context.Context, handle string, at time.Time) error
+
+	// CreateLink inserts l, sets l.ID and revokes, at l.CreatedAt, every
+	// earlier link of the same person and purpose that is still unused, so
+	// one link per person and purpose works at a time. ErrNotFound for an
+	// unknown handle. A PurposeSetup link names no user and is refused with
+	// ErrSetupDone once any user exists.
+	CreateLink(ctx context.Context, l *Link) error
+	// GetLink returns the link whose token hashes to hash, in any state,
+	// with its user (nil for PurposeSetup). ErrLinkNotFound.
+	GetLink(ctx context.Context, hash string) (*Link, *User, error)
+	// ListLinks returns the links that are live at now, newest first.
+	ListLinks(ctx context.Context, now time.Time) ([]Link, error)
+	// RevokeLink revokes the link with id if it is live at the given time,
+	// and returns it. ErrLinkNotFound otherwise.
+	RevokeLink(ctx context.Context, id int64, at time.Time) (*Link, error)
+	// UseLink marks the link used at the given time and stores
+	// passwordHash for its user, in one transaction, and returns both.
+	// ErrLinkNotFound unless the link is live then and its user enabled.
+	// For a PurposeSetup link it first inserts first as a new user, and
+	// answers ErrSetupDone, with nothing written, if any user exists: of
+	// two people racing for a fresh instance one becomes its admin.
+	// ErrHandleTaken and ErrEmailTaken cannot occur on an empty table.
+	UseLink(ctx context.Context, hash string, at time.Time, passwordHash string, first *User) (*Link, *User, error)
+
+	// ListAccounts returns every user's Account, ordered by handle, with
+	// keys counted as live at now.
+	ListAccounts(ctx context.Context, now time.Time) ([]Account, error)
 }
 
 // Count is how many users have a role and disabled state.

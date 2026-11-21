@@ -29,6 +29,7 @@
 # TYPE kazari_mcp_tool_result_size_bytes histogram
 # TYPE kazari_upload_count gauge
 # TYPE kazari_user_count gauge
+# TYPE kazari_user_link_operations counter
 # TYPE mcp_server_operation_duration_seconds histogram
 # TYPE process_cpu_seconds counter
 # TYPE process_max_fds gauge

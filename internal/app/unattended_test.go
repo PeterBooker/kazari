@@ -189,12 +189,12 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 	if g.Client != "Routine" || g.KeyPrefix != prefix || !g.ExpiresAt.Equal(now.Add(45*day)) || !g.CreatedAt.Equal(now) {
 		t.Errorf("grant = %+v, want the client's name, the key and auth.tokens.refresh_ttl", g)
 	}
-	events, err := admin.Audit(ctx, "", "weekly-report", 0)
+	events, err := admin.Audit(ctx, cli.AuditParams{Slug: "weekly-report"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	credentials := map[string]bool{}
-	for _, ev := range events {
+	for _, ev := range events.Events {
 		credentials[ev.Details["credential"]] = true
 	}
 	if want := fmt.Sprintf("oauth:%d", g.ID); !credentials[want] || !credentials["api_key:"+prefix] {

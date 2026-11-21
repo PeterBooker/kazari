@@ -41,7 +41,7 @@ func userMustKey(t *testing.T, s *UserStore, handle, prefix string, created time
 	t.Helper()
 	k := &user.APIKey{UserHandle: handle, Prefix: prefix, Hash: "hash-" + prefix, Label: "label " + prefix,
 		Scopes: []string{"artifacts:read", "artifacts:write"}, CreatedAt: created}
-	if err := s.CreateKey(context.Background(), k); err != nil {
+	if err := s.CreateKey(context.Background(), k, 0); err != nil {
 		t.Fatalf("CreateKey(%q): %v", prefix, err)
 	}
 	return k
@@ -117,7 +117,7 @@ func TestUserStoreNotFound(t *testing.T) {
 			return s.UpdateUser(ctx, &user.User{Handle: "nobody", Role: user.RoleMember})
 		}, user.ErrNotFound},
 		{"CreateKey", func() error {
-			return s.CreateKey(ctx, &user.APIKey{UserHandle: "nobody", Prefix: "aaaaaaaa", CreatedAt: userT0})
+			return s.CreateKey(ctx, &user.APIKey{UserHandle: "nobody", Prefix: "aaaaaaaa", CreatedAt: userT0}, 0)
 		}, user.ErrNotFound},
 		{"GetKey", func() error { _, _, err := s.GetKey(ctx, "aaaaaaaa"); return err }, user.ErrKeyNotFound},
 		{"ListKeys", func() error { _, err := s.ListKeys(ctx, "nobody"); return err }, user.ErrNotFound},
@@ -226,7 +226,7 @@ func TestUserStoreKeys(t *testing.T) {
 	exp := userT0.Add(24 * time.Hour)
 	k1 := &user.APIKey{UserHandle: "alice", Prefix: "aaaaaaaa", Hash: "h1", Label: "laptop",
 		Scopes: []string{"artifacts:read", "admin"}, ExpiresAt: &exp, CreatedAt: userT0}
-	if err := s.CreateKey(ctx, k1); err != nil {
+	if err := s.CreateKey(ctx, k1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if k1.ID == 0 {
@@ -235,11 +235,11 @@ func TestUserStoreKeys(t *testing.T) {
 	k2 := userMustKey(t, s, "alice", "bbbbbbbb", userT0.Add(time.Second))
 	userMustKey(t, s, "bob", "cccccccc", userT0)
 	noScopes := &user.APIKey{UserHandle: "bob", Prefix: "dddddddd", Hash: "h4", CreatedAt: userT0}
-	if err := s.CreateKey(ctx, noScopes); err != nil {
+	if err := s.CreateKey(ctx, noScopes, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.CreateKey(ctx, &user.APIKey{UserHandle: "bob", Prefix: "aaaaaaaa", CreatedAt: userT0}); err == nil {
+	if err := s.CreateKey(ctx, &user.APIKey{UserHandle: "bob", Prefix: "aaaaaaaa", CreatedAt: userT0}, 0); err == nil {
 		t.Error("CreateKey with a duplicate prefix succeeded")
 	}
 

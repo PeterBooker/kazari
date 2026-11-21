@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -56,7 +58,11 @@ func TestAdminSocket(t *testing.T) {
 	if _, err := local.IssueKey(ctx, "ann", api.IssueKeyRequest{Label: "local"}); err != nil {
 		t.Fatalf("issue key over socket: %v", err)
 	}
-	events, err := local.Audit(ctx, "", "", 0)
+	audited, err := local.Audit(ctx, cli.AuditParams{})
+	var events []api.AuditEvent
+	if audited != nil {
+		events = audited.Events
+	}
 	if err != nil || len(events) == 0 || events[0].Actor != "admin" {
 		t.Errorf("audit over socket: %+v, %v; want events by actor admin", events, err)
 	}
@@ -119,6 +125,12 @@ func (l *logRecorder) find(msg string) (slog.Record, bool) {
 	return slog.Record{}, false
 }
 
+func (l *logRecorder) all() []slog.Record {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]slog.Record(nil), l.records...)
+}
+
 func attr(r slog.Record, key string) string {
 	var v string
 	r.Attrs(func(a slog.Attr) bool {
@@ -130,22 +142,35 @@ func attr(r slog.Record, key string) string {
 	return v
 }
 
-func TestFirstRunHint(t *testing.T) {
-	cfg := testConfig(t)
+// firstRun starts and stops a fresh instance and returns what it logged,
+// what it wrote to stderr and where its socket was.
+func firstRun(t *testing.T, cfg config.Config) (*logRecorder, string, string) {
+	t.Helper()
 	rec := &logRecorder{}
+	var stderr bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a, err := app.New(ctx, cfg, app.Options{Logger: slog.New(rec)})
+	a, err := app.New(ctx, cfg, app.Options{Logger: slog.New(rec), Stderr: &stderr, Argon2: cheapArgon2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
 	<-a.Started()
+	socket := a.Addrs().Socket
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	return rec, stderr.String(), socket
+}
+
+// Without built-in accounts the first admin is made with two commands.
+func TestFirstRunHint(t *testing.T) {
+	cfg := testConfig(t)
+	off := false
+	cfg.Auth.Local.Enabled = &off
+	rec, stderr, socket := firstRun(t, cfg)
 
 	serving, ok := rec.find("serving")
 	if !ok || attr(serving, "pages") != "http://<slug>.localhost/" || attr(serving, "admin") != "http://admin.localhost/" {
@@ -156,7 +181,34 @@ func TestFirstRunHint(t *testing.T) {
 		t.Fatalf("no users yet: found %v, level %v", ok, hint.Level)
 	}
 	if next, how := attr(hint, "next"), attr(hint, "how"); !strings.Contains(next, "kazari admin users create") ||
-		!strings.Contains(how, a.Addrs().Socket) {
+		!strings.Contains(how, socket) {
 		t.Errorf("hint next=%q how=%q", next, how)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want nothing without built-in accounts", stderr)
+	}
+}
+
+// With built-in accounts a fresh instance prints a setup link, straight to
+// stderr: no log record, which may be exported, carries it.
+func TestFirstRunSetupLink(t *testing.T) {
+	rec, stderr, _ := firstRun(t, testConfig(t))
+	m := regexp.MustCompile(`http://localhost/account/setup\?token=(kzl_[a-z2-7]+)`).FindStringSubmatch(stderr)
+	if m == nil {
+		t.Fatalf("stderr holds no setup link: %q", stderr)
+	}
+	if !strings.Contains(stderr, "kazari admin setup-link") {
+		t.Errorf("stderr does not say how to get a fresh link: %q", stderr)
+	}
+	hint, ok := rec.find("no users yet")
+	if !ok || !strings.Contains(attr(hint, "next"), "kazari admin setup-link") {
+		t.Errorf("no users yet: found %v, next %q", ok, attr(hint, "next"))
+	}
+	for _, r := range rec.all() {
+		line := r.Message
+		r.Attrs(func(a slog.Attr) bool { line += " " + a.Value.String(); return true })
+		if strings.Contains(line, m[1]) || strings.Contains(line, "kzl_") {
+			t.Errorf("a log record carries the setup token: %s", line)
+		}
 	}
 }

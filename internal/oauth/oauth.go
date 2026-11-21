@@ -1,13 +1,15 @@
 // Package oauth is the OAuth 2.1 authorization server for MCP clients: RFC
 // 8414 and RFC 9728 metadata, dynamic registration (RFC 7591), client ID
 // metadata documents, PKCE (S256 only) and refresh-token rotation. People sign
-// in at an upstream IdentityProvider or, without one, with an API key; a
-// grant approved with a key takes that key's scopes, restriction and
-// lifetime. The admin scope is never granted.
+// in at an upstream IdentityProvider or, without one, with the password of a
+// built-in account or an API key; a grant approved with a key takes that
+// key's scopes, restriction and lifetime. The admin scope is never granted.
 //
-// It is also the browser sign-in host for gated artifacts: a session cookie on
-// the MCP host, and per artifact host a single-use code that the host redeems
-// in-process (Redeem) for a view cookie only it receives.
+// It is also the browser sign-in host for every other host: a session cookie
+// on the MCP host, and per host a single-use code that the host redeems
+// in-process (Redeem) for a cookie only it receives. Those hosts are the
+// artifact hosts with gated pages and the control hosts, the admin host and
+// the apex (HostAdmin, HostAccount).
 package oauth
 
 import (
@@ -18,18 +20,21 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/PeterBooker/kazari/internal/instrument"
-	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -246,6 +251,13 @@ type Store interface {
 	// non-empty Browser, with their codes and view sessions; a missing one
 	// is not an error.
 	DeleteSession(ctx context.Context, id int64) error
+	// DeleteUserSessions removes the user's sessions, with their codes and
+	// view sessions, and returns how many. It spares the session with id
+	// keep and those of the same browser; 0 spares none. The user's tokens
+	// stay.
+	DeleteUserSessions(ctx context.Context, handle string, keep int64) (int, error)
+	// CountSessions counts the user's sessions that have not expired at now.
+	CountSessions(ctx context.Context, handle string, now time.Time) (int, error)
 
 	// CreateViewCode stores a code for an existing session.
 	CreateViewCode(ctx context.Context, c *ViewCode) error
@@ -280,6 +292,14 @@ type Keys interface {
 	KeyStatus(ctx context.Context, prefix string) (user.KeyStatus, error)
 }
 
+// Passwords signs people in to the accounts Kazari keeps itself.
+// user.Service implements it.
+type Passwords interface {
+	// CheckPassword returns the person whose handle or email login is, if
+	// the password is theirs, and user.ErrBadPassword for every refusal.
+	CheckPassword(ctx context.Context, login, password string) (*user.User, error)
+}
+
 // Options configures a Service.
 type Options struct {
 	Issuer string // e.g. https://mcp.art.example.com
@@ -312,11 +332,19 @@ type Options struct {
 	// InsecureCookies drops the Secure attribute and the __Host- prefix, for
 	// development over plain http.
 	InsecureCookies bool
+	// Passwords signs people in with a built-in account. Nil, or an
+	// identity provider, turns the password form off; the pages then ask
+	// for an API key.
+	Passwords Passwords
 	// ViewCallback returns the URL on an artifact host where a browser
 	// sign-in ends (https://demo.art.example.com/.kazari/callback), given
 	// the host's label, and whether the label names an artifact host. Nil
 	// turns browser sign-in off.
 	ViewCallback func(host string) (string, bool)
+	// ControlCallback is ViewCallback for the control hosts, HostAdmin and
+	// HostAccount: the URL their sign-in ends at, built from the
+	// configuration and never from a request.
+	ControlCallback func(host string) (string, bool)
 	// SessionTTL is how long a browser sign-in lasts (default 12h); every
 	// view session it opens ends with it. ViewCodeTTL is the lifetime of
 	// the code that carries it to an artifact host (default 1m).
@@ -341,20 +369,36 @@ const DefaultMaxUnusedClients = 10_000
 
 // Service is the authorization server.
 type Service struct {
-	store  Store
-	users  *user.Service
-	keys   Keys
-	idp    IdentityProvider
-	audit  audit.Recorder
-	opts   Options
-	origin string // of the issuer
-	now    func() time.Time
-	log    *slog.Logger
-	client *http.Client
-	pages  *pages
-	tracer trace.Tracer
-	m      metrics
+	store     Store
+	users     *user.Service
+	keys      Keys
+	passwords Passwords // nil with an identity provider
+	idp       IdentityProvider
+	audit     audit.Recorder
+	opts      Options
+	origin    string // of the issuer
+	now       func() time.Time
+	log       *slog.Logger
+	client    *http.Client
+	pages     *pages
+	tracer    trace.Tracer
+	m         metrics
+
+	// Failed password sign-ins slow the next one down, per account and per
+	// client address.
+	accountDelay, ipDelay *ratelimit.Backoff
 }
+
+// How failed password sign-ins slow the next: three wrong passwords for an
+// account, or ten from one address, which may be a whole office, cost
+// nothing; then the wait doubles from a second up to a minute. Nobody is
+// ever locked out.
+const (
+	accountFreeFailures = 3
+	ipFreeFailures      = 10
+	signInBaseDelay     = time.Second
+	signInMaxDelay      = time.Minute
+)
 
 var _ auth.Authenticator = (*Service)(nil)
 
@@ -407,10 +451,20 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	if u, err := url.Parse(opts.Issuer); err == nil && u.Host != "" {
 		origin = strings.ToLower(u.Scheme + "://" + u.Host)
 	}
+	// Built-in accounts or an identity provider, never both.
+	passwords := opts.Passwords
+	if idp != nil {
+		passwords = nil
+	}
+	backoff := func(free int, scope string) *ratelimit.Backoff {
+		return ratelimit.NewBackoff(ratelimit.BackoffOptions{Free: free, Base: signInBaseDelay, Max: signInMaxDelay,
+			Now: opts.Now, Scope: scope, Telemetry: opts.Telemetry})
+	}
 	return &Service{
-		store: store, users: users, keys: keys, idp: idp, audit: rec, opts: opts, origin: origin,
-		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(),
+		store: store, users: users, keys: keys, passwords: passwords, idp: idp, audit: rec, opts: opts, origin: origin,
+		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(origin),
 		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(opts.Telemetry.Meter(scope)),
+		accountDelay: backoff(accountFreeFailures, ratelimit.ScopeAccount), ipDelay: backoff(ipFreeFailures, ratelimit.ScopeIP),
 	}
 }
 
@@ -534,6 +588,28 @@ func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 	}
 	s.record(ctx, actorFrom(ctx, "admin"), ActionRevoke, map[string]string{"user": handle})
 	return nil
+}
+
+// EndSessions ends the user's browser sessions on every host and leaves
+// their tokens alone, so the applications they connected keep working. The
+// session with id keep, where a person changed their own password, stays;
+// 0 keeps none.
+func (s *Service) EndSessions(ctx context.Context, handle string, keep int64) (err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "oauth.end_sessions")
+	defer func() { instrument.End(span, err, "") }()
+	n, err := s.store.DeleteUserSessions(ctx, handle, keep)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		s.record(ctx, actorFrom(ctx, handle), audit.SessionRevoke, map[string]string{"user": handle, "sessions": strconv.Itoa(n)})
+	}
+	return nil
+}
+
+// CountSessions returns how many browser sessions the user has.
+func (s *Service) CountSessions(ctx context.Context, handle string) (int, error) {
+	return s.store.CountSessions(ctx, handle, s.now())
 }
 
 // Cleanup deletes expired requests, codes, tokens and sign-ins, and clients

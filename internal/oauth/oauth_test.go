@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -185,9 +186,33 @@ func checkPageHeaders(t *testing.T, resp *http.Response) {
 			t.Errorf("%s = %q, want %q", k, got, want)
 		}
 	}
-	if csp := resp.Header.Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'") {
-		t.Errorf("Content-Security-Policy = %q", csp)
+	if got := resp.Header.Get("Cross-Origin-Resource-Policy"); got != "same-origin" {
+		t.Errorf("Cross-Origin-Resource-Policy = %q, want same-origin", got)
 	}
+	// The strict policy, whatever origin the page's form may go on to.
+	csp := resp.Header.Get("Content-Security-Policy")
+	if got := withoutFormTarget(csp); got != middleware.PageCSP {
+		t.Errorf("Content-Security-Policy = %q, want %q with at most one more form-action source", csp, middleware.PageCSP)
+	}
+}
+
+// formTarget returns the source a page's policy allows forms to go on to
+// beside 'self', or "".
+func formTarget(csp string) string {
+	for d := range strings.SplitSeq(csp, "; ") {
+		if rest, ok := strings.CutPrefix(d, "form-action 'self'"); ok {
+			return strings.TrimPrefix(rest, " ")
+		}
+	}
+	return ""
+}
+
+// withoutFormTarget is the policy without that source.
+func withoutFormTarget(csp string) string {
+	if t := formTarget(csp); t != "" {
+		return strings.Replace(csp, "form-action 'self' "+t, "form-action 'self'", 1)
+	}
+	return csp
 }
 
 // An invalid request renders a page: the client is unverified until the
@@ -867,7 +892,7 @@ func TestAPIKeyFallback(t *testing.T) {
 		t.Errorf("bad key: status %d:\n%s", resp.StatusCode, body)
 	}
 	checkPageHeaders(t, resp)
-	if csp := resp.Header.Get("Content-Security-Policy"); !strings.HasSuffix(csp, " http://localhost:7777") {
+	if csp := resp.Header.Get("Content-Security-Policy"); formTarget(csp) != "http://localhost:7777" {
 		t.Errorf("consent CSP = %q, want the redirect origin in form-action", csp)
 	}
 

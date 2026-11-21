@@ -17,7 +17,9 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
@@ -111,8 +113,14 @@ func errorResponse(err error) (int, api.Error, time.Duration) {
 	switch {
 	case errors.Is(err, user.ErrInvalidIdentity):
 		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
+	case errors.Is(err, audit.ErrInvalidQuery):
+		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
 	case errors.Is(err, ErrGrantNotFound):
 		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "grant not found"}, 0
+	case errors.Is(err, backup.ErrRunning):
+		return http.StatusConflict, api.Error{Code: api.CodeBackupRunning, Message: "a backup is already running; wait for it to finish"}, 0
+	case errors.Is(err, backup.ErrNoSpace):
+		return http.StatusInsufficientStorage, api.Error{Code: api.CodeNoSpace, Message: err.Error()}, 0
 	}
 	status, body := present.Error(err)
 	return status, body, 0
@@ -195,11 +203,13 @@ func listQuery(r *http.Request) (artifact.ListQuery, error) {
 		return artifact.ListQuery{}, err
 	}
 	lq := artifact.ListQuery{
-		Mine:    q.Get("mine"),
-		Stale:   q.Get("stale"),
-		Deleted: q.Get("deleted"),
-		Cursor:  q.Get("cursor"),
-		Limit:   limit,
+		Mine:       q.Get("mine"),
+		Stale:      q.Get("stale"),
+		Deleted:    q.Get("deleted"),
+		Search:     q.Get("q"),
+		Visibility: q.Get("visibility"),
+		Cursor:     q.Get("cursor"),
+		Limit:      limit,
 	}
 	for k, vs := range q {
 		key, ok := strings.CutPrefix(k, "metadata.")

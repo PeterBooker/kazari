@@ -1,0 +1,68 @@
+{{define "theme/head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} · Kazari</title>
+<link rel="icon" type="image/svg+xml" href="{{.Assets.Icon}}">
+<link rel="stylesheet" href="{{.Assets.CSS}}">
+<script src="{{.Assets.JS}}" defer></script>
+</head>
+{{end}}
+
+{{define "theme/mark"}}<svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="1.8"/><path class="mark-wedge" transform="rotate(262.5 16 16)" d="M9.87 2.86A14.5 14.5 0 0 1 22.13 2.86L19.17 9.2A7.5 7.5 0 0 0 12.83 9.2Z"/></svg>{{end}}
+
+{{define "theme/brand"}}{{template "theme/mark"}}<span class="wordmark">KAZARI</span>{{end}}
+
+{{define "theme/door-open"}}<body class="door">
+<span class="door-ghost" lang="ja" aria-hidden="true">飾り</span>
+<div class="brand">{{template "theme/brand"}}</div>
+<main class="door-card">
+{{end}}
+
+{{define "theme/door-close"}}</main>
+{{with .}}<p class="door-foot label">{{.}}</p>
+{{end}}</body>
+</html>
+{{end}}
+
+{{define "theme/door"}}{{template "theme/head" .}}{{template "theme/door-open"}}{{end}}
+
+{{define "theme/shell"}}{{template "theme/head" .Page}}<body class="app">
+<a class="skip" href="#main">Skip to the content</a>
+<header class="side">
+<a class="brand" href="{{.Home}}">{{template "theme/brand"}}</a>
+{{with .Host}}<p class="side-host label">{{.}}</p>
+{{end}}<nav class="nav" aria-label="{{.Label}}">
+{{range .Nav}}<a href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>
+{{end}}</nav>
+<div class="who">
+{{with .Person}}<span class="who-name">{{.}}</span>
+{{end}}{{with .Detail}}<span class="label">{{.}}</span>
+{{end}}{{if .SignOut.Action}}<form method="post" action="{{.SignOut.Action}}">{{range $name, $value := .SignOut.Hidden}}<input type="hidden" name="{{$name}}" value="{{$value}}">{{end}}<button type="submit" class="link">Sign out</button></form>
+{{end}}</div>
+</header>
+<main class="main" id="main">
+{{end}}
+
+{{define "theme/shell-close"}}</main>
+</body>
+</html>
+{{end}}
+
+{{define "icon/alert"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V13M12 16.5v.01"/></svg>{{end}}
+{{define "icon/check"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>{{end}}
+{{define "icon/copy"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>{{end}}
+{{define "icon/arrow"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg>{{end}}
+{{define "icon/external"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>{{end}}
+{{define "icon/search"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>{{end}}
+{{define "icon/key"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/></svg>{{end}}
+{{define "icon/link"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 14a4 4 0 0 0 6 .5l3-3a4 4 0 0 0-5.7-5.7L12 7"/><path d="M14 10a4 4 0 0 0-6-.5l-3 3a4 4 0 0 0 5.7 5.7L12 17"/></svg>{{end}}
+{{define "icon/clock"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
+{{define "icon/download"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>{{end}}
+{{define "icon/plus"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>{{end}}
+{{define "icon/bin"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg>{{end}}
+{{define "icon/lock"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}

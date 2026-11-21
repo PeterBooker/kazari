@@ -51,5 +51,6 @@ The reference pages hold every detail:
 | [CLI](cli.md)                       | Every `kazari` command and flag, output and exit codes            |
 | [REST API](api.md)                  | The user and admin APIs, wire types, limits and error codes       |
 | [Configuration](configuration.md)   | Every YAML key, `${}` environment references, `.env`, overrides   |
-| [Sign-in and identity](identity.md) | OAuth for MCP clients, OpenID Connect providers, provisioning     |
+| [Sign-in and identity](identity.md) | Built-in accounts, OAuth for MCP clients, OpenID Connect providers, provisioning |
+| [Dashboard](dashboard.md)           | Running an instance from a browser: people, pages, activity, system |
 | [Operations](ops.md)                | Data layout, backup, upgrades, logs, metrics, tracing, jobs, quotas, abuse |

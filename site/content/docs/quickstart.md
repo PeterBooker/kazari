@@ -18,7 +18,7 @@ docker run -d --name kazari -p 127.0.0.1:8080:8080 -e KAZARI_LISTEN_HTTP=:8080 \
   ghcr.io/peterbooker/kazari:latest serve --local
 ```
 
-The log, from `docker logs kazari`, ends with a `serving` line that names the addresses and a `no users yet` line that says what to do next. `KAZARI_LISTEN_HTTP` makes the server listen on every interface inside the container; the `-p` keeps the published port on your own machine.
+The log, from `docker logs kazari`, ends with a `serving` line that names the addresses, a setup link and a `no users yet` line. The link creates an admin with a password for the [dashboard](dashboard.md); this guide creates the user from the command line instead. `KAZARI_LISTEN_HTTP` makes the server listen on every interface inside the container; the `-p` keeps the published port on your own machine.
 
 > [!NOTE]
 > No Docker? `curl -fsSL https://kazari.io/install.sh | sh` installs the binary, and `kazari serve --local` runs the same server with its data in `./.data`. Run the admin commands below as `kazari admin ...` from the same directory, without `docker exec`.

@@ -28,6 +28,8 @@ const scope = "github.com/PeterBooker/kazari/internal/ratelimit"
 const (
 	ScopeIP         = "ip"
 	ScopeCredential = "credential"
+	// ScopeAccount is the account a sign-in names, whoever is trying.
+	ScopeAccount = "account"
 )
 
 // Options configure a Limiter. The zero value is valid.

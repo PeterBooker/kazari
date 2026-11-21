@@ -142,6 +142,37 @@ func (s *OAuthStore) DeleteSession(ctx context.Context, id int64) (err error) {
 	return nil
 }
 
+// DeleteUserSessions implements oauth.Store. The codes and view sessions go
+// by cascade.
+func (s *OAuthStore) DeleteUserSessions(ctx context.Context, handle string, keep int64) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "OAuthStore.DeleteUserSessions")
+	defer func() { end(err) }()
+	res, err := s.db.ExecContext(ctx, `DELETE FROM signin_session
+		WHERE user_id = (SELECT id FROM user WHERE handle = ?1) AND id <> ?2
+		  AND (browser = '' OR browser NOT IN (SELECT browser FROM signin_session WHERE id = ?2))`, handle, keep)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete sessions of %q: %w", handle, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete sessions of %q: %w", handle, err)
+	}
+	return int(n), nil
+}
+
+// CountSessions implements oauth.Store.
+func (s *OAuthStore) CountSessions(ctx context.Context, handle string, now time.Time) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "OAuthStore.CountSessions")
+	defer func() { end(err) }()
+	var n int
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM signin_session
+		WHERE user_id = (SELECT id FROM user WHERE handle = ?) AND expires_at > ?`, handle, toNanos(now)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: count sessions of %q: %w", handle, err)
+	}
+	return n, nil
+}
+
 // CreateViewCode implements oauth.Store.
 func (s *OAuthStore) CreateViewCode(ctx context.Context, c *oauth.ViewCode) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.CreateViewCode")

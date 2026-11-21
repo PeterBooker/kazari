@@ -149,7 +149,9 @@ Every key has an environment variable: `KAZARI_` followed by the key's full path
 | `tls.dns_provider`         | `KAZARI_TLS_DNS_PROVIDER`         |
 | `tls.dns.api_token`        | `KAZARI_TLS_DNS_API_TOKEN`        |
 | `limits.max_version_bytes` | `KAZARI_LIMITS_MAX_VERSION_BYTES` |
+| `auth.local.invite_ttl`    | `KAZARI_AUTH_LOCAL_INVITE_TTL`    |
 | `auth.oidc.allowed_domains`| `KAZARI_AUTH_OIDC_ALLOWED_DOMAINS`|
+| `admin.public_url`         | `KAZARI_ADMIN_PUBLIC_URL`         |
 
 An override wins over the file, whether or not the file mentions the key. A deployment configured entirely from the environment therefore needs no file at all.
 
@@ -158,7 +160,7 @@ The secrets in `deploy/kazari.yaml` use the same names in their `${}` references
 Setting any `KAZARI_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults, even when the file has none.
 
 > [!NOTE]
-> The CLI has variables of its own: `KAZARI_URL`, `KAZARI_TOKEN`, `KAZARI_ADMIN_URL` and `KAZARI_ADMIN_TOKEN` configure the client (see the [CLI reference](cli.md)). The server's admin token is `KAZARI_AUTH_ADMIN_TOKEN`.
+> The CLI has variables of its own: `KAZARI_URL`, `KAZARI_TOKEN`, `KAZARI_ADMIN_URL` and `KAZARI_ADMIN_TOKEN` configure the client (see the [CLI reference](cli.md)). The server's admin token is `KAZARI_AUTH_ADMIN_TOKEN`, and the dashboard's address is `KAZARI_ADMIN_PUBLIC_URL`; the server reads neither `KAZARI_ADMIN_URL` nor `KAZARI_ADMIN_TOKEN`.
 
 ### Value formats
 
@@ -386,9 +388,46 @@ auth:
     max_key_ttl: 365d
 ```
 
+### `auth.local`
+
+Built-in accounts: a password for each person, set through a link that an admin copies and sends. [Built-in accounts](identity.md#built-in-accounts) explains how they work.
+
+The section's keys:
+
+| Key                   | Type     | Default                       | Meaning                                              |
+| --------------------- | -------- | ----------------------------- | ---------------------------------------------------- |
+| `enabled`             | bool     | `true` without `auth.oidc`, `false` with it | Whether people sign in with a built-in account. |
+| `min_password_length` | int      | `15`                          | The shortest password accepted, in characters.       |
+| `invite_ttl`          | duration | `7d`                          | How long an invite link works.                       |
+| `reset_ttl`           | duration | `1d`                          | How long a password reset link works.                |
+
+#### Turning built-in accounts off
+
+By default, built-in accounts are on when the file has no `auth.oidc` section and off when it has one. Leave the key out unless you want an instance without an identity provider to sign people in by API key alone:
+
+```yaml
+auth:
+  local:
+    enabled: false
+```
+
+Built-in accounts and an identity provider never run together, so `enabled: true` beside `auth.oidc` is refused at startup.
+
+#### Password length
+
+By default, a password has at least 15 characters. The value can be from 8 to 256; 256 characters is also the longest password Kazari accepts. Length is the only rule a password has to meet.
+
+A change applies to passwords set from then on. Passwords already set keep working.
+
+#### Link lifetimes
+
+By default, an invite link works for 7 days and a reset link for 24 hours. Both must be greater than 0. A change applies to links made from then on.
+
+The first-run setup link always works for 1 hour.
+
 ### `auth.oidc`
 
-With this section, users sign in through an OpenID Connect provider. Without it, the OAuth consent page asks for an API key instead. [Sign-in and identity](identity.md) walks through setting up a provider.
+With this section, users sign in through an OpenID Connect provider. Without it, they sign in with a [built-in account](identity.md#built-in-accounts), or with an API key when `auth.local.enabled` is `false`. [Sign-in and identity](identity.md) walks through setting up a provider.
 
 The section's keys:
 
@@ -403,16 +442,55 @@ The section's keys:
 
 ### `admin`
 
-The admin socket for this host, and an optional separate listener for the admin API:
+The admin socket for this host, an optional separate listener for the admin host, and the [dashboard](dashboard.md):
 
-| Key      | Type   | Default      | Meaning                                                                                       |
-| -------- | ------ | ------------ | --------------------------------------------------------------------------------------------- |
-| `socket` | string | `admin.sock` | Unix socket serving the admin API without a credential; relative to `data_dir` unless absolute. `""` disables it. |
-| `listen` | string | `""`         | Optional plain-HTTP listener for the admin API, `/health` and `/metrics`, such as `127.0.0.1:9443`. |
+| Key            | Type   | Default      | Meaning                                                                                       |
+| -------------- | ------ | ------------ | --------------------------------------------------------------------------------------------- |
+| `socket`       | string | `admin.sock` | Unix socket serving the admin API without a credential; relative to `data_dir` unless absolute. `""` disables it. |
+| `listen`       | string | `""`         | Optional plain-HTTP listener for the admin host: the admin API, the dashboard, `/health` and `/metrics`, such as `127.0.0.1:9443`. |
+| `dashboard`    | bool   | `true`       | Serve the dashboard at the root of the admin host.                                            |
+| `url`          | string | `""`         | The address a browser uses for the admin host. Empty means `https://admin.<base_domain>`.     |
+| `update_check` | bool   | `true`       | Ask GitHub once a day for the newest release.                                                 |
+
+#### The admin socket
 
 The socket is created with mode `0600`, so only the service user and root can use it. The `kazari` command on the same host finds it through the server's configuration (`$KAZARI_CONFIG`, `/etc/kazari/kazari.yaml` or `$KAZARI_DATA_DIR`) and uses it for every `admin` command with no token ([admin commands](cli.md#admin-commands)). Requests over it act as the `admin` principal, with no rate limit.
 
-The listener serves `/v1`, `/health` and `/metrics` whatever the `Host` header, `/metrics` with no credential. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point a remote admin CLI at this address.
+#### The separate listener
+
+The listener serves `/v1`, the dashboard, `/health` and `/metrics` whatever the `Host` header, `/metrics` with no credential. When it is set, `admin.<base>` is no longer served on the public listener and answers `404` there, so point a remote admin CLI at this address and set `admin.public_url` for the dashboard.
+
+#### Turning the dashboard off
+
+By default, the admin host serves the dashboard at `/`, beside the admin API under `/v1`. To serve the API alone, turn it off:
+
+```yaml
+admin:
+  dashboard: false
+```
+
+#### The dashboard's address
+
+By default, the dashboard's address is `https://admin.<base_domain>`, built like every other public URL from `external_scheme` and `external_port`. Sign-in for the dashboard returns to this address, and every link the dashboard shows starts with it.
+
+With `admin.listen` set, Kazari cannot know how a browser reaches that listener, so the dashboard is off until `admin.public_url` says. For a listener reached through an SSH tunnel, the settings are:
+
+```yaml
+admin:
+  listen: "127.0.0.1:9443"
+  public_url: http://localhost:9443
+```
+
+The value is an origin: a scheme, a host and an optional port, with no path. Plain `http` is accepted only for `localhost`, a name under it, or a loopback address. Any other address must be `https`, which a TLS proxy in front of `admin.listen` provides. [Reaching the dashboard](dashboard.md#reaching-the-dashboard) has the steps.
+
+#### The update check
+
+By default, the `update-check` job asks GitHub once a day for the newest release, so the dashboard can say when the instance is behind. [Scheduled jobs](ops.md#the-update-check) says what the request carries. To turn it off:
+
+```yaml
+admin:
+  update_check: false
+```
 
 ### `log`
 
@@ -472,8 +550,8 @@ Which requests are traced and whether spans are exported:
 | Key                 | Type   | Default | Meaning                                                                                              |
 | ------------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------- |
 | `otlp`              | bool   | `true`  | Export spans whenever an endpoint is set.                                                            |
-| `sample_ratio`      | number | unset   | Share of new traces kept on `api.`, `mcp.`, `admin.` and the admin socket, from 0 to 1.             |
-| `site_sample_ratio` | number | unset   | Share of new traces kept on artifact hosts and the base domain, from 0 to 1.                        |
+| `sample_ratio`      | number | unset   | Share of new traces kept on `api.`, `mcp.`, `admin.`, the admin socket and the account pages, from 0 to 1. |
+| `site_sample_ratio` | number | unset   | Share of new traces kept on artifact hosts and the base domain's own page, from 0 to 1.             |
 
 With both ratios unset, `OTEL_TRACES_SAMPLER` decides when it is set; otherwise Kazari keeps every control-plane trace and one page view in a hundred (`1.0` and `0.01`). Setting either ratio uses Kazari's sampler, with the default for the other. A request that arrives on the control plane with a `traceparent` header follows the caller's decision, so a trace is kept or dropped whole.
 
@@ -514,7 +592,9 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `auth.write_policy` is `shared` or `owner`.
 - `auth.tokens.access_ttl` is greater than 0 and `auth.tokens.refresh_ttl` is at least as long. `auth.tokens.refresh_reuse_window` is between 0 and `5m`, and `auth.tokens.max_key_ttl` is not negative.
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost`: a development instance that only its own machine can reach.
+- `auth.local.min_password_length` is between 8 and 256, and `auth.local.invite_ttl` and `auth.local.reset_ttl` are greater than 0. `auth.local.enabled` is not `true` while `auth.oidc` is present.
 - With `auth.oidc`, `issuer` is an `https` URL, and `client_id` and `client_secret` are set.
+- `admin.public_url`, when set, is an `http` or `https` origin with no path, query or credentials, and `http` only for `localhost`, a name under it or a loopback address.
 - `log.level` and `log.format` are among the listed values.
 - `telemetry.otlp.protocol`, when set, is `http/protobuf` or `grpc`, and `telemetry.otlp.compression` is `gzip` or `none`.
 - `telemetry.otlp.endpoint`, when set, is an absolute `http` or `https` URL with no credentials, query or fragment, and with no path under `grpc`. Credentials belong in `telemetry.otlp.headers`, because the endpoint appears in `kazari check`, `kazari admin settings` and error messages.

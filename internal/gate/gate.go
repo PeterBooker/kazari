@@ -35,6 +35,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/theme"
 )
 
 // Reserved paths on every artifact host.
@@ -121,7 +122,7 @@ const scope = "github.com/PeterBooker/kazari/internal/gate"
 //go:embed page.html
 var pageHTML string
 
-var pageTmpl = template.Must(template.New("page").Parse(pageHTML))
+var pageTmpl = template.Must(theme.Templates().New("page").Parse(pageHTML))
 
 // New returns a Gate.
 func New(sessions Sessions, links Links, opts Options) *Gate {
@@ -363,7 +364,7 @@ func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 			Form:    SignOutPath, Link: g.opts.SignOutURL, LinkText: everywhere})
 		return
 	}
-	if !sameOrigin(r) {
+	if !middleware.SameHost(r) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Request rejected", Message: "This form was not sent from this page."})
 		return
 	}
@@ -378,18 +379,6 @@ func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 	g.page(w, r, http.StatusOK, page{Title: "Signed out of this page",
 		Message: "This browser's access to this page has ended. Any sign-in to this Kazari instance is still active.",
 		Link:    g.opts.SignOutURL, LinkText: everywhere})
-}
-
-// sameOrigin reports whether a form post comes from a page on the request's
-// own host: Origin names it, or, without Origin, Sec-Fetch-Site says
-// same-origin (or is absent, from a client that sends neither).
-func sameOrigin(r *http.Request) bool {
-	if o := r.Header.Get("Origin"); o != "" && o != "null" {
-		u, err := url.Parse(o)
-		return err == nil && strings.EqualFold(u.Host, r.Host)
-	}
-	site := r.Header.Get("Sec-Fetch-Site")
-	return site == "" || site == "same-origin"
 }
 
 func (g *Gate) name(base string) string {
