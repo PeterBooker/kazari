@@ -21,8 +21,9 @@ import (
 var now = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
 const (
-	signInURL = "https://mcp.art.test/oauth/signin"
-	viewToken = "view-token-of-alice-on-team"
+	signInURL  = "https://mcp.art.test/oauth/signin"
+	signOutURL = "https://mcp.art.test/oauth/signout"
+	viewToken  = "view-token-of-alice-on-team"
 )
 
 // linkToken is a well-formed share link token.
@@ -32,7 +33,7 @@ var linkToken = artifact.LinkTokenPrefix + "aaaaaaaa_" + strings.Repeat("b", 52)
 type fakeSessions struct {
 	mu       sync.Mutex
 	redeemed []string // code host nonce
-	signOuts []string // host token
+	ended    []string // host token
 	err      error    // returned by every call when set
 }
 
@@ -66,10 +67,10 @@ func (f *fakeSessions) Viewer(_ context.Context, host, token string) (string, er
 	return "", oauth.ErrNotFound
 }
 
-func (f *fakeSessions) SignOut(_ context.Context, host, token string) error {
+func (f *fakeSessions) EndView(_ context.Context, host, token string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.signOuts = append(f.signOuts, host+" "+token)
+	f.ended = append(f.ended, host+" "+token)
 	return f.err
 }
 
@@ -105,7 +106,7 @@ type fixture struct {
 
 func newFixture() *fixture {
 	fx := &fixture{sessions: &fakeSessions{}, links: &fakeLinks{}}
-	fx.g = gate.New(fx.sessions, fx.links, gate.Options{SignInURL: signInURL, Now: func() time.Time { return now }})
+	fx.g = gate.New(fx.sessions, fx.links, gate.Options{SignInURL: signInURL, SignOutURL: signOutURL, Now: func() time.Time { return now }})
 	return fx
 }
 
@@ -335,26 +336,28 @@ func TestShare(t *testing.T) {
 func TestSignOut(t *testing.T) {
 	fx := newFixture()
 	if rec := fx.reserved(request(http.MethodGet, gate.SignOutPath, navigate), team, "team"); !strings.Contains(rec.Body.String(), "Not signed in here") ||
-		strings.Contains(rec.Body.String(), "<form") {
+		strings.Contains(rec.Body.String(), "<form") || !strings.Contains(rec.Body.String(), `href="`+signOutURL+`"`) {
 		t.Fatalf("GET without a cookie: %q", rec.Body.String())
 	}
 	view := &http.Cookie{Name: "__Host-kazari_view", Value: viewToken}
 	rec := fx.reserved(request(http.MethodGet, gate.SignOutPath, navigate, view), team, "team")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `action="/.kazari/signout"`) || len(fx.sessions.signOuts) != 0 {
-		t.Fatalf("GET: status %d, sign-outs %v, body %q", rec.Code, fx.sessions.signOuts, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `action="/.kazari/signout"`) ||
+		!strings.Contains(rec.Body.String(), `href="`+signOutURL+`"`) || len(fx.sessions.ended) != 0 {
+		t.Fatalf("GET: status %d, ended %v, body %q", rec.Code, fx.sessions.ended, rec.Body.String())
 	}
 
 	rec = fx.reserved(request(http.MethodPost, gate.SignOutPath, http.Header{"Origin": {"https://evil.art.test"}}, view), team, "team")
-	if rec.Code != http.StatusForbidden || len(fx.sessions.signOuts) != 0 {
-		t.Fatalf("foreign POST: status %d, sign-outs %v", rec.Code, fx.sessions.signOuts)
+	if rec.Code != http.StatusForbidden || len(fx.sessions.ended) != 0 {
+		t.Fatalf("foreign POST: status %d, ended %v", rec.Code, fx.sessions.ended)
 	}
 
 	rec = fx.reserved(request(http.MethodPost, gate.SignOutPath, http.Header{"Origin": {"https://team.art.test"}}, view), team, "team")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Signed out") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Signed out of this page") ||
+		!strings.Contains(rec.Body.String(), `href="`+signOutURL+`"`) {
 		t.Fatalf("POST: status %d, body %q", rec.Code, rec.Body.String())
 	}
-	if got := fx.sessions.signOuts; len(got) != 1 || got[0] != "team "+viewToken {
-		t.Fatalf("SignOut calls = %q", got)
+	if got := fx.sessions.ended; len(got) != 1 || got[0] != "team "+viewToken {
+		t.Fatalf("EndView calls = %q", got)
 	}
 	if c := cookie(rec, "__Host-kazari_view"); c == nil || c.MaxAge >= 0 {
 		t.Fatalf("view cookie not cleared: %+v", c)
@@ -363,8 +366,8 @@ func TestSignOut(t *testing.T) {
 	// A share link's cookie is dropped without touching any session.
 	link := &http.Cookie{Name: "__Host-kazari_view", Value: linkToken}
 	rec = fx.reserved(request(http.MethodPost, gate.SignOutPath, http.Header{"Sec-Fetch-Site": {"same-origin"}}, link), team, "team")
-	if rec.Code != http.StatusOK || len(fx.sessions.signOuts) != 1 {
-		t.Fatalf("share link sign-out: status %d, sign-outs %v", rec.Code, fx.sessions.signOuts)
+	if rec.Code != http.StatusOK || len(fx.sessions.ended) != 1 {
+		t.Fatalf("share link sign-out: status %d, ended %v", rec.Code, fx.sessions.ended)
 	}
 }
 
