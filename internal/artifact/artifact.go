@@ -101,6 +101,9 @@ type Actor struct {
 	// patterns (see MatchSlug); empty means no restriction. It narrows what
 	// the actor may otherwise do and never widens it.
 	Slugs []string
+	// Operator is the admin token or socket: Handle is only a name in the
+	// audit trail, whatever a user row may hold.
+	Operator bool
 }
 
 // System is the actor used by scheduler jobs.

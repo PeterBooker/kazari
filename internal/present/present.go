@@ -314,7 +314,8 @@ func Me(p auth.Principal, used int64) api.Me {
 // Actor converts a principal to the artifact service's caller.
 func Actor(p auth.Principal) artifact.Actor {
 	return artifact.Actor{Handle: p.Handle, Admin: p.Admin, QuotaBytes: p.QuotaBytes, Credential: credential(p),
-		CanDelete: p.HasScope(auth.ScopeDelete), Slugs: p.Slugs}
+		CanDelete: p.HasScope(auth.ScopeDelete), Slugs: p.Slugs,
+		Operator: p.Source == auth.SourceAdminToken || p.Source == auth.SourceLocal}
 }
 
 // credential names p's credential in the audit trail: "api_key:<prefix>",

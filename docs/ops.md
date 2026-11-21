@@ -79,6 +79,12 @@ docker compose up -d
 
 The container keeps its data in the volume `kazari_data`.
 
+### Users named admin or scheduler
+
+Kazari 0.5 reserved the handles `admin` and `scheduler` for new users only. The first start after this change renames any user who still holds one to the first free suffix, such as `admin-2`, and records a `user.update` event with `handle` and `renamed_from`. API keys, sign-ins, OAuth grants and artifacts stay with the user; versions and share links show the new handle. Scripts and links that name the user need the new handle.
+
+Events from before the rename keep the actor they had, so `admin` there can be the operator or that user: `credential` tells them apart, `admin_token` or `local` for the operator. Earlier releases also made a user called `admin` involved in any artifact the operator hid or transferred, which opens it to that user while it is offline. The migration removes that involvement where the audit log shows only operator events for the artifact from that actor. It stays where the log also shows the user acting, or shows an event with no `credential`, because those cannot be attributed; review them with `kazari admin audit --slug <slug>`.
+
 ## Logs
 
 Kazari logs to stderr through `log/slog`; under systemd, that is the journal. `log.format` sets the format, `text` by default or `json`, and `log.level` sets the level, `info` by default. Every request produces one line when it completes:
@@ -517,7 +523,7 @@ Blobs written in the last hour survive one more `gc` run.
 
 Kazari records every change with its time, actor, action, slug and details. The actor is a handle, `admin` for the admin token and the admin socket, or `scheduler` for jobs; no user can have either of those handles.
 
-Artifact events also carry `credential`, the credential that acted: `api_key:<prefix>`, `oauth:<grant>` or `admin_token`. An `oauth:` credential has one id per grant, the same across refreshes.
+Artifact events also carry `credential`, the credential that acted: `api_key:<prefix>`, `oauth:<grant>`, `admin_token`, or `local` for the admin socket. An `oauth:` credential has one id per grant, the same across refreshes.
 
 The actions, with the details each records:
 
@@ -535,7 +541,7 @@ The actions, with the details each records:
 | `artifact.free`       | Tombstone removed, slug free                                         |
 | `artifact.transfer`   | Owner changed (`from`, `to`)                                         |
 | `user.create`         | User created by an admin, or provisioned at sign-in (`via: identity`) |
-| `user.update`         | User changed, identity linked or unlinked                            |
+| `user.update`         | User changed, identity linked or unlinked, or renamed at upgrade (`handle`, `renamed_from`) |
 | `key.issue`           | API key issued (`prefix`, `label`, `scopes`; `slugs`, `expires_at` and `issued_by` when it has them) |
 | `key.rotate`          | API key replaced (`prefix`, `new_prefix`, `old_expires_at`, and the new key's details) |
 | `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
