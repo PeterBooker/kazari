@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -328,6 +329,117 @@ func TestTextsUsePublicLinks(t *testing.T) {
 	if !strings.Contains(c.Text, `"versionURL":"http://{slug}--v{version}.localhost:8080/"`) ||
 		string(frames) != `{"frameDomains":["http://*.localhost:8080"]}` {
 		t.Errorf("preview versionURL or frames wrong: %s", frames)
+	}
+}
+
+// TestReadFileWindowDoesNotBufferTheFile counts every byte the read allocates, so
+// a buffer of the whole file shows however briefly it lived.
+func TestReadFileWindowDoesNotBufferTheFile(t *testing.T) {
+	const fileBytes, budget = 4 << 20, 1 << 20
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	var sb strings.Builder
+	for sb.Len() < fileBytes {
+		fmt.Fprintf(&sb, "<p>%s</p>\n", strings.Repeat("x", 90))
+	}
+	big := sb.String()
+	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+		"files": []map[string]any{{"path": "index.html", "content": big}}})
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html",
+		"start_line": 2, "end_line": 2})
+	runtime.ReadMemStats(&after)
+	if want := strings.Count(big, "\n"); rf.TotalLines != want || rf.Content != big[:strings.IndexByte(big, '\n')] {
+		t.Errorf("window = %d of %d lines, %q", rf.EndLine, rf.TotalLines, rf.Content)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > budget {
+		t.Errorf("a one-line window of a %d byte file allocated %d bytes, want at most %d", fileBytes, n, budget)
+	}
+}
+
+// TestReadFileWindowEdges runs on files built to split a multi-byte character or
+// an invalid byte across every read the server might do.
+func TestReadFileWindowEdges(t *testing.T) {
+	const limit = 64
+	line := "a\u20ac\U0001F600 fits"
+	long := strings.Repeat("\u20ac", limit)
+	var many strings.Builder
+	for i := 0; i < 20000; i++ {
+		many.WriteString(line + "\n")
+	}
+
+	for _, c := range []struct {
+		name       string
+		content    string
+		args       map[string]any
+		want       string // window content
+		first, end int    // the result's start_line, end_line
+		total      int
+		note       string
+		fails      string
+	}{
+		{name: "no final break", content: "a\nb", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
+		{name: "final break", content: "a\nb\n", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
+		{name: "blank last line", content: "a\n\n", args: map[string]any{"start_line": 2}, want: "", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
+		{name: "only a break", content: "\n", args: map[string]any{"start_line": 1}, want: "", first: 1, end: 1, total: 1, note: "Lines 1-1 of 1"},
+		{name: "end_line only", content: "a\nb\nc", args: map[string]any{"end_line": 2}, want: "a\nb", first: 1, end: 2, total: 3, note: "Lines 1-2 of 3"},
+		{name: "end_line past the end", content: "a\nb", args: map[string]any{"start_line": 2, "end_line": 9}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
+		{name: "long line after the window", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 1, "end_line": 1}, want: "a", first: 1, end: 1, total: 3, note: "Lines 1-1 of 3"},
+		{name: "long line cuts the window", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 1}, want: "a", first: 1, end: 1, total: 3, note: "continue from start_line 2"},
+		{name: "line fits, anchor does not", content: strings.Repeat("x", limit-2) + "\n", args: map[string]any{"start_line": 1, "anchors": true}, fails: fmt.Sprintf("too_large: line 1 of index.html is %d bytes", limit-2)},
+		{name: "long first line", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 2}, fails: fmt.Sprintf("too_large: line 2 of index.html is %d bytes", len(long))},
+		{name: "long last line, no break", content: "a\n" + long, args: map[string]any{"start_line": 2}, fails: fmt.Sprintf("too_large: line 2 of index.html is %d bytes", len(long))},
+		{name: "past the end", content: "a\n", args: map[string]any{"start_line": 2}, fails: "invalid_argument: start_line 2 is past the end of index.html, which has 1 lines"},
+		{name: "invalid byte", content: "a\n\xff\nb\n", args: map[string]any{"start_line": 1, "end_line": 1}, fails: "invalid_argument: index.html is not UTF-8 text"},
+		{name: "invalid byte after the window", content: many.String() + "\xff", args: map[string]any{"start_line": 1, "end_line": 1}, fails: "invalid_argument: index.html is not UTF-8 text"},
+		{name: "cut character at the end", content: "a\n\xe2\x82", args: map[string]any{"start_line": 1, "end_line": 1}, fails: "invalid_argument: index.html is not UTF-8 text"},
+		{name: "surrogate", content: "a\n\xed\xa0\x80\n", args: map[string]any{"start_line": 1, "end_line": 1}, fails: "invalid_argument: index.html is not UTF-8 text"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.opts.MaxInlineReadBytes = limit
+			cs := e.connect(t, member)
+			ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+				"files": []map[string]any{{"path": "index.html", "content": b64([]byte(c.content)), "encoding": "base64"}}})
+			args := map[string]any{"slug": "demo", "path": "index.html"}
+			for k, v := range c.args {
+				args[k] = v
+			}
+			if c.fails != "" {
+				if msg := fails(t, cs, "read_file", args); !strings.HasPrefix(msg, c.fails) {
+					t.Errorf("error %q, want prefix %q", msg, c.fails)
+				}
+				return
+			}
+			rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", args)
+			if rf.Content != c.want || rf.StartLine != c.first || rf.EndLine != c.end || rf.TotalLines != c.total ||
+				!strings.Contains(text(res), c.note) {
+				t.Errorf("window = %+v, %q", rf, text(res))
+			}
+		})
+	}
+
+	// Every alignment of the characters against a read boundary.
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	for pad := range 9 {
+		slug := fmt.Sprintf("pad-%d", pad)
+		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": slug, "name": "Demo", "description": "d",
+			"files": []map[string]any{{"path": "index.html", "content": strings.Repeat("x", pad) + "\n" + many.String()}}})
+		rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": slug, "path": "index.html",
+			"start_line": 20001, "end_line": 20001})
+		if rf.Content != line || rf.TotalLines != 20001 {
+			t.Errorf("pad %d: window = %+v", pad, rf)
+		}
+		bad := strings.Repeat("x", pad) + "\n" + many.String()[:32<<10] + "\xe2\x82\n" + many.String()
+		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": slug + "-bad", "name": "Demo", "description": "d",
+			"files": []map[string]any{{"path": "index.html", "content": b64([]byte(bad)), "encoding": "base64"}}})
+		if msg := fails(t, cs, "read_file", map[string]any{"slug": slug + "-bad", "path": "index.html", "start_line": 1}); !strings.HasPrefix(msg, "invalid_argument: index.html is not UTF-8 text") {
+			t.Errorf("pad %d: error %q", pad, msg)
+		}
 	}
 }
 

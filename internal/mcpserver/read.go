@@ -1,10 +1,12 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
 	"strconv"
@@ -282,7 +284,8 @@ func (b *builder) addPrompt(s *mcp.Server) {
 // readWindow returns lines start_line to end_line of a text file of any size up
 // to the file limit: as many whole lines as fit the inline limit, with anchors
 // that carry their absolute line numbers so edit_file can use them. The note
-// says what the window covers and where to continue when it was cut short.
+// says what the window covers and where to continue when it was cut short. It
+// holds the window, not the file.
 func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadFileInput, version, latest int) (ReadFileResult, string, error) {
 	start, end := in.StartLine, in.EndLine
 	if start <= 0 {
@@ -304,52 +307,32 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
 			"%s is %d bytes, more than the %s file limit", f.Path, f.Size, size(b.o.MaxFileBytes))
 	}
-	data, more, err := readAtMost(rc, b.o.MaxFileBytes)
+	w := lineWindow{start: start, end: end, limit: b.o.MaxInlineReadBytes, anchors: in.Anchors}
+	valid, n, err := w.scan(io.LimitReader(rc, b.o.MaxFileBytes+1))
 	if err != nil {
 		return ReadFileResult{}, "", fmt.Errorf("mcpserver: read %s/%s: %w", in.Slug, f.Path, err)
 	}
-	if more {
+	if n > b.o.MaxFileBytes {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
 			"%s is larger than the %s file limit", f.Path, size(b.o.MaxFileBytes))
 	}
-	if !utf8.Valid(data) {
+	if !valid {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "%s is not UTF-8 text", f.Path)
 	}
-	lines := splitLines(string(data))
-	total := len(lines)
+	total, last := w.total, w.last
 	if start > total {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,
 			"start_line %d is past the end of %s, which has %d lines", start, f.Path, total)
 	}
+	if w.last == 0 { // line start exists, so it did not fit
+		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
+			"line %d of %s is %d bytes, more than the %s inline limit", start, f.Path, w.tooLong, size(b.o.MaxInlineReadBytes))
+	}
 	if end == 0 || end > total {
 		end = total
 	}
-	var sb strings.Builder
-	last := start - 1
-	for n := start; n <= end; n++ {
-		piece := lines[n-1]
-		if in.Anchors {
-			piece = artifact.Anchor(n, piece) + "|" + piece
-		}
-		add := len(piece)
-		if n > start {
-			add++ // the line break before it
-		}
-		if int64(sb.Len()+add) > b.o.MaxInlineReadBytes {
-			if n == start {
-				return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
-					"line %d of %s is %d bytes, more than the %s inline limit", n, f.Path, len(lines[n-1]), size(b.o.MaxInlineReadBytes))
-			}
-			break
-		}
-		if n > start {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(piece)
-		last = n
-	}
 	out := ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash, Encoding: "utf8",
-		Content: sb.String(), Anchored: in.Anchors, Version: version, LatestVersion: latest,
+		Content: w.sb.String(), Anchored: in.Anchors, Version: version, LatestVersion: latest,
 		StartLine: start, EndLine: last, TotalLines: total}
 	note := fmt.Sprintf("Lines %d-%d of %d in %s.", start, last, total, f.Path)
 	if last < end {
@@ -359,10 +342,127 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	return out, note, nil
 }
 
-// splitLines counts "a\nb\n" as two lines and "" as none, as artifact.AnchorLines does.
-func splitLines(text string) []string {
-	if text == "" {
-		return nil
+// windowChunkBytes is the read size of lineWindow.scan.
+const windowChunkBytes = 32 << 10
+
+// lineWindow keeps lines start to end (0 for the last) of a file read once, in
+// at most limit bytes, however large the file. It counts lines as
+// artifact.AnchorLines does: "a\nb\n" is two lines and "" none.
+type lineWindow struct {
+	start, end int
+	limit      int64
+	anchors    bool
+
+	sb      strings.Builder
+	line    []byte // the line being read, while it can still fit
+	lineLen int64  // that line's length so far, kept or not
+	total   int    // lines finished
+	last    int    // last line in sb
+	cut     bool   // a line did not fit, so sb is complete
+	tooLong int64  // length of line start, if it did not fit
+}
+
+// scan reads r to its end, so the line count and the UTF-8 check cover the whole
+// file. It stops early only at invalid UTF-8, returning valid false.
+func (w *lineWindow) scan(r io.Reader) (valid bool, n int64, err error) {
+	buf := make([]byte, windowChunkBytes)
+	have := 0
+	for {
+		m, err := r.Read(buf[have:])
+		have += m
+		n += int64(m)
+		eof := errors.Is(err, io.EOF)
+		if err != nil && !eof {
+			return false, n, err
+		}
+		whole := have
+		if !eof {
+			whole -= partialRune(buf[:have])
+		}
+		if !utf8.Valid(buf[:whole]) {
+			return false, n, nil
+		}
+		w.write(buf[:whole])
+		have = copy(buf, buf[whole:have])
+		if eof {
+			break
+		}
 	}
-	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if w.lineLen > 0 {
+		w.endLine()
+	}
+	return true, n, nil
+}
+
+// partialRune returns how many bytes at the end of p start a character that p cuts off.
+func partialRune(p []byte) int {
+	for i := 1; i < utf8.UTFMax && i <= len(p); i++ {
+		if tail := p[len(p)-i:]; utf8.RuneStart(tail[0]) {
+			if utf8.FullRune(tail) {
+				return 0
+			}
+			return i
+		}
+	}
+	return 0
+}
+
+func (w *lineWindow) write(p []byte) {
+	for {
+		i := bytes.IndexByte(p, '\n')
+		seg := p
+		if i >= 0 {
+			seg = p[:i]
+		}
+		w.lineLen += int64(len(seg))
+		if w.inWindow(w.total+1) && int64(w.sb.Len())+w.lineLen <= w.limit {
+			w.line = append(w.line, seg...)
+		}
+		if i < 0 {
+			return
+		}
+		w.endLine()
+		p = p[i+1:]
+	}
+}
+
+func (w *lineWindow) inWindow(n int) bool {
+	return !w.cut && n >= w.start && (w.end == 0 || n <= w.end)
+}
+
+// endLine adds the finished line to the window if it fits; a line that does not
+// ends the window, as an error when it is the first.
+func (w *lineWindow) endLine() {
+	w.total++
+	n := w.total
+	if w.inWindow(n) && !w.keep(n) {
+		w.cut = true
+		if n == w.start {
+			w.tooLong = w.lineLen
+		}
+	}
+	w.line, w.lineLen = w.line[:0], 0
+}
+
+func (w *lineWindow) keep(n int) bool {
+	if int64(w.sb.Len())+w.lineLen > w.limit {
+		return false
+	}
+	piece := string(w.line)
+	if w.anchors {
+		piece = artifact.Anchor(n, piece) + "|" + piece
+	}
+	add := len(piece)
+	if n > w.start {
+		add++ // the line break before it
+	}
+	if int64(w.sb.Len()+add) > w.limit {
+		return false
+	}
+	if n > w.start {
+		w.sb.WriteByte('\n')
+	}
+	w.sb.WriteString(piece)
+	w.last = n
+	return true
 }

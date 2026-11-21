@@ -3,7 +3,9 @@
 package mcpserver
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -231,7 +233,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 		DisableLocalhostProtection: true,
 		MaxRequestBodyBytes:        b.bodyLimit(),
 	})
-	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(withProtocolVersion(stream))
+	authed := auth.RequireBearer(d.Auth, auth.Options{ResourceMetadataURL: b.o.ResourceMetadataURL, Telemetry: b.o.Telemetry})(withProtocolVersion(b.refuseBatches(stream)))
 	return b.checkOrigin(checkProtocolVersion(authed))
 }
 
@@ -240,6 +242,45 @@ func NewHandler(d Deps, o Options) http.Handler {
 func (b *builder) bodyLimit() int64 {
 	n := max(b.o.MaxVersionBytes, b.o.MaxChunkBytes)
 	return (n+2)/3*4 + bodyOverhead
+}
+
+// refuseBatches answers a JSON-RPC batch with 400 before the SDK reads it. The
+// rate limits charge a request once, while the SDK starts a goroutine for every
+// call in a batch, so one small request could start thousands of them.
+func (b *builder) refuseBatches(next http.Handler) http.Handler {
+	limit := b.bodyLimit()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.Body != nil {
+			body := bufio.NewReader(http.MaxBytesReader(w, r.Body, limit))
+			if startsArray(body) {
+				writeError(w, r, http.StatusBadRequest, api.CodeInvalidArgument,
+					"JSON-RPC batches are not supported; send one message per request")
+				return
+			}
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{body, r.Body}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// startsArray reports whether a JSON array follows the white space it consumes.
+// On a read error it reports false; the next read fails alike and the SDK answers.
+func startsArray(r *bufio.Reader) bool {
+	for {
+		c, err := r.ReadByte()
+		if err != nil {
+			return false
+		}
+		switch c {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		_ = r.UnreadByte()
+		return c == '['
+	}
 }
 
 // checkOrigin rejects a foreign Origin header, defending against DNS rebinding.

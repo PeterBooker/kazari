@@ -37,7 +37,12 @@ const listToolsBody = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}
 
 func post(t *testing.T, url string, header map[string]string) (*http.Response, api.ErrorResponse) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(listToolsBody))
+	return postBody(t, url, listToolsBody, header)
+}
+
+func postBody(t *testing.T, url, payload string, header map[string]string) (*http.Response, api.ErrorResponse) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +107,54 @@ func TestHTTPProtocolVersion(t *testing.T) {
 		if _, body := post(t, srv.URL, map[string]string{"Authorization": "Bearer good", "MCP-Protocol-Version": v}); body.Error.Code != "" {
 			t.Errorf("version %s rejected: %+v", v, body)
 		}
+	}
+}
+
+// TestHTTPBatchRefused pins one call per POST: the per-IP limit charges a POST
+// once, and the SDK would run every call of a batch on its own goroutine.
+func TestHTTPBatchRefused(t *testing.T) {
+	srv := newHTTPServer(t)
+	good := map[string]string{"Authorization": "Bearer good"}
+	batch := "[" + listToolsBody + "," + listToolsBody + "]"
+
+	for name, c := range map[string]struct {
+		body   string
+		header map[string]string
+	}{
+		"no version header":        {batch, good},
+		"one call":                 {"[" + listToolsBody + "]", good},
+		"legacy version":           {batch, map[string]string{"Authorization": "Bearer good", "MCP-Protocol-Version": "2025-03-26"}},
+		"leading whitespace":       {" \t\r\n" + batch, good},
+		"whitespace past a buffer": {strings.Repeat(" ", 64<<10) + batch, good},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp, body := postBody(t, srv.URL, c.body, c.header)
+			if resp.StatusCode != http.StatusBadRequest || body.Error.Code != api.CodeInvalidArgument {
+				t.Errorf("status %d, body %+v", resp.StatusCode, body)
+			}
+		})
+	}
+
+	if resp, _ := postBody(t, srv.URL, batch, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("batch without a token: status %d", resp.StatusCode)
+	}
+	for _, body := range []string{listToolsBody, " \n" + listToolsBody, strings.Repeat(" ", 64<<10) + listToolsBody} {
+		if resp, out := postBody(t, srv.URL, body, good); resp.StatusCode != http.StatusOK || out.Error.Code != "" {
+			t.Errorf("single message of %d bytes: status %d, %+v", len(body), resp.StatusCode, out)
+		}
+	}
+}
+
+// TestHTTPBodyLimitCoversWhitespace: the batch check must not read past the body limit.
+func TestHTTPBodyLimitCoversWhitespace(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Auth = auth.AuthenticatorFunc(func(context.Context, string) (auth.Principal, error) { return member, nil })
+	e.opts.MaxVersionBytes = 1
+	srv := httptest.NewServer(mcpserver.NewHandler(e.deps, e.opts))
+	t.Cleanup(srv.Close)
+	body := strings.Repeat(" ", 4<<20) + listToolsBody
+	if resp, _ := postBody(t, srv.URL, body, map[string]string{"Authorization": "Bearer good"}); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d", resp.StatusCode)
 	}
 }
 
