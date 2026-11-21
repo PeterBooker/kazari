@@ -125,6 +125,7 @@ The woff2 files in `site/static/fonts` hold Latin plus only the Japanese charact
 - Container 1240px with a 2.5rem gutter (1.5rem under 920px, 1rem under 640px); docs 1400px with a 240px sidebar and a 210px "On this page" column. Sticky 72px header (60px on phones), borderless on the home page.
 - Space and bands separate sections, not rules: landing sections have 6.5rem of padding and alternate between `--bg` and `.section-soft`. Hairlines (`--border`) stay inside a section: ruled columns, lists, tables, the footer's top edge.
 - Radii: 999px for buttons, the search field, chips and version pills; 18px for the prompt demo and search dialog; 14px for boxes, callouts and pager links; 12px for code blocks and chat bubbles; 2px for the strip's bars. No shadows except the search dialog.
+- Motion: going to another page is a cross-fade (`@view-transition` in `main.css`), with the header and the desktop docs sidebar held in place by a `view-transition-name`. The theme button cross-fades the same way (`document.startViewTransition` in `main.js`). Nothing slides or scales, and neither runs under `prefers-reduced-motion`.
 
 Landing page (`home.html`), top to bottom: hero, season strip, how it works (soft), who it's for, addresses (soft), publish your way, features (soft), lifecycle, self-hosting (soft), closing call to action. A new section keeps the alternation.
 

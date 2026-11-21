@@ -1,11 +1,18 @@
 const root = document.documentElement;
 
-document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
+function flipTheme() {
   const dark = root.dataset.theme
     ? root.dataset.theme === "dark"
     : matchMedia("(prefers-color-scheme: dark)").matches;
   root.dataset.theme = dark ? "light" : "dark";
   try { localStorage.setItem("theme", root.dataset.theme); } catch {}
+}
+document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
+  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.startViewTransition(flipTheme);
+  } else {
+    flipTheme();
+  }
 });
 
 const navToggle = document.querySelector(".nav-toggle");

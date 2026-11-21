@@ -96,6 +96,9 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: calc(var(--header-h) + 1rem); }
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -161,6 +164,7 @@ p, li { text-wrap: pretty; }
 
 .site-header {
   position: sticky; top: 0; z-index: 50;
+  view-transition-name: site-header;
   height: var(--header-h);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: saturate(1.3) blur(12px);
@@ -432,6 +436,7 @@ p, li { text-wrap: pretty; }
   max-height: calc(100vh - var(--header-h)); overflow-y: auto; padding: 2.5rem 0 3rem;
   scrollbar-width: thin;
 }
+.docs-sidebar { view-transition-name: docs-sidebar; }
 .nav-group + .nav-group { margin-top: 1.75rem; }
 .nav-group h2 { margin-bottom: .45rem; padding-left: 1.1rem; }
 .nav-group ul { margin: 0; padding: 0; list-style: none; }
@@ -592,6 +597,7 @@ p, li { text-wrap: pretty; }
   .nav-toggle { display: inline-grid; }
   .docs-sidebar {
     position: fixed; inset: var(--header-h) 0 0 0; z-index: 40; max-height: none; align-self: stretch;
+    view-transition-name: none;
     padding: 1.5rem var(--gutter) 3rem; background: var(--bg); visibility: hidden; opacity: 0;
     transition: opacity .15s, visibility .15s;
   }
