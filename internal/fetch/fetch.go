@@ -79,7 +79,8 @@ func New(opts Options) *Client {
 	}}
 }
 
-// Budget is how long one publish or import may spend fetching in all.
+// Budget is how long one publish may spend fetching in all, and one import
+// fetching and parsing its page.
 func (c *Client) Budget() time.Duration { return c.opts.Budget }
 
 // Result describes a fetched resource.

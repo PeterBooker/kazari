@@ -127,7 +127,7 @@ type Serve struct {
 // and pages imported with import_page.
 type Fetch struct {
 	Enabled bool `yaml:"enabled"`
-	// Timeout bounds one request, Budget every request of one import.
+	// Timeout bounds one request, Budget one import: its requests and parsing its page.
 	Timeout Duration `yaml:"timeout"`
 	Budget  Duration `yaml:"budget"`
 }
