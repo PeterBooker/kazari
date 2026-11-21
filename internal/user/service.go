@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 )
@@ -57,6 +58,10 @@ type Options struct {
 	AutoProvision bool
 	// AdminEmails are provisioned as admins.
 	AdminEmails []string
+	// MaxKeyTTL, when set, is the longest a key may live: one issued without
+	// an expiry gets it, and a longer one is refused. Keys issued before it
+	// was set keep what they have.
+	MaxKeyTTL time.Duration
 	// OnDisable, if set, runs after a user is disabled and their keys revoked,
 	// to revoke credentials held elsewhere (OAuth grants, share links). An
 	// error fails the update; the user stays disabled.
@@ -245,29 +250,54 @@ func ScopesFor(u *User) []string {
 	return slices.Clone(auth.MemberScopes)
 }
 
+// IssueKeyRequest describes a new key.
+type IssueKeyRequest struct {
+	Handle string
+	Label  string
+	// Scopes default to auth.MemberScopes, or to those of them the issuing
+	// key holds.
+	Scopes []string
+	// Slugs restricts the key to artifacts whose slug matches a pattern;
+	// empty is no restriction, or the issuing key's.
+	Slugs []string
+	// ExpiresIn <= 0 is no expiry, or Options.MaxKeyTTL, or the issuing
+	// key's expiry, whichever ends first.
+	ExpiresIn time.Duration
+	// With is the prefix of the API key making the request, when a person
+	// issues a key for themselves. The new key is then bounded by it: no
+	// scope it lacks, never admin, a restriction no wider and an expiry no
+	// later; and revoking it revokes the new key. "" is an admin, who is
+	// bounded by the owner's role alone.
+	With string
+}
+
 // IssueKey creates an API key and returns it with the key string, which is
-// never available again. Empty scopes mean auth.MemberScopes; expiresIn <= 0
-// means no expiry. ErrNotFound, ErrDisabled, ErrInvalidScope.
-func (s *Service) IssueKey(ctx context.Context, handle, label string, scopes []string, expiresIn time.Duration) (_ *APIKey, _ string, err error) {
+// never available again. ErrNotFound, ErrDisabled, ErrInvalidScope,
+// ErrInvalidKey, and with With also ErrKeyNotFound and ErrKeyTooWide.
+func (s *Service) IssueKey(ctx context.Context, req IssueKeyRequest) (_ *APIKey, _ string, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.issue_key")
 	defer func() { endSpan(span, err) }()
-	u, err := s.store.GetUser(ctx, handle)
+	u, err := s.store.GetUser(ctx, req.Handle)
 	if err != nil {
 		return nil, "", err
 	}
 	if u.DisabledAt != nil {
-		return nil, "", fmt.Errorf("user: issue key for %q: %w", handle, ErrDisabled)
+		return nil, "", fmt.Errorf("user: issue key for %q: %w", req.Handle, ErrDisabled)
 	}
+	now := s.now()
+	with, err := s.actingKey(ctx, req.Handle, req.With, now)
+	if err != nil {
+		return nil, "", err
+	}
+
+	scopes := req.Scopes
 	if len(scopes) == 0 {
 		scopes = auth.MemberScopes
-	}
-	allowed := ScopesFor(u)
-	var granted []string
-	for _, sc := range auth.AllScopes { // canonical order, deduplicated
-		if slices.Contains(scopes, sc) {
-			granted = append(granted, sc)
+		if with != nil {
+			scopes = intersect(scopes, effectiveScopes(with, u))
 		}
 	}
+	allowed := ScopesFor(u)
 	for _, sc := range scopes {
 		if !slices.Contains(auth.AllScopes, sc) {
 			return nil, "", fmt.Errorf("%w: unknown scope %q", ErrInvalidScope, sc)
@@ -276,31 +306,174 @@ func (s *Service) IssueKey(ctx context.Context, handle, label string, scopes []s
 			return nil, "", fmt.Errorf("%w: role %s may not hold %q", ErrInvalidScope, u.Role, sc)
 		}
 	}
+	granted := intersect(auth.AllScopes, scopes) // canonical order, deduplicated
+	if len(granted) == 0 {
+		return nil, "", fmt.Errorf("%w: the key would hold no scope", ErrInvalidScope)
+	}
+
+	slugs, err := cleanPatterns(req.Slugs)
+	if err != nil {
+		return nil, "", err
+	}
+	if with != nil && len(slugs) == 0 {
+		slugs = slices.Clone(with.Slugs)
+	}
+	if len(slugs) > 0 && slices.Contains(granted, auth.ScopeAdmin) {
+		return nil, "", fmt.Errorf("%w: a key restricted to slugs may not hold %q", ErrInvalidScope, auth.ScopeAdmin)
+	}
+
+	k := &APIKey{
+		UserHandle: req.Handle,
+		Label:      strings.TrimSpace(req.Label),
+		Scopes:     granted,
+		Slugs:      slugs,
+		CreatedAt:  now,
+	}
+	if with != nil {
+		if slices.Contains(granted, auth.ScopeAdmin) {
+			return nil, "", fmt.Errorf("%w: no key issues a key with %q, an admin does", ErrKeyTooWide, auth.ScopeAdmin)
+		}
+		if err := covers(with, u, k); err != nil {
+			return nil, "", err
+		}
+		k.IssuedBy = with.Prefix
+	}
+	if k.ExpiresAt, err = s.expiry(req.ExpiresIn, with, now); err != nil {
+		return nil, "", err
+	}
 
 	key, prefix, err := newKey()
 	if err != nil {
 		return nil, "", err
 	}
-	now := s.now()
-	k := &APIKey{
-		UserHandle: handle,
-		Prefix:     prefix,
-		Hash:       HashKey(key),
-		Label:      strings.TrimSpace(label),
-		Scopes:     granted,
-		CreatedAt:  now,
-	}
-	if expiresIn > 0 {
-		exp := now.Add(expiresIn)
-		k.ExpiresAt = &exp
-	}
+	k.Prefix, k.Hash = prefix, HashKey(key)
 	if err := s.store.CreateKey(ctx, k); err != nil {
 		return nil, "", err
 	}
-	s.record(ctx, actorFrom(ctx, handle), audit.KeyIssue, map[string]string{
-		"handle": handle, "prefix": prefix, "label": k.Label, "scopes": strings.Join(granted, " "),
-	})
+	s.record(ctx, actorFrom(ctx, req.Handle), audit.KeyIssue, keyDetails(k))
 	return k, key, nil
+}
+
+// expiry is when a key issued now for ttl ends: ttl <= 0 asks for none.
+// Options.MaxKeyTTL caps it, and so does the expiry of the key it is issued
+// with; a longer ttl asked for by name is refused, not shortened.
+func (s *Service) expiry(ttl time.Duration, with *APIKey, now time.Time) (*time.Time, error) {
+	limit := s.opts.MaxKeyTTL
+	if limit > 0 && ttl > limit {
+		return nil, fmt.Errorf("%w: a key may live at most %s on this instance", ErrInvalidKey, formatTTL(limit))
+	}
+	asked := ttl > 0
+	if !asked {
+		ttl = limit
+	}
+	var exp *time.Time
+	if ttl > 0 {
+		t := now.Add(ttl)
+		exp = &t
+	}
+	if with == nil || with.ExpiresAt == nil {
+		return exp, nil
+	}
+	if exp == nil || exp.After(*with.ExpiresAt) {
+		if asked {
+			return nil, fmt.Errorf("%w: it expires at %s, before the new key would",
+				ErrKeyTooWide, with.ExpiresAt.UTC().Format(time.RFC3339))
+		}
+		t := *with.ExpiresAt
+		exp = &t
+	}
+	return exp, nil
+}
+
+// actingKey loads the key a person makes a request with: one of handle's
+// own, still active. A nil key for an empty prefix. ErrKeyNotFound.
+func (s *Service) actingKey(ctx context.Context, handle, prefix string, now time.Time) (*APIKey, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	k, u, err := s.store.GetKey(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if u.Handle != handle || !keyActive(k, u, now) {
+		return nil, fmt.Errorf("user: key %q of %q: %w", prefix, handle, ErrKeyNotFound)
+	}
+	return k, nil
+}
+
+// effectiveScopes are the scopes k acts with: its own, capped at the role
+// its owner has now.
+func effectiveScopes(k *APIKey, u *User) []string {
+	return intersect(k.Scopes, ScopesFor(u))
+}
+
+// covers reports ErrKeyTooWide unless target holds no scope and reaches no
+// slug that with does not, so that acting on target with with gives its
+// holder nothing new.
+func covers(with *APIKey, u *User, target *APIKey) error {
+	held := effectiveScopes(with, u)
+	for _, sc := range target.Scopes {
+		if !slices.Contains(held, sc) {
+			return fmt.Errorf("%w: it does not hold %q", ErrKeyTooWide, sc)
+		}
+	}
+	if !artifact.SlugPatternsWithin(target.Slugs, with.Slugs) {
+		return fmt.Errorf("%w: it is restricted to slugs matching %s", ErrKeyTooWide, strings.Join(with.Slugs, ", "))
+	}
+	return nil
+}
+
+func cleanPatterns(in []string) ([]string, error) {
+	var out []string
+	for _, p := range in {
+		if p = strings.TrimSpace(p); p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	if err := artifact.ValidateSlugPatterns(out); err != nil {
+		var ae *artifact.Error
+		if errors.As(err, &ae) {
+			return nil, fmt.Errorf("%w: slugs: %s", ErrInvalidKey, ae.Message)
+		}
+		return nil, fmt.Errorf("%w: slugs: %v", ErrInvalidKey, err)
+	}
+	return out, nil
+}
+
+func keyDetails(k *APIKey) map[string]string {
+	d := map[string]string{
+		"handle": k.UserHandle, "prefix": k.Prefix, "label": k.Label, "scopes": strings.Join(k.Scopes, " "),
+	}
+	if len(k.Slugs) > 0 {
+		d["slugs"] = strings.Join(k.Slugs, " ")
+	}
+	if k.IssuedBy != "" {
+		d["issued_by"] = k.IssuedBy
+	}
+	if k.ExpiresAt != nil {
+		d["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return d
+}
+
+// formatTTL prints a whole number of days as "90d", anything else as a Go
+// duration.
+func formatTTL(d time.Duration) string {
+	const day = 24 * time.Hour
+	if d%day == 0 {
+		return strconv.FormatInt(int64(d/day), 10) + "d"
+	}
+	return d.String()
+}
+
+func intersect(a, b []string) []string {
+	var out []string
+	for _, s := range a {
+		if slices.Contains(b, s) && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ListKeys returns the user's keys, newest first.
@@ -308,17 +481,133 @@ func (s *Service) ListKeys(ctx context.Context, handle string) ([]APIKey, error)
 	return s.store.ListKeys(ctx, handle)
 }
 
-// RevokeKey revokes one of the user's keys. ErrKeyNotFound.
-func (s *Service) RevokeKey(ctx context.Context, handle, prefix string) (err error) {
+// KeyRef names one of a user's keys for a change. With is the prefix of the
+// API key making the request, when a person acts on their own keys: the key
+// named must then be no wider than it. "" is an admin, who is not bounded.
+type KeyRef struct {
+	Handle string
+	Prefix string
+	With   string
+}
+
+// target loads the key ref names and, for a person's request, checks the
+// key they make it with covers it. ErrKeyNotFound, ErrKeyTooWide.
+func (s *Service) target(ctx context.Context, ref KeyRef, now time.Time) (k, with *APIKey, u *User, err error) {
+	k, u, err = s.store.GetKey(ctx, ref.Prefix)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if u.Handle != ref.Handle {
+		return nil, nil, nil, fmt.Errorf("user: key %q of %q: %w", ref.Prefix, ref.Handle, ErrKeyNotFound)
+	}
+	if with, err = s.actingKey(ctx, ref.Handle, ref.With, now); err != nil {
+		return nil, nil, nil, err
+	}
+	if with != nil && with.Prefix != k.Prefix {
+		if err := covers(with, u, k); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return k, with, u, nil
+}
+
+// RevokeKey revokes one of the user's keys and every key issued with it.
+// ErrKeyNotFound, ErrKeyTooWide.
+func (s *Service) RevokeKey(ctx context.Context, ref KeyRef) (err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.revoke_key")
 	defer func() { endSpan(span, err) }()
-	if err := s.store.RevokeKey(ctx, handle, prefix, s.now()); err != nil {
+	now := s.now()
+	if _, _, _, err := s.target(ctx, ref, now); err != nil {
 		return err
 	}
-	s.record(ctx, actorFrom(ctx, handle), audit.KeyRevoke, map[string]string{
-		"handle": handle, "prefix": prefix,
-	})
+	issued, err := s.store.RevokeKey(ctx, ref.Handle, ref.Prefix, now)
+	if err != nil {
+		return err
+	}
+	actor := actorFrom(ctx, ref.Handle)
+	s.record(ctx, actor, audit.KeyRevoke, map[string]string{"handle": ref.Handle, "prefix": ref.Prefix})
+	for _, p := range issued {
+		s.record(ctx, actor, audit.KeyRevoke, map[string]string{"handle": ref.Handle, "prefix": p, "issued_by": ref.Prefix})
+	}
 	return nil
+}
+
+const (
+	// DefaultRotateOverlap is how long a rotated key keeps working when the
+	// request names no overlap.
+	DefaultRotateOverlap = 24 * time.Hour
+	// MaxRotateOverlap bounds it: a longer one would leave the old key in
+	// use, which is what a rotation ends.
+	MaxRotateOverlap = 7 * 24 * time.Hour
+)
+
+// RotateKey replaces a key: it issues one with the same owner, label,
+// scopes, restriction, issuer and lifetime, and sets the old key to expire
+// when overlap has passed (0 ends it now), so both work in between. It
+// returns the new key with its key string, and the old key as it now is.
+// Options.MaxKeyTTL caps the new key's lifetime, and for a person's request
+// so does the expiry of the key they make it with, itself included: a key
+// renews its secret, never its own time. ErrKeyNotFound for a key that is no
+// longer active, ErrKeyTooWide, ErrInvalidKey for an overlap out of range.
+func (s *Service) RotateKey(ctx context.Context, ref KeyRef, overlap time.Duration) (_ *APIKey, _ string, _ *APIKey, err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.rotate_key")
+	defer func() { endSpan(span, err) }()
+	if overlap < 0 || overlap > MaxRotateOverlap {
+		return nil, "", nil, fmt.Errorf("%w: overlap must be between 0 and %s", ErrInvalidKey, formatTTL(MaxRotateOverlap))
+	}
+	now := s.now()
+	old, with, u, err := s.target(ctx, ref, now)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if !keyActive(old, u, now) {
+		return nil, "", nil, fmt.Errorf("user: rotate key %q: it is revoked or expired: %w", ref.Prefix, ErrKeyNotFound)
+	}
+	if with != nil && slices.Contains(old.Scopes, auth.ScopeAdmin) {
+		return nil, "", nil, fmt.Errorf("%w: no key rotates a key with %q, an admin does", ErrKeyTooWide, auth.ScopeAdmin)
+	}
+
+	k := &APIKey{
+		UserHandle: old.UserHandle,
+		Label:      old.Label,
+		Scopes:     effectiveScopes(old, u),
+		Slugs:      slices.Clone(old.Slugs),
+		IssuedBy:   old.IssuedBy,
+		CreatedAt:  now,
+	}
+	var ttl time.Duration
+	if old.ExpiresAt != nil {
+		ttl = old.ExpiresAt.Sub(old.CreatedAt)
+	}
+	if limit := s.opts.MaxKeyTTL; limit > 0 && (ttl <= 0 || ttl > limit) {
+		ttl = limit
+	}
+	if ttl > 0 {
+		t := now.Add(ttl)
+		k.ExpiresAt = &t
+	}
+	if with != nil && with.ExpiresAt != nil && (k.ExpiresAt == nil || k.ExpiresAt.After(*with.ExpiresAt)) {
+		t := *with.ExpiresAt
+		k.ExpiresAt = &t
+	}
+
+	key, prefix, err := newKey()
+	if err != nil {
+		return nil, "", nil, err
+	}
+	k.Prefix, k.Hash = prefix, HashKey(key)
+	ends := now.Add(overlap)
+	if err := s.store.RotateKey(ctx, old.Prefix, k, ends); err != nil {
+		return nil, "", nil, err
+	}
+	if old.ExpiresAt == nil || ends.Before(*old.ExpiresAt) {
+		old.ExpiresAt = &ends
+	}
+	details := keyDetails(k)
+	details["prefix"], details["new_prefix"] = old.Prefix, k.Prefix
+	details["old_expires_at"] = old.ExpiresAt.UTC().Format(time.RFC3339)
+	s.record(ctx, actorFrom(ctx, ref.Handle), audit.KeyRotate, details)
+	return k, key, old, nil
 }
 
 // Authenticate verifies an API key. A malformed, unknown, revoked or expired
@@ -358,6 +647,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		Source:     auth.SourceAPIKey,
 		KeyID:      k.Prefix,
 		QuotaBytes: u.QuotaBytes,
+		Slugs:      k.Slugs,
+		ExpiresAt:  k.ExpiresAt,
 	}, nil
 }
 
@@ -374,7 +665,7 @@ func (s *Service) KeyStatus(ctx context.Context, prefix string) (KeyStatus, erro
 	if err != nil {
 		return KeyStatus{}, err
 	}
-	return KeyStatus{Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt}, nil
+	return KeyStatus{Handle: u.Handle, Active: keyActive(k, u, s.now()), ExpiresAt: k.ExpiresAt, Slugs: k.Slugs}, nil
 }
 
 func keyActive(k *APIKey, u *User, now time.Time) bool {

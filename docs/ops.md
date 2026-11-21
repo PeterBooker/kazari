@@ -464,7 +464,21 @@ kazari admin keys list ana
 kazari admin keys revoke ana abcdefgh
 ```
 
-To revoke one OAuth grant instead, which also revokes every token rotated from it, use the admin API as in [Revoking one client's access](identity.md#revoking-one-clients-access).
+Revoking a key also revokes every key its owner issued with it, and ends every OAuth grant approved with one of them. The list shows, under `ISSUED BY`, the key each key was issued with. To retire a key that issued others and keep those, rotate it instead.
+
+To revoke one OAuth grant instead, which also revokes every token rotated from it, see [Revoking one client's access](identity.md#revoking-one-clients-access).
+
+### Rotating an API key
+
+To replace a key without an interruption, rotate it. The new key has the same owner, label, scopes, restriction and lifetime, and the old key keeps working for the overlap:
+
+```sh
+kazari admin keys rotate ana abcdefgh --overlap 24h
+```
+
+The command prints the new key once. Put it wherever the old one is stored before the overlap ends; the old key then expires on its own. The overlap is 24 hours by default and at most 7 days, and `--overlap 0` ends the old key at once.
+
+A person rotates their own keys with [`kazari keys rotate`](cli.md#keys). An OAuth grant approved with the old key ends with it, so its client must connect again with the new key. To make every key expire, set [`auth.tokens.max_key_ttl`](configuration.md#authtokens).
 
 ### Handing over a disabled user's pages
 
@@ -522,10 +536,11 @@ The actions, with the details each records:
 | `artifact.transfer`   | Owner changed (`from`, `to`)                                         |
 | `user.create`         | User created by an admin, or provisioned at sign-in (`via: identity`) |
 | `user.update`         | User changed, identity linked or unlinked                            |
-| `key.issue`           | API key issued (`prefix`, `label`, `scopes`)                         |
-| `key.revoke`          | API key revoked                                                      |
+| `key.issue`           | API key issued (`prefix`, `label`, `scopes`; `slugs`, `expires_at` and `issued_by` when it has them) |
+| `key.rotate`          | API key replaced (`prefix`, `new_prefix`, `old_expires_at`, and the new key's details) |
+| `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
 | `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
-| `oauth.revoke`        | OAuth grant revoked                                                  |
+| `oauth.revoke`        | OAuth grant revoked (`grant`, or `user` for all of a user's; `reason: refresh_replay` when Kazari revoked it because a retired refresh token was presented again) |
 | `oauth.signin`        | A browser signed in to view `members` pages (`via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
 | `share_link.create`   | Share link created (`prefix`, `expires_at`)                          |
 | `share_link.revoke`   | Share link revoked (`prefix`; `created_by` when disabling its creator did it) |
@@ -553,9 +568,9 @@ Kazari did not accept the credential. Check that:
 - the header is `Authorization: Bearer <token>`;
 - the admin token is used only on `admin.<base>`, not on `api.` or `mcp.`;
 - the key is not revoked or expired (`kazari admin keys list <handle>`), and its user is not disabled;
-- an OAuth client can refresh its access token, which lives one hour. A client that cannot refresh must sign in again.
+- an OAuth client can refresh its access token, which lives one hour. A client that cannot refresh must sign in again. `kazari admin grants list <handle>` shows each connection's last refresh and expiry.
 
-A `403` instead means the credential is valid but lacks a scope: `artifacts:delete` for `rm` or for `stale` on an artifact you do not own, or the `admin` scope for the admin API.
+A `403` instead means the credential is valid but lacks a scope: `artifacts:share` for a change of visibility or a share link, `artifacts:delete` for `rm` or for `stale` on an artifact you do not own, or the `admin` scope for the admin API. A key [restricted to some artifacts](api.md#restricted-credentials) also gets `403` for every other slug; `kazari me` shows the restriction.
 
 ### `413 Payload Too Large`
 

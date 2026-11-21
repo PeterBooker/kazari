@@ -198,6 +198,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	if actor.Handle == "" {
 		return nil, nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
+	if err := checkSlug(actor, req.Slug); err != nil {
+		return nil, nil, err
+	}
 	if err := ValidateSlug(req.Slug, s.opts.ReservedSlugs); err != nil {
 		return nil, nil, err
 	}
@@ -346,6 +349,9 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (_
 // update is Update without its span and count, for Edit, which publishes
 // through it under its own.
 func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_ *Artifact, v *Version, err error) {
+	if err := checkSlug(actor, req.Slug); err != nil {
+		return nil, nil, err
+	}
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
 	}
@@ -536,6 +542,9 @@ var errUnchanged = errors.New("artifact: unchanged")
 // store's transaction, then records action with change's details.
 func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDeleted bool, action string,
 	change func(a *Artifact) (map[string]string, error)) (*Artifact, error) {
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, err
+	}
 	involved, err := s.involved(ctx, actor, slug)
 	if err != nil {
 		return nil, err

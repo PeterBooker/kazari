@@ -89,6 +89,9 @@ func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (_ *Ar
 		editAttrs(span, out)
 		endSpan(span, err)
 	}()
+	if err := checkSlug(actor, req.Slug); err != nil {
+		return nil, nil, nil, err
+	}
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, nil, err
 	}

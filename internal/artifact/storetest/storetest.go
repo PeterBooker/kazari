@@ -45,6 +45,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"ListPagination", testListPagination},
 		{"ListInvalid", testListInvalid},
 		{"ListMembers", testListMembers},
+		{"ListSlugs", testListSlugs},
 		{"Resolve", testResolve},
 		{"Files", testFiles},
 		{"Usage", testUsage},
@@ -1206,6 +1207,78 @@ func testListMembers(t *testing.T, h *harness) {
 	}
 	if got := h.get(t, "team-page").Visibility; got != artifact.Members {
 		t.Fatalf("Visibility = %q, want members", got)
+	}
+}
+
+func testListSlugs(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	all := []string{"weekly-report", "weekly-notes", "weekly", "week", "reports-q1", "reports-q2", "reports", "other", "x-y-z"}
+	for i, slug := range all {
+		h.create(t, newArtifact(slug, "alice", at(time.Duration(i)*time.Hour)))
+	}
+	// Seven more that match "page-*", to cross a page boundary.
+	for i := range 7 {
+		h.create(t, newArtifact("page-"+string(rune('a'+i)), "alice", at(time.Duration(20+i/2)*time.Hour)))
+	}
+
+	list := func(q artifact.ListQuery) []string {
+		t.Helper()
+		var (
+			got    []string
+			cursor string
+		)
+		for range 30 {
+			q.Cursor = cursor
+			page, err := h.store.List(h.ctx, q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if q.Limit > 0 && len(page.Items) > q.Limit {
+				t.Fatalf("limit %d: page of %d", q.Limit, len(page.Items))
+			}
+			got = append(got, slugs(page.Items)...)
+			if cursor = page.NextCursor; cursor == "" {
+				slices.Sort(got)
+				return got
+			}
+		}
+		t.Fatal("pagination does not terminate")
+		return nil
+	}
+
+	for _, tc := range []struct {
+		name     string
+		patterns []string
+		want     []string
+	}{
+		{"exact", []string{"weekly-report"}, []string{"weekly-report"}},
+		{"exact is not a prefix", []string{"weekly"}, []string{"weekly"}},
+		{"prefix", []string{"weekly-*"}, []string{"weekly-notes", "weekly-report"}},
+		{"prefix without a hyphen", []string{"week*"}, []string{"week", "weekly", "weekly-notes", "weekly-report"}},
+		{"several", []string{"reports-*", "other", "missing"}, []string{"other", "reports-q1", "reports-q2"}},
+		{"nothing matches", []string{"nothing-*"}, nil},
+		// "_" and "%" are LIKE wildcards and "?" and "[" GLOB ones; none may act as one.
+		{"no wildcard but the last star", []string{"x_y_z", "x?y?z", "%", "[a-z]*", "w%*"}, nil},
+	} {
+		for _, q := range []artifact.ListQuery{
+			{Viewer: "alice", Slugs: tc.patterns},
+			{All: true, Slugs: tc.patterns},
+			{Viewer: "alice", Mine: "created", Slugs: tc.patterns, Limit: 1},
+		} {
+			if diff := cmp.Diff(tc.want, list(q), cmpOpts...); diff != "" {
+				t.Errorf("%s, %+v (-want +got):\n%s", tc.name, q, diff)
+			}
+		}
+	}
+
+	want := []string{"page-a", "page-b", "page-c", "page-d", "page-e", "page-f", "page-g"}
+	for _, limit := range []int{1, 2, 3, 7, 50} {
+		if diff := cmp.Diff(want, list(artifact.ListQuery{Viewer: "alice", Slugs: []string{"page-*"}, Limit: limit})); diff != "" {
+			t.Errorf("page-*, limit %d (-want +got):\n%s", limit, diff)
+		}
+	}
+	if got := list(artifact.ListQuery{Viewer: "alice"}); len(got) != len(all)+7 {
+		t.Errorf("no patterns: %d artifacts, want every one of %d", len(got), len(all)+7)
 	}
 }
 

@@ -21,7 +21,7 @@ Authorization: Bearer kzk_abcdefgh_<52 characters>
 
 The credential is one of these:
 
-- An API key, issued by an admin, in the form `kzk_<8-character prefix>_<secret>`.
+- An API key in the form `kzk_<8-character prefix>_<secret>`, issued by an admin or by its owner with [another key](#your-own-keys-mekeys).
 - An OAuth access token issued to an MCP client. [Sign-in and identity](identity.md) explains how clients get one.
 
 ### Scopes
@@ -31,11 +31,27 @@ Every credential carries scopes, which decide the routes it can call:
 | Scope              | Allows                                                                  |
 | ------------------ | ----------------------------------------------------------------------- |
 | `artifacts:read`   | `GET` routes                                                            |
-| `artifacts:write`  | Create, update, publish, stale, visibility, share links, uploads        |
+| `artifacts:write`  | Create, update, edit, publish, stale, uploads                           |
+| `artifacts:share`  | Who can open an artifact: its `visibility`, and creating and revoking share links |
 | `artifacts:delete` | `DELETE /artifacts/{slug}`, soft and hard                               |
 | `admin`            | The admin API. Held only by admin users, and implies every other scope  |
 
 A credential without `artifacts:delete` can mark stale only the artifacts its user owns, because the expiry ends in a purge.
+
+A credential without `artifacts:share` cannot send `visibility`: a new artifact gets `serve.default_visibility`, and an existing one keeps what it has. A key issued without naming scopes holds all four artifact scopes.
+
+### Restricted credentials
+
+A key can be restricted to some artifacts with `slugs`, a list of up to 20 slug patterns. A pattern is an exact slug (`weekly-report`) or a prefix ending in `*` (`reports-*`). The restriction is set when the key is issued and never changes.
+
+A restricted credential sees and changes only artifacts whose slug matches a pattern:
+
+- Every route that names another slug answers `403 forbidden`, and the message names the patterns. This holds for reads too, and whether or not the slug exists.
+- `POST /artifacts` accepts only a matching slug.
+- `GET /artifacts` lists matching artifacts only.
+- [Uploads](#chunked-uploads) are not restricted: an upload names no slug until a create or update publishes it.
+
+A restriction only narrows. The scopes, the [write policy](#write-policy) and the rules for offline artifacts apply as they do to any credential. An OAuth connection [approved with a restricted key](identity.md#approving-with-an-api-key) carries the same restriction. [`GET /me`](#who-am-i-get-me) shows the restriction of the credential in use.
 
 A missing or invalid credential gets `401` with `WWW-Authenticate: Bearer error="invalid_token"`. A valid credential without the scope gets `403 forbidden`.
 
@@ -150,16 +166,16 @@ The user API's base URL is `https://api.<base>/v1`. These are its routes, with t
 | `GET`    | `/artifacts`                             | read   | `200` list page             |
 | `GET`    | `/artifacts/{slug}`                      | read   | `200` artifact and versions |
 | `PUT`    | `/artifacts/{slug}`                      | write  | `200` publish result        |
-| `PATCH`  | `/artifacts/{slug}`                      | write  | `200` publish result        |
+| `PATCH`  | `/artifacts/{slug}`                      | write, or share for `visibility` alone | `200` publish result |
 | `DELETE` | `/artifacts/{slug}`                      | delete | `204`                       |
 | `POST`   | `/artifacts/{slug}/edit`                 | write  | `200` edit result           |
 | `POST`   | `/artifacts/{slug}/publish`              | write  | `200` publish result        |
 | `POST`   | `/artifacts/{slug}/stale`                | write  | `200` stale result          |
 | `DELETE` | `/artifacts/{slug}/stale`                | write  | `200` publish result        |
 | `GET`    | `/artifacts/{slug}/files/{path...}`      | read   | `200` file bytes            |
-| `POST`   | `/artifacts/{slug}/share-links`          | write  | `201` new share link        |
+| `POST`   | `/artifacts/{slug}/share-links`          | share  | `201` new share link        |
 | `GET`    | `/artifacts/{slug}/share-links`          | read   | `200` share links           |
-| `DELETE` | `/artifacts/{slug}/share-links/{prefix}` | write  | `204`                       |
+| `DELETE` | `/artifacts/{slug}/share-links/{prefix}` | share  | `204`                       |
 | `POST`   | `/uploads`                               | write  | `201` upload                |
 | `PATCH`  | `/uploads/{id}/files/{path...}`          | write  | `200` chunk result          |
 | `PUT`    | `/uploads/{id}/archive`                  | none   | `200` archive result        |
@@ -167,8 +183,11 @@ The user API's base URL is `https://api.<base>/v1`. These are its routes, with t
 | `GET`    | `/skill`                                 | read   | `200` the instance's skill  |
 | `GET`    | `/me`                                    | any    | `200` caller                |
 | `GET`    | `/me/keys`                               | any    | `200` caller's keys         |
+| `POST`   | `/me/keys`                               | an API key | `201` issued key        |
+| `POST`   | `/me/keys/{prefix}/rotate`               | an API key | `201` issued key        |
+| `DELETE` | `/me/keys/{prefix}`                      | an API key | `204`                   |
 
-In the scope column, `read`, `write` and `delete` stand for `artifacts:read`, `artifacts:write` and `artifacts:delete`, `any` means any valid credential, and `none` means no credential: the token in the URL of an [archive upload](#archive-uploads) stands for one.
+In the scope column, `read`, `write`, `share` and `delete` stand for `artifacts:read`, `artifacts:write`, `artifacts:share` and `artifacts:delete`, `any` means any valid credential, `an API key` means a key with any scopes but not an OAuth token, and `none` means no credential: the token in the URL of an [archive upload](#archive-uploads) stands for one. Any route that takes `visibility` in its body also needs `artifacts:share` when it is sent.
 
 ### Create an artifact: `POST /artifacts`
 
@@ -203,7 +222,7 @@ The body takes these fields:
 | `slug`        | string | Required                                                                    |
 | `name`        | string | At most 256 bytes, one line                                                 |
 | `description` | string | At most 4096 bytes; can contain line breaks and tabs                        |
-| `visibility`  | string | `public`, `unlisted` or `members`; defaults to `serve.default_visibility` (`public`) |
+| `visibility`  | string | `public`, `unlisted` or `members`; defaults to `serve.default_visibility` (`public`). Sending it needs `artifacts:share` |
 | `metadata`    | object | String to string                                                            |
 | `label`       | string | Label of version 1; at most 256 bytes, one line                             |
 | `files`       | array  | `{ path, content, encoding?, content_type? }`, or `{ path, url, content_type? }` ([Files named by URL](#files-named-by-url)) |
@@ -346,7 +365,7 @@ These fields work differently from create, or exist only here:
 | Field              | Notes                                                                           |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `metadata`         | Merged into the existing metadata; `null` deletes a key                         |
-| `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else |
+| `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else. Needs `artifacts:share` |
 | `expected_version` | Fails with `412 version_conflict` unless this is the latest version             |
 | `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version or a `restore` otherwise clears |
 | `restore`          | Clears `deleted_at` on a soft-deleted artifact, which is `404` without it       |
@@ -371,6 +390,8 @@ curl -sS -X PUT https://api.art.example.com/v1/artifacts/q3-report \
 ### Change fields: `PATCH /artifacts/{slug}`
 
 Changes the name, description, metadata, visibility (including `unpublished`) or `restore`, without adding a version. The body is the JSON body of `PUT` without `files` or `upload_id`, and sending either is `422`. The body is capped at 1 MiB.
+
+A body with `visibility` and nothing else needs `artifacts:share` alone. Any other field needs `artifacts:write`, and `visibility` beside it needs both.
 
 To take a page offline, set its visibility to `unpublished`:
 
@@ -522,7 +543,7 @@ A share link opens one `members` artifact in a browser without signing in. It is
 
 The link's URL opens the latest host. The cookie it sets is per host, so to open a pinned version, open `https://<slug>--v<N>.<base>/.kazari/share?token=...` with the same token.
 
-Managing links needs the same rights as changing the artifact, so the write policy applies. An offline artifact's links can be managed only by the people who can see the artifact.
+Creating and revoking links needs `artifacts:share`, and the same rights as changing the artifact, so the write policy applies. An offline artifact's links can be managed only by the people who can see the artifact.
 
 A link on a `public` or `unlisted` artifact works but changes nothing, since those pages open for anyone anyway.
 
@@ -696,18 +717,63 @@ Returns the instance's [Agent Skill](https://agentskills.io/specification) as `t
 
 To install it, save it with [`kazari skill`](cli.md#skill) as `~/.claude/skills/kazari/SKILL.md`, or wherever your agent reads skills.
 
-### Who am I: `GET /me` and `GET /me/keys`
+### Who am I: `GET /me`
 
-`GET /me` returns the caller: their handle, whether they are an admin, their scopes, how they authenticated and their storage quota and use:
+`GET /me` returns the caller: their handle, whether they are an admin, their scopes, how they authenticated and their storage quota and use. For a key restricted to the weekly reports that expires at the end of February:
 
 ```json
-{ "handle": "peter", "admin": false, "scopes": ["artifacts:read", "artifacts:write", "artifacts:delete"],
-  "source": "api_key", "quota_bytes": 2147483648, "used_bytes": 184320 }
+{ "handle": "ana", "admin": false, "scopes": ["artifacts:read", "artifacts:write"],
+  "source": "api_key", "slugs": ["weekly-*"], "expires_at": "2027-02-28T09:00:00Z",
+  "quota_bytes": 2147483648, "used_bytes": 184320 }
 ```
 
 `source` is `api_key` or `oauth`. A `quota_bytes` of 0 means unlimited. `used_bytes` also charges 4 KiB per stored file row, so it is more than the sum of the artifacts' `size_bytes`; see [quotas](ops.md#quotas).
 
-`GET /me/keys` lists the caller's API keys with their `prefix`, `label`, `scopes`, `last_used_at`, `expires_at`, `revoked_at` and `created_at`, never the secret. OAuth callers get `[]`.
+`slugs` is the credential's [restriction](#restricted-credentials), and is absent when it has none. `expires_at` is when the credential ends whatever is done with it: a key's expiry, or for an OAuth connection the expiry of the key it was approved with. It is absent when there is none.
+
+### Your own keys: `/me/keys`
+
+These routes let a person list, issue, rotate and revoke their own API keys. The three that change keys need an API key as the credential. An OAuth token gets `403 forbidden` on them, so no connected agent can issue a key.
+
+The key that makes the request bounds what it can do. It can issue, rotate or revoke only a key that is no wider than itself: one with no scope it lacks, and with a restriction inside its own.
+
+#### List keys: `GET /me/keys`
+
+Lists the caller's API keys with their `prefix`, `label`, `scopes`, `slugs`, `issued_by`, `last_used_at`, `expires_at`, `revoked_at` and `created_at`, never the secret. `issued_by` is the prefix of the key that issued it, and is absent for a key an admin issued. OAuth callers get `[]`.
+
+#### Issue a key: `POST /me/keys`
+
+Issues a key for the caller. The body is optional and takes the [fields of a key](#keys). To issue a key for an agent that keeps the weekly reports current, for 90 days:
+
+```sh
+curl -sS https://api.art.example.com/v1/me/keys   -H "Authorization: Bearer $KAZARI_TOKEN" -H 'Content-Type: application/json'   -d '{"label":"weekly-report","scopes":["artifacts:read","artifacts:write"],"slugs":["weekly-*"],"expires_in":"90d"}'
+```
+
+The response is `201 Created` with the [issued key](#keys), which carries the secret this once only.
+
+The new key is bounded by the key that issued it:
+
+- It holds no scope the issuing key lacks, and never `admin`. Without `scopes`, it gets the artifact scopes the issuing key holds.
+- Its `slugs` must lie inside the issuing key's restriction. Without `slugs`, it gets the same restriction.
+- It expires no later than the issuing key. Without `expires_in`, it expires when the issuing key does.
+
+A request for more is `403 forbidden`. Revoking a key revokes every key issued with it.
+
+#### Rotate a key: `POST /me/keys/{prefix}/rotate`
+
+Issues a key with the same label, scopes, restriction and lifetime as the key with that prefix, and sets the old key to expire when the overlap ends. Both keys work in between, so the new one can be put in place first. The body is optional:
+
+```json
+{ "overlap": "24h" }
+```
+
+`overlap` is a duration such as `1h` or `7d`, or `0` to end the old key at once. It defaults to 24 hours and can be at most 7 days.
+
+The response is `201 Created` with the issued key and, in `replaces`, the old key with its new `expires_at`. The new key expires no later than the key that made the request, so a key that rotates itself gets a new secret and no more time. An admin [rotates a key](#keys) for its full lifetime. A key with `admin` is rotated on the admin API only.
+
+#### Revoke a key: `DELETE /me/keys/{prefix}`
+
+Revokes the key with that prefix at once, and with it every key that was issued with it and every OAuth connection approved with one of them. It answers `204`, `404` for a prefix that is not the caller's, and `403` for a key wider than the one making the request.
 
 ## Admin API
 
@@ -722,7 +788,8 @@ These are its routes, with the body or query parameters each takes and its respo
 | `GET`    | `/users/{handle}`                   |                                                           | `200` user with `identities` and `used_bytes` |
 | `PATCH`  | `/users/{handle}`                   | `{email?, display_name?, role?, quota_bytes?, disabled?}` | `200` user                              |
 | `GET`    | `/users/{handle}/keys`              |                                                           | `200` keys                              |
-| `POST`   | `/users/{handle}/keys`              | `{label?, scopes?, expires_in?}`                          | `201` issued key                        |
+| `POST`   | `/users/{handle}/keys`              | `{label?, scopes?, slugs?, expires_in?}`                  | `201` issued key                        |
+| `POST`   | `/users/{handle}/keys/{prefix}/rotate` | `{overlap?}`                                           | `201` issued key                        |
 | `DELETE` | `/users/{handle}/keys/{prefix}`     |                                                           | `204`                                   |
 | `POST`   | `/users/{handle}/identities`        | `{issuer, subject, email?}`                               | `204`                                   |
 | `POST`   | `/users/{handle}/identities/unlink` | `{issuer, subject}`                                       | `204`                                   |
@@ -745,7 +812,7 @@ ADMIN=https://admin.art.example.com/v1
 curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: application/json' \
   $ADMIN/users -d '{"handle":"ana","email":"ana@example.com","quota_bytes":1073741824}'
 curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  $ADMIN/users/ana/keys -d '{"label":"ci","scopes":["artifacts:read","artifacts:write"],"expires_in":"2160h"}'
+  $ADMIN/users/ana/keys -d '{"label":"ci","scopes":["artifacts:read","artifacts:write"],"expires_in":"90d"}'
 curl -sS -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" $ADMIN/jobs/sweep/run
 curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "$ADMIN/audit?slug=q3-report&limit=20"
 ```
@@ -765,9 +832,10 @@ A user's fields follow these rules:
 
 A key's fields follow these rules:
 
-- `scopes` defaults to `artifacts:read`, `artifacts:write` and `artifacts:delete`.
+- `scopes` defaults to `artifacts:read`, `artifacts:write`, `artifacts:share` and `artifacts:delete`.
 - Only admin users can hold `admin`, and an admin user's key has admin powers only if it holds `admin`.
-- `expires_in` is a Go duration such as `720h`. Without it, the key never expires.
+- `slugs` restricts the key to artifacts whose slug matches one of up to 20 patterns ([Restricted credentials](#restricted-credentials)). Without it, the key is not restricted. A key with `slugs` cannot hold `admin`.
+- `expires_in` is a duration such as `720h` or `90d`. Without it, the key never expires, unless `auth.tokens.max_key_ttl` is set: the key then gets that lifetime, and a longer `expires_in` is `422`.
 
 The response carries the secret, this once only:
 
@@ -775,13 +843,23 @@ The response carries the secret, this once only:
 { "key": "kzk_...", "api_key": { "prefix": "abcdefgh", ... } }
 ```
 
+`POST /users/{handle}/keys/{prefix}/rotate` replaces a key as [`POST /me/keys/{prefix}/rotate`](#rotate-a-key-post-mekeysprefixrotate) does, with the same optional `overlap`. The new key gets the old key's full lifetime, capped at `auth.tokens.max_key_ttl`.
+
+`DELETE /users/{handle}/keys/{prefix}` revokes the key and every key that was issued with it.
+
 ### Identities
 
 `POST /users/{handle}/identities` links an upstream `(issuer, subject)` to a user before they sign in, or moves one from another user. `POST /users/{handle}/identities/unlink` removes it. [Admin-created users](identity.md#admin-created-users) explains when to use them.
 
 ### Grants
 
-`GET /users/{handle}/grants` lists one entry per live refresh token, with `id`, `client_id`, `client`, `user`, `scopes`, `created_at` and `expires_at`. `DELETE /grants/{id}` revokes the grant and every token derived from it.
+`GET /users/{handle}/grants` lists the user's OAuth grants, one per connection of an MCP client, with `id`, `client_id`, `client`, `user`, `scopes`, `key_prefix`, `created_at` and `expires_at`.
+
+- `id` stays the same across refreshes. It is the number in the `oauth:<id>` credential of the [audit log](#audit-log).
+- `created_at` is the last refresh, and `expires_at` is when the grant lapses unless it is refreshed again.
+- `key_prefix` is the API key the grant was [approved with](identity.md#approving-with-an-api-key), and is absent for a grant approved after a sign-in alone.
+
+`DELETE /grants/{id}` revokes the grant and every token derived from it.
 
 ### Artifacts
 
@@ -849,7 +927,7 @@ These are the codes, with their HTTP status and meaning:
 | `edit_ambiguous`         | 422    | Edit: an `old_text` matched more than once without `replace_all`                   |
 | `upload_digest_mismatch` | 422    | The body sent to an archive URL does not have the declared size and SHA-256        |
 | `unauthorized`           | 401    | Missing, invalid, expired or revoked credential                                    |
-| `forbidden`              | 403    | Missing scope, write policy, disabled user, or admin role required                 |
+| `forbidden`              | 403    | Missing scope, a slug outside the credential's restriction, write policy, disabled user, admin role required, or a key asked for more than the key making the request holds |
 | `quota_exceeded`         | 403    | The owner's storage quota would be exceeded                                        |
 | `too_many_uploads`       | 403    | The caller already has `limits.max_open_uploads` open uploads                      |
 | `not_found`              | 404    | No such artifact, user, key, grant, job or route; also a soft-deleted artifact on write routes |

@@ -220,6 +220,13 @@ func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
 		s.renderSignIn(w, http.StatusUnauthorized, t, "That API key was not accepted.")
 		return
 	}
+	// A session opens every members page, which is more than a restricted
+	// key may read.
+	if len(p.Slugs) > 0 {
+		s.renderSignIn(w, http.StatusForbidden, t,
+			"That API key is restricted to certain artifacts, so it cannot sign in to view pages. Use a key without a restriction.")
+		return
+	}
 	sess, err := s.startSession(ctx, w, s.signInBinding(r), p.Handle, p.KeyID)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
@@ -317,15 +324,15 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, bindi
 	via := "oidc"
 	if keyPrefix != "" {
 		via = "api_key"
-		keyExpires, live, err := s.approvingKey(ctx, keyPrefix, handle)
+		key, err := s.approvingKey(ctx, keyPrefix, handle)
 		if err != nil {
 			return nil, err
 		}
-		if !live {
-			return nil, fmt.Errorf("oauth: key %q is not active", keyPrefix)
+		if !key.live || len(key.slugs) > 0 {
+			return nil, fmt.Errorf("oauth: key %q is not active or is restricted", keyPrefix)
 		}
-		if keyExpires != nil && keyExpires.Before(expires) {
-			expires = *keyExpires
+		if key.expires != nil && key.expires.Before(expires) {
+			expires = *key.expires
 		}
 	}
 	token := randomString(secretBytes)
@@ -380,8 +387,8 @@ func (s *Service) sessionLive(ctx context.Context, handle, keyPrefix string, exp
 	if u.DisabledAt != nil {
 		return false, nil
 	}
-	_, live, err := s.approvingKey(ctx, keyPrefix, handle)
-	return live, err
+	key, err := s.approvingKey(ctx, keyPrefix, handle)
+	return key.live && len(key.slugs) == 0, err
 }
 
 // sendToHost issues a code for the session and sends the browser to the

@@ -73,7 +73,8 @@ func newTexts(links present.Links, o Options) texts {
 	t.visibility = fmt.Sprintf("visibility is \"public\" (served to anyone, listed), \"unlisted\" (served to anyone "+
 		"with the URL, not listed) or \"members\" (only people who sign in to this Kazari instance, and holders of a "+
 		"share link from create_share_link, can open it); omitted, it is %q on this instance. A page is never secret "+
-		"by its URL alone, so use \"members\" for anything not meant for the open web.", o.DefaultVisibility)
+		"by its URL alone, so use \"members\" for anything not meant for the open web. Giving visibility needs the "+
+		"artifacts:share scope; a connection without it leaves visibility out.", o.DefaultVisibility)
 
 	t.inline = fmt.Sprintf("Inline files: give each file in files[] as {path, content, encoding, content_type}; encoding is "+
 		"\"utf8\" (default, for text) or \"base64\" (for binary). When any single file or all files together exceed %s, "+
@@ -177,7 +178,8 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"not mentioned carries over from the latest version. Without files only the fields change and no version "+
 				"is added.", t.pageURL),
 			"name, description and visibility (\"public\", \"unlisted\" or \"members\") replace the stored values when " +
-				"given. metadata is merged into the stored map; a key set to null is deleted.",
+				"given; visibility needs the artifacts:share scope. metadata is merged into the stored map; a key set to " +
+				"null is deleted.",
 			"expected_version: pass the latest_version you last saw (from get_artifact or a previous result). If " +
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
@@ -285,7 +287,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"(create_share_link), on the latest URL and every version URL; listed to members. \"unpublished\": takes "+
 			"the page offline (%s answers 404) while keeping every version; setting \"public\", \"unlisted\" or "+
 			"\"members\" brings it back online. A page is never secret by its URL alone: slugs are easy to guess, so "+
-			"use \"members\" for anything not meant for the open web.", t.pageURL),
+			"use \"members\" for anything not meant for the open web. Needs the artifacts:share scope.", t.pageURL),
 
 		"create_share_link": fmt.Sprintf("Create a share link: a URL that opens an artifact in a browser without "+
 			"signing in, for someone outside this instance (a client, a reviewer, a headless browser). It matters for "+
@@ -294,7 +296,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"link is revoked; for a pinned version, give the same url with the host changed to %s. label is a "+
 			"note such as who the link is for. The url in the result holds the link's secret and is returned only "+
 			"this once: give it to the user. Anyone who has the url can open the page, so it is for the people it is "+
-			"meant for only.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
+			"meant for only. Needs the artifacts:share scope.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
 
 		"list_share_links": "List an artifact's share links, newest first: prefix, label, created_by, expires_at, " +
 			"revoked_at, uses, last_used_at and whether each is active. Their URLs are never shown again; revoke a link " +
@@ -302,7 +304,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 
 		"revoke_share_link": "Revoke one share link of an artifact by its prefix (from list_share_links or " +
 			"create_share_link). It stops opening the page at once: browsers that opened it lose access on their next " +
-			"request. Revoking twice is fine.",
+			"request. Revoking twice is fine. Needs the artifacts:share scope.",
 
 		"delete_artifact": "Delete an artifact. By default a soft delete: the page goes offline at once and the " +
 			"artifact is purged after the retention period. hard = true purges it now, permanently: every version is " +

@@ -77,7 +77,7 @@ func (f *fixture) mustCreate(t *testing.T, handle, email string, role user.Role)
 
 func (f *fixture) mustIssue(t *testing.T, handle string, scopes []string, expiresIn time.Duration) (*user.APIKey, string) {
 	t.Helper()
-	k, secret, err := f.svc.IssueKey(context.Background(), handle, "test", scopes, expiresIn)
+	k, secret, err := f.svc.IssueKey(context.Background(), user.IssueKeyRequest{Handle: handle, Label: "test", Scopes: scopes, ExpiresIn: expiresIn})
 	if err != nil {
 		t.Fatalf("IssueKey(%q): %v", handle, err)
 	}
@@ -296,7 +296,7 @@ func TestDisableRevokesKeys(t *testing.T) {
 			t.Errorf("Authenticate after disable = %v, want ErrInvalidToken", err)
 		}
 	}
-	if _, _, err := f.svc.IssueKey(ctx, "alice", "", nil, 0); !errors.Is(err, user.ErrDisabled) {
+	if _, _, err := f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "alice"}); !errors.Is(err, user.ErrDisabled) {
 		t.Errorf("IssueKey for disabled user = %v, want ErrDisabled", err)
 	}
 
@@ -356,7 +356,7 @@ func TestKeyStatus(t *testing.T) {
 	live, _ := f.mustIssue(t, "alice", nil, 0)
 	expiring, _ := f.mustIssue(t, "alice", nil, time.Hour)
 	revoked, _ := f.mustIssue(t, "alice", nil, 0)
-	if err := f.svc.RevokeKey(ctx, "alice", revoked.Prefix); err != nil {
+	if err := f.svc.RevokeKey(ctx, user.KeyRef{Handle: "alice", Prefix: revoked.Prefix}); err != nil {
 		t.Fatal(err)
 	}
 	// Disabled in the store so bob's key stays unrevoked.
@@ -402,7 +402,7 @@ func TestIssueKey(t *testing.T) {
 	f := newFixture(t, user.Options{})
 	f.mustCreate(t, "alice", "", "")
 
-	k, secret, err := f.svc.IssueKey(ctx, "alice", " laptop ", nil, 24*time.Hour)
+	k, secret, err := f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "alice", Label: " laptop ", ExpiresIn: 24 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestIssueKey(t *testing.T) {
 	}
 	ev := f.lastEvent(t)
 	wantDetails := map[string]string{"handle": "alice", "prefix": k.Prefix, "label": "laptop",
-		"scopes": "artifacts:read artifacts:write artifacts:delete"}
+		"scopes": "artifacts:read artifacts:write artifacts:share artifacts:delete", "expires_at": "2026-10-25T12:00:00Z"}
 	if ev.Action != audit.KeyIssue || !cmp.Equal(ev.Details, wantDetails) {
 		t.Errorf("audit event = %+v, want details %v", ev, wantDetails)
 	}
@@ -451,7 +451,7 @@ func TestIssueKey(t *testing.T) {
 		t.Error("two keys collided")
 	}
 
-	if _, _, err := f.svc.IssueKey(ctx, "nobody", "", nil, 0); !errors.Is(err, user.ErrNotFound) {
+	if _, _, err := f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: "nobody"}); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("IssueKey(unknown) = %v, want ErrNotFound", err)
 	}
 }
@@ -480,7 +480,7 @@ func TestIssueKeyScopes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			k, _, err := f.svc.IssueKey(ctx, tt.handle, "", tt.scopes, 0)
+			k, _, err := f.svc.IssueKey(ctx, user.IssueKeyRequest{Handle: tt.handle, Scopes: tt.scopes})
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("IssueKey = %v, want %v", err, tt.wantErr)
@@ -570,7 +570,7 @@ func TestAuthenticateFailures(t *testing.T) {
 	f.mustCreate(t, "bob", "", "")
 	live, liveKey := f.mustIssue(t, "alice", nil, 0)
 	revoked, revokedKey := f.mustIssue(t, "alice", nil, 0)
-	if err := f.svc.RevokeKey(ctx, "alice", revoked.Prefix); err != nil {
+	if err := f.svc.RevokeKey(ctx, user.KeyRef{Handle: "alice", Prefix: revoked.Prefix}); err != nil {
 		t.Fatal(err)
 	}
 	_, expiringKey := f.mustIssue(t, "alice", nil, time.Hour)
@@ -699,11 +699,11 @@ func TestRevokeKey(t *testing.T) {
 	f.mustCreate(t, "bob", "", "")
 	k, secret := f.mustIssue(t, "alice", nil, 0)
 
-	if err := f.svc.RevokeKey(ctx, "bob", k.Prefix); !errors.Is(err, user.ErrKeyNotFound) {
+	if err := f.svc.RevokeKey(ctx, user.KeyRef{Handle: "bob", Prefix: k.Prefix}); !errors.Is(err, user.ErrKeyNotFound) {
 		t.Errorf("RevokeKey by another user = %v, want ErrKeyNotFound", err)
 	}
 	f.clock.Advance(time.Minute)
-	if err := f.svc.RevokeKey(ctx, "alice", k.Prefix); err != nil {
+	if err := f.svc.RevokeKey(ctx, user.KeyRef{Handle: "alice", Prefix: k.Prefix}); err != nil {
 		t.Fatal(err)
 	}
 	ev := f.lastEvent(t)

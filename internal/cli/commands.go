@@ -773,14 +773,28 @@ func (c *MeCmd) Run(r *runner) error {
 	fmt.Fprintf(tw, "admin:\t%t\n", me.Admin)
 	fmt.Fprintf(tw, "scopes:\t%s\n", dash(strings.Join(me.Scopes, ", ")))
 	fmt.Fprintf(tw, "source:\t%s\n", dash(me.Source))
+	if len(me.Slugs) > 0 {
+		fmt.Fprintf(tw, "slugs:\t%s\n", strings.Join(me.Slugs, ", "))
+	}
+	if me.ExpiresAt != nil {
+		fmt.Fprintf(tw, "expires:\t%s\n", fmtTime(*me.ExpiresAt))
+	}
 	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(me.UsedBytes, me.QuotaBytes))
 	return tw.Flush()
 }
 
-// KeysCmd lists the caller's keys.
-type KeysCmd struct{}
+// KeysCmd manages the caller's own keys. Without a subcommand it lists them.
+type KeysCmd struct {
+	List   KeysListCmd   `cmd:"" default:"1" help:"List the caller's keys."`
+	Issue  KeysIssueCmd  `cmd:"" help:"Issue a key no wider than the one in use; the secret is printed once."`
+	Rotate KeysRotateCmd `cmd:"" help:"Replace a key with a new one; the secret is printed once."`
+	Revoke KeysRevokeCmd `cmd:"" help:"Revoke a key by its prefix, with the keys issued with it."`
+}
 
-func (c *KeysCmd) Run(r *runner) error {
+// KeysListCmd lists the caller's keys.
+type KeysListCmd struct{}
+
+func (c *KeysListCmd) Run(r *runner) error {
 	cl, err := r.userClient()
 	if err != nil {
 		return err
@@ -792,14 +806,122 @@ func (c *KeysCmd) Run(r *runner) error {
 	return r.printKeys(keys)
 }
 
+// keyFlags describe a new key, for keys issue and admin keys issue.
+type keyFlags struct {
+	Label   string `help:"Key label." placeholder:"LABEL"`
+	Scopes  string `help:"Comma-separated scopes (default: artifacts:read,artifacts:write,artifacts:share,artifacts:delete)." placeholder:"A,B"`
+	Slugs   string `help:"Comma-separated slug patterns the key is restricted to: an exact slug, or a prefix ending in *, such as 'reports-*' (default: no restriction)." placeholder:"A,B"`
+	Expires string `help:"Lifetime, such as 720h or 90d (default: no expiry, or the server's limit)." placeholder:"DURATION"`
+}
+
+func (f *keyFlags) request() api.IssueKeyRequest {
+	return api.IssueKeyRequest{Label: f.Label, Scopes: splitList(f.Scopes), Slugs: splitList(f.Slugs), ExpiresIn: f.Expires}
+}
+
+func splitList(s string) []string {
+	var out []string
+	for item := range strings.SplitSeq(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// printIssued prints the key string alone on stdout, so it can be piped
+// into a secret store, and what it is on stderr.
+func (r *runner) printIssued(k *api.IssuedKey, note string) error {
+	if r.g.JSON {
+		return r.printJSON(k)
+	}
+	fmt.Fprintln(r.stdout, k.Key)
+	fmt.Fprintf(termSafe{r.stderr}, "%s; the key is shown only once\n", note)
+	return nil
+}
+
+func keyNote(k api.APIKey) string {
+	note := "scopes " + strings.Join(k.Scopes, ",")
+	if len(k.Slugs) > 0 {
+		note += ", restricted to " + strings.Join(k.Slugs, ",")
+	}
+	if k.ExpiresAt != nil {
+		note += ", expires " + fmtTime(*k.ExpiresAt)
+	}
+	return note
+}
+
+func rotatedNote(k *api.IssuedKey) string {
+	note := fmt.Sprintf("issued key %s (%s)", k.APIKey.Prefix, keyNote(k.APIKey))
+	if old := k.Replaces; old != nil && old.ExpiresAt != nil {
+		note += fmt.Sprintf(" in place of %s, which works until %s", old.Prefix, fmtTime(*old.ExpiresAt))
+	}
+	return note
+}
+
+// KeysIssueCmd issues a key for the caller.
+type KeysIssueCmd struct {
+	keyFlags
+}
+
+func (c *KeysIssueCmd) Run(r *runner) error {
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	k, err := cl.IssueMyKey(r.ctx, c.request())
+	if err != nil {
+		return err
+	}
+	return r.printIssued(k, fmt.Sprintf("issued key %s (%s)", k.APIKey.Prefix, keyNote(k.APIKey)))
+}
+
+// KeysRotateCmd replaces one of the caller's keys.
+type KeysRotateCmd struct {
+	Prefix  string `arg:"" help:"The key's prefix, from keys list."`
+	Overlap string `help:"How long the old key keeps working, such as 24h (the default), 7d (the most) or 0." placeholder:"DURATION"`
+}
+
+func (c *KeysRotateCmd) Run(r *runner) error {
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	k, err := cl.RotateMyKey(r.ctx, c.Prefix, c.Overlap)
+	if err != nil {
+		return err
+	}
+	return r.printIssued(k, rotatedNote(k))
+}
+
+// KeysRevokeCmd revokes one of the caller's keys.
+type KeysRevokeCmd struct {
+	Prefix string `arg:"" help:"The key's prefix, from keys list."`
+}
+
+func (c *KeysRevokeCmd) Run(r *runner) error {
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	if err := cl.RevokeMyKey(r.ctx, c.Prefix); err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(api.OK{OK: true})
+	}
+	fmt.Fprintf(r.stdout, "revoked %s\n", c.Prefix)
+	return nil
+}
+
 func (r *runner) printKeys(keys []api.APIKey) error {
 	if r.g.JSON {
 		return r.printJSON(keys)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "PREFIX\tLABEL\tSCOPES\tCREATED\tLAST USED\tEXPIRES\tREVOKED")
+	fmt.Fprintln(tw, "PREFIX\tLABEL\tSCOPES\tSLUGS\tISSUED BY\tCREATED\tLAST USED\tEXPIRES\tREVOKED")
 	for _, k := range keys {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", k.Prefix, dash(oneLine(k.Label)), dash(strings.Join(k.Scopes, ",")),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", k.Prefix, dash(oneLine(k.Label)), dash(strings.Join(k.Scopes, ",")),
+			dash(strings.Join(k.Slugs, ",")), dash(k.IssuedBy),
 			fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
 	}
 	return tw.Flush()

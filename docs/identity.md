@@ -48,7 +48,9 @@ Kazari accepts the consent form only from the consent page itself. A post whose 
 
 ### Scopes
 
-The scopes granted are those the client asked for, capped at what the user's role allows: `artifacts:read`, `artifacts:write` and `artifacts:delete`. A client that asks for none gets all of them.
+The scopes granted are those the client asked for, capped at what the user's role allows: `artifacts:read`, `artifacts:write`, `artifacts:share` and `artifacts:delete`. A client that asks for none gets all of them. [Scopes](api.md#scopes) says what each one allows.
+
+A person who wants a connection to do less than they can [approves it with an API key](#approving-with-an-api-key), which caps the grant at that key's scopes.
 
 An OAuth token always acts as a member, so it never opens the admin host. Kazari never offers the `admin` scope (`scopes_supported` does not list it) and never grants it, even to admins; asking for it gets `invalid_scope`. Administer the instance over the admin socket on the server, with an admin-scoped API key, or with the admin token.
 
@@ -183,13 +185,25 @@ To remove the link, send the same body to `POST /v1/users/{handle}/identities/un
 
 ## Signing in with an API key
 
-When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user, capped at the key's scopes.
+When `auth.oidc` is absent, `/oauth/authorize` skips the IdP and shows the consent page with an API key field. Approving with a valid key binds the grant to that key's user.
 
-The grant lives only as long as the key. Once the key is revoked or expires, or its user is disabled, the grant's access and refresh tokens stop working, and no token outlives the key's expiry.
+A one-person or small instance can therefore connect a cloud agent with no IdP set up: issue yourself a key, add the connector and paste the key once.
 
-A one-person or small instance can therefore connect a cloud agent with no IdP set up: issue yourself a key, add the connector and paste the key once. The audit log records the consent as `oauth.grant` with `via: api_key` and the key's `key_prefix`.
+Opening a `members` page works the same way. The sign-in page asks for an API key with `artifacts:read`, and the browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. A key [restricted to some artifacts](api.md#restricted-credentials) is refused there, because a session opens every members page. Browser sign-ins are recorded as `oauth.signin`, with `via: oidc` or `via: api_key`.
 
-Opening a `members` page works the same way. The sign-in page asks for an API key with `artifacts:read`, and the browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. Browser sign-ins are recorded as `oauth.signin`, with `via: oidc` or `via: api_key`.
+### Approving with an API key
+
+A grant approved with an API key is that key over OAuth. It is for a connection that should do less than the person can, such as a [scheduled agent](mcp.md#scheduled-and-unattended-agents) whose host speaks only OAuth.
+
+On an instance with an IdP, the consent page offers it after sign-in: open **Approve with an API key instead**, paste one of your own keys and approve. A key of another user is refused. Left empty, the form approves as yourself, as before.
+
+The grant takes everything from the key:
+
+- Its scopes are the key's, where the client asked for them.
+- It is [restricted](api.md#restricted-credentials) to the key's slug patterns.
+- It lives only as long as the key. Once the key expires or is revoked, or its user is disabled, the grant's access and refresh tokens stop working, and no token outlives the key's expiry.
+
+Rotating the key ends the grant when the old key does, so connect again with the new key inside the overlap. The audit log records the consent as `oauth.grant` with `via: api_key` and the key's `key_prefix`, and [`kazari admin grants list`](cli.md#oauth-grants) shows the key beside the grant.
 
 ## Viewing members pages
 
@@ -276,18 +290,23 @@ Each credential and session in the sign-in flows has a fixed lifetime:
 | ----------------------- | ------------------------------ | ------------------------------------------------------------ |
 | Authorization request   | 10 minutes                     | The time a person has to sign in and approve                 |
 | Authorization code      | 5 minutes                      | Single use; a second use fails                               |
-| Access token            | 1 hour                         | Opaque, stored as a SHA-256 hash                             |
-| Refresh token           | 30 days                        | Rotated on every use                                         |
+| Access token            | 1 hour                         | `auth.tokens.access_ttl`. Opaque, stored as a SHA-256 hash   |
+| Refresh token           | 90 days                        | `auth.tokens.refresh_ttl`. Rotated on every use              |
+| API key                 | Until revoked, unless issued with an expiry | Up to `auth.tokens.max_key_ttl`, when that is set |
 | Browser sign-in session | 12 hours                       | On the MCP host; ends sooner with the API key that opened it |
 | View session            | Until its sign-in session ends | One per artifact host, on that host only                     |
 | Sign-in code            | 1 minute                       | Single use, one host, bound to the browser's nonce cookie    |
 | Share link              | 7 days by default              | Up to `serve.share_link_max_ttl` (90 days); revocable        |
 
-These lifetimes are fixed in this version.
+The lifetimes with a key are set under [`auth.tokens`](configuration.md#authtokens); the others are fixed in this version.
 
-Each refresh returns a new refresh token and retires the old one. Presenting a retired refresh token again revokes the whole chain, and the client must sign in again; this is what limits the damage of a stolen token. A refresh can narrow the scopes but never widen them.
+A connection has no fixed end. Each refresh returns a new access token and a new refresh token with a full lifetime, so a client that refreshes at least once every `auth.tokens.refresh_ttl` stays connected. A client that pauses for longer must sign in again.
 
-Tokens are checked against the user on every request. A disabled user's tokens stop working, scopes beyond the user's current role are dropped, and a grant approved with an API key needs that key to be active.
+Each refresh retires the old refresh token. Presenting a retired refresh token again revokes the whole chain, and the client must sign in again; this is what limits the damage of a stolen token. A refresh can narrow the scopes but never widen them.
+
+A client that never receives the answer to a refresh holds only the retired token. For that case, a refresh token is accepted once more for `auth.tokens.refresh_reuse_window` (30 seconds by default) after it was retired: Kazari answers with another new pair in the same grant, and the client carries on. A second repeat, a repeat after the window, or a repeat once the newer token has been used revokes the chain as above. Kazari records that as `oauth.revoke` with `reason: refresh_replay` in the [audit log](ops.md#audit-log).
+
+Tokens are checked against the user on every request. A disabled user's tokens stop working, scopes beyond the user's current role are dropped, and a grant [approved with an API key](#approving-with-an-api-key) needs that key to be active and takes its restriction.
 
 The `oauth-cleanup` job deletes expired requests, codes, tokens, browser sign-ins and sessions every hour ([scheduled jobs](ops.md#scheduled-jobs)).
 
@@ -300,9 +319,13 @@ Each kind of access ends in its own way.
 Each grant is a chain of refresh tokens, and revoking it also revokes the access tokens issued from it. List a user's grants, then revoke one by its id:
 
 ```sh
-curl -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" https://admin.art.example.com/v1/users/jdoe/grants
-curl -X DELETE -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" https://admin.art.example.com/v1/grants/17
+kazari admin grants list jdoe
+kazari admin grants revoke 17
 ```
+
+The list shows each connection's client, scopes, last refresh and expiry. The id is the number in the `oauth:<id>` credential that the [audit log](ops.md#audit-log) records for every change the connection made, so a line there leads to the grant to revoke. The [admin API](api.md#grants) has the same two calls.
+
+A grant approved with an API key also ends when that key is revoked.
 
 ### Revoking everything a user holds
 
@@ -381,4 +404,6 @@ The client asked to return to a URI it did not register.
 
 ### `invalid_grant` from the token endpoint
 
-The code was already used or has expired, or the PKCE verifier does not match. For a refresh, the refresh token was rotated, revoked or expired, or belongs to a disabled user. The client must start the flow again.
+The code was already used or has expired, or the PKCE verifier does not match. For a refresh, the refresh token was rotated, revoked or expired, belongs to a disabled user, or belongs to a grant whose API key has expired or been revoked. The client must start the flow again.
+
+If a client that runs unattended meets this after a pause, compare the pause with `auth.tokens.refresh_ttl`. If the audit log shows `oauth.revoke` with `reason: refresh_replay`, the client sent a retired refresh token outside the [reuse window](#tokens-lifetimes-and-rotation).

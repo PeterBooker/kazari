@@ -3,6 +3,7 @@ package oauth
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"net/http"
 	"slices"
@@ -174,19 +175,18 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid")
 		return
 	}
-	if old.ReplacedBy != nil {
-		// A rotated token came back, so someone holds a stolen copy:
-		// revoke the whole family (OAuth 2.1 section 4.3.1).
-		s.log.WarnContext(ctx, "oauth: refresh token replay, revoking family",
-			"client_id", clientID, "user", old.UserHandle, "family", old.FamilyID)
-		if err := s.store.RevokeFamily(ctx, old.FamilyID, now); err != nil {
-			s.serverError(w, r, "revoke family", err)
-			return
-		}
-		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
+	rotated := old.ReplacedBy != nil
+	// A rotated token came back. Inside the reuse window it is most likely
+	// a client whose answer was lost, so the family may get one more pair;
+	// otherwise someone holds a stolen copy, and the whole family is
+	// revoked (OAuth 2.1 section 4.3.1).
+	reusable := s.opts.RefreshReuseWindow > 0 && now.Before(old.ExpiresAt) &&
+		(!rotated || old.RevokedAt != nil && now.Sub(*old.RevokedAt) < s.opts.RefreshReuseWindow)
+	if rotated && !reusable {
+		s.replayed(w, r, old, now)
 		return
 	}
-	if old.RevokedAt != nil || !now.Before(old.ExpiresAt) {
+	if !rotated && (old.RevokedAt != nil || !now.Before(old.ExpiresAt)) {
 		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has expired or been revoked")
 		return
 	}
@@ -210,17 +210,40 @@ func (s *Service) grantRefresh(w http.ResponseWriter, r *http.Request, clientID 
 	access, refresh := s.newPair(Token{
 		ClientID: clientID, UserHandle: old.UserHandle, Scopes: scopes, Resource: old.Resource, KeyPrefix: old.KeyPrefix,
 	}, keyExpires, now)
-	err = s.store.Rotate(ctx, old.ID, now, &access.Token, &refresh.Token)
-	if errors.Is(err, ErrNotFound) {
-		// Lost a race with a concurrent refresh of the same token.
-		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
-		return
+
+	err = ErrNotFound
+	if !rotated {
+		// ErrNotFound here is a race lost to a concurrent refresh of the
+		// same token, which the reuse window covers like a lost answer.
+		err = s.store.Rotate(ctx, old.ID, now, &access.Token, &refresh.Token)
 	}
-	if err != nil {
+	if errors.Is(err, ErrNotFound) && reusable {
+		err = s.store.Reissue(ctx, old.ID, now.Add(-s.opts.RefreshReuseWindow), &access.Token, &refresh.Token)
+	}
+	switch {
+	case err == nil:
+		s.writeTokens(w, access, refresh)
+	case !errors.Is(err, ErrNotFound):
 		s.serverError(w, r, "rotate refresh token", err)
+	case rotated:
+		s.replayed(w, r, old, now)
+	default:
+		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
+	}
+}
+
+func (s *Service) replayed(w http.ResponseWriter, r *http.Request, old *Token, now time.Time) {
+	ctx := r.Context()
+	s.log.WarnContext(ctx, "oauth: refresh token replay, revoking family",
+		"client_id", old.ClientID, "user", old.UserHandle, "family", old.FamilyID)
+	if err := s.store.RevokeFamily(ctx, old.FamilyID, now); err != nil {
+		s.serverError(w, r, "revoke family", err)
 		return
 	}
-	s.writeTokens(w, access, refresh)
+	s.record(ctx, old.UserHandle, ActionRevoke, map[string]string{
+		"grant": fmt.Sprint(old.FamilyID), "client_id": old.ClientID, "reason": ReasonRefreshReplay,
+	})
+	writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")
 }
 
 // userActive writes invalid_grant when the user is gone or disabled.
@@ -240,16 +263,16 @@ func (s *Service) userActive(w http.ResponseWriter, r *http.Request, handle stri
 // keyActive writes invalid_grant when the approving API key is no longer
 // active, and returns its expiry: nil when it has none or there is no key.
 func (s *Service) keyActive(w http.ResponseWriter, r *http.Request, prefix, handle string) (*time.Time, bool) {
-	expires, live, err := s.approvingKey(r.Context(), prefix, handle)
+	key, err := s.approvingKey(r.Context(), prefix, handle)
 	if err != nil {
 		s.serverError(w, r, "check api key", err)
 		return nil, false
 	}
-	if !live {
+	if !key.live {
 		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the API key that approved this grant is no longer valid")
 		return nil, false
 	}
-	return expires, true
+	return key.expires, true
 }
 
 type issued struct {

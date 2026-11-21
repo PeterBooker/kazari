@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 func TestAdminUsersAndKeys(t *testing.T) {
@@ -186,7 +187,7 @@ func TestAdminJobsAuditSettingsHealth(t *testing.T) {
 	if _, err := e.users.CreateUser(e.ctx, userReq("root", "admin")); err != nil {
 		t.Fatal(err)
 	}
-	_, rootKey, err := e.users.IssueKey(e.ctx, "root", "", []string{auth.ScopeAdmin}, 0)
+	_, rootKey, err := e.users.IssueKey(e.ctx, user.IssueKeyRequest{Handle: "root", Scopes: []string{auth.ScopeAdmin}})
 	if err != nil {
 		t.Fatal(err)
 	}

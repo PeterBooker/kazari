@@ -329,14 +329,19 @@ type ChunkResult struct {
 	BytesReceived int64  `json:"bytes_received"`
 }
 
-// Me is GET /me.
+// Me is GET /me. Slugs is the credential's restriction: the slug patterns it
+// may see and change, absent when it has none. ExpiresAt is when the
+// credential ends whatever is done with it: an API key's expiry, or that of
+// the key an OAuth connection was approved with.
 type Me struct {
-	Handle     string   `json:"handle"`
-	Admin      bool     `json:"admin"`
-	Scopes     []string `json:"scopes"`
-	Source     string   `json:"source"`
-	QuotaBytes int64    `json:"quota_bytes"`
-	UsedBytes  int64    `json:"used_bytes"`
+	Handle     string     `json:"handle"`
+	Admin      bool       `json:"admin"`
+	Scopes     []string   `json:"scopes"`
+	Source     string     `json:"source"`
+	Slugs      []string   `json:"slugs,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	QuotaBytes int64      `json:"quota_bytes"`
+	UsedBytes  int64      `json:"used_bytes"`
 }
 
 // User is an instance member.
@@ -385,28 +390,44 @@ type LinkIdentityRequest struct {
 	Email   string `json:"email,omitempty"`
 }
 
-// APIKey is a key as listed (never the secret).
+// APIKey is a key as listed (never the secret). Slugs is its restriction,
+// absent when it has none; IssuedBy the prefix of the key it was issued
+// with, absent when an admin issued it.
 type APIKey struct {
 	Prefix     string     `json:"prefix"`
 	Label      string     `json:"label,omitempty"`
 	Scopes     []string   `json:"scopes"`
+	Slugs      []string   `json:"slugs,omitempty"`
+	IssuedBy   string     `json:"issued_by,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// IssueKeyRequest is POST /users/{handle}/keys.
+// IssueKeyRequest is POST /users/{handle}/keys and POST /me/keys. Slugs are
+// slug patterns, an exact slug or a prefix ending in "*"; ExpiresIn is a
+// duration such as 720h or 90d.
 type IssueKeyRequest struct {
 	Label     string   `json:"label,omitempty"`
-	Scopes    []string `json:"scopes,omitempty"` // default: read, write, delete
+	Scopes    []string `json:"scopes,omitempty"` // default: read, write, share, delete
+	Slugs     []string `json:"slugs,omitempty"`
 	ExpiresIn string   `json:"expires_in,omitempty"`
 }
 
-// IssuedKey carries the secret exactly once.
+// IssuedKey carries the secret exactly once. Replaces is set by a rotation:
+// the key the new one replaces, with the expiry the rotation gave it.
 type IssuedKey struct {
-	Key    string `json:"key"`
-	APIKey APIKey `json:"api_key"`
+	Key      string  `json:"key"`
+	APIKey   APIKey  `json:"api_key"`
+	Replaces *APIKey `json:"replaces,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of the two rotate routes. Overlap is
+// how long the old key keeps working, such as 24h (the default), 7d (the
+// most) or 0.
+type RotateKeyRequest struct {
+	Overlap string `json:"overlap,omitempty"`
 }
 
 // TransferRequest is POST /artifacts/{slug}/transfer.
@@ -433,13 +454,18 @@ type AuditEvent struct {
 	Details map[string]string `json:"details,omitempty"`
 }
 
-// OAuthGrant is a refresh token issued to a client for a user.
+// OAuthGrant is a client's connection for a user. ID is the number in the
+// "oauth:<id>" credential of the audit log and stays the same across
+// refreshes. CreatedAt is the last refresh, ExpiresAt when the grant lapses
+// unless it is refreshed again, and KeyPrefix the API key it was approved
+// with, whose scopes, restriction and expiry it shares.
 type OAuthGrant struct {
 	ID        int64      `json:"id"`
 	ClientID  string     `json:"client_id"`
 	Client    string     `json:"client,omitempty"`
 	User      string     `json:"user"`
 	Scopes    []string   `json:"scopes"`
+	KeyPrefix string     `json:"key_prefix,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`

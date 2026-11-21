@@ -75,6 +75,6 @@ A failed call returns `<code>: <message>`, and usually a `Next step:` line. Foll
 | `too_many_uploads` | Discard the open uploads you no longer need with discard_upload (their ids came from begin_upload), then begin a new one; unused uploads also expire on their own. |
 | `share_link_not_found` | Call list_share_links: it lists the prefixes of the artifact's share links. |
 | `fetch_failed` | The server could not fetch that URL; the message says what happened. Check the address is public and serves the file. A page behind a login, a CAPTCHA or bot protection cannot be fetched: ask the user to save it from their browser and publish the files with create_artifact or kazari publish. |
-| `forbidden` | Retrying will not help. Tell the user: the connection's credential lacks the scope, or the instance's write policy reserves the artifact for its owner. |
+| `forbidden` | Retrying the same call will not help. If the message names slug patterns, the credential reaches only artifacts whose slug matches one: give a new artifact a matching slug. If it names visibility, call again without visibility. Otherwise tell the user: the connection's credential lacks the scope, or the instance's write policy reserves the artifact for its owner. |
 | `rate_limited` | Wait as long as the message says, then repeat the call. |
 | `internal` | The server failed. Retry once; if it fails again, tell the user. |

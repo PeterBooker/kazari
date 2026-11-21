@@ -25,6 +25,7 @@ const (
 	UserUpdate         = "user.update"
 	KeyIssue           = "key.issue"
 	KeyRevoke          = "key.revoke"
+	KeyRotate          = "key.rotate"
 )
 
 // Event is one audit row.

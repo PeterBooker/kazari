@@ -6,19 +6,23 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 )
 
+// ScopeShare covers who can open an artifact: its visibility and its share
+// links. ScopeWrite covers every other change short of deleting.
 const (
 	ScopeRead   = "artifacts:read"
 	ScopeWrite  = "artifacts:write"
+	ScopeShare  = "artifacts:share"
 	ScopeDelete = "artifacts:delete"
 	ScopeAdmin  = "admin"
 )
 
 // AllScopes is every scope, in display order.
-var AllScopes = []string{ScopeRead, ScopeWrite, ScopeDelete, ScopeAdmin}
+var AllScopes = []string{ScopeRead, ScopeWrite, ScopeShare, ScopeDelete, ScopeAdmin}
 
-var MemberScopes = []string{ScopeRead, ScopeWrite, ScopeDelete}
+var MemberScopes = []string{ScopeRead, ScopeWrite, ScopeShare, ScopeDelete}
 
 const (
 	SourceAPIKey     = "api_key"
@@ -44,6 +48,14 @@ type Principal struct {
 	// ClientID is the OAuth client a token was issued to; it names the
 	// agent software, not the person.
 	ClientID string
+	// Slugs are the slug patterns the credential is restricted to: an exact
+	// slug, or a prefix ending in "*". Empty means every artifact the
+	// person may touch.
+	Slugs []string
+	// ExpiresAt is when the credential ends whatever is done with it: an
+	// API key's expiry, or that of the key an OAuth grant was approved
+	// with. Nil when it has none.
+	ExpiresAt *time.Time
 }
 
 // HasScope reports whether p holds scope; admins hold every scope.

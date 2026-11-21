@@ -367,6 +367,7 @@ func (s *Service) renderConsent(w http.ResponseWriter, status int, c *Client, re
 		Scopes:       scopeViews(scopes),
 		RequestID:    req.ID,
 		AskKey:       handle == "",
+		OfferKey:     handle != "" && s.keys != nil,
 		Error:        errMsg,
 	}, req.RedirectURI)
 }
@@ -475,46 +476,63 @@ type approval struct {
 	keyPrefix string // the approving API key, "" via oidc
 }
 
-// approver is the user bound at the callback (scopes capped by role) or the
-// owner of the form's API key (capped at the key's scopes), whose grant then
-// lives only as long as the key. When ok is false a page has been written.
+// approver is who approves the request. With an API key in the form it is
+// the key's owner, and the grant is the key over OAuth: capped at its
+// scopes, restricted to its slugs and alive only as long as it is. After an
+// identity-provider sign-in the key must be the signed-in person's own;
+// without a key it is that person, with scopes capped by role. When ok is
+// false a page has been written.
 func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request) (approval, bool) {
 	ctx := r.Context()
+	fail := func(status int, title, msg string) (approval, bool) {
+		s.message(w, status, title, msg, "")
+		return approval{}, false
+	}
+	var signedIn *user.User
 	if req.UserHandle != "" {
 		u, err := s.users.GetUser(ctx, req.UserHandle)
 		if err == nil && u.DisabledAt != nil {
 			err = user.ErrDisabled
 		}
 		if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
-			s.message(w, http.StatusForbidden, "No access",
-				"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", "")
-			return approval{}, false
+			return fail(http.StatusForbidden, "No access",
+				"Your account is not allowed to use this Kazari instance. Ask your administrator for access.")
 		}
 		if err != nil {
 			s.log.ErrorContext(ctx, "oauth: load user", "err", err)
-			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
-			return approval{}, false
+			return fail(http.StatusInternalServerError, "Something went wrong", "Please try again later.")
 		}
-		return approval{handle: u.Handle, scopes: intersect(req.Scopes, user.ScopesFor(u)), via: "oidc"}, true
+		signedIn = u
+	} else if s.idp != nil {
+		return fail(http.StatusForbidden, "Sign-in required",
+			"Sign in at the identity provider first. Start again from your application.")
 	}
 
-	if s.idp != nil || s.keys == nil {
-		s.message(w, http.StatusForbidden, "Sign-in required",
-			"Sign in at the identity provider first. Start again from your application.", "")
-		return approval{}, false
+	key := strings.TrimSpace(r.PostForm.Get("api_key"))
+	if signedIn != nil && key == "" {
+		return approval{handle: signedIn.Handle, scopes: intersect(req.Scopes, user.ScopesFor(signedIn)), via: "oidc"}, true
 	}
-	p, err := s.keys.Authenticate(ctx, strings.TrimSpace(r.PostForm.Get("api_key")))
+	if s.keys == nil {
+		return fail(http.StatusForbidden, "Sign-in required", "This instance has no way to approve with an API key.")
+	}
+	p, err := s.keys.Authenticate(ctx, key)
 	s.keySignIn(ctx, err)
+	if err == nil && signedIn != nil && p.Handle != signedIn.Handle {
+		err = auth.ErrInvalidToken
+	}
 	if err != nil {
 		if !errors.Is(err, auth.ErrInvalidToken) {
 			s.log.ErrorContext(ctx, "oauth: authenticate api key", "err", err)
 		}
 		c, cerr := s.store.GetClient(ctx, req.ClientID)
 		if cerr != nil {
-			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
-			return approval{}, false
+			return fail(http.StatusInternalServerError, "Something went wrong", "Please try again later.")
 		}
-		s.renderConsent(w, http.StatusUnauthorized, c, req, "", req.Scopes, "That API key was not accepted.")
+		handle, scopes := "", req.Scopes
+		if signedIn != nil {
+			handle, scopes = signedIn.Handle, intersect(req.Scopes, user.ScopesFor(signedIn))
+		}
+		s.renderConsent(w, http.StatusUnauthorized, c, req, handle, scopes, "That API key was not accepted.")
 		return approval{}, false
 	}
 	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: "api_key", keyPrefix: p.KeyID}, true

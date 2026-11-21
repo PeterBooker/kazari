@@ -54,6 +54,27 @@ func (c *Client) RevokeKey(ctx context.Context, handle, prefix string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/users/"+seg(handle)+"/keys/"+seg(prefix), nil, nil, nil, nil)
 }
 
+// RotateKey replaces a user's key; the old one works until overlap has
+// passed ("" is the server's default).
+func (c *Client) RotateKey(ctx context.Context, handle, prefix, overlap string) (*api.IssuedKey, error) {
+	var out api.IssuedKey
+	path := "/users/" + seg(handle) + "/keys/" + seg(prefix) + "/rotate"
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, nil, api.RotateKeyRequest{Overlap: overlap}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListGrants lists a user's OAuth grants.
+func (c *Client) ListGrants(ctx context.Context, handle string) ([]api.OAuthGrant, error) {
+	return decodeSlice[api.OAuthGrant](c, ctx, "/users/"+seg(handle)+"/grants", nil)
+}
+
+// RevokeGrant revokes the OAuth grant with id and every token of it.
+func (c *Client) RevokeGrant(ctx context.Context, id int64) error {
+	return c.doJSON(ctx, http.MethodDelete, "/grants/"+strconv.FormatInt(id, 10), nil, nil, nil, nil)
+}
+
 // AdminListArtifacts lists every artifact of any owner.
 func (c *Client) AdminListArtifacts(ctx context.Context, p ListParams) (*api.ArtifactList, error) {
 	var out api.ArtifactList

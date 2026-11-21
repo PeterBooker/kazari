@@ -551,6 +551,21 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 		where = append(where, "u.handle = ?")
 		args = append(args, q.Owner)
 	}
+	if len(q.Slugs) > 0 {
+		conds := make([]string, 0, len(q.Slugs))
+		for _, p := range q.Slugs {
+			if prefix, wild := strings.CutSuffix(p, "*"); wild {
+				// substr rather than LIKE or GLOB: no character of the
+				// pattern is ever read as a wildcard.
+				conds = append(conds, "substr(a.slug, 1, ?) = ?")
+				args = append(args, len(prefix), prefix)
+				continue
+			}
+			conds = append(conds, "a.slug = ?")
+			args = append(args, p)
+		}
+		where = append(where, "("+strings.Join(conds, " OR ")+")")
+	}
 	keys := make([]string, 0, len(q.Metadata))
 	for k := range q.Metadata {
 		keys = append(keys, k)

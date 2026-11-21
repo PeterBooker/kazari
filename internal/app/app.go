@@ -209,7 +209,8 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 	}
 	auditStore := sqlite.NewAuditStore(a.db)
 
-	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), Now: now, Telemetry: tel}
+	userOpts := user.Options{DefaultQuota: int64(cfg.Limits.DefaultUserQuota), MaxKeyTTL: cfg.Auth.Tokens.MaxKeyTTL.Std(),
+		Now: now, Telemetry: tel}
 	if o := cfg.Auth.OIDC; o != nil {
 		userOpts.AllowedDomains = o.AllowedDomains
 		userOpts.AutoProvision = o.AutoProvision
@@ -294,14 +295,17 @@ func (a *App) build(ctx context.Context, now func() time.Time) error {
 		a.oidcOn = true
 	}
 	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauth.Options{
-		Issuer:          strings.TrimSuffix(mcpURL, "/"),
-		Resource:        mcpURL,
-		Now:             now,
-		Logger:          log,
-		InsecureCookies: cfg.ExternalScheme == "http",
-		ViewCallback:    viewCallback(cfg),
-		Fetch:           fetchObs,
-		Telemetry:       tel,
+		Issuer:             strings.TrimSuffix(mcpURL, "/"),
+		Resource:           mcpURL,
+		AccessTTL:          cfg.Auth.Tokens.AccessTTL.Std(),
+		RefreshTTL:         cfg.Auth.Tokens.RefreshTTL.Std(),
+		RefreshReuseWindow: cfg.Auth.Tokens.RefreshReuseWindow.Std(),
+		Now:                now,
+		Logger:             log,
+		InsecureCookies:    cfg.ExternalScheme == "http",
+		ViewCallback:       viewCallback(cfg),
+		Fetch:              fetchObs,
+		Telemetry:          tel,
 	})
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
@@ -598,11 +602,12 @@ func (g grantStore) ListGrants(ctx context.Context, handle string) ([]api.OAuthG
 			names[t.ClientID] = name
 		}
 		out = append(out, api.OAuthGrant{
-			ID:        t.ID,
+			ID:        t.FamilyID,
 			ClientID:  t.ClientID,
 			Client:    name,
 			User:      t.UserHandle,
 			Scopes:    t.Scopes,
+			KeyPrefix: t.KeyPrefix,
 			CreatedAt: t.CreatedAt,
 			ExpiresAt: t.ExpiresAt,
 			RevokedAt: t.RevokedAt,

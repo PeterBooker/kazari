@@ -85,6 +85,7 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	handle("GET /v1/users/{handle}/keys", h.listKeys)
 	handle("POST /v1/users/{handle}/keys", h.issueKey)
 	handle("DELETE /v1/users/{handle}/keys/{prefix}", h.revokeKey)
+	handle("POST /v1/users/{handle}/keys/{prefix}/rotate", h.rotateKey)
 	handle("POST /v1/users/{handle}/identities", h.linkIdentity)
 	handle("POST /v1/users/{handle}/identities/unlink", h.unlinkIdentity)
 	if d.Grants != nil {
@@ -239,15 +240,13 @@ func (h *adminAPI) issueKey(w http.ResponseWriter, r *http.Request, _ auth.Princ
 	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
 		return err
 	}
-	var expiresIn time.Duration
-	if req.ExpiresIn != "" {
-		d, err := time.ParseDuration(req.ExpiresIn)
-		if err != nil || d <= 0 {
-			return invalid("expires_in must be a positive duration such as 720h")
-		}
-		expiresIn = d
+	expiresIn, err := present.ParseDuration("expires_in", req.ExpiresIn)
+	if err != nil {
+		return err
 	}
-	k, secret, err := h.d.Users.IssueKey(r.Context(), r.PathValue("handle"), req.Label, req.Scopes, expiresIn)
+	k, secret, err := h.d.Users.IssueKey(r.Context(), user.IssueKeyRequest{
+		Handle: r.PathValue("handle"), Label: req.Label, Scopes: req.Scopes, Slugs: req.Slugs, ExpiresIn: expiresIn,
+	})
 	if err != nil {
 		return err
 	}
@@ -256,11 +255,16 @@ func (h *adminAPI) issueKey(w http.ResponseWriter, r *http.Request, _ auth.Princ
 }
 
 func (h *adminAPI) revokeKey(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
-	if err := h.d.Users.RevokeKey(r.Context(), r.PathValue("handle"), r.PathValue("prefix")); err != nil {
+	ref := user.KeyRef{Handle: r.PathValue("handle"), Prefix: r.PathValue("prefix")}
+	if err := h.d.Users.RevokeKey(r.Context(), ref); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+func (h *adminAPI) rotateKey(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
+	return rotateKey(w, r, h.d.Users, user.KeyRef{Handle: r.PathValue("handle"), Prefix: r.PathValue("prefix")})
 }
 
 func (h *adminAPI) linkIdentity(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {

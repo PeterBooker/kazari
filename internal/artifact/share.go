@@ -67,6 +67,9 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) error
 	if actor.Handle == "" {
 		return Errorf(ErrForbidden, "an authenticated actor is required")
 	}
+	if err := checkSlug(actor, slug); err != nil {
+		return err
+	}
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
 		return err
@@ -89,6 +92,9 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("create"))
 		endSpan(span, err)
 	}()
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, "", err
+	}
 	if ttl > s.opts.MaxShareLinkTTL {
 		return nil, "", Errorf(ErrInvalidArgument, "a share link may live at most %s", formatTTL(s.opts.MaxShareLinkTTL))
 	}

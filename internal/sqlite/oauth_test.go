@@ -320,7 +320,7 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("ListGrants after expiry = %v, want none", got)
 	}
 
-	if err := s.RevokeGrant(ctx, r2.ID, t1); err != nil {
+	if err := s.RevokeGrant(ctx, r2.FamilyID, t1); err != nil {
 		t.Fatal(err)
 	}
 	for _, h := range []string{a1.Hash, a2.Hash, r2.Hash} {

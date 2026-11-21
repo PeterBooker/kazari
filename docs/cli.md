@@ -443,19 +443,53 @@ To install it for Claude Code:
 mkdir -p ~/.claude/skills/kazari && kazari skill > ~/.claude/skills/kazari/SKILL.md
 ```
 
-### me, keys, version
-
-These three commands print information about you and this binary:
+### keys
 
 ```text
-kazari me        # handle, admin flag, scopes, credential source, storage used of quota
-kazari keys      # your API keys: prefix, label, scopes, created, last used, expiry, revocation
+kazari keys [list]
+kazari keys issue [--label L] [--scopes a,b] [--slugs a,b] [--expires 90d]
+kazari keys rotate <prefix> [--overlap 24h]
+kazari keys revoke <prefix>
+```
+
+Lists, issues, rotates and revokes your own API keys. `kazari keys` alone lists them: prefix, label, scopes, slug patterns, the key each was issued with, created, last used, expiry and revocation.
+
+The key in `--token` bounds the other three commands. It issues, rotates or revokes only a key that holds no scope it lacks and reaches no artifact it does not. [Your own keys](api.md#your-own-keys-mekeys) has the rules in full.
+
+To issue a key for an agent that keeps the weekly reports current, for 90 days:
+
+```sh
+kazari keys issue --label weekly-report --scopes artifacts:read,artifacts:write \
+  --slugs 'weekly-*' --expires 90d
+```
+
+The key is printed once on stdout, and a line describing it on stderr. Without `--scopes`, `--slugs` or `--expires`, the new key gets the scopes, restriction and expiry of the key that issues it.
+
+- `--slugs`: a comma-separated list of [slug patterns](api.md#restricted-credentials) the key is restricted to: an exact slug, or a prefix ending in `*`. Quote the value, so the shell leaves `*` alone.
+- `--expires`: a lifetime such as `720h` or `90d`.
+
+To replace a key, rotate it:
+
+```sh
+kazari keys rotate abcdefgh --overlap 24h
+```
+
+`rotate` prints a new key with the same label, scopes, restriction and lifetime. The old key keeps working for `--overlap`, which is 24 hours by default and at most `7d`; `--overlap 0` ends it at once. The new key expires no later than the key in `--token`, so a key that rotates itself gets a new secret and no more time.
+
+`revoke` ends a key at once, with every key that was issued with it and every OAuth connection approved with one of them.
+
+### me, version
+
+These two commands print information about you and this binary:
+
+```text
+kazari me        # handle, admin flag, scopes, credential source, slug patterns, expiry, storage used of quota
 kazari version   # version, commit, build date and Go version of this binary
 ```
 
 ## Admin commands
 
-Admin commands manage users, keys, artifacts and the server. On the server's host they use [the admin socket](#the-admin-socket) and need no token; elsewhere they use the admin URL and token from [configuring the client](#configuring-the-client). `admin health` needs no token either way.
+Admin commands manage users, keys, OAuth grants, artifacts and the server. On the server's host they use [the admin socket](#the-admin-socket) and need no token; elsewhere they use the admin URL and token from [configuring the client](#configuring-the-client). `admin health` needs no token either way.
 
 | Command                                                                 | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -463,8 +497,11 @@ Admin commands manage users, keys, artifacts and the server. On the server's hos
 | `admin users create <handle> [--email E] [--role member\|admin] [--quota 500MiB]` | Create a user                                    |
 | `admin users update <handle> [--disable\|--enable] [--role R] [--quota Q] [--email E]` | Change a user; `--disable` also revokes every key, OAuth grant and share link they created |
 | `admin keys list <handle>`                                              | List a user's keys                                          |
-| `admin keys issue <handle> [--label L] [--scopes a,b] [--expires 720h]` | Issue a key; prints the key once on stdout                  |
-| `admin keys revoke <handle> <prefix>`                                   | Revoke a key                                                |
+| `admin keys issue <handle> [--label L] [--scopes a,b] [--slugs a,b] [--expires 90d]` | Issue a key; prints the key once on stdout     |
+| `admin keys rotate <handle> <prefix> [--overlap 24h]`                   | Replace a key with a new one; prints the new key once       |
+| `admin keys revoke <handle> <prefix>`                                   | Revoke a key and every key issued with it                   |
+| `admin grants list <handle>`                                            | List a user's OAuth grants                                  |
+| `admin grants revoke <id>`                                              | Revoke an OAuth grant                                       |
 | `admin artifacts list [list flags]`                                     | Every artifact with its owner; same flags as `list`         |
 | `admin transfer <slug> <handle>`                                        | Give an artifact to another user                            |
 | `admin hide <slug>`                                                     | Unpublish an artifact (abuse response)                      |
@@ -479,18 +516,32 @@ Admin commands manage users, keys, artifacts and the server. On the server's hos
 The admin flags take these values:
 
 - `--quota`: bytes or a unit, such as `500MiB` or `2GB`; `0` means unlimited. A new user's quota defaults to `limits.default_user_quota`.
-- `--scopes`: a comma-separated list from `artifacts:read`, `artifacts:write`, `artifacts:delete` and `admin`, which only admin users can hold. By default, a key gets the three artifact scopes.
+- `--scopes`: a comma-separated list from `artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete` and `admin`, which only admin users can hold. By default, a key gets the four artifact scopes.
+- `--slugs`: a comma-separated list of [slug patterns](api.md#restricted-credentials) that restricts the key to some artifacts, such as `'weekly-*'`. By default, a key is not restricted.
+- `--expires`: a lifetime such as `720h` or `90d`. By default, a key never expires, or gets `auth.tokens.max_key_ttl` when that is set.
+- `--overlap`: how long a rotated key keeps working, such as `24h` (the default), `7d` (the most) or `0`.
 - `--since`: an RFC 3339 time, or a Go duration meaning "that long ago", such as `24h`.
 
 For example, to create a user with a 1 GiB quota, issue a CI key valid for 90 days, run the sweep job, then read the last day's audit entries for one artifact:
 
 ```sh
 kazari admin users create ana --email ana@example.com --quota 1GiB
-kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 2160h
+kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 90d
 kazari admin jobs run sweep
 kazari admin audit --since 24h --slug q3-report
 ```
 
-### Identities and OAuth grants
+### OAuth grants
 
-The CLI has no commands for linking identities, or for listing and revoking OAuth grants. Use the [admin API](api.md#admin-api) for those.
+An OAuth grant is one MCP client's connection for one user. List a user's grants, then revoke one by its id:
+
+```sh
+kazari admin grants list ana
+kazari admin grants revoke 17
+```
+
+`list` prints, for each grant, its id, the client, the scopes, the API key it was approved with if any, the last refresh and the expiry. The id is the number in the `oauth:<id>` credential of the [audit log](ops.md#audit-log), and stays the same across refreshes. `revoke` ends the connection at once; the client must sign in again.
+
+### Identities
+
+The CLI has no commands for linking identities. Use the [admin API](api.md#identities) for those.

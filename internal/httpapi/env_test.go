@@ -47,6 +47,10 @@ type config struct {
 	grants   httpapi.GrantStore
 	// writeRate is per credential; 0 disables it.
 	writeRate int
+	// auth, when set, is tried before the API keys, as OAuth is.
+	auth auth.Authenticator
+	// maxKeyTTL is user.Options.MaxKeyTTL.
+	maxKeyTTL time.Duration
 }
 
 type env struct {
@@ -86,7 +90,11 @@ func newEnv(t *testing.T, c config) *env {
 	c.upload.Dir = filepath.Join(dir, "uploads")
 	c.upload.Now = now
 	uploads := upload.New(sqlite.NewUploadStore(db), c.upload)
-	users := user.New(sqlite.NewUserStore(db), rec, user.Options{Now: now})
+	users := user.New(sqlite.NewUserStore(db), rec, user.Options{Now: now, MaxKeyTTL: c.maxKeyTTL})
+	var authn auth.Authenticator = users
+	if c.auth != nil {
+		authn = auth.Chain(c.auth, users)
+	}
 
 	var runs atomic.Int32
 	jobs := scheduler.New(scheduler.Options{Now: now}, scheduler.Job{
@@ -107,7 +115,7 @@ func newEnv(t *testing.T, c config) *env {
 	c.user.TempDir = dir
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
-		Artifacts: art, Uploads: uploads, Users: users, Auth: users, Links: links,
+		Artifacts: art, Uploads: uploads, Users: users, Auth: authn, Links: links,
 		Writes: ratelimit.New(c.writeRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential}), Fetch: fc,
 	}, c.user))
 	t.Cleanup(userSrv.Close)
@@ -132,6 +140,21 @@ func newEnv(t *testing.T, c config) *env {
 	return e
 }
 
+// key issues a key and returns it with its key string.
+func (e *env) key(req user.IssueKeyRequest) (*user.APIKey, string) {
+	e.t.Helper()
+	if _, err := e.users.GetUser(e.ctx, req.Handle); err != nil {
+		if _, err := e.users.CreateUser(e.ctx, user.CreateUserRequest{Handle: req.Handle}); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	k, key, err := e.users.IssueKey(e.ctx, req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return k, key
+}
+
 // member returns a key with scopes, nil meaning every member scope.
 func (e *env) member(handle string, scopes []string) string {
 	e.t.Helper()
@@ -140,7 +163,7 @@ func (e *env) member(handle string, scopes []string) string {
 			e.t.Fatal(err)
 		}
 	}
-	_, key, err := e.users.IssueKey(e.ctx, handle, "test", scopes, 0)
+	_, key, err := e.users.IssueKey(e.ctx, user.IssueKeyRequest{Handle: handle, Label: "test", Scopes: scopes})
 	if err != nil {
 		e.t.Fatal(err)
 	}

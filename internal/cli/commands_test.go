@@ -639,8 +639,8 @@ func TestRunSimpleCommands(t *testing.T) {
 		{[]string{"rollback", "demo", "1"}, "demo now serves version 1: https://demo.art.test\n", `{"version":1}`},
 		{[]string{"files", "cat", "demo", "css/site.css", "--version", "2"}, "body{color:red}", "version=2"},
 		{[]string{"me"}, "handle:   peter\nadmin:    false\nscopes:   read, write\nsource:   api_key\nstorage:  1.5 KiB of 100.0 MiB used\n", ""},
-		{[]string{"keys"}, "PREFIX  LABEL   SCOPES      CREATED                    LAST USED                  EXPIRES  REVOKED\n" +
-			"abc123  laptop  read,write  2026-10-01T14:00:00+02:00  2026-10-01T14:01:00+02:00  -        -\n", ""},
+		{[]string{"keys"}, "PREFIX  LABEL   SCOPES      SLUGS  ISSUED BY  CREATED                    LAST USED                  EXPIRES  REVOKED\n" +
+			"abc123  laptop  read,write  -      -          2026-10-01T14:00:00+02:00  2026-10-01T14:01:00+02:00  -        -\n", ""},
 		{[]string{"--json", "rm", "demo"}, "{\n  \"ok\": true\n}\n", ""},
 	}
 	for _, tt := range tests {

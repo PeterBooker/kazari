@@ -18,6 +18,8 @@
   ul { margin: 0 0 16px; padding-left: 20px; }
   code { font-size: .9em; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--accent); }
   input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
   .actions { display: flex; gap: 12px; margin-top: 20px; }
   button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; cursor: pointer; }
@@ -53,7 +55,13 @@
 <input type="hidden" name="request_id" value="{{.RequestID}}">
 {{if .AskKey}}<label for="api_key">API key</label>
 <input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
-<p class="muted">Approving with a key grants at most that key's scopes.</p>{{end}}
+<p class="muted">The connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked.</p>{{end}}
+{{if .OfferKey}}<details{{if .Error}} open{{end}}>
+<summary>Approve with an API key instead</summary>
+<label for="api_key">API key</label>
+<input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" placeholder="kzk_…">
+<p class="muted">For a connection that should do less than you can, such as a scheduled agent. With one of your own keys here, the connection gets at most that key's scopes and its restriction to certain artifacts, and ends when the key expires or is revoked. Leave it empty to approve as yourself.</p>
+</details>{{end}}
 <div class="actions">
 <button type="submit" name="action" value="deny">Deny</button>
 <button type="submit" name="action" value="approve" class="primary">Approve</button>

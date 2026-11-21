@@ -47,6 +47,18 @@ To sign in through OAuth instead of sending a key, leave out `headers`, if your 
 claude mcp add --transport http kazari https://mcp.art.example.com/
 ```
 
+### Agents that run on a schedule
+
+An agent that publishes on its own, such as a weekly report that nobody watches, should hold a credential that can do only that job. Ask your administrator for an API key restricted to the pages the agent keeps current, or issue one yourself if you hold a key:
+
+```sh
+kazari keys issue --label weekly-report --scopes artifacts:read,artifacts:write --slugs 'weekly-*' --expires 90d
+```
+
+An agent with this key publishes and edits pages whose address starts with `weekly-`, and can touch nothing else. Give the key to a self-hosted agent as above. For a cloud agent, paste it on Kazari's consent page when you connect; after signing in with a work account, open **Approve with an API key instead** there first.
+
+[Scheduled and unattended agents](mcp.md#scheduled-and-unattended-agents) covers both ways, renewing the key and cutting an agent off.
+
 ### Installing the skill
 
 Your instance also serves a skill: a guide for agents with its conventions, limits and recipes. Agents that load skills over MCP find it on their own, and others can call the `get_guide` tool.
@@ -149,7 +161,7 @@ Your agent reports a problem as a short code or message. Find it here:
 | ------- | ------------- |
 | `slug_taken` | Another page, or one deleted recently, has that name. Pick another. |
 | `invalid_slug` | Slugs are 3 to 63 lower-case letters, digits and single hyphens. Some names, such as `api`, `mcp`, `admin` and `www`, are reserved. |
-| `forbidden` | Your key or sign-in lacks the permission for that action, or the instance lets only owners change their pages. Ask your administrator. |
+| `forbidden` | Your key or sign-in lacks the permission for that action, is limited to other pages, or the instance lets only owners change their pages. The message says which. Ask your administrator. |
 | `quota_exceeded` | You have used your storage allowance. Retire old pages or ask for more. |
 | `version_conflict` | Someone else published in between. The agent fetches the latest version and tries again. |
 | `anchor_mismatch`, `edit_not_found` | The page changed since the agent read it, or the text to change was not found. The agent reads the page again and redoes the edit. |

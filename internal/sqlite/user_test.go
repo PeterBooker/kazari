@@ -121,7 +121,7 @@ func TestUserStoreNotFound(t *testing.T) {
 		}, user.ErrNotFound},
 		{"GetKey", func() error { _, _, err := s.GetKey(ctx, "aaaaaaaa"); return err }, user.ErrKeyNotFound},
 		{"ListKeys", func() error { _, err := s.ListKeys(ctx, "nobody"); return err }, user.ErrNotFound},
-		{"RevokeKey", func() error { return s.RevokeKey(ctx, "alice", "aaaaaaaa", userT0) }, user.ErrKeyNotFound},
+		{"RevokeKey", func() error { _, err := s.RevokeKey(ctx, "alice", "aaaaaaaa", userT0); return err }, user.ErrKeyNotFound},
 		{"RevokeAllKeys", func() error { return s.RevokeAllKeys(ctx, "nobody", userT0) }, user.ErrNotFound},
 		{"TouchKey", func() error { return s.TouchKey(ctx, "aaaaaaaa", userT0) }, user.ErrKeyNotFound},
 		{"GetIdentity", func() error { _, err := s.GetIdentity(ctx, "iss", "sub"); return err }, user.ErrNotFound},
@@ -265,14 +265,14 @@ func TestUserStoreKeys(t *testing.T) {
 		t.Errorf("ListKeys newest first (-want +got):\n%s", diff)
 	}
 
-	if err := s.RevokeKey(ctx, "bob", "aaaaaaaa", userT0); !errors.Is(err, user.ErrKeyNotFound) {
+	if _, err := s.RevokeKey(ctx, "bob", "aaaaaaaa", userT0); !errors.Is(err, user.ErrKeyNotFound) {
 		t.Errorf("RevokeKey by another user = %v, want ErrKeyNotFound", err)
 	}
 	r1 := userT0.Add(time.Hour)
-	if err := s.RevokeKey(ctx, "alice", "aaaaaaaa", r1); err != nil {
+	if _, err := s.RevokeKey(ctx, "alice", "aaaaaaaa", r1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RevokeKey(ctx, "alice", "aaaaaaaa", r1.Add(time.Hour)); err != nil {
+	if _, err := s.RevokeKey(ctx, "alice", "aaaaaaaa", r1.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if gotK, _, _ = s.GetKey(ctx, "aaaaaaaa"); gotK.RevokedAt == nil || !gotK.RevokedAt.Equal(r1) {

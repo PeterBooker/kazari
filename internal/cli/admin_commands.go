@@ -15,7 +15,8 @@ import (
 // admin socket and need no token.
 type AdminCmd struct {
 	Users     AdminUsersCmd     `cmd:"" help:"List, create and update users."`
-	Keys      AdminKeysCmd      `cmd:"" help:"List, issue and revoke a user's API keys."`
+	Keys      AdminKeysCmd      `cmd:"" help:"List, issue, rotate and revoke a user's API keys."`
+	Grants    AdminGrantsCmd    `cmd:"" help:"List and revoke a user's OAuth grants, the connections of MCP clients."`
 	Artifacts AdminArtifactsCmd `cmd:"" help:"Artifacts of every owner."`
 	Jobs      AdminJobsCmd      `cmd:"" help:"The maintenance jobs."`
 	Transfer  AdminTransferCmd  `cmd:"" help:"Give an artifact to another user."`
@@ -149,7 +150,8 @@ func (c *AdminUsersUpdateCmd) Run(r *runner) error {
 type AdminKeysCmd struct {
 	List   AdminKeysListCmd   `cmd:"" help:"List a user's keys."`
 	Issue  AdminKeysIssueCmd  `cmd:"" help:"Issue a key; the secret is printed once."`
-	Revoke AdminKeysRevokeCmd `cmd:"" help:"Revoke a key by its prefix."`
+	Rotate AdminKeysRotateCmd `cmd:"" help:"Replace a key with a new one; the secret is printed once."`
+	Revoke AdminKeysRevokeCmd `cmd:"" help:"Revoke a key by its prefix, with the keys issued with it."`
 }
 
 // AdminKeysListCmd lists a user's keys.
@@ -171,38 +173,39 @@ func (c *AdminKeysListCmd) Run(r *runner) error {
 
 // AdminKeysIssueCmd issues a key.
 type AdminKeysIssueCmd struct {
-	Handle  string `arg:"" help:"The user's handle."`
-	Label   string `help:"Key label." placeholder:"LABEL"`
-	Scopes  string `help:"Comma-separated scopes (default: artifacts:read,artifacts:write,artifacts:delete)." placeholder:"A,B"`
-	Expires string `help:"Lifetime as a Go duration, such as 720h (default: no expiry)." placeholder:"DURATION"`
+	Handle string `arg:"" help:"The user's handle."`
+	keyFlags
 }
 
 func (c *AdminKeysIssueCmd) Run(r *runner) error {
-	if c.Expires != "" {
-		if _, err := time.ParseDuration(c.Expires); err != nil {
-			return usagef("admin keys issue: --expires: %v", err)
-		}
-	}
-	req := api.IssueKeyRequest{Label: c.Label, ExpiresIn: c.Expires}
-	for s := range strings.SplitSeq(c.Scopes, ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			req.Scopes = append(req.Scopes, s)
-		}
-	}
 	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	k, err := cl.IssueKey(r.ctx, c.Handle, req)
+	k, err := cl.IssueKey(r.ctx, c.Handle, c.request())
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(k)
+	return r.printIssued(k, fmt.Sprintf("issued key %s for %s", k.APIKey.Prefix, c.Handle))
+}
+
+// AdminKeysRotateCmd replaces a key.
+type AdminKeysRotateCmd struct {
+	Handle  string `arg:"" help:"The user's handle."`
+	Prefix  string `arg:"" help:"The key's prefix, from keys list."`
+	Overlap string `help:"How long the old key keeps working, such as 24h (the default), 7d (the most) or 0." placeholder:"DURATION"`
+}
+
+func (c *AdminKeysRotateCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintln(r.stdout, k.Key)
-	fmt.Fprintf(r.stderr, "issued key %s for %s; the key is shown only once\n", k.APIKey.Prefix, c.Handle)
-	return nil
+	k, err := cl.RotateKey(r.ctx, c.Handle, c.Prefix, c.Overlap)
+	if err != nil {
+		return err
+	}
+	return r.printIssued(k, rotatedNote(k)+" for "+c.Handle)
 }
 
 // AdminKeysRevokeCmd revokes a key.
@@ -223,6 +226,62 @@ func (c *AdminKeysRevokeCmd) Run(r *runner) error {
 		return r.printJSON(api.OK{OK: true})
 	}
 	fmt.Fprintf(r.stdout, "revoked %s\n", c.Prefix)
+	return nil
+}
+
+// AdminGrantsCmd manages OAuth grants: the connections of MCP clients.
+type AdminGrantsCmd struct {
+	List   AdminGrantsListCmd   `cmd:"" help:"List a user's connections, with the last refresh and the expiry."`
+	Revoke AdminGrantsRevokeCmd `cmd:"" help:"Revoke a connection by its id."`
+}
+
+// AdminGrantsListCmd lists a user's grants.
+type AdminGrantsListCmd struct {
+	Handle string `arg:"" help:"The user's handle."`
+}
+
+func (c *AdminGrantsListCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	grants, err := cl.ListGrants(r.ctx, c.Handle)
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(grants)
+	}
+	tw := newTable(r.stdout)
+	fmt.Fprintln(tw, "ID\tCLIENT\tSCOPES\tKEY\tLAST REFRESH\tEXPIRES")
+	for _, g := range grants {
+		client := g.Client
+		if client == "" {
+			client = g.ClientID
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", g.ID, dash(oneLine(client)), dash(strings.Join(g.Scopes, ",")),
+			dash(g.KeyPrefix), fmtTime(g.CreatedAt), fmtTime(g.ExpiresAt))
+	}
+	return tw.Flush()
+}
+
+// AdminGrantsRevokeCmd revokes a grant.
+type AdminGrantsRevokeCmd struct {
+	ID int64 `arg:"" help:"The grant's id, from grants list or an oauth:<id> credential in the audit log."`
+}
+
+func (c *AdminGrantsRevokeCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	if err := cl.RevokeGrant(r.ctx, c.ID); err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(api.OK{OK: true})
+	}
+	fmt.Fprintf(r.stdout, "revoked grant %d\n", c.ID)
 	return nil
 }
 

@@ -198,7 +198,7 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 	s := mcp.NewServer(
 		&mcp.Implementation{Name: "kazari", Title: "Kazari", Version: buildinfo.Get().Version},
 		&mcp.ServerOptions{
-			Instructions: b.text.instructions,
+			Instructions: b.text.instructions + restrictionLine(p),
 			Logger:       b.sdkLog,
 			Capabilities: caps,
 			SchemaCache:  b.schema,
@@ -213,6 +213,17 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 	b.addSkill(s, p)
 	b.addPreview(s)
 	return s
+}
+
+// restrictionLine tells the model which slugs a restricted credential
+// reaches, so it picks one that will be accepted; "" for any other.
+func restrictionLine(p auth.Principal) string {
+	if len(p.Slugs) == 0 {
+		return ""
+	}
+	return "\nThis connection is restricted to artifacts whose slug matches " + strings.Join(p.Slugs, ", ") +
+		" (a pattern is an exact slug, or a prefix ending in \"*\"). It cannot see or change any other artifact: " +
+		"choose a matching slug for create_artifact and import_page, and expect list_artifacts to hold matching artifacts only."
 }
 
 // NewHandler returns the handler for the MCP endpoint. It checks Origin and
