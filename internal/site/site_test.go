@@ -101,6 +101,9 @@ type fakeResolver struct {
 	versions map[string]map[int]*artifact.Published
 	files    map[int64]map[string]artifact.File
 	err      error
+	// lost names the files WorkerControlled refuses; workerErr fails it.
+	lost      map[string]bool
+	workerErr error
 }
 
 func (f *fakeResolver) ResolvePublished(_ context.Context, slug string) (*artifact.Published, error) {
@@ -136,6 +139,10 @@ func (f *fakeResolver) Files(_ context.Context, versionID int64) (map[string]art
 		return nil, errors.New("no such version id")
 	}
 	return m, nil
+}
+
+func (f *fakeResolver) WorkerControlled(_ context.Context, _ int64, path string) (bool, error) {
+	return !f.lost[path], f.workerErr
 }
 
 type testFile struct {
