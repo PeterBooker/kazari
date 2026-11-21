@@ -572,7 +572,7 @@ func TestStaleWithoutDeleteScope(t *testing.T) {
 	if _, err := e.users.CreateUser(e.ctx, user.CreateUserRequest{Handle: "root", Role: user.RoleAdmin}); err != nil {
 		t.Fatal(err)
 	}
-	_, admin, err := e.users.IssueKey(e.ctx, "root", "test", auth.AllScopes, 0)
+	_, admin, err := e.users.IssueKey(e.ctx, user.IssueKeyRequest{Handle: "root", Label: "test", Scopes: auth.AllScopes})
 	if err != nil {
 		t.Fatal(err)
 	}

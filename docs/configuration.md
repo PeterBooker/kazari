@@ -355,6 +355,37 @@ An empty `admin_token` disables it, leaving the admin socket and admin users' cr
 
 Under either policy, marking an artifact you do not own stale also takes `artifacts:delete`, because the expiry ends in a purge. Admins are exempt.
 
+### `auth.tokens`
+
+How long OAuth tokens and API keys live:
+
+| Key                    | Type     | Default | Meaning                                                                              |
+| ---------------------- | -------- | ------- | ------------------------------------------------------------------------------------ |
+| `access_ttl`           | duration | `1h`    | Lifetime of an OAuth access token.                                                   |
+| `refresh_ttl`          | duration | `90d`   | Lifetime of an OAuth refresh token, renewed on every refresh.                        |
+| `refresh_reuse_window` | duration | `30s`   | How long after a refresh the previous refresh token is accepted once more. `0` never accepts it again. |
+| `max_key_ttl`          | duration | `0`     | The longest an API key may live. `0` lets a key be issued without an expiry.         |
+
+An MCP client stays connected for as long as it refreshes at least once every `refresh_ttl`. To keep an agent that runs every three months connected, raise it above the pause:
+
+```yaml
+auth:
+  tokens:
+    refresh_ttl: 180d
+```
+
+A change to `access_ttl` or `refresh_ttl` applies to tokens issued from then on; tokens already issued keep their expiry.
+
+`refresh_reuse_window` covers a client that never received the answer to a refresh and sends the same refresh token again ([Tokens, lifetimes and rotation](identity.md#tokens-lifetimes-and-rotation)). It can be at most `5m`.
+
+By default, a key issued without `--expires` never expires. With `max_key_ttl` set, such a key gets that lifetime, and a request for a longer one is refused. Keys issued before the setting keep what they have:
+
+```yaml
+auth:
+  tokens:
+    max_key_ttl: 365d
+```
+
 ### `auth.oidc`
 
 With this section, users sign in through an OpenID Connect provider. Without it, the OAuth consent page asks for an API key instead. [Sign-in and identity](identity.md) walks through setting up a provider.
@@ -481,6 +512,7 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` do not exceed `limits.max_version_bytes`.
 - `serve.default_visibility` is `public`, `unlisted` or `members`, and `serve.share_link_max_ttl` is greater than 0.
 - `auth.write_policy` is `shared` or `owner`.
+- `auth.tokens.access_ttl` is greater than 0 and `auth.tokens.refresh_ttl` is at least as long. `auth.tokens.refresh_reuse_window` is between 0 and `5m`, and `auth.tokens.max_key_ttl` is not negative.
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost`: a development instance that only its own machine can reach.
 - With `auth.oidc`, `issuer` is an `https` URL, and `client_id` and `client_secret` are set.
 - `log.level` and `log.format` are among the listed values.

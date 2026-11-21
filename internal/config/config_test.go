@@ -433,6 +433,11 @@ func TestEnvOverrides(t *testing.T) {
 		"KAZARI_AUTH_OIDC_CLIENT_ID":      "cid",
 		"KAZARI_AUTH_OIDC_CLIENT_SECRET":  "csecret",
 		"KAZARI_EXTERNAL_PORT":            "8080",
+
+		"KAZARI_AUTH_TOKENS_ACCESS_TTL":           "30m",
+		"KAZARI_AUTH_TOKENS_REFRESH_TTL":          "180d",
+		"KAZARI_AUTH_TOKENS_REFRESH_REUSE_WINDOW": "0",
+		"KAZARI_AUTH_TOKENS_MAX_KEY_TTL":          "365d",
 	}
 	c, err := LoadWith("", env(vars))
 	if err != nil {
@@ -453,6 +458,8 @@ func TestEnvOverrides(t *testing.T) {
 		{"tls.dns.api_token", c.TLS.DNS.APIToken, "dns"},
 		{"auth.admin_token", c.Auth.AdminToken, testAdminToken},
 		{"external_port", c.ExternalPort, 8080},
+		{"auth.tokens", c.Auth.Tokens, Tokens{AccessTTL: Duration(30 * time.Minute), RefreshTTL: Duration(180 * 24 * time.Hour),
+			MaxKeyTTL: Duration(365 * 24 * time.Hour)}},
 	}
 	for _, ch := range checks {
 		if !reflect.DeepEqual(ch.got, ch.want) {
@@ -681,6 +688,11 @@ func TestValidateErrors(t *testing.T) {
 		{"default visibility", func(c *Config) { c.Serve.DefaultVisibility = "private" }, "serve.default_visibility: must be one of public, unlisted, members"},
 		{"share link lifetime", func(c *Config) { c.Serve.ShareLinkMaxTTL = 0 }, "serve.share_link_max_ttl: must be greater than 0"},
 		{"write policy", func(c *Config) { c.Auth.WritePolicy = "anyone" }, "auth.write_policy: must be one of shared, owner"},
+		{"access ttl", func(c *Config) { c.Auth.Tokens.AccessTTL = 0 }, "auth.tokens.access_ttl: must be greater than 0"},
+		{"refresh ttl", func(c *Config) { c.Auth.Tokens.RefreshTTL = Duration(time.Minute) }, "auth.tokens.refresh_ttl: must not be shorter than auth.tokens.access_ttl"},
+		{"reuse window negative", func(c *Config) { c.Auth.Tokens.RefreshReuseWindow = -1 }, "auth.tokens.refresh_reuse_window: must not be negative"},
+		{"reuse window long", func(c *Config) { c.Auth.Tokens.RefreshReuseWindow = Duration(time.Hour) }, "auth.tokens.refresh_reuse_window: must not exceed 5m"},
+		{"max key ttl", func(c *Config) { c.Auth.Tokens.MaxKeyTTL = -1 }, "auth.tokens.max_key_ttl: must not be negative"},
 		{"oidc issuer", func(c *Config) { oidc(c).Issuer = "http://idp.example" }, "auth.oidc.issuer: must be an https URL"},
 		{"oidc client id", func(c *Config) { oidc(c).ClientID = "" }, "auth.oidc.client_id: required"},
 		{"oidc client secret", func(c *Config) { oidc(c).ClientSecret = "" }, "auth.oidc.client_secret: required"},

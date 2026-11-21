@@ -11,19 +11,28 @@ This guide covers getting a key, installing the CLI, publishing and changing a d
 
 ## Getting a key
 
-An administrator issues keys. A key carries scopes, which decide what it can do:
+An administrator issues your first key. A key carries scopes, which decide what it can do:
 
 - `artifacts:read` to read.
 - `artifacts:write` to publish and change.
+- `artifacts:share` to change who can open a page, and to create share links.
 - `artifacts:delete` to delete.
 
-For CI, ask for a key without the delete scope and with an expiry. This admin command issues one that expires after 90 days:
+For CI, ask for a key without the share and delete scopes and with an expiry. This admin command issues one that expires after 90 days:
 
 ```sh
-kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 2160h
+kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 90d
 ```
 
 The key is printed once, so store it straight away.
+
+Once you hold a key, you can issue narrower ones yourself, for example one per CI job, restricted to the pages that job publishes:
+
+```sh
+kazari keys issue --label previews --scopes artifacts:read,artifacts:write --slugs 'pr-*' --expires 90d
+```
+
+That key sees and changes only artifacts whose slug starts with `pr-`. The [CLI reference](cli.md#keys) covers issuing, rotating and revoking your keys.
 
 ## Installing the CLI
 

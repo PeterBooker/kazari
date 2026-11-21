@@ -447,6 +447,37 @@ func (s *OAuthStore) Rotate(ctx context.Context, oldID int64, at time.Time, acce
 	return nil
 }
 
+// Reissue reads and writes in one transaction, so of two reuses of one
+// token at once only the first finds the family as the check needs it.
+func (s *OAuthStore) Reissue(ctx context.Context, oldID int64, since time.Time, access, refresh *oauth.Token) (err error) {
+	ctx, end := s.db.op(ctx, "OAuthStore.Reissue")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		var family int64
+		// A fork is the newest refresh token of its family, so "nothing
+		// newer than the successor" also says the token was not reused
+		// before and the successor was not rotated.
+		err := tx.QueryRowContext(ctx, `SELECT o.family_id FROM oauth_token o
+			JOIN oauth_token n ON n.id = o.replaced_by
+			WHERE o.id = ?1 AND o.kind = 'refresh' AND o.revoked_at > ?2
+			  AND n.revoked_at IS NULL AND n.replaced_by IS NULL AND n.expires_at > ?3
+			  AND NOT EXISTS (SELECT 1 FROM oauth_token x
+				WHERE x.family_id = o.family_id AND x.kind = 'refresh' AND x.id > n.id)`,
+			oldID, toNanos(since), toNanos(refresh.CreatedAt)).Scan(&family)
+		if errors.Is(err, sql.ErrNoRows) {
+			return oauth.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return oauthInsertPair(ctx, tx, family, access, refresh)
+	})
+	if err != nil {
+		return fmt.Errorf("sqlite: reissue for oauth token %d: %w", oldID, err)
+	}
+	return nil
+}
+
 func (s *OAuthStore) RevokeFamily(ctx context.Context, familyID int64, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeFamily")
 	defer func() { end(err) }()
@@ -463,7 +494,10 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+oauthTokenColumns+`
 		FROM oauth_token t JOIN user u ON u.id = t.user_id
-		WHERE u.handle = ? AND t.kind = 'refresh' AND t.revoked_at IS NULL AND t.expires_at > ?
+		WHERE u.handle = ?1 AND t.kind = 'refresh' AND t.revoked_at IS NULL AND t.expires_at > ?2
+		  AND NOT EXISTS (SELECT 1 FROM oauth_token x
+			WHERE x.family_id = t.family_id AND x.kind = 'refresh' AND x.id > t.id
+			  AND x.revoked_at IS NULL AND x.expires_at > ?2)
 		ORDER BY t.created_at DESC, t.id DESC`, handle, toNanos(now))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list oauth grants: %w", err)
@@ -483,13 +517,13 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 	return out, nil
 }
 
-func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) (err error) {
+func (s *OAuthStore) RevokeGrant(ctx context.Context, familyID int64, at time.Time) (err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeGrant")
 	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		var family int64
+		var one int
 		err := tx.QueryRowContext(ctx,
-			`SELECT family_id FROM oauth_token WHERE id = ? AND kind = 'refresh'`, id).Scan(&family)
+			`SELECT 1 FROM oauth_token WHERE family_id = ? AND kind = 'refresh' LIMIT 1`, familyID).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			return oauth.ErrNotFound
 		}
@@ -497,7 +531,7 @@ func (s *OAuthStore) RevokeGrant(ctx context.Context, id int64, at time.Time) (e
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE oauth_token SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`, toNanos(at), family)
+			`UPDATE oauth_token SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`, toNanos(at), familyID)
 		return err
 	})
 	if err != nil {

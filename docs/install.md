@@ -219,14 +219,14 @@ docker compose exec kazari kazari admin users create peter --email peter@example
 docker compose exec kazari kazari admin keys issue peter --label laptop
 ```
 
-The key is shown exactly once, so copy it now. A key issued without `--scopes` carries the member scopes (`artifacts:read`, `artifacts:write`, `artifacts:delete`) and acts as a member, even for an admin user.
+The key is shown exactly once, so copy it now. A key issued without `--scopes` carries the member scopes (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`) and acts as a member, even for an admin user.
 
 ### Administering from another machine
 
 To run admin commands from your laptop, issue the admin user a key that also holds the `admin` scope, and point the CLI at the admin host with it:
 
 ```sh
-sudo kazari admin keys issue peter --label admin --scopes artifacts:read,artifacts:write,artifacts:delete,admin
+sudo kazari admin keys issue peter --label admin --scopes artifacts:read,artifacts:write,artifacts:share,artifacts:delete,admin
 ```
 
 ```sh

@@ -201,6 +201,30 @@ func ParseDuration(field, s string) (time.Duration, error) {
 	return d, nil
 }
 
+// ParseOverlap is ParseDuration for a value that may be zero ("0", "0s"):
+// the overlap of a key rotation. Empty is def.
+func ParseOverlap(field, s string, def time.Duration) (time.Duration, error) {
+	switch s = strings.TrimSpace(s); s {
+	case "":
+		return def, nil
+	case "0", "0s", "0h", "0d":
+		return 0, nil
+	}
+	return ParseDuration(field, s)
+}
+
+// RequireShare refuses a principal without artifacts:share that names a
+// visibility: the scope covers who can open an artifact, and without it a
+// new page gets the instance's default and no call changes one.
+func RequireShare(p auth.Principal, visibility string) error {
+	if visibility == "" || p.HasScope(auth.ScopeShare) {
+		return nil
+	}
+	return artifact.Errorf(artifact.ErrForbidden,
+		"scope %q required to set visibility; leave visibility out to keep the artifact's, or the instance default on a new one",
+		auth.ScopeShare)
+}
+
 // Edit converts the outcome of an edit of path that produced version.
 func (l Links) Edit(a *artifact.Artifact, version int, path string, outs []artifact.EditOutcome) api.EditResult {
 	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: version, Path: path,
@@ -268,6 +292,8 @@ func Key(k *user.APIKey) api.APIKey {
 		Prefix:     k.Prefix,
 		Label:      k.Label,
 		Scopes:     scopes,
+		Slugs:      k.Slugs,
+		IssuedBy:   k.IssuedBy,
 		LastUsedAt: k.LastUsedAt,
 		ExpiresAt:  k.ExpiresAt,
 		RevokedAt:  k.RevokedAt,
@@ -281,13 +307,14 @@ func Me(p auth.Principal, used int64) api.Me {
 	if scopes == nil {
 		scopes = []string{}
 	}
-	return api.Me{Handle: p.Handle, Admin: p.Admin, Scopes: scopes, Source: p.Source, QuotaBytes: p.QuotaBytes, UsedBytes: used}
+	return api.Me{Handle: p.Handle, Admin: p.Admin, Scopes: scopes, Source: p.Source, Slugs: p.Slugs, ExpiresAt: p.ExpiresAt,
+		QuotaBytes: p.QuotaBytes, UsedBytes: used}
 }
 
 // Actor converts a principal to the artifact service's caller.
 func Actor(p auth.Principal) artifact.Actor {
 	return artifact.Actor{Handle: p.Handle, Admin: p.Admin, QuotaBytes: p.QuotaBytes, Credential: credential(p),
-		CanDelete: p.HasScope(auth.ScopeDelete)}
+		CanDelete: p.HasScope(auth.ScopeDelete), Slugs: p.Slugs}
 }
 
 // credential names p's credential in the audit trail: "api_key:<prefix>",
@@ -337,8 +364,11 @@ func Error(err error) (int, api.Error) {
 		return http.StatusConflict, api.Error{Code: api.CodeHandleTaken, Message: err.Error()}
 	case errors.Is(err, user.ErrEmailTaken):
 		return http.StatusConflict, api.Error{Code: api.CodeEmailTaken, Message: err.Error()}
-	case errors.Is(err, user.ErrInvalidHandle), errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrInvalidScope):
+	case errors.Is(err, user.ErrInvalidHandle), errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrInvalidScope),
+		errors.Is(err, user.ErrInvalidKey):
 		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}
+	case errors.Is(err, user.ErrKeyTooWide):
+		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
 	case errors.Is(err, user.ErrDisabled):
 		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
 	case errors.Is(err, user.ErrNotProvisioned):

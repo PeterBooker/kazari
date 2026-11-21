@@ -97,6 +97,10 @@ type Actor struct {
 	// CanDelete is whether the credential holds artifacts:delete, the scope
 	// MarkStale needs on an artifact the actor does not own.
 	CanDelete bool
+	// Slugs restricts the credential to slugs matching one of these
+	// patterns (see MatchSlug); empty means no restriction. It narrows what
+	// the actor may otherwise do and never widens it.
+	Slugs []string
 }
 
 // System is the actor used by scheduler jobs.
@@ -129,10 +133,13 @@ type UpdateRequest struct {
 }
 
 // ListQuery filters a listing. Viewer sees public artifacts plus any it
-// created or updated; All sees every artifact.
+// created or updated; All sees every artifact. Slugs, when not empty, keeps
+// only the artifacts whose slug matches one of the patterns, whatever else
+// is set.
 type ListQuery struct {
 	Viewer   string            // handle
 	All      bool              // admin only
+	Slugs    []string          // an actor's restriction, see MatchSlug
 	Mine     string            // "", "created", "updated", "any" (relative to Viewer)
 	Owner    string            // handle
 	Metadata map[string]string // every pair must match

@@ -403,7 +403,7 @@ func TestSignOutEndsParallelSignIns(t *testing.T) {
 							t.Fatal(err)
 						}
 						var err error
-						if _, key, err = e.users.IssueKey(ctx, "bob", "", []string{auth.ScopeRead}, 0); err != nil {
+						if _, key, err = e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Scopes: []string{auth.ScopeRead}}); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -444,7 +444,7 @@ func TestSignOutEndsEverySignInOfTheBrowser(t *testing.T) {
 		if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: handle}); err != nil {
 			t.Fatal(err)
 		}
-		_, key, err := e.users.IssueKey(ctx, handle, "", []string{auth.ScopeRead}, 0)
+		_, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: handle, Scopes: []string{auth.ScopeRead}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,11 +507,11 @@ func TestSignInWithAPIKey(t *testing.T) {
 	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "bob"}); err != nil {
 		t.Fatal(err)
 	}
-	k, key, err := e.users.IssueKey(ctx, "bob", "laptop", []string{auth.ScopeRead}, 0)
+	k, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Label: "laptop", Scopes: []string{auth.ScopeRead}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, writeOnly, err := e.users.IssueKey(ctx, "bob", "ci", []string{auth.ScopeWrite}, 0)
+	_, writeOnly, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Label: "ci", Scopes: []string{auth.ScopeWrite}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestSignInWithAPIKey(t *testing.T) {
 	}
 
 	// The session lives only as long as the key.
-	if err := e.users.RevokeKey(ctx, "bob", k.Prefix); err != nil {
+	if err := e.users.RevokeKey(ctx, user.KeyRef{Handle: "bob", Prefix: k.Prefix}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.Viewer(ctx, "demo", v.Token); !errors.Is(err, oauth.ErrNotFound) {
@@ -571,7 +571,7 @@ func TestSignInWithExpiringKey(t *testing.T) {
 	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "bob"}); err != nil {
 		t.Fatal(err)
 	}
-	_, key, err := e.users.IssueKey(ctx, "bob", "", []string{auth.ScopeRead}, time.Hour)
+	_, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "bob", Scopes: []string{auth.ScopeRead}, ExpiresIn: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

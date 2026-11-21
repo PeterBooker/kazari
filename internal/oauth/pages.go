@@ -37,7 +37,8 @@ type consentPage struct {
 	Handle       string // "" when signing in with an API key
 	Scopes       []scopeView
 	RequestID    string
-	AskKey       bool
+	AskKey       bool // no identity provider: the key is how the person signs in
+	OfferKey     bool // signed in: a key of theirs may bound the grant instead
 	Error        string
 }
 
@@ -55,6 +56,7 @@ type signInPage struct {
 var scopeDescriptions = map[string]string{
 	auth.ScopeRead:   "List and read your artifacts",
 	auth.ScopeWrite:  "Create and update artifacts",
+	auth.ScopeShare:  "Change who can open artifacts, and create share links",
 	auth.ScopeDelete: "Delete artifacts",
 }
 

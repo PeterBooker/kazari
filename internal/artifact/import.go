@@ -77,6 +77,9 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (_
 	if actor.Handle == "" {
 		return nil, nil, nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
+	if err := checkSlug(actor, req.Slug); err != nil {
+		return nil, nil, nil, err
+	}
 	// The fetch is the expensive part, so the cheap refusals come first.
 	if err := ValidateSlug(req.Slug, s.opts.ReservedSlugs); err != nil {
 		return nil, nil, nil, err

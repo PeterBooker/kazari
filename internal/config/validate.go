@@ -78,6 +78,22 @@ func (c *Config) Validate() error {
 	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !IsLocalhost(c.BaseDomain) {
 		v.add("auth.admin_token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
 	}
+	t := c.Auth.Tokens
+	if t.AccessTTL <= 0 {
+		v.add("auth.tokens.access_ttl", "must be greater than 0")
+	}
+	if t.RefreshTTL < t.AccessTTL {
+		v.add("auth.tokens.refresh_ttl", "must not be shorter than auth.tokens.access_ttl")
+	}
+	if t.RefreshReuseWindow < 0 {
+		v.add("auth.tokens.refresh_reuse_window", "must not be negative; 0 turns the window off")
+	}
+	if t.RefreshReuseWindow > MaxRefreshReuseWindow {
+		v.add("auth.tokens.refresh_reuse_window", fmt.Sprintf("must not exceed %s", MaxRefreshReuseWindow))
+	}
+	if t.MaxKeyTTL < 0 {
+		v.add("auth.tokens.max_key_ttl", "must not be negative; 0 sets no limit")
+	}
 	if o := c.Auth.OIDC; o != nil {
 		if !isHTTPSURL(o.Issuer) {
 			v.add("auth.oidc.issuer", "must be an https URL")
@@ -97,6 +113,10 @@ func (c *Config) Validate() error {
 }
 
 var logLevels = []string{"debug", "info", "warn", "error"}
+
+// MaxRefreshReuseWindow bounds auth.tokens.refresh_reuse_window: for that
+// long a copied refresh token forks a connection unnoticed.
+const MaxRefreshReuseWindow = Duration(5 * minute)
 
 // MinAdminTokenLen is the shortest auth.admin_token accepted, except under a
 // localhost base domain, which only the local machine can reach.

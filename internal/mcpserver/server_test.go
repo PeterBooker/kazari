@@ -462,7 +462,7 @@ func TestReadOnlyPrincipal(t *testing.T) {
 	msg := fails(t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	if first, next, _ := strings.Cut(msg, "\n"); first != `forbidden: scope "artifacts:write" required` ||
-		!strings.HasPrefix(next, "Next step: Retrying will not help.") {
+		!strings.HasPrefix(next, "Next step: Retrying the same call will not help.") {
 		t.Errorf("create as reader = %q", msg)
 	}
 	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !strings.Contains(msg, `scope "artifacts:delete" required`) {

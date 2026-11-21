@@ -475,6 +475,32 @@ func (c *Client) MyKeys(ctx context.Context) ([]api.APIKey, error) {
 	return decodeSlice[api.APIKey](c, ctx, "/me/keys", nil)
 }
 
+// IssueMyKey issues a key for the caller, bounded by the key the client
+// holds. The secret is in the result exactly once.
+func (c *Client) IssueMyKey(ctx context.Context, req api.IssueKeyRequest) (*api.IssuedKey, error) {
+	var out api.IssuedKey
+	if err := c.doJSON(ctx, http.MethodPost, "/me/keys", nil, nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokeMyKey revokes one of the caller's keys and the keys issued with it.
+func (c *Client) RevokeMyKey(ctx context.Context, prefix string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/me/keys/"+seg(prefix), nil, nil, nil, nil)
+}
+
+// RotateMyKey replaces one of the caller's keys; the old one works until
+// overlap has passed ("" is the server's default).
+func (c *Client) RotateMyKey(ctx context.Context, prefix, overlap string) (*api.IssuedKey, error) {
+	var out api.IssuedKey
+	err := c.doJSON(ctx, http.MethodPost, "/me/keys/"+seg(prefix)+"/rotate", nil, nil, api.RotateKeyRequest{Overlap: overlap}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // BeginUpload starts a chunked upload.
 func (c *Client) BeginUpload(ctx context.Context) (*api.Upload, error) {
 	var out api.Upload

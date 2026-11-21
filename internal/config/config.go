@@ -132,12 +132,26 @@ type Fetch struct {
 	Budget  Duration `yaml:"budget"`
 }
 
-// Auth holds the write policy, the admin token and the optional identity provider.
+// Auth holds the write policy, the admin token, the lifetimes of
+// credentials and the optional identity provider.
 type Auth struct {
 	WritePolicy string `yaml:"write_policy"`
 	AdminToken  string `yaml:"admin_token" secret:"true"`
+	Tokens      Tokens `yaml:"tokens"`
 	// Nil when auth.oidc is absent: sign-in falls back to API keys.
 	OIDC *OIDC `yaml:"oidc"`
+}
+
+// Tokens sets how long OAuth tokens and API keys live.
+type Tokens struct {
+	AccessTTL  Duration `yaml:"access_ttl"`
+	RefreshTTL Duration `yaml:"refresh_ttl"`
+	// How long after its rotation a refresh token is accepted once more;
+	// 0 never accepts one again.
+	RefreshReuseWindow Duration `yaml:"refresh_reuse_window"`
+	// The longest an API key may live; 0 lets a key be issued without an
+	// expiry.
+	MaxKeyTTL Duration `yaml:"max_key_ttl"`
 }
 
 // OIDC configures the upstream OpenID Connect provider users sign in with.
@@ -220,6 +234,11 @@ func Default() Config {
 		},
 		Auth: Auth{
 			WritePolicy: "shared",
+			Tokens: Tokens{
+				AccessTTL:          Duration(1 * hour),
+				RefreshTTL:         Duration(90 * day),
+				RefreshReuseWindow: Duration(30 * second),
+			},
 		},
 		Admin: Admin{
 			Socket: DefaultAdminSocket,

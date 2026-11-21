@@ -1,8 +1,9 @@
 // Package oauth is the OAuth 2.1 authorization server for MCP clients: RFC
 // 8414 and RFC 9728 metadata, dynamic registration (RFC 7591), client ID
 // metadata documents, PKCE (S256 only) and refresh-token rotation. People sign
-// in at an upstream IdentityProvider or, without one, with an API key whose
-// lifetime then bounds the grant; the admin scope is never granted.
+// in at an upstream IdentityProvider or, without one, with an API key; a
+// grant approved with a key takes that key's scopes, restriction and
+// lifetime. The admin scope is never granted.
 //
 // It is also the browser sign-in host for gated artifacts: a session cookie on
 // the MCP host, and per artifact host a single-use code that the host redeems
@@ -42,6 +43,10 @@ const (
 	ActionRevoke = "oauth.revoke"
 	ActionSignIn = "oauth.signin"
 )
+
+// ReasonRefreshReplay is the reason of an ActionRevoke that the server made
+// itself, because a rotated refresh token was presented again.
+const ReasonRefreshReplay = "refresh_replay"
 
 var (
 	ErrNotFound = errors.New("oauth: not found")
@@ -201,11 +206,21 @@ type Store interface {
 	// and refresh in its family and records refresh as its replacement.
 	// ErrNotFound when oldID is missing, revoked or already rotated.
 	Rotate(ctx context.Context, oldID int64, at time.Time, access, refresh *Token) error
+	// Reissue stores another pair in the family of the rotated refresh token
+	// oldID, for a client that never got the answer to its refresh, without
+	// touching the pair that answer held. It does so only while the family
+	// is exactly as that rotation left it: oldID was rotated after since,
+	// and its successor is live (at refresh.CreatedAt) and still the newest
+	// refresh token of the family, so it was neither used nor has oldID
+	// been reissued for before. ErrNotFound otherwise, with nothing stored.
+	Reissue(ctx context.Context, oldID int64, since time.Time, access, refresh *Token) error
 	RevokeFamily(ctx context.Context, familyID int64, at time.Time) error
-	// ListGrants returns the user's live refresh tokens, newest first.
+	// ListGrants returns the newest live refresh token of each of the
+	// user's families, newest first. Its FamilyID names the grant.
 	ListGrants(ctx context.Context, handle string, now time.Time) ([]Token, error)
-	// RevokeGrant revokes the family of refresh token id. ErrNotFound.
-	RevokeGrant(ctx context.Context, id int64, at time.Time) error
+	// RevokeGrant revokes every token of the family. ErrNotFound for a
+	// family that never held a refresh token.
+	RevokeGrant(ctx context.Context, familyID int64, at time.Time) error
 	// RevokeAllForUser also deletes the user's sessions.
 	RevokeAllForUser(ctx context.Context, handle string, at time.Time) error
 	// DeleteExpired returns the number of requests, codes, tokens, sign-ins
@@ -254,8 +269,8 @@ type IdentityProvider interface {
 	Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error)
 }
 
-// Keys checks the API keys of grants approved without an identity provider,
-// at consent and on every later use. user.Service implements it.
+// Keys checks the API keys that grants and browser sessions are approved
+// with, at consent and on every later use. user.Service implements it.
 type Keys interface {
 	auth.Authenticator
 	// KeyStatus returns user.ErrKeyNotFound for an unknown prefix.
@@ -271,6 +286,11 @@ type Options struct {
 	// Zero means the Default*TTL. ClientTTL is how long a registered or
 	// fetched client that completes no grant is kept.
 	AccessTTL, RefreshTTL, RequestTTL, CodeTTL, ClientTTL time.Duration
+	// RefreshReuseWindow is how long after its rotation a refresh token is
+	// accepted once more, for a client that never got the answer to its
+	// refresh: it gets another pair in the same family. 0 never accepts a
+	// rotated token again.
+	RefreshReuseWindow time.Duration
 	// MaxUnusedClients is how many clients without a grant may exist before
 	// new ones are refused (default DefaultMaxUnusedClients).
 	MaxUnusedClients int
@@ -302,7 +322,7 @@ type Options struct {
 
 const (
 	DefaultAccessTTL   = time.Hour
-	DefaultRefreshTTL  = 30 * 24 * time.Hour
+	DefaultRefreshTTL  = 90 * 24 * time.Hour
 	DefaultRequestTTL  = 10 * time.Minute
 	DefaultCodeTTL     = 5 * time.Minute
 	DefaultSessionTTL  = 12 * time.Hour
@@ -335,9 +355,9 @@ type Service struct {
 
 var _ auth.Authenticator = (*Service)(nil)
 
-// New returns a Service. keys checks the consent page's API key when idp is
-// nil; keys, idp and rec may be nil, but without keys grants approved with a
-// key stop working.
+// New returns a Service. keys checks the consent page's API key; keys, idp
+// and rec may be nil, but without keys grants approved with a key stop
+// working.
 func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec audit.Recorder, opts Options) *Service {
 	if rec == nil {
 		rec = audit.Nop{}
@@ -420,15 +440,16 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	if u.DisabledAt != nil {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
-	_, live, err := s.approvingKey(ctx, t.KeyPrefix, t.UserHandle)
+	key, err := s.approvingKey(ctx, t.KeyPrefix, t.UserHandle)
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("oauth: authenticate: %w", err)
 	}
-	if !live {
+	if !key.live {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	// Capping at Options.Scopes also strips admin from tokens issued
-	// before admin was dropped.
+	// before admin was dropped. The restriction is read from the key on
+	// every request, so the grant is never wider than the key is now.
 	return auth.Principal{
 		Handle:     u.Handle,
 		Scopes:     intersect(intersect(t.Scopes, s.opts.Scopes), user.ScopesFor(u)),
@@ -436,6 +457,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 		KeyID:      fmt.Sprintf("oauth:%d", t.FamilyID),
 		QuotaBytes: u.QuotaBytes,
 		ClientID:   t.ClientID,
+		Slugs:      key.slugs,
+		ExpiresAt:  key.expires,
 	}, nil
 }
 
@@ -448,24 +471,34 @@ func (s *Service) Recognize(token string) (string, bool) {
 	return auth.SourceOAuth, err == nil
 }
 
-// approvingKey passes prefix "" (an identity-provider sign-in). live is false
-// when the key is unknown, inactive or not handle's; expires is nil when it
-// never expires.
-func (s *Service) approvingKey(ctx context.Context, prefix, handle string) (expires *time.Time, live bool, err error) {
+// keyState is what a credential derived from an API key takes from it.
+type keyState struct {
+	live    bool       // the key is active and belongs to the credential's user
+	expires *time.Time // nil when it never expires
+	slugs   []string   // its restriction, empty when it has none
+}
+
+// approvingKey reads the key a grant or session was approved with. Prefix ""
+// (an identity-provider sign-in) is live and unbounded; an unknown or
+// inactive key, or one that is not handle's, is not live.
+func (s *Service) approvingKey(ctx context.Context, prefix, handle string) (keyState, error) {
 	if prefix == "" {
-		return nil, true, nil
+		return keyState{live: true}, nil
 	}
 	if s.keys == nil {
-		return nil, false, nil
+		return keyState{}, nil
 	}
 	st, err := s.keys.KeyStatus(ctx, prefix)
 	if errors.Is(err, user.ErrKeyNotFound) {
-		return nil, false, nil
+		return keyState{}, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return keyState{}, err
 	}
-	return st.ExpiresAt, st.Active && st.Handle == handle, nil
+	if !st.Active || st.Handle != handle {
+		return keyState{}, nil
+	}
+	return keyState{live: true, expires: st.ExpiresAt, slugs: st.Slugs}, nil
 }
 
 // GetClient returns a registered or cached client, or ErrNotFound.
@@ -473,12 +506,15 @@ func (s *Service) GetClient(ctx context.Context, id string) (*Client, error) {
 	return s.store.GetClient(ctx, id)
 }
 
-// ListGrants returns the user's live refresh tokens, newest first.
+// ListGrants returns the user's grants, newest first, each as its newest
+// live refresh token: CreatedAt is the last refresh, ExpiresAt when the
+// grant lapses unless refreshed again, and FamilyID its id, the number in
+// the "oauth:<id>" credential of the audit log.
 func (s *Service) ListGrants(ctx context.Context, handle string) ([]Token, error) {
 	return s.store.ListGrants(ctx, handle, s.now())
 }
 
-// RevokeGrant revokes the family of refresh token id. ErrNotFound.
+// RevokeGrant revokes every token of the grant with that id. ErrNotFound.
 func (s *Service) RevokeGrant(ctx context.Context, id int64) error {
 	if err := s.store.RevokeGrant(ctx, id, s.now()); err != nil {
 		return err

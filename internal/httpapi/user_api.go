@@ -107,31 +107,10 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
 	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o}
 
-	read := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeRead, false, fn) }
-	write := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeWrite, true, fn) }
-	del := func(fn apiFunc) http.Handler { return h.guard(auth.ScopeDelete, true, fn) }
-
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/artifacts", write(h.createArtifact))
-	mux.Handle("GET /v1/artifacts", read(h.listArtifacts))
-	mux.Handle("GET /v1/artifacts/{slug}", read(h.getArtifact))
-	mux.Handle("PUT /v1/artifacts/{slug}", write(h.updateArtifact))
-	mux.Handle("PATCH /v1/artifacts/{slug}", write(h.patchArtifact))
-	mux.Handle("DELETE /v1/artifacts/{slug}", del(h.deleteArtifact))
-	mux.Handle("POST /v1/artifacts/{slug}/edit", write(h.editFile))
-	mux.Handle("POST /v1/artifacts/{slug}/publish", write(h.publish))
-	mux.Handle("POST /v1/artifacts/{slug}/stale", write(h.markStale))
-	mux.Handle("DELETE /v1/artifacts/{slug}/stale", write(h.unmarkStale))
-	mux.Handle("GET /v1/artifacts/{slug}/files/{path...}", read(h.readFile))
-	mux.Handle("POST /v1/artifacts/{slug}/share-links", write(h.createShareLink))
-	mux.Handle("GET /v1/artifacts/{slug}/share-links", read(h.listShareLinks))
-	mux.Handle("DELETE /v1/artifacts/{slug}/share-links/{prefix}", write(h.revokeShareLink))
-	mux.Handle("POST /v1/uploads", write(h.beginUpload))
-	mux.Handle("PATCH /v1/uploads/{id}/files/{path...}", write(h.uploadChunk))
-	mux.Handle("DELETE /v1/uploads/{id}", write(h.abortUpload))
-	mux.Handle("GET /v1/skill", read(h.skill))
-	mux.Handle("GET /v1/me", h.guard("", false, h.me))
-	mux.Handle("GET /v1/me/keys", h.guard("", false, h.myKeys))
+	for _, rt := range h.routes() {
+		mux.Handle(rt.pattern, h.guard(rt.scope, rt.write, rt.fn))
+	}
 
 	var protected http.Handler = jsonFallback(mux, &h.base)
 	protected = auth.RequireBearer(d.Auth, auth.Options{Telemetry: o.Telemetry})(protected)
@@ -148,6 +127,48 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	})
 	open.Handle("/", protected)
 	return h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(open)
+}
+
+// route is one route behind the bearer check: the scope it needs ("" for
+// any credential) and whether it counts against the write rate.
+type route struct {
+	pattern string
+	scope   string
+	write   bool
+	fn      apiFunc
+}
+
+func (h *userAPI) routes() []route {
+	read := func(pattern string, fn apiFunc) route { return route{pattern, auth.ScopeRead, false, fn} }
+	write := func(pattern string, fn apiFunc) route { return route{pattern, auth.ScopeWrite, true, fn} }
+	share := func(pattern string, fn apiFunc) route { return route{pattern, auth.ScopeShare, true, fn} }
+	return []route{
+		write("POST /v1/artifacts", h.createArtifact),
+		read("GET /v1/artifacts", h.listArtifacts),
+		read("GET /v1/artifacts/{slug}", h.getArtifact),
+		write("PUT /v1/artifacts/{slug}", h.updateArtifact),
+		// A change of visibility alone takes artifacts:share and no
+		// artifacts:write, as set_visibility does; update decides.
+		{"PATCH /v1/artifacts/{slug}", "", true, h.patchArtifact},
+		{"DELETE /v1/artifacts/{slug}", auth.ScopeDelete, true, h.deleteArtifact},
+		write("POST /v1/artifacts/{slug}/edit", h.editFile),
+		write("POST /v1/artifacts/{slug}/publish", h.publish),
+		write("POST /v1/artifacts/{slug}/stale", h.markStale),
+		write("DELETE /v1/artifacts/{slug}/stale", h.unmarkStale),
+		read("GET /v1/artifacts/{slug}/files/{path...}", h.readFile),
+		share("POST /v1/artifacts/{slug}/share-links", h.createShareLink),
+		read("GET /v1/artifacts/{slug}/share-links", h.listShareLinks),
+		share("DELETE /v1/artifacts/{slug}/share-links/{prefix}", h.revokeShareLink),
+		write("POST /v1/uploads", h.beginUpload),
+		write("PATCH /v1/uploads/{id}/files/{path...}", h.uploadChunk),
+		write("DELETE /v1/uploads/{id}", h.abortUpload),
+		read("GET /v1/skill", h.skill),
+		{"GET /v1/me", "", false, h.me},
+		{"GET /v1/me/keys", "", false, h.myKeys},
+		{"POST /v1/me/keys", "", true, h.issueMyKey},
+		{"DELETE /v1/me/keys/{prefix}", "", true, h.revokeMyKey},
+		{"POST /v1/me/keys/{prefix}/rotate", "", true, h.rotateMyKey},
+	}
 }
 
 func (h *userAPI) guard(scope string, write bool, fn apiFunc) http.Handler {
@@ -206,6 +227,9 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
 		return err
 	}
+	if err := present.RequireShare(p, req.Visibility); err != nil {
+		return err
+	}
 	files, closeDownloads, err := h.inlineFiles(r.Context(), req.Files, false)
 	if err != nil {
 		return err
@@ -256,6 +280,9 @@ func (h *userAPI) createMultipart(w http.ResponseWriter, r *http.Request, p auth
 	}
 	var m api.CreateManifest
 	if err := readManifest(mr, &m); err != nil {
+		return err
+	}
+	if err := present.RequireShare(p, m.Visibility); err != nil {
 		return err
 	}
 	b, err := h.nextBundle(mr)
@@ -386,6 +413,9 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 		return err
 	}
 	if req.Visibility != nil {
+		if !p.HasScope(auth.ScopeShare) {
+			return artifact.Errorf(artifact.ErrForbidden, "scope %q required to change visibility", auth.ScopeShare)
+		}
 		switch *req.Visibility {
 		case string(artifact.Public), string(artifact.Unlisted), string(artifact.Members), artifact.Unpublished:
 		default:
@@ -395,6 +425,9 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 	actor := present.Actor(p)
 	visibilityOnly := req.Visibility != nil && len(files) == 0 && req.Name == nil && req.Description == nil &&
 		len(req.Metadata) == 0 && !req.Restore && expected == 0
+	if !visibilityOnly && !p.HasScope(auth.ScopeWrite) {
+		return artifact.Errorf(artifact.ErrForbidden, "scope %q required", auth.ScopeWrite)
+	}
 
 	var (
 		a       *artifact.Artifact
@@ -733,5 +766,76 @@ func (h *userAPI) myKeys(w http.ResponseWriter, r *http.Request, p auth.Principa
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// keyHolder refuses anything but an API key on the routes that change a
+// person's keys. A key made or renewed with an OAuth token would outlive
+// the connection it came from, and any connected agent could mint one.
+func (h *userAPI) keyHolder(p auth.Principal) error {
+	if p.Source != auth.SourceAPIKey || h.d.Users == nil {
+		return artifact.Errorf(artifact.ErrForbidden,
+			"an API key is required: an OAuth connection cannot issue, rotate or revoke keys")
+	}
+	return nil
+}
+
+func (h *userAPI) issueMyKey(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := h.keyHolder(p); err != nil {
+		return err
+	}
+	var req api.IssueKeyRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
+		return err
+	}
+	expiresIn, err := present.ParseDuration("expires_in", req.ExpiresIn)
+	if err != nil {
+		return err
+	}
+	k, secret, err := h.d.Users.IssueKey(r.Context(), user.IssueKeyRequest{
+		Handle: p.Handle, Label: req.Label, Scopes: req.Scopes, Slugs: req.Slugs, ExpiresIn: expiresIn, With: p.KeyID,
+	})
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, api.IssuedKey{Key: secret, APIKey: present.Key(k)})
+	return nil
+}
+
+func (h *userAPI) revokeMyKey(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := h.keyHolder(p); err != nil {
+		return err
+	}
+	ref := user.KeyRef{Handle: p.Handle, Prefix: r.PathValue("prefix"), With: p.KeyID}
+	if err := h.d.Users.RevokeKey(r.Context(), ref); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (h *userAPI) rotateMyKey(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	if err := h.keyHolder(p); err != nil {
+		return err
+	}
+	return rotateKey(w, r, h.d.Users, user.KeyRef{Handle: p.Handle, Prefix: r.PathValue("prefix"), With: p.KeyID})
+}
+
+// rotateKey serves both rotate routes: the person's own and the admin's.
+func rotateKey(w http.ResponseWriter, r *http.Request, users *user.Service, ref user.KeyRef) error {
+	var req api.RotateKeyRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
+		return err
+	}
+	overlap, err := present.ParseOverlap("overlap", req.Overlap, user.DefaultRotateOverlap)
+	if err != nil {
+		return err
+	}
+	k, secret, old, err := users.RotateKey(r.Context(), ref, overlap)
+	if err != nil {
+		return err
+	}
+	replaced := present.Key(old)
+	writeJSON(w, http.StatusCreated, api.IssuedKey{Key: secret, APIKey: present.Key(k), Replaces: &replaced})
 	return nil
 }

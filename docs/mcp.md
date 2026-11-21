@@ -2,7 +2,7 @@
 
 Kazari exposes its artifact operations as an MCP server at `https://mcp.<base>/`, over Streamable HTTP. An agent connected to it can publish, edit, share and retire pages.
 
-This page covers connecting an agent, the tools, resources and skill the server offers, and its errors and request checks. The examples use `art.example.com` as the base domain. Setting up OAuth sign-in for MCP clients is in [Identity and sign-in](identity.md).
+This page covers connecting an agent, running one unattended, the tools, resources and skill the server offers, and its errors and request checks. The examples use `art.example.com` as the base domain. Setting up OAuth sign-in for MCP clients is in [Identity and sign-in](identity.md).
 
 ## How the server works
 
@@ -36,15 +36,18 @@ claude mcp add --transport http kazari https://mcp.art.example.com/ \
   --header "Authorization: Bearer kzk_..."
 ```
 
-An administrator issues the key with `POST /users/{handle}/keys` on the [admin API](api.md#admin-api), or with the [CLI's admin commands](cli.md#admin-commands). The secret is shown once.
+An administrator issues the key with [`kazari admin keys issue`](cli.md#admin-commands), and a person who holds a key issues further ones with [`kazari keys issue`](cli.md#keys). The secret is shown once.
 
 A key carries scopes, which decide the tools it can call:
 
 | Scope              | Tools                                                    |
 | ------------------ | -------------------------------------------------------- |
 | `artifacts:read`   | The read tools                                           |
-| `artifacts:write`  | Publishing and lifecycle changes                         |
+| `artifacts:write`  | Publishing, editing, uploads and lifecycle changes       |
+| `artifacts:share`  | `set_visibility`, `create_share_link`, `revoke_share_link`, and the `visibility` argument of `create_artifact`, `update_artifact` and `import_page` |
 | `artifacts:delete` | `delete_artifact`, and `mark_stale` on others' artifacts |
+
+A key issued without naming scopes holds all four. A key can also be [restricted to some artifacts](api.md#restricted-credentials); the server then tells the agent which slugs it reaches, in its instructions.
 
 Agents that read skills from disk can also install the server's skill ([Installing the skill from disk](#installing-the-skill-from-disk)).
 
@@ -60,6 +63,93 @@ WWW-Authenticate: Bearer resource_metadata="https://mcp.art.example.com/.well-kn
 
 The sign-in that follows, and how an administrator sets it up, are in [Identity and sign-in](identity.md).
 
+## Scheduled and unattended agents
+
+An agent that runs on a schedule, with nobody present, needs a credential that works for months and that can do no more than the agent's job. Give each such agent a key of its own: an API key restricted to the artifacts it keeps current. The key goes into the agent's configuration as a header, or stands behind an OAuth connection where the host accepts nothing else.
+
+### Issuing a key for one agent
+
+Issue the key with only the scopes and artifacts the agent needs. For an agent that keeps the weekly reports of `ana` current, for 90 days:
+
+```sh
+kazari admin keys issue ana --label weekly-report \
+  --scopes artifacts:read,artifacts:write --slugs 'weekly-*' --expires 90d
+```
+
+The command prints the key once. Someone who already holds a key issues the same key for themselves with `kazari keys issue` and the same flags.
+
+This key publishes and edits artifacts whose slug starts with `weekly-`, and nothing else:
+
+- `--slugs` restricts it to [slug patterns](api.md#restricted-credentials): an exact slug, or a prefix ending in `*`. Every other artifact answers `forbidden`, reads included, and `create_artifact` accepts only a matching slug.
+- Without `artifacts:share`, it cannot change who can open a page or create a share link. New pages get the instance's default visibility.
+- Without `artifacts:delete`, it cannot delete.
+
+One key per agent also gives each agent its own line in the [audit log](ops.md#audit-log) and its own [write budget](configuration.md#limits), and lets you cut one agent off without touching the others.
+
+For automation that belongs to a team, create a user for it, such as `reports-bot`, and issue the key to that user. Its pages then belong to it and not to a person.
+
+### Agents that send a header
+
+Most agents outside a chat application read the server from a configuration file and can send a header: a command-line agent in CI, an agent built on an SDK, a hosted agent with a secret store. Keep the key in the runner's secret store and refer to it from the configuration:
+
+```json
+{
+  "mcpServers": {
+    "kazari": {
+      "type": "http",
+      "url": "https://mcp.art.example.com/",
+      "headers": { "Authorization": "Bearer ${KAZARI_TOKEN}" }
+    }
+  }
+}
+```
+
+Claude Code, for example, reads this as `.mcp.json` and fills `${KAZARI_TOKEN}` from the environment. A host with a credential vault takes the key as a static bearer token for `https://mcp.art.example.com/`.
+
+The key works until it expires or is revoked, with nothing to refresh.
+
+### Agents that connect with OAuth only
+
+Some hosts connect to an MCP server with OAuth and offer no header, such as a custom connector in a chat application that also runs scheduled tasks. Connect once, and approve the connection with the agent's key:
+
+1. Add the server's URL, `https://mcp.art.example.com/`, as a connector.
+2. Sign in when the host sends you to Kazari.
+3. On the consent page, open **Approve with an API key instead**, paste the agent's key and approve. On an instance without an identity provider, the page asks for the key directly.
+
+The connection is then that key over OAuth: it has the key's scopes and restriction, ends when the key expires or is revoked, and is recorded with the key's prefix ([Approving with an API key](identity.md#approving-with-an-api-key)). Everything that uses the connection is restricted alike, a chat as much as a scheduled run.
+
+The host refreshes the connection as it uses it. A connection lapses when it is not used for `auth.tokens.refresh_ttl`, 90 days by default, so a schedule that runs less often than that needs a [longer lifetime](configuration.md#authtokens).
+
+### Rotating an agent's key
+
+To replace a key before it expires, rotate it. The new key has the same scopes, restriction and lifetime, and the old one keeps working for the overlap, 24 hours by default:
+
+```sh
+kazari keys rotate abcdefgh --overlap 24h
+```
+
+Put the printed key in the agent's secret store before the overlap ends. A connection approved with the old key ends with it, so connect again with the new key.
+
+### Cutting an agent off
+
+Revoke the agent's key by its prefix:
+
+```sh
+kazari keys revoke abcdefgh
+```
+
+The key stops working at once, and so does every connection approved with it. To end one OAuth connection and keep the key, an administrator runs [`kazari admin grants revoke`](cli.md#oauth-grants).
+
+### An unattended run that stopped publishing
+
+A run whose credential has ended gets `401` on every request, and may report only that the server's tools are missing. Check the credential on the instance:
+
+- `kazari admin keys list ana` shows whether the key expired or was revoked.
+- `kazari admin grants list ana` shows the user's connections, with the last refresh and the expiry of each. A connection that is not listed has lapsed or was revoked.
+- `kazari admin audit --since 720h` shows `oauth.revoke` and `key.revoke` events, with the reason where Kazari ended a connection itself.
+
+If the run reaches the server and a call fails with `forbidden`, the message names the scope the key lacks or the slug patterns it is restricted to.
+
 ## Tools
 
 The server offers nineteen tools. The six with more to know have their own sections below the table:
@@ -68,7 +158,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | ---- | ------------ |
 | `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1 ([Files named by URL](#files-named-by-url)). |
 | `import_page` | Copy a web page into a new artifact: its stylesheets, fonts and images fetched, its scripts removed ([Importing a page](#import_page)). |
-| `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. |
+| `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. Changing the visibility needs `artifacts:share`. |
 | `edit_file` | Change one text file of the latest version with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. With `archive_sha256` and `archive_bytes`, also an `archive_url` for [an archive from a shell](#uploading-an-archive-from-a-shell). |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
@@ -79,10 +169,10 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
 | `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. Needs `artifacts:delete` unless you own the artifact. |
 | `unmark_stale` | Cancel a pending expiry. |
-| `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. |
-| `create_share_link` | Create a URL that opens a `members` artifact without signing in. |
+| `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. Needs `artifacts:share`. |
+| `create_share_link` | Create a URL that opens a `members` artifact without signing in. Needs `artifacts:share`. |
 | `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
-| `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. |
+| `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. Needs `artifacts:share`. |
 | `delete_artifact` | Soft-delete, which `update_artifact` with `restore: true` undoes, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
 | `get_guide` | The instance's skill as Markdown, for clients that do not load skills over MCP. |
 
@@ -169,7 +259,7 @@ The structured types are the REST API's: `PublishResult`, `EditResult`, `Artifac
 
 Tool descriptions are generated from the instance's configuration, so they state its real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, inline-upload threshold, chunk limit, default visibility and longest share-link lifetime. A model needs nothing else to use the tools.
 
-The server's instructions say how the tools fit together: read with anchors, edit with `expected_version`, and read again on a conflict. They also point to the [skill](#skill).
+The server's instructions say how the tools fit together: read with anchors, edit with `expected_version`, and read again on a conflict. They also point to the [skill](#skill). For a [restricted credential](api.md#restricted-credentials) they add one line naming its slug patterns, so the model chooses a slug the server accepts.
 
 ## Editing files
 
@@ -361,11 +451,11 @@ The codes are:
 | `fetch_failed` | The server could not fetch a URL: the message names the address and what happened (a status, a non-public address, a timeout, a size over the limit). |
 | `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
 | `gone` | The artifact was purged. |
-| `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or the write policy denies the change, or `mark_stale` lacks `artifacts:delete` on an artifact you do not own. |
+| `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or lacks `artifacts:share` for a `visibility` argument, or is [restricted](api.md#restricted-credentials) to other slugs, or the write policy denies the change, or `mark_stale` lacks `artifacts:delete` on an artifact you do not own. |
 | `rate_limited` | The credential used up its write budget (`rate_limited: too many writes; retry in 12s`). |
 | `internal` | Server error, including a handler that crashed; details are in the server log. |
 
-The write budget is `limits.write_rate_per_minute`, shared with the REST API. Only the write and delete tools can return `rate_limited`.
+The write budget is `limits.write_rate_per_minute`, shared with the REST API. Only the write, share and delete tools can return `rate_limited`.
 
 The skill lists the next step for every code a tool returns.
 

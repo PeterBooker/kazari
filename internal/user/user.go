@@ -20,13 +20,19 @@ const (
 const KeyPrefix = "kzk_"
 
 var (
-	ErrNotFound       = errors.New("user: not found")
-	ErrKeyNotFound    = errors.New("user: key not found")
-	ErrHandleTaken    = errors.New("user: handle is taken")
-	ErrEmailTaken     = errors.New("user: email is taken")
-	ErrInvalidHandle  = errors.New("user: invalid handle")
-	ErrInvalidRole    = errors.New("user: invalid role")
-	ErrInvalidScope   = errors.New("user: invalid scope")
+	ErrNotFound      = errors.New("user: not found")
+	ErrKeyNotFound   = errors.New("user: key not found")
+	ErrHandleTaken   = errors.New("user: handle is taken")
+	ErrEmailTaken    = errors.New("user: email is taken")
+	ErrInvalidHandle = errors.New("user: invalid handle")
+	ErrInvalidRole   = errors.New("user: invalid role")
+	ErrInvalidScope  = errors.New("user: invalid scope")
+	// ErrInvalidKey is a request for a key that cannot exist: a malformed
+	// slug pattern, a lifetime over the limit.
+	ErrInvalidKey = errors.New("user: invalid key")
+	// ErrKeyTooWide is a person's key asked to issue, rotate or revoke a key
+	// that holds more than it does.
+	ErrKeyTooWide     = errors.New("user: the key making the request is too narrow")
 	ErrDisabled       = errors.New("user: disabled")
 	ErrNotProvisioned = errors.New("user: identity is not allowed on this instance")
 )
@@ -52,6 +58,13 @@ type APIKey struct {
 	Hash       string
 	Label      string
 	Scopes     []string
+	// Slugs restricts the key to artifacts whose slug matches one of these
+	// patterns (artifact.MatchSlug); empty is no restriction. Set at issue
+	// and never changed.
+	Slugs []string
+	// IssuedBy is the prefix of the key its owner issued it with; "" when an
+	// admin issued it. Revoking that key revokes this one.
+	IssuedBy   string
 	LastUsedAt *time.Time
 	ExpiresAt  *time.Time
 	RevokedAt  *time.Time
@@ -64,6 +77,7 @@ type KeyStatus struct {
 	Handle    string
 	Active    bool       // neither revoked nor expired, and the owner is not disabled
 	ExpiresAt *time.Time // nil when the key never expires
+	Slugs     []string   // the key's restriction, empty when it has none
 }
 
 // Identity links an upstream (issuer, subject) pair to a user.
@@ -86,15 +100,22 @@ type Store interface {
 	// UpdateUser writes email, display name, role, quota and disabled_at.
 	UpdateUser(ctx context.Context, u *User) error
 
-	// CreateKey inserts k and sets k.ID.
+	// CreateKey inserts k and sets k.ID. ErrKeyNotFound when k.IssuedBy
+	// names no key of the same user.
 	CreateKey(ctx context.Context, k *APIKey) error
+	// RotateKey is CreateKey for the successor of the user's key with
+	// prefix, which in the same transaction is set to expire at expires
+	// unless it ends sooner. ErrKeyNotFound.
+	RotateKey(ctx context.Context, prefix string, k *APIKey, expires time.Time) error
 	// GetKey returns the key and its user by prefix, including revoked and
 	// expired keys; the caller decides. ErrKeyNotFound.
 	GetKey(ctx context.Context, prefix string) (*APIKey, *User, error)
 	// ListKeys returns a user's keys, newest first. ErrNotFound.
 	ListKeys(ctx context.Context, handle string) ([]APIKey, error)
-	// RevokeKey sets revoked_at on one key unless already set. ErrKeyNotFound.
-	RevokeKey(ctx context.Context, handle, prefix string, at time.Time) error
+	// RevokeKey sets revoked_at on one key and on every key issued with it,
+	// directly or through another, unless already set. It returns the
+	// prefixes of the issued keys it revoked. ErrKeyNotFound.
+	RevokeKey(ctx context.Context, handle, prefix string, at time.Time) (issued []string, err error)
 	// RevokeAllKeys revokes every live key of a user. ErrNotFound.
 	RevokeAllKeys(ctx context.Context, handle string, at time.Time) error
 	TouchKey(ctx context.Context, prefix string, at time.Time) error

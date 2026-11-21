@@ -337,7 +337,9 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeFetchFailed: "The server could not fetch that URL; the message says what happened. Check the address is " +
 			"public and serves the file. A page behind a login, a CAPTCHA or bot protection cannot be fetched: ask the " +
 			"user to save it from their browser and publish the files with create_artifact or kazari publish.",
-		api.CodeForbidden: "Retrying will not help. Tell the user: the connection's credential lacks the scope, or the " +
+		api.CodeForbidden: "Retrying the same call will not help. If the message names slug patterns, the credential " +
+			"reaches only artifacts whose slug matches one: give a new artifact a matching slug. If it names visibility, " +
+			"call again without visibility. Otherwise tell the user: the connection's credential lacks the scope, or the " +
 			"instance's write policy reserves the artifact for its owner.",
 		api.CodeRateLimited: "Wait as long as the message says, then repeat the call.",
 		api.CodeInternal:    "The server failed. Retry once; if it fails again, tell the user.",

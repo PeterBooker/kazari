@@ -89,6 +89,14 @@ fetch:
 auth:
   write_policy: shared               # shared | owner
   admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
+  # How long credentials live. An MCP client's connection lapses when it is
+  # not refreshed for refresh_ttl, so keep that above the longest pause of a
+  # scheduled agent.
+  tokens:
+    access_ttl: 1h                   # an OAuth access token
+    refresh_ttl: 90d                 # an OAuth refresh token, renewed on every use
+    refresh_reuse_window: 30s        # a rotated refresh token is accepted once more for this long; 0 = never
+    max_key_ttl: 0                   # longest an API key may live; 0 = a key may be issued without an expiry
   # Sign-in through the organisation's OpenID Connect provider. Leave oidc
   # out entirely to fall back to API-key sign-in on the consent page.
   # Register https://mcp.<base_domain>/oauth/callback as the redirect URI; it

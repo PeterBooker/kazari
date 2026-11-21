@@ -241,7 +241,7 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 		if err := requireScope(p, scope); err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, err)
 		}
-		if scope == auth.ScopeWrite || scope == auth.ScopeDelete {
+		if scope != auth.ScopeRead {
 			if d := b.d.Writes.Reserve(ctx, ratelimit.CredentialKey(p)); d > 0 {
 				return nil, zero, b.toolError(ctx, t.Name, &api.Error{Code: api.CodeRateLimited,
 					Message: "too many writes; retry in " + ratelimit.RetryAfter(d) + "s"})
@@ -341,6 +341,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (api.PublishResult, string, error) {
+			// Before the upload is opened, which a refused call would consume.
+			if err := present.RequireShare(p, in.Visibility); err != nil {
+				return api.PublishResult{}, "", err
+			}
 			files, cleanup, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
 			defer cleanup()
 			if err != nil {
@@ -369,6 +373,12 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (api.PublishResult, string, error) {
+			// Before the upload is opened, which a refused call would consume.
+			if in.Visibility != nil {
+				if err := present.RequireShare(p, *in.Visibility); err != nil {
+					return api.PublishResult{}, "", err
+				}
+			}
 			files, cleanup, err := b.files(ctx, p, in.UploadID, in.Files)
 			defer cleanup()
 			if err != nil {
@@ -542,7 +552,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "set_visibility", Annotations: annotations("Set visibility", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in VisibilityInput) (api.PublishResult, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in VisibilityInput) (api.PublishResult, string, error) {
 			a, err := arts.SetVisibility(ctx, actor, in.Slug, in.Visibility)
 			if err != nil {
 				return api.PublishResult{}, "", err
@@ -552,7 +562,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "create_share_link", Annotations: annotations("Create share link", false, false, false)},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (api.CreatedShareLink, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (api.CreatedShareLink, string, error) {
 			ttl, err := present.ParseDuration("expires_in", in.ExpiresIn)
 			if err != nil {
 				return api.CreatedShareLink{}, "", err
@@ -593,7 +603,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "revoke_share_link", Annotations: annotations("Revoke share link", false, true, true)},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in RevokeShareLinkInput) (api.OK, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in RevokeShareLinkInput) (api.OK, string, error) {
 			if err := arts.RevokeShareLink(ctx, actor, in.Slug, in.Prefix); err != nil {
 				return api.OK{}, "", err
 			}

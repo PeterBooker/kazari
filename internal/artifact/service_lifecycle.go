@@ -26,6 +26,9 @@ const (
 func (s *Service) Get(ctx context.Context, actor Actor, slug string) (_ *Artifact, _ []Version, err error) {
 	ctx, span := s.span(ctx, "artifact.get", slug)
 	defer func() { endSpan(span, err) }()
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, nil, err
+	}
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
 		return nil, nil, err
@@ -65,6 +68,7 @@ func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (_ ListPag
 	defer func() { endSpan(span, err) }()
 	q.Viewer = actor.Handle
 	q.All = q.All && actor.Admin
+	q.Slugs = actor.Slugs
 	switch q.Mine {
 	case "", "created", "updated", "any":
 	default:
@@ -150,6 +154,9 @@ func (s *Service) UnmarkStale(ctx context.Context, actor Actor, slug string) (_ 
 func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v string) (_ *Artifact, err error) {
 	ctx, span := s.span(ctx, "artifact.set_visibility", slug)
 	defer func() { endSpan(span, err) }()
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, err
+	}
 	switch v {
 	case string(Public), string(Unlisted), string(Members), Unpublished:
 	default:
@@ -177,6 +184,9 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner string) (_ *Artifact, err error) {
 	ctx, span := s.span(ctx, "artifact.transfer", slug)
 	defer func() { endSpan(span, err) }()
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, err
+	}
 	if newOwner == "" {
 		return nil, Errorf(ErrInvalidArgument, "a new owner is required")
 	}
@@ -195,6 +205,9 @@ func (s *Service) Transfer(ctx context.Context, actor Actor, slug, newOwner stri
 func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard bool) (err error) {
 	ctx, span := s.span(ctx, "artifact.delete", slug)
 	defer func() { endSpan(span, err) }()
+	if err := checkSlug(actor, slug); err != nil {
+		return err
+	}
 	if hard {
 		involved, err := s.involved(ctx, actor, slug)
 		if err != nil {
@@ -229,6 +242,9 @@ func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard boo
 func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, version int) (_ File, _ io.ReadSeekCloser, err error) {
 	ctx, span := s.span(ctx, "artifact.open_file", slug)
 	defer func() { endSpan(span, err) }()
+	if err := checkSlug(actor, slug); err != nil {
+		return File{}, nil, err
+	}
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
 		return File{}, nil, err

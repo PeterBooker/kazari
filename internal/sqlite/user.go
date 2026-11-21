@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -178,47 +179,89 @@ func userJoinScopes(scopes []string) string { return strings.Join(scopes, " ") }
 
 func userSplitScopes(s string) []string { return strings.Fields(s) }
 
+// userInsertKey resolves k.IssuedBy among the keys of the same user.
+func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey) error {
+	uid, err := userLookupID(ctx, tx, k.UserHandle)
+	if err != nil {
+		return err
+	}
+	var issuer sql.NullInt64
+	if k.IssuedBy != "" {
+		err := tx.QueryRowContext(ctx, `SELECT id FROM api_key WHERE prefix = ? AND user_id = ?`,
+			k.IssuedBy, uid).Scan(&issuer.Int64)
+		if errors.Is(err, sql.ErrNoRows) {
+			return user.ErrKeyNotFound
+		}
+		if err != nil {
+			return err
+		}
+		issuer.Valid = true
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO api_key
+		(user_id, prefix, hash, label, scopes, slugs, issued_by, last_used_at, expires_at, revoked_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uid, k.Prefix, k.Hash, k.Label, userJoinScopes(k.Scopes), userJoinScopes(k.Slugs), issuer,
+		nullNanos(k.LastUsedAt), nullNanos(k.ExpiresAt), nullNanos(k.RevokedAt),
+		toNanos(k.CreatedAt))
+	if err != nil {
+		return err
+	}
+	k.ID, err = res.LastInsertId()
+	return err
+}
+
 func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateKey")
 	defer func() { end(err) }()
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		uid, err := userLookupID(ctx, tx, k.UserHandle)
-		if err != nil {
-			return err
-		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO api_key
-			(user_id, prefix, hash, label, scopes, last_used_at, expires_at, revoked_at, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uid, k.Prefix, k.Hash, k.Label, userJoinScopes(k.Scopes),
-			nullNanos(k.LastUsedAt), nullNanos(k.ExpiresAt), nullNanos(k.RevokedAt),
-			toNanos(k.CreatedAt))
-		if err != nil {
-			return err
-		}
-		k.ID, err = res.LastInsertId()
-		return err
-	})
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertKey(ctx, tx, k) })
 	if err != nil {
 		return fmt.Errorf("sqlite: create key for %q: %w", k.UserHandle, err)
 	}
 	return nil
 }
 
+func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey, expires time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "UserStore.RotateKey")
+	defer func() { end(err) }()
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE api_key
+			SET expires_at = CASE WHEN expires_at IS NULL OR expires_at > ?1 THEN ?1 ELSE expires_at END
+			WHERE prefix = ?2 AND user_id = (SELECT id FROM user WHERE handle = ?3)`,
+			toNanos(expires), prefix, k.UserHandle)
+		if err == nil {
+			err = userOneRow(res, user.ErrKeyNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		return userInsertKey(ctx, tx, k)
+	})
+	if err != nil {
+		return fmt.Errorf("sqlite: rotate key %q of %q: %w", prefix, k.UserHandle, err)
+	}
+	return nil
+}
+
 const userKeyColumns = `api_key.id, user.handle, api_key.prefix, api_key.hash, api_key.label,
-	api_key.scopes, api_key.last_used_at, api_key.expires_at, api_key.revoked_at, api_key.created_at`
+	api_key.scopes, api_key.slugs,
+	coalesce((SELECT i.prefix FROM api_key i WHERE i.id = api_key.issued_by), ''),
+	api_key.last_used_at, api_key.expires_at, api_key.revoked_at, api_key.created_at`
 
 func userScanKey(s userRowScanner, k *user.APIKey, extra ...any) error {
 	var (
-		scopes                   string
+		scopes, slugs            string
 		lastUsed, expires, revok sql.NullInt64
 		created                  int64
 	)
 	dest := []any{&k.ID, &k.UserHandle, &k.Prefix, &k.Hash, &k.Label,
-		&scopes, &lastUsed, &expires, &revok, &created}
+		&scopes, &slugs, &k.IssuedBy, &lastUsed, &expires, &revok, &created}
 	if err := s.Scan(append(dest, extra...)...); err != nil {
 		return err
 	}
 	k.Scopes = userSplitScopes(scopes)
+	if slugs != "" {
+		k.Slugs = userSplitScopes(slugs)
+	}
 	k.LastUsedAt = ptrTime(lastUsed)
 	k.ExpiresAt = ptrTime(expires)
 	k.RevokedAt = ptrTime(revok)
@@ -289,20 +332,52 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKe
 	return keys, nil
 }
 
-func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) (err error) {
+// RevokeKey walks issued_by down from the key: a key issued with a revoked
+// key is revoked with it, however many keys lie between.
+func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at time.Time) (_ []string, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.RevokeKey")
 	defer func() { end(err) }()
-	res, err := s.db.ExecContext(ctx, `UPDATE api_key
-		SET revoked_at = coalesce(revoked_at, ?)
-		WHERE prefix = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`,
-		toNanos(at), prefix, handle)
-	if err == nil {
-		err = userOneRow(res, user.ErrKeyNotFound)
-	}
+	var issued []string
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM api_key
+			WHERE prefix = ? AND user_id = (SELECT id FROM user WHERE handle = ?)`, prefix, handle).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return user.ErrKeyNotFound
+		}
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+				SELECT ?1
+				UNION
+				SELECT k.id FROM api_key k JOIN tree ON k.issued_by = tree.id
+			)
+			UPDATE api_key SET revoked_at = ?2
+			WHERE id IN (SELECT id FROM tree) AND id <> ?1 AND revoked_at IS NULL
+			RETURNING prefix`, id, toNanos(at))
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			issued = append(issued, p)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE api_key SET revoked_at = coalesce(revoked_at, ?) WHERE id = ?`, toNanos(at), id)
+		return err
+	})
 	if err != nil {
-		return fmt.Errorf("sqlite: revoke key %q of %q: %w", prefix, handle, err)
+		return nil, fmt.Errorf("sqlite: revoke key %q of %q: %w", prefix, handle, err)
 	}
-	return nil
+	slices.Sort(issued)
+	return issued, nil
 }
 
 func (s *UserStore) RevokeAllKeys(ctx context.Context, handle string, at time.Time) (err error) {

@@ -32,7 +32,7 @@ func TestMetadata(t *testing.T) {
 			"authorization_endpoint":                e.srv.URL + "/oauth/authorize",
 			"token_endpoint":                        e.srv.URL + "/oauth/token",
 			"registration_endpoint":                 e.srv.URL + "/oauth/register",
-			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:delete"},
+			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
 			"response_types_supported":              []any{"code"},
 			"response_modes_supported":              []any{"query"},
 			"grant_types_supported":                 []any{"authorization_code", "refresh_token"},
@@ -43,7 +43,7 @@ func TestMetadata(t *testing.T) {
 		{"/.well-known/oauth-protected-resource", map[string]any{
 			"resource":                 e.srv.URL + "/",
 			"authorization_servers":    []any{e.srv.URL},
-			"scopes_supported":         []any{"artifacts:read", "artifacts:write", "artifacts:delete"},
+			"scopes_supported":         []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
 			"bearer_methods_supported": []any{"header"},
 		}},
 	}
@@ -407,8 +407,8 @@ func TestFullFlow(t *testing.T) {
 					t.Errorf("consent page lacks %q", want)
 				}
 			}
-			if strings.Contains(page, `name="api_key"`) {
-				t.Error("consent page after sign-in asks for an API key")
+			if !strings.Contains(page, "Approve with an API key instead") || strings.Contains(page, "<details open") {
+				t.Error("consent page after sign-in does not offer an API key as a closed option")
 			}
 
 			code := e.approve(nil)
@@ -775,9 +775,14 @@ func TestTokenExpiry(t *testing.T) {
 		t.Fatalf("refresh after 1h = %d %s", next.status, next.Error)
 	}
 
-	e.clock.Advance(30 * 24 * time.Hour)
-	if r := e.refresh(clientID, next.RefreshToken, ""); r.Error != "invalid_grant" {
-		t.Errorf("refresh after 30 days = %d %q, want invalid_grant", r.status, r.Error)
+	e.clock.Advance(oauth.DefaultRefreshTTL - time.Second)
+	last := e.refresh(clientID, next.RefreshToken, "")
+	if last.status != http.StatusOK {
+		t.Fatalf("refresh a second before the refresh token ends = %d %s", last.status, last.Error)
+	}
+	e.clock.Advance(oauth.DefaultRefreshTTL)
+	if r := e.refresh(clientID, last.RefreshToken, ""); r.Error != "invalid_grant" {
+		t.Errorf("refresh after the refresh token's lifetime = %d %q, want invalid_grant", r.status, r.Error)
 	}
 }
 
@@ -844,7 +849,7 @@ func TestAPIKeyFallback(t *testing.T) {
 	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol", Role: user.RoleMember}); err != nil {
 		t.Fatal(err)
 	}
-	_, key, err := e.users.IssueKey(ctx, "carol", "laptop", []string{auth.ScopeRead, auth.ScopeWrite}, 0)
+	_, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "carol", Label: "laptop", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -889,7 +894,7 @@ func TestAPIKeyRefusedWithIdentityProvider(t *testing.T) {
 	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol"}); err != nil {
 		t.Fatal(err)
 	}
-	_, key, err := e.users.IssueKey(ctx, "carol", "", nil, 0)
+	_, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "carol"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -918,7 +923,7 @@ func TestGrants(t *testing.T) {
 	}
 	newest := grants[0]
 	if newest.Kind != oauth.KindRefresh || newest.UserHandle != "alice" || !cmp.Equal(newest.Scopes, []string{auth.ScopeRead}) ||
-		!newest.ExpiresAt.Equal(e.clock.Now().Add(30*24*time.Hour)) {
+		!newest.ExpiresAt.Equal(e.clock.Now().Add(oauth.DefaultRefreshTTL)) {
 		t.Errorf("newest grant = %+v", newest)
 	}
 
@@ -926,7 +931,7 @@ func TestGrants(t *testing.T) {
 	if older.ClientID != clientA {
 		t.Errorf("older grant client = %q, want %q", older.ClientID, clientA)
 	}
-	if err := e.svc.RevokeGrant(ctx, older.ID); err != nil {
+	if err := e.svc.RevokeGrant(ctx, older.FamilyID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.Authenticate(ctx, a.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
@@ -1028,11 +1033,11 @@ func TestCleanup(t *testing.T) {
 	if _, err := e.svc.GetClient(ctx, unused); err != nil {
 		t.Errorf("client without a grant removed after 2h: %v", err)
 	}
-	e.clock.Advance(31 * 24 * time.Hour)
+	e.clock.Advance(oauth.DefaultRefreshTTL + 24*time.Hour)
 	// two refresh tokens, the second access token and the client that
 	// never completed a grant (1 day)
 	if n, err := e.svc.Cleanup(ctx); err != nil || n != 4 {
-		t.Errorf("Cleanup after 31 days = %d, %v; want 4", n, err)
+		t.Errorf("Cleanup after the refresh token's lifetime = %d, %v; want 4", n, err)
 	}
 	if _, err := e.svc.GetClient(ctx, unused); !errors.Is(err, oauth.ErrNotFound) {
 		t.Errorf("GetClient(unused) err = %v, want ErrNotFound", err)
@@ -1136,7 +1141,7 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 		if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol"}); err != nil {
 			t.Fatal(err)
 		}
-		k, key, err := e.users.IssueKey(ctx, "carol", "laptop", nil, expiresIn)
+		k, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "carol", Label: "laptop", ExpiresIn: expiresIn})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1162,7 +1167,7 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 		if _, err := e.svc.Authenticate(ctx, tr.AccessToken); err != nil {
 			t.Fatal(err)
 		}
-		if err := e.users.RevokeKey(ctx, "carol", k.Prefix); err != nil {
+		if err := e.users.RevokeKey(ctx, user.KeyRef{Handle: "carol", Prefix: k.Prefix}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := e.svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
@@ -1174,7 +1179,7 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 	})
 	t.Run("key revoked before the exchange", func(t *testing.T) {
 		e, k, clientID, code := approved(t, 0)
-		if err := e.users.RevokeKey(ctx, "carol", k.Prefix); err != nil {
+		if err := e.users.RevokeKey(ctx, user.KeyRef{Handle: "carol", Prefix: k.Prefix}); err != nil {
 			t.Fatal(err)
 		}
 		if tr := e.exchange(clientID, redirect, code, p); tr.status != http.StatusBadRequest || tr.Error != "invalid_grant" {
@@ -1303,7 +1308,7 @@ func newMCPHost(t *testing.T) *mcpHost {
 	if _, err := e.users.CreateUser(ctx, user.CreateUserRequest{Handle: "carol"}); err != nil {
 		t.Fatal(err)
 	}
-	_, key, err := e.users.IssueKey(ctx, "carol", "", nil, 0)
+	_, key, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: "carol"})
 	if err != nil {
 		t.Fatal(err)
 	}

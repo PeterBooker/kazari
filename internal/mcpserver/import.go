@@ -10,6 +10,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/present"
 )
 
 // ImportInput is the input of import_page.
@@ -29,6 +30,9 @@ func (b *builder) addImport(s *mcp.Server, p auth.Principal, actor artifact.Acto
 	a.OpenWorldHint = boolPtr(true)
 	register(b, s, p, &mcp.Tool{Name: "import_page", Annotations: a, Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ImportInput) (api.PublishResult, string, error) {
+			if err := present.RequireShare(p, in.Visibility); err != nil {
+				return api.PublishResult{}, "", err
+			}
 			art, v, rep, err := b.d.Artifacts.Import(ctx, actor, artifact.ImportRequest{
 				URL:         in.URL,
 				Slug:        in.Slug,
