@@ -7,7 +7,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/present"
@@ -29,9 +28,9 @@ func (b *builder) addImport(s *mcp.Server, p auth.Principal, actor artifact.Acto
 	a := annotations("Import page", false, false, false)
 	a.OpenWorldHint = new(true)
 	register(b, s, p, &mcp.Tool{Name: "import_page", Annotations: a, Meta: previewToolMeta()},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ImportInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ImportInput) (WriteResult, string, error) {
 			if err := present.RequireShare(p, in.Visibility); err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
 			art, v, rep, err := b.d.Artifacts.Import(ctx, actor, artifact.ImportRequest{
 				URL:         in.URL,
@@ -44,14 +43,14 @@ func (b *builder) addImport(s *mcp.Server, p auth.Principal, actor artifact.Acto
 				KeepScripts: in.KeepScripts,
 			})
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
-			res := b.d.Links.Imported(art, v.Number, rep)
+			res := writeResult(b.d.Links.Imported(art, v.Number, rep))
 			return res, importedLine(res), nil
 		})
 }
 
-func importedLine(r api.PublishResult) string {
+func importedLine(r WriteResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s from %s: %d files", publishedLine(r), r.Import.Source, r.Import.Fetched+1)
 	if n := len(r.Import.Skipped); n > 0 {

@@ -99,19 +99,19 @@
   const render = (result) => {
     $("waiting").hidden = true;
     const sc = result && result.structuredContent;
-    if (!sc || result.isError || !sc.artifact || !sc.url) {
+    if (!sc || result.isError || !sc.slug || !sc.url) {
       const parts = ((result && result.content) || []).filter((c) => c && c.type === "text").map((c) => c.text);
       $("error").textContent = parts.join("\n") || "The call did not publish a page.";
       $("error").hidden = false;
       $("card").hidden = true;
       return;
     }
-    const a = sc.artifact;
-    const pinned = config.versionURL.replace("{slug}", a.slug).replace("{version}", String(sc.version));
-    $("name").textContent = a.name || a.slug;
+    const description = (result._meta && result._meta.kazari && result._meta.kazari.description) || "";
+    const pinned = config.versionURL.replace("{slug}", sc.slug).replace("{version}", String(sc.version));
+    $("name").textContent = sc.name || sc.slug;
     $("version").textContent = "version " + sc.version;
-    $("description").textContent = a.description || "";
-    $("description").hidden = !a.description;
+    $("description").textContent = description;
+    $("description").hidden = !description;
     $("url").textContent = sc.url;
     $("open").onclick = () => openLink(sc.url);
     $("open-version").textContent = "Open version " + sc.version;
@@ -119,12 +119,12 @@
     const frame = $("frame");
     frame.replaceChildren();
     // A members page needs a sign-in, which cannot happen inside a frame.
-    const embed = config.embed && a.visibility !== "members";
+    const embed = config.embed && sc.visibility !== "members";
     frame.hidden = !embed;
     if (embed) {
       const f = document.createElement("iframe");
       f.src = pinned;
-      f.title = "Preview of " + (a.name || a.slug);
+      f.title = "Preview of " + (sc.name || sc.slug);
       f.loading = "lazy";
       f.referrerPolicy = "no-referrer";
       frame.append(f);

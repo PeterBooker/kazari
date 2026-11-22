@@ -11,7 +11,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/present"
 )
 
-var updateExample = flag.Bool("update", false, "rewrite examples/kazari/SKILL.md from the default settings")
+var updateExample = flag.Bool("update", false, "rewrite examples/kazari/SKILL.md and the golden files in testdata")
 
 // examplePath is the committed skill for the default settings, relative to this package.
 const examplePath = "../../examples/kazari/SKILL.md"

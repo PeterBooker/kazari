@@ -84,8 +84,10 @@ func (t texts) skillText(o Options) string {
 	steps := []string{
 		"**Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the " +
 			"`url` from the result to the user.",
-		"**Change a page:** `read_file` with `anchors: true`, then `edit_file` with `expected_version` set to the " +
-			"`latest_version` the read returned. `update_artifact` adds or replaces whole files and removes them with " +
+		"**Change a page:** `edit_file` with text edits and `expected_version` set to the `latest_version` you last " +
+			"saw, from the create, edit or read result. Read first only when you have not seen the current text, and " +
+			"once you know where the change is, read just that window with `start_line` and `end_line`; ask for " +
+			"`anchors` only for anchor edits. `update_artifact` adds or replaces whole files and removes them with " +
 			"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version " +
 			"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send " +
 			"a delete entry for each path not in the set. A change that spans several files is atomic only as one " +
@@ -103,7 +105,8 @@ func (t texts) skillText(o Options) string {
 			"call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you no longer need.",
 			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
-			"inline, `anchors: true` for edits, `start_line` and `end_line` for a window of a large text file, small " +
+			"inline, `anchors: true` for anchor edits, `start_line` and `end_line` for only the lines you need of any text " +
+			"file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
 			"`deleted`, `cursor`).",
 		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.",
@@ -134,19 +137,28 @@ func (t texts) skillText(o Options) string {
 		"`exact`, `trailing_whitespace` or `indentation`. A miss names the closest lines with their anchors.\n"+
 		"- **Anchor edits:** `read_file` with `anchors: true` prefixes every line with `<line>:<hash>|`, e.g. "+
 		"`12:3fa0|<h1>Title</h1>`. An edit with `start` (and optionally `end`) replaces those lines, inclusive, with "+
-		"`new_text`; an empty `new_text` deletes them. To insert, replace a line with itself plus the new lines. Every "+
-		"anchor in one call refers to the file as read, and the ranges must not overlap. A line that changed since the "+
-		"read fails with `anchor_mismatch`, so nothing is overwritten by mistake.\n"+
+		"`new_text`; an empty `new_text` deletes them. An edit with `after` or `before` instead inserts `new_text` as "+
+		"new lines after or before the anchored line, which stays as it is. Every anchor in one call refers to the "+
+		"file as read, and the ranges must not overlap. A line that changed since the read fails with "+
+		"`anchor_mismatch`, so nothing is overwritten by mistake.\n"+
+		"- **When anchors pay off:** they cost a read and about 8 bytes a line, so use them when you do not have the "+
+		"exact text of a long block you replace, when the text repeats in the file so `old_text` would be ambiguous, "+
+		"or after a text edit missed (`edit_not_found`). Otherwise a text edit is cheaper and as safe: "+
+		"`expected_version` already stops an edit against content that changed.\n"+
 		"- One call takes text edits or anchor edits, at most %d.\n"+
-		"- The result has the new `version` and, for each edit, `start_line`, `end_line` and an anchored `excerpt` of "+
-		"the new text, so a follow-up anchor edit needs no new read. Lines longer than 160 bytes are clipped in "+
-		"excerpts (\"…[+N bytes]\"): read the file before rewriting such a line whole.\n"+
+		"- The result has the new `version` and `latest_version` and, for each edit, `start_line`, `end_line` and an "+
+		"anchored `excerpt` of the new text with %d lines around it, so a follow-up anchor edit needs no new read. In "+
+		"a new text of more than %d lines that you sent as is, the lines between its first and last are bare anchors "+
+		"without `|` and content (`9:395c`): you have their text, and the anchor is all an anchor edit needs. Edits "+
+		"whose excerpts would overlap share one, and `excerpt_of` names the edit that holds it. Lines longer than 160 "+
+		"bytes are clipped in excerpts (\"…[+N bytes]\"): read the file before rewriting such a line whole.\n"+
 		"- `edit_file` edits the latest version. `read_file` reads the published version unless given `version`; when "+
 		"its `latest_version` differs from its `version` (after a rollback), read `version: latest_version` before "+
 		"editing.\n"+
 		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
 		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
-		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, size(o.MaxInlineReadBytes))
+		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, artifact.ExcerptContext,
+		artifact.ExcerptFullLines, size(o.MaxInlineReadBytes))
 
 	b.WriteString("## Authoring conventions\n\n")
 	fmt.Fprintf(&b, "- Build a self-contained `index.html`; it is served at %s. Extra files (CSS, JavaScript, images) are "+
@@ -306,8 +318,8 @@ func (t texts) nextSteps(o Options) map[string]string {
 	return map[string]string{
 		api.CodeVersionConflict: "Someone published since you read it: read the artifact again (get_artifact, or read_file " +
 			"for the file), redo your change on the new content and retry with expected_version set to the new latest_version.",
-		api.CodeAnchorMismatch: "The file changed since you read it: call read_file with anchors: true for fresh anchors, " +
-			"then redo the edit.",
+		api.CodeAnchorMismatch: "The file changed since you read it: call read_file with anchors: true for fresh anchors " +
+			"(start_line and end_line around the change are enough), then redo the edit.",
 		api.CodeEditNotFound: "Copy old_text exactly from the current file (read_file shows it; the error names the closest " +
 			"lines), or switch to anchor edits.",
 		api.CodeEditAmbiguous: "Add surrounding lines to old_text until it matches once, or set replace_all to change every match.",

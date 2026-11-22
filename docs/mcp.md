@@ -164,7 +164,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
 | `discard_upload` | Remove an upload you no longer need. |
 | `get_artifact` | The artifact record and its versions; `include_files` adds file lists, newest version first, up to 5,000 files a result. `next_files_before`, when present, goes back as `files_before` for the next page. |
-| `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read a window of a large text file. |
+| `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read only those lines of a text file. |
 | `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata`, `stale` and `deleted`. |
 | `publish_version` | Serve an existing version (rollback or roll-forward). |
 | `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. Needs `artifacts:delete` unless you own the artifact. |
@@ -212,7 +212,7 @@ The page's scripts and event-handler attributes are removed, because the copy is
 
 `name` and `description` default to the page's title and meta description. The other arguments are `create_artifact`'s: `slug`, `visibility`, `metadata` and `label`.
 
-The result is a publish result with an `import` field:
+The result is a [write result](#results) with an `import` field:
 
 | Field | Meaning |
 | ----- | ------- |
@@ -233,7 +233,9 @@ Returns one file of the published version, or of the version given in `version`.
 
 The result names the `version` read and the `latest_version`. For text, its `content` field repeats the text, anchored when asked, for clients that show only the structured content.
 
-A text file larger than the inline limit, 1 MiB, comes back as a download URL. To read it over MCP anyway, pass `start_line` and `end_line`, 1-based and inclusive. The result holds those lines, anchored when asked, and states `start_line`, `end_line` and `total_lines`. A window holds as many whole lines as fit the inline limit; when it was cut short, the note after the text says where to continue. Windows work on text files of any size up to `limits.max_file_bytes`, small ones included.
+To read only some lines of a text file, pass `start_line` and `end_line`, 1-based and inclusive. The result holds those lines, anchored when asked, and states `start_line`, `end_line` and `total_lines`. A window works on a text file of any size up to `limits.max_file_bytes`, so an agent that already knows where a change goes, from an earlier read, an edit result or an import outline, reads just those lines.
+
+A text file larger than the inline limit, 1 MiB, comes back as a download URL, and windows are the way to read it over MCP. A window holds as many whole lines as fit the inline limit; when it was cut short, the note after the text says where to continue.
 
 ### `set_visibility`
 
@@ -253,13 +255,27 @@ Every result starts with a one-line text summary, then the JSON of the result, w
 Published https://q3-report.art.example.com/ (version 3)
 ```
 
-The structured types are the REST API's: `PublishResult`, `EditResult`, `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `CreatedShareLink`, `ShareLinkList` and `OK`. `get_guide` returns the Markdown alone.
+The JSON in the text content leaves `<`, `>` and `&` unescaped, so HTML in an excerpt costs the model no more than the HTML itself. `get_guide` returns the Markdown alone.
+
+The tools that publish or change an artifact (`create_artifact`, `import_page`, `update_artifact`, `edit_file`, `publish_version`, `unmark_stale` and `set_visibility`) return a write result instead of the full record. The model sent most of the record itself, so the write result keeps only what it needs next:
+
+| Field | Meaning |
+| ----- | ------- |
+| `url`, `version` | The address and the version the call published or serves. |
+| `slug`, `name`, `visibility` | The artifact. |
+| `published_version`, `latest_version` | What is served, and what the next edit's `expected_version` should be. |
+| `expires_at`, `unpublished_at`, `deleted_at` | Present only when set. |
+| `note` | Present only when the page is offline, with the step that brings it back, for clients that show the model only the structured content. |
+
+`edit_file` adds `path` and `edits` ([Edit results](#edit-results)), and `import_page` adds `import`. `get_artifact` returns the rest of the record. The result's `_meta` carries the description for the [preview app](#preview-app), which hosts show the user but not the model.
+
+The other tools return the REST API's types: `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `CreatedShareLink`, `ShareLinkList` and `OK`.
 
 ### Descriptions and instructions
 
 Tool descriptions are generated from the instance's configuration, so they state its real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, inline-upload threshold, chunk limit, default visibility and longest share-link lifetime. A model needs nothing else to use the tools.
 
-The server's instructions say how the tools fit together: read with anchors, edit with `expected_version`, and read again on a conflict. They also point to the [skill](#skill). For a [restricted credential](api.md#restricted-credentials) they add one line naming its slug patterns, so the model chooses a slug the server accepts.
+The server's instructions say how the tools fit together: edit with text edits and the `expected_version` from the last result, read first only when the current text is unknown, and read again on a conflict. They also point to the [skill](#skill). For a [restricted credential](api.md#restricted-credentials) they add one line naming its slug patterns, so the model chooses a slug the server accepts.
 
 ## Editing files
 
@@ -267,7 +283,9 @@ The server's instructions say how the tools fit together: read with anchors, edi
 
 The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`kazari edit`](cli.md#edit) in the CLI.
 
-A call carries up to 100 edits of one kind, text edits or anchor edits, and its result can be at most the file size limit. The input schema states each edit as a `oneOf` of the two kinds, so clients that validate arguments reject an edit that mixes them. The server refuses a call that mixes text edits with anchor edits.
+A call carries up to 100 edits of one kind, text edits or anchor edits, and its result can be at most the file size limit. The input schema states each edit as a `oneOf` of `old_text`, `start`, `after` and `before`, so clients that validate arguments reject an edit that mixes them. The server refuses a call that mixes text edits with anchor edits.
+
+Text edits are the default. An agent that published the page knows its text, and the `latest_version` of the create or edit result, so it can edit without reading first.
 
 ### Text edits
 
@@ -308,7 +326,21 @@ To delete lines 20 and 21:
 }
 ```
 
-All anchors in a call refer to the file as read, and their ranges must not overlap. If a line's content changed since it was read, the call fails with `anchor_mismatch` before anything is written.
+To insert lines without copying a line that stays, give `after` or `before` with the anchor of the line next to them. This adds a paragraph after line 12:
+
+```json
+{
+  "slug": "q3-report",
+  "path": "index.html",
+  "edits": [{ "after": "12:3fa0", "new_text": "<p>Revenue grew.</p>" }]
+}
+```
+
+All anchors in a call refer to the file as read, and their ranges must not overlap; an insert overlaps a range only when it falls inside it. Inserts at the same place keep the order of the call. If a line's content changed since it was read, the call fails with `anchor_mismatch` before anything is written.
+
+#### When anchors pay off
+
+Anchors cost a read and about 8 bytes a line. They pay off when the agent does not have the exact text of a long block it replaces, when the text repeats in the file so `old_text` would be ambiguous, and after a text edit missed with `edit_not_found`. Otherwise a text edit is cheaper and as safe, since `expected_version` already stops an edit against content that changed.
 
 ### Versions and conflicts
 
@@ -318,7 +350,21 @@ All anchors in a call refer to the file as read, and their ranges must not overl
 
 ### Edit results
 
-The result, `EditResult`, has the new `version` and, for each edit, `match`, `replacements`, `start_line`, `end_line` and an anchored `excerpt`. The excerpt shows the new text with two lines around it, so a follow-up anchor edit needs no fresh read. It holds at most 24 lines of new text, each clipped to 160 bytes with a note of what is left out.
+The result is a [write result](#results) with the new `version`, the `path` and, for each edit, `match`, `replacements`, `start_line`, `end_line` and an anchored `excerpt`. The excerpt shows the new text with two lines around it, so a follow-up anchor edit needs no fresh read. It holds at most 24 lines of new text, each clipped to 160 bytes with a note of what is left out.
+
+In a new text of more than four lines that the agent sent as it is, only the first and last lines show their content. The lines between are bare anchors, since the agent has their text:
+
+```text
+6:aded|<style>
+7:d734|body {
+8:a36d
+9:87c8
+10:8f87
+11:b0a4|}
+12:165f|li { margin: 0.25rem 0; }
+```
+
+A text re-indented by an `indentation` match shows in full. When the excerpts of two edits in one call would overlap or touch, the first edit's excerpt shows both, and the other edit's `excerpt_of` names it.
 
 A miss (`edit_not_found`) names the most similar lines with their anchors. An ambiguous `old_text` (`edit_ambiguous`) lists the lines it matched.
 
@@ -410,7 +456,7 @@ The repository's `examples/kazari/SKILL.md` is the skill generated from the defa
 
 ## Preview app
 
-`create_artifact`, `update_artifact`, `edit_file` and `publish_version` link their results to the MCP App `ui://kazari/preview.html`, from the `io.modelcontextprotocol/ui` extension (SEP-1865). A host that supports MCP Apps renders the result as a card with the page's name, its version, and links to the page and to the pinned version. Other hosts show the text result as before.
+`create_artifact`, `import_page`, `update_artifact`, `edit_file` and `publish_version` link their results to the MCP App `ui://kazari/preview.html`, from the `io.modelcontextprotocol/ui` extension (SEP-1865). A host that supports MCP Apps renders the result as a card with the page's name, its description from the result's `_meta`, its version, and links to the page and to the pinned version. Other hosts show the text result as before.
 
 ### Embedding the page
 

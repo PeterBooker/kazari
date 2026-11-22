@@ -16,6 +16,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
 )
 
 var narrow = auth.Principal{Handle: "alice", Scopes: auth.MemberScopes, Source: auth.SourceAPIKey, KeyID: "abcdefgh",
@@ -237,18 +238,18 @@ func TestShareScopeOnTools(t *testing.T) {
 
 	// Without the scope the same calls go through once visibility is left
 	// out or empty, which models send for an optional field.
-	res, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "new-page", "name": "n", "description": "d", "visibility": "", "files": file})
-	if res.Artifact.Visibility != "public" {
-		t.Errorf("visibility of a new page = %q, want the instance default", res.Artifact.Visibility)
+	res, _ := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "new-page", "name": "n", "description": "d", "visibility": "", "files": file})
+	if res.Visibility != "public" {
+		t.Errorf("visibility of a new page = %q, want the instance default", res.Visibility)
 	}
-	ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "visibility": "", "name": "renamed"})
-	ok[api.PublishResult](t, cs, "import_page", map[string]any{"slug": "copy", "url": page.URL + "/"})
+	ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "visibility": "", "name": "renamed"})
+	ok[mcpserver.WriteResult](t, cs, "import_page", map[string]any{"slug": "copy", "url": page.URL + "/"})
 	ok[api.ShareLinkList](t, cs, "list_share_links", map[string]any{"slug": "demo"})
 
 	sharer := auth.Principal{Handle: "alice", Scopes: []string{auth.ScopeRead, auth.ScopeShare}, Source: auth.SourceAPIKey}
 	cs = e.connect(t, sharer)
-	if res, _ := ok[api.PublishResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"}); res.Artifact.Visibility != "members" {
-		t.Errorf("set_visibility with the share scope = %+v", res.Artifact)
+	if res, _ := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"}); res.Visibility != "members" {
+		t.Errorf("set_visibility with the share scope = %+v", res)
 	}
 	ok[api.CreatedShareLink](t, cs, "create_share_link", map[string]any{"slug": "demo"})
 	ok[api.OK](t, cs, "revoke_share_link", map[string]any{"slug": "demo", "prefix": link.Prefix})

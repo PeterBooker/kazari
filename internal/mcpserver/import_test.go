@@ -44,8 +44,8 @@ func TestImportPage(t *testing.T) {
 	cs := e.connect(t, member)
 	srv := pageServer(t)
 
-	res, raw := ok[api.PublishResult](t, cs, "import_page", map[string]any{"url": srv.URL + "/", "slug": "copy"})
-	if res.Version != 1 || res.Artifact.Name != "Charity" || res.Import == nil {
+	res, raw := ok[mcpserver.WriteResult](t, cs, "import_page", map[string]any{"url": srv.URL + "/", "slug": "copy"})
+	if res.Version != 1 || res.Name != "Charity" || res.Import == nil {
 		t.Fatalf("import = %+v", res)
 	}
 	imp := res.Import
@@ -90,14 +90,14 @@ func TestFilesFromURL(t *testing.T) {
 	cs := e.connect(t, member)
 	srv := pageServer(t)
 
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>hi</h1>"}, {"path": "data.json", "url": srv.URL + "/data.json"}}})
 	rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "data.json"})
 	if rf.Content != `{"ok":true}` || rf.ContentType != "application/json" {
 		t.Errorf("fetched file = %+v", rf)
 	}
 
-	ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "expected_version": 1,
+	ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "expected_version": 1,
 		"files": []map[string]any{{"path": "s.css", "url": srv.URL + "/s.css", "content_type": "text/css; charset=utf-8"}}})
 	rf, _ = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "s.css"})
 	if rf.Content != "body{background:url(bg.png)}" || rf.ContentType != "text/css; charset=utf-8" || rf.Version != 2 {
