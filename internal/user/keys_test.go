@@ -60,7 +60,7 @@ func TestIssueRestrictedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := auth.Principal{Handle: "ana", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceAPIKey,
+	want := auth.Principal{Handle: "ana", Role: "member", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceAPIKey,
 		KeyID: k.Prefix, Slugs: []string{"weekly-*", "report"}, ExpiresAt: new(t0.Add(90 * day))}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("Principal (-want +got):\n%s", diff)

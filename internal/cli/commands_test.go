@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -46,8 +47,26 @@ func runCLI(t *testing.T, env map[string]string, args ...string) result {
 	if _, ok := env["HOME"]; !ok {
 		env["HOME"] = t.TempDir()
 	}
+	return runCLIWith(t, env, strings.NewReader(""), nil, args...)
+}
+
+// runCLIWith runs with stdin and, unless nil, a terminal check; retries
+// record their waits in place of sleeping.
+func runCLIWith(t *testing.T, env map[string]string, stdin io.Reader, terminal func() bool, args ...string) result {
+	t.Helper()
+	if env == nil {
+		env = map[string]string{}
+	}
+	if _, ok := env["HOME"]; !ok {
+		env["HOME"] = t.TempDir()
+	}
 	var stdout, stderr bytes.Buffer
-	code := Run(args, strings.NewReader(""), &stdout, &stderr, envMap(env))
+	r := newRunner(t.Context(), args, stdin, &stdout, &stderr, envMap(env))
+	r.sleep = func(context.Context, time.Duration) error { return nil }
+	if terminal != nil {
+		r.terminal = terminal
+	}
+	code := r.exit(r.run(args))
 	return result{code, stdout.String(), stderr.String()}
 }
 
@@ -157,7 +176,7 @@ admin_token: file-admin
 		{
 			name:    "unknown key",
 			config:  "url: x\ntokn: y\n",
-			wantErr: "line 2: field tokn not found",
+			wantErr: `unknown key "tokn" in `,
 		},
 		{
 			name:    "bad yaml",
@@ -244,14 +263,17 @@ func TestRunUsageErrors(t *testing.T) {
 		{"unknown flag", []string{"get", "--bogus", "demo"}, 2, "kazari: unknown flag --bogus"},
 		{"missing positional", []string{"get"}, 2, `kazari: expected "<slug>"`},
 		{"too many positionals", []string{"rm", "a", "b"}, 2, "kazari: unexpected argument b"},
-		{"publish without slug", []string{"publish", dir}, 2, "kazari: publish: --slug is required"},
+		{"publish missing directory", []string{"publish", dir + "/nope", "--slug", "x"}, 2, "kazari: no such directory: " + dir + "/nope"},
+		{"publish name that is no slug", []string{"publish", writeTree(t, map[string]string{"_/index.html": "x"}) + "/_"}, 2, `kazari: publish: "_" does not make a slug; give --slug`},
+		{"publish base without update", []string{"publish", dir, "--slug", "x", "--base", "2"}, 2, "--base needs --update"},
+		{"rm hard without a terminal", []string{"rm", "demo", "--hard"}, 2, "add --yes"},
 		{"publish bad visibility", []string{"publish", dir, "--slug", "x", "--visibility", "secret"}, 2, "--visibility must be public, unlisted or members"},
 		{"bad meta", []string{"publish", dir, "--slug", "x", "--meta", "novalue"}, 2, `expected "<key>=<value>"`},
 		{"visibility value", []string{"visibility", "demo", "hidden"}, 2, "want public, unlisted, members or unpublished"},
 		{"rollback version", []string{"rollback", "demo", "two"}, 2, "version must be a positive integer"},
-		{"stale grace", []string{"stale", "demo", "--grace", "2w"}, 2, "stale: --grace"},
+		{"stale grace", []string{"stale", "demo", "--grace", "soon"}, 2, "stale: --grace"},
 		{"update nothing", []string{"update", "demo"}, 2, "update: nothing to update"},
-		{"files without cat", []string{"files", "ls"}, 2, "Usage: kazari files <command>"},
+		{"files without a command", []string{"files"}, 2, "Usage: kazari files <command>"},
 		{"admin unknown", []string{"admin", "nuke"}, 2, "kazari: unexpected argument nuke"},
 		{"admin users missing action", []string{"admin", "users"}, 2, `expected one of "list", "show", "create"`},
 		{"admin enable and disable", []string{"admin", "users", "update", "ann", "--enable", "--disable"}, 2, "are exclusive"},
@@ -262,7 +284,10 @@ func TestRunUsageErrors(t *testing.T) {
 		{"admin identities link without a subject", []string{"admin", "identities", "link", "ann", "--issuer", "https://idp.test"}, 2, "--subject"},
 		{"admin users transfer without an owner", []string{"admin", "users", "transfer", "ann"}, 2, `expected "<owner>"`},
 		{"restore without slug", []string{"restore"}, 2, `kazari: expected "<slug>"`},
-		{"missing url", []string{"me"}, 2, "kazari: no API URL: set --url, KAZARI_URL or url in"},
+		{"missing url", []string{"me"}, 2, "kazari: no API URL: run kazari login --url https://api.<base>, or set --url, KAZARI_URL or url in"},
+		{"bad url", []string{"--url", "ftp://x", "--token", "t", "me"}, 2, `API URL "ftp://x" is not an http or https URL`},
+		{"plain http off this machine", []string{"--url", "http://api.example.com", "--token", "t", "me"}, 2,
+			"not sending the key to http://api.example.com over plain http: use https, or pass --allow-http (KAZARI_ALLOW_HTTP=1)"},
 		{"missing token", []string{"--url", "http://x", "me"}, 2, "kazari: no API token"},
 	}
 	for _, tt := range tests {
@@ -305,25 +330,38 @@ func TestRunHelp(t *testing.T) {
 }
 
 func TestRunHTTPError(t *testing.T) {
+	notFound := replyWith(404, api.ErrorResponse{Error: api.Error{Code: "not_found", Message: "no artifact demo"}})
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
-		"GET /v1/artifacts/demo": replyWith(404, api.ErrorResponse{Error: api.Error{Code: "not_found", Message: "no artifact demo"}}),
+		"GET /v1/artifacts/demo": notFound,
+		"GET /v1/artifacts/dmeo": notFound,
+		"GET /v1/artifacts":      replyWith(200, api.ArtifactList{Items: []api.Artifact{{Slug: "demo"}, {Slug: "other"}}}),
 		"DELETE /v1/artifacts/demo": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 			io.WriteString(w, "upstream down\n")
 		},
+		"POST /v1/artifacts/demo/publish": replyWith(409, api.ErrorResponse{Error: api.Error{Code: "version_conflict", Message: "latest is 3"}}),
+		"PATCH /v1/artifacts/demo":        replyWith(429, api.ErrorResponse{Error: api.Error{Code: "rate_limited", Message: "slow down"}}),
+		"DELETE /v1/artifacts/demo/stale": replyWith(403, api.ErrorResponse{Error: api.Error{Code: "forbidden", Message: "no"}}),
+		"GET /v1/me":                      replyWith(401, api.ErrorResponse{Error: api.Error{Code: "unauthorized", Message: "invalid key"}}),
 	})
+	host := strings.TrimPrefix(srv.URL, "http://")
 	tests := []struct {
-		args []string
-		want string
+		args     []string
+		wantCode int
+		want     string
 	}{
-		{[]string{"get", "demo"}, "kazari: not_found: no artifact demo\n"},
-		{[]string{"--json", "get", "demo"}, "kazari: not_found: no artifact demo\n"},
-		{[]string{"rm", "demo"}, "kazari: http_502: upstream down\n"},
+		{[]string{"get", "dmeo"}, 3, "kazari: not_found: no artifact demo\ndid you mean demo?\n"},
+		{[]string{"--json", "get", "demo"}, 3, `{"error":{"code":"not_found","message":"no artifact demo"}}` + "\n"},
+		{[]string{"rm", "demo"}, 1, "kazari: http_502: HTTP 502 Bad Gateway from " + srv.URL + ": upstream down\n"},
+		{[]string{"rollback", "demo", "2"}, 4, "kazari: version_conflict: latest is 3\n"},
+		{[]string{"visibility", "demo", "public"}, 5, "kazari: rate_limited: slow down\n"},
+		{[]string{"unstale", "demo"}, 6, "kazari: forbidden: no\n"},
+		{[]string{"me"}, 6, "kazari: unauthorized: invalid key\ncheck KAZARI_TOKEN or run kazari login; keys are on https://" + host + "/account/\n"},
 	}
 	for _, tt := range tests {
 		r := runCLI(t, nil, append([]string{"--url", srv.URL, "--token", "t"}, tt.args...)...)
-		if r.code != 1 || r.stderr != tt.want || r.stdout != "" {
-			t.Errorf("%v: %+v, want exit 1 and stderr %q", tt.args, r, tt.want)
+		if r.code != tt.wantCode || r.stderr != tt.want || r.stdout != "" {
+			t.Errorf("%v: %+v, want exit %d and stderr %q", tt.args, r, tt.wantCode, tt.want)
 		}
 	}
 }
@@ -463,7 +501,7 @@ func TestRunPublish(t *testing.T) {
 	})
 	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "publish", dir, "--slug", "demo", "--name", "Demo",
 		"--label", "v1", "--visibility", "unlisted", "--meta", "team=web", "--meta", "env=prod")
-	if r.code != 0 || r.stdout != "https://demo.art.test\n" {
+	if r.code != 0 || r.stdout != "demo v1 → https://demo.art.test\n" || r.stderr != "1 file, 11 B; skipped: .DS_Store (dotfile)\n" {
 		t.Fatalf("publish: %+v", r)
 	}
 	wantManifest := map[string]any{"slug": "demo", "name": "Demo", "label": "v1", "visibility": "unlisted",
@@ -487,7 +525,7 @@ func TestRunPublish(t *testing.T) {
 
 func TestRunPublishEmptyDir(t *testing.T) {
 	r := runCLI(t, nil, "--url", "http://unused", "--token", "t", "publish", t.TempDir(), "--slug", "demo")
-	if r.code != 1 || !strings.Contains(r.stderr, "no files to publish") {
+	if r.code != 1 || !strings.Contains(r.stderr, "nothing to publish") {
 		t.Errorf("%+v", r)
 	}
 }
@@ -538,7 +576,7 @@ func TestRunPublishUpdate(t *testing.T) {
 				},
 			})
 			r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "publish", dir, "--slug", "demo", "--update", "--label", "l")
-			if r.code != 0 || r.stdout != "https://demo.art.test\n" {
+			if r.code != 0 || !strings.HasPrefix(r.stdout, "demo v") || !strings.HasSuffix(r.stdout, " → https://demo.art.test\n") {
 				t.Fatalf("%+v", r)
 			}
 			if diff := cmp.Diff(tt.wantSeen, f.seen); diff != "" {
@@ -576,7 +614,7 @@ func TestRunUpdate(t *testing.T) {
 	base := []string{"--url", srv.URL, "--token", "t"}
 	r := runCLI(t, nil, append(base, "update", "demo", dir, "--expected", "2", "--keep-stale", "--name", "",
 		"--meta", "k=v", "--delete", "a.html", "--delete", "b/c.html")...)
-	if r.code != 0 || r.stdout != "https://demo.art.test\n" {
+	if r.code != 0 || r.stdout != "demo v3 → https://demo.art.test\n" || r.stderr != "1 file, 2 B; removed: a.html, b/c.html\n" {
 		t.Fatalf("%+v", r)
 	}
 	wantManifest := map[string]any{"name": "", "expected_version": 2.0, "keep_stale": true,
@@ -622,7 +660,7 @@ func TestRunSimpleCommands(t *testing.T) {
 		"DELETE /v1/artifacts/demo/stale": record(200, demo),
 		"PATCH /v1/artifacts/demo":        record(200, api.PublishResult{URL: demo.URL, Version: 2, Artifact: demo}),
 		"PATCH /v1/artifacts/bin":         record(200, api.PublishResult{URL: "https://bin.art.test", Version: 2, Artifact: demo}),
-		"POST /v1/artifacts/demo/publish": record(200, api.PublishResult{URL: demo.URL, Version: 1, Artifact: demo}),
+		"POST /v1/artifacts/demo/publish": record(200, api.PublishResult{URL: demo.URL, Version: 1, Artifact: api.Artifact{PublishedVersion: 1, LatestVersion: 1}}),
 		"GET /v1/me":                      record(200, api.Me{Handle: "peter", Scopes: []string{"read", "write"}, Source: "api_key", QuotaBytes: 100 << 20, UsedBytes: 1536}),
 		"GET /v1/me/keys":                 record(200, []api.APIKey{{Prefix: "abc123", Label: "laptop", Scopes: []string{"read", "write"}, CreatedAt: t0, LastUsedAt: &lastUsed}}),
 		"GET /v1/artifacts/demo/files/css/site.css": func(w http.ResponseWriter, r *http.Request) {
@@ -637,7 +675,7 @@ func TestRunSimpleCommands(t *testing.T) {
 		wantBody string
 	}{
 		{[]string{"rm", "demo"}, "deleted demo\n", ""},
-		{[]string{"rm", "demo", "--hard"}, "purged demo\n", "?hard=true"},
+		{[]string{"rm", "demo", "--hard", "--yes"}, "purged demo\n", "?hard=true"},
 		{[]string{"stale", "demo", "--grace", "336h"}, "demo is stale since 2026-10-01T14:00:00+02:00 and expires at 2026-10-15T14:00:00+02:00\n", `{"grace":"336h"}`},
 		{[]string{"unstale", "demo"}, "demo is no longer stale\n", ""},
 		{[]string{"visibility", "demo", "unpublished"}, "demo is now unpublished\n", `{"visibility":"unpublished"}`},
@@ -899,13 +937,17 @@ func TestErrorMessageTerminalSafe(t *testing.T) {
 			t.Fatalf("%v: %+v", args, r)
 		}
 		want := "kazari: anchor_mismatch\uFFFD[2K: line 1 is now 1:e9af|<h1>x\uFFFD]52;c;QQ==\uFFFD\uFFFD[1A\uFFFD\uFFFDy\uFFFDz</h1>\nread the file again\n"
+		if args[0] == "--json" {
+			want = `{"error":{"code":"anchor_mismatch\u001b[2K","message":"line 1 is now 1:e9af|<h1>x\u001b]52;c;QQ==\u0007\u001b[1A\r` +
+				"\uFFFDy\uFFFDz</h1>\\nread the file again\"}}\n"
+		}
 		if r.stderr != want {
 			t.Errorf("%v: stderr\n got %q\nwant %q", args, r.stderr, want)
 		}
 	}
 }
 
-// A body that is not the API's error shape is printed as the message too.
+// A short body that is not the API's error shape is quoted in the message.
 func TestErrorBodyTerminalSafe(t *testing.T) {
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
 		"GET /v1/artifacts/demo": func(w http.ResponseWriter, r *http.Request) {
@@ -914,7 +956,7 @@ func TestErrorBodyTerminalSafe(t *testing.T) {
 		},
 	})
 	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "get", "demo")
-	if want := "kazari: http_502: bad\uFFFD[2J gateway\uFFFD\n"; r.code != exitError || r.stderr != want {
+	if want := "kazari: http_502: HTTP 502 Bad Gateway from " + srv.URL + ": bad\uFFFD[2J gateway\uFFFD\n"; r.code != exitError || r.stderr != want {
 		t.Errorf("code %d, stderr\n got %q\nwant %q", r.code, r.stderr, want)
 	}
 }
@@ -964,7 +1006,7 @@ func TestRunEdit(t *testing.T) {
 	base := []string{"--url", srv.URL, "--token", "t"}
 
 	r := runCLI(t, nil, append(base, "edit", "demo", "index.html", "--old", "Q3", "--new", "Q4", "--all", "--expected", "3", "--label", "q4")...)
-	want := "https://demo.art.test\nedit 1: lines 3-4 (indentation)\nedit 2: removed at line 9 (exact, 2 places)\n"
+	want := "demo v4 → https://demo.art.test\nedit 1: lines 3-4 (indentation)\nedit 2: removed at line 9 (exact, 2 places)\n"
 	if r.code != 0 || r.stdout != want {
 		t.Fatalf("edit = %+v", r)
 	}

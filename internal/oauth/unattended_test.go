@@ -256,7 +256,7 @@ func TestConsentWithKeyAfterSignIn(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := auth.Principal{Handle: "alice", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceOAuth,
+		want := auth.Principal{Handle: "alice", Role: "member", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceOAuth,
 			KeyID: p.KeyID, ClientID: p.ClientID, Slugs: []string{"weekly-*"}, ExpiresAt: k.ExpiresAt}
 		if diff := cmp.Diff(want, p); diff != "" {
 			t.Errorf("Principal (-want +got):\n%s", diff)

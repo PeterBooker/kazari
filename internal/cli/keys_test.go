@@ -149,7 +149,7 @@ func TestRunAdminKeysAndGrants(t *testing.T) {
 	if r = run("grants", "revoke", "seventeen"); r.code != exitUsage {
 		t.Errorf("grants revoke with a word: %+v", r)
 	}
-	if r = run("grants", "revoke", "99"); r.code != exitError {
+	if r = run("grants", "revoke", "99"); r.code != exitNotFound {
 		t.Errorf("grants revoke of an unknown grant: %+v", r)
 	}
 }
