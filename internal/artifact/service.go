@@ -335,10 +335,14 @@ func validateTexts(name, description, label string) error {
 }
 
 func versionDetails(v *Version) map[string]string {
-	return map[string]string{
+	d := map[string]string{
 		"version": strconv.Itoa(v.Number),
 		"size":    strconv.FormatInt(v.SizeBytes, 10),
 	}
+	if v.Staged {
+		d["staged"] = "true"
+	}
+	return d
 }
 
 // quotaLeft is nil when the owner has no quota.
@@ -388,6 +392,9 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	}
 	if err := ValidateLabel(req.Label); err != nil {
 		return nil, nil, err
+	}
+	if req.Stage && len(req.Files) == 0 {
+		return nil, nil, Errorf(ErrInvalidArgument, "stage adds a version without publishing it, so it needs files")
 	}
 	involved, err := s.involved(ctx, actor, req.Slug)
 	if err != nil {
@@ -447,7 +454,7 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	}
-	baseNumber, err := baseVersion(a, req.BaseVersion)
+	baseNumber, err := baseVersion(a, req.BaseVersion, req.Stage)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -474,7 +481,7 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if err != nil {
 		return nil, nil, err
 	}
-	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Edited: edited}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Staged: req.Stage, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
 		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
@@ -491,7 +498,7 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			if err := apply(a); err != nil {
 				return err
 			}
-			if _, err := baseVersion(a, req.BaseVersion); err != nil {
+			if _, err := baseVersion(a, req.BaseVersion, req.Stage); err != nil {
 				return err
 			}
 			if !req.KeepStale {
@@ -631,19 +638,22 @@ func truncate(s string, n int) string {
 }
 
 // baseVersion is the version a change builds on. Without one named, it is
-// the latest, unless an earlier version is published: the change would
-// then quietly undo that rollback.
-func baseVersion(a *Artifact, requested int) (int, error) {
+// the latest, unless an earlier version is published and the change would
+// be: it would then quietly publish what the latest holds, a staged version
+// or one rolled back from. A staged change publishes nothing, so it builds
+// on the latest.
+func baseVersion(a *Artifact, requested int, stage bool) (int, error) {
 	if requested < 0 || requested > a.LatestVersion {
 		return 0, Errorf(ErrVersionNotFound, "%s has no version %d; its latest is %d", a.Slug, requested, a.LatestVersion)
 	}
 	if requested > 0 {
 		return requested, nil
 	}
-	if a.PublishedVersion != 0 && a.PublishedVersion != a.LatestVersion {
+	if !stage && a.PublishedVersion != 0 && a.PublishedVersion != a.LatestVersion {
 		return 0, Errorf(ErrPublishedNotLatest,
-			"version %d of %s is published but the latest is %d, so building on the latest would undo that rollback; "+
-				"set base_version to %d to change the published version, or to %d to build on the latest",
+			"version %d of %s is published but the latest is %d, staged or rolled back from, so building on the latest "+
+				"would publish it; set base_version to %d to change the published version, to %d to build on the latest "+
+				"and publish both, or stage to add to the latest without publishing",
 			a.PublishedVersion, a.Slug, a.LatestVersion, a.PublishedVersion, a.LatestVersion)
 	}
 	return a.LatestVersion, nil

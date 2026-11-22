@@ -159,18 +159,18 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1 ([Files named by URL](#files-named-by-url)). |
 | `import_page` | Copy a web page into a new artifact: its stylesheets, fonts and images fetched, its scripts removed ([Importing a page](#import_page)). |
 | `update_artifact` | Add a version from whole files, edits to several files and deletions, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. Changing the visibility needs `artifacts:share`. |
-| `edit_file` | Change one text file with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
+| `edit_file` | Change one text file with text or anchor edits, and publish the result as a new version, or stage it with `stage: true` ([Editing files](#editing-files)). |
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. With `archive_sha256` and `archive_bytes`, also an `archive_url` for [an archive from a shell](#uploading-an-archive-from-a-shell). |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
 | `discard_upload` | Remove an upload you no longer need. |
 | `get_artifact` | The artifact record and its versions; `include_files` adds file lists, newest version first, up to 5,000 files a result. `next_files_before`, when present, goes back as `files_before` for the next page. |
 | `read_file` | One file of a version, as text, a base64 blob or a download URL; `start_line` and `end_line` read only those lines of a text file. |
 | `list_artifacts` | One page of visible artifacts, filtered by `mine`, `metadata`, `stale` and `deleted`. |
-| `publish_version` | Serve an existing version (rollback or roll-forward). |
+| `publish_version` | Serve an existing version: a rollback, a roll-forward, or a [staged version](#staging-a-change) going live. |
 | `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. Needs `artifacts:delete` unless you own the artifact. |
 | `unmark_stale` | Cancel a pending expiry. |
 | `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. Needs `artifacts:share`. |
-| `create_share_link` | Create a URL that opens a `members` artifact without signing in, and with `version` one that opens that version. Needs `artifacts:share`. |
+| `create_share_link` | Create a URL that opens a `members` artifact without signing in, and with `version` one that opens that version, unless it is staged. Needs `artifacts:share`. |
 | `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
 | `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. Needs `artifacts:share`. |
 | `delete_artifact` | Soft-delete, which `update_artifact` with `restore: true` undoes, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
@@ -206,7 +206,7 @@ The result's `edited` field lists each file's edit outcomes, as in [edit results
 
 The fields are the name, description, metadata and visibility. In metadata, `null` deletes a key. `visibility` also takes `unpublished`, as `set_visibility` does.
 
-`expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`. `base_version` names the version the new one builds on, the latest by default ([Versions and conflicts](#versions-and-conflicts)).
+`expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`. `base_version` names the version the new one builds on, the latest by default ([Versions and conflicts](#versions-and-conflicts)). `stage: true` adds the version without publishing it ([Staging a change](#staging-a-change)).
 
 To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari deploy` does for a directory.
 
@@ -308,6 +308,7 @@ The tools that publish or change an artifact (`create_artifact`, `import_page`, 
 | ----- | ------- |
 | `url`, `version`, `version_url` | The address, the version the call published or serves, and that version's pinned address. |
 | `unchanged` | Present when the files matched the latest version, so no version was added. |
+| `staged` | Present when the version is [staged](#staging-a-change): `url` still serves `published_version`. |
 | `warnings` | Present when the version will not render as published: no root `index.html`, a file a page links to that is missing, or an origin the Content-Security-Policy blocks. |
 | `slug`, `name`, `visibility` | The artifact. |
 | `published_version`, `latest_version` | What is served, and what the next edit's `expected_version` should be. |
@@ -403,7 +404,24 @@ version_conflict: latest version is 7, expected 6; every edit still applies to v
 
 Two `edit_file` calls in parallel on one artifact always conflict, since each makes a version. Send every edit to one file in one call, and a change across files as one `update_artifact` call.
 
-`base_version` names the version a change builds on, the latest by default. While an earlier version is published, after `publish_version` rolled back, a change without `base_version` fails with `published_not_latest`, so it never quietly undoes the rollback. Set it to the published version to fix the page people see, or to the latest to carry on from it. `update_artifact` takes it too.
+`base_version` names the version a change builds on, the latest by default. While an earlier version is published, after `publish_version` rolled back or while a version is staged, a change without `base_version` fails with `published_not_latest`, so it never quietly publishes the latest version's content. Set it to the published version to fix the page people see, or to the latest to carry on from it. `update_artifact` takes it too.
+
+### Staging a change
+
+To show a change to the user before anyone else sees it, set `stage: true` on `edit_file` or `update_artifact`. The version is added without being published:
+
+```json
+{ "slug": "q3-report", "path": "index.html", "stage": true,
+  "edits": [{ "old_text": "Q3 results", "new_text": "Q3 results (draft)" }] }
+```
+
+The result has `staged: true`, and its first line says where the version opens:
+
+```text
+Staged version 5 at https://q3-report--v5.art.example.com/, which only people signed in to this instance can open; https://q3-report.art.example.com/ still serves version 4 until publish_version 5
+```
+
+A staged change builds on the latest version, so further staged changes carry on from the first without `base_version`. `publish_version` with the staged version's number makes it live. Share links do not open a staged version, and `create_share_link` refuses one with `invalid_argument` ([staging a version](api.md#staging-a-version)).
 
 ### Edit results
 
@@ -528,7 +546,7 @@ By default the policy has `frame-ancestors 'none'`, so the card shows links only
 > [!WARNING]
 > Allowing framing lets those sites show any page of the instance inside their own. List only hosts you trust.
 
-Per-artifact `kazari.csp` overrides do not change the decision. A `members` page is never embedded, whatever the policy, because it needs a sign-in, which cannot run inside a frame.
+Per-artifact `kazari.csp` overrides do not change the decision. A `members` page or a staged version is never embedded, whatever the policy, because it needs a sign-in, which cannot run inside a frame.
 
 ## Errors
 
@@ -546,7 +564,7 @@ The codes are:
 | `invalid_slug`, `invalid_path`, `invalid_metadata`, `invalid_argument` | Input rejected; the message says why. An invalid slug suggests one that would do, such as `q3-report` for `Q3_Report`. `kazari.csp` is `invalid_metadata` on an instance with `serve.allow_csp_override: false`. |
 | `slug_taken` | Another artifact, or a recent tombstone, holds the slug. |
 | `version_conflict` | `expected_version` is not the latest version; for `edit_file`, the message says whether the edits still apply to it. |
-| `published_not_latest` | An earlier version is published and the change named no `base_version`. |
+| `published_not_latest` | The latest version is staged, or an earlier one was published again, and the change named no `base_version` and did not set `stage`. |
 | `edit_not_found` | An `old_text` matched nowhere, even ignoring whitespace; the message names the closest lines. |
 | `edit_ambiguous` | An `old_text` matched more than once without `replace_all`; the message lists the lines. |
 | `anchor_mismatch` | An anchor's line changed since the file was read, or is past its end. |

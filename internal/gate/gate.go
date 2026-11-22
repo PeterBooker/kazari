@@ -146,12 +146,14 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 
 // Allow reports whether r may be served p on host, the artifact host's
 // label (<slug> or <slug>--v<N>), and who was let in. A public or unlisted
-// artifact is always allowed. Otherwise the visitor needs a view cookie that opens this host;
+// artifact is always allowed, unless the version is staged. Otherwise the
+// visitor needs a view cookie that opens this host, and for a staged version
+// one from a sign-in;
 // without one, Allow answers the request and returns false: a page
 // navigation is sent to sign in, anything else (a script, an image, a
 // fetch, a frame, a client such as curl) gets 401.
 func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) (views.Access, bool) {
-	if !p.Visibility.Gated() {
+	if !p.Gated() {
 		g.decided(r.Context(), resultPublic)
 		return views.Access{Via: views.ViaPublic}, true
 	}
@@ -177,6 +179,10 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	hdr.Set("X-Robots-Tag", "noindex")
 	body := "This page is only open to members of this Kazari instance. Open it in a browser to sign in, " +
 		"or ask its owner for a share link.\n"
+	if p.Staged {
+		body = "This version is not published yet, and only members of this Kazari instance can open it. " +
+			"Open it in a browser to sign in.\n"
+	}
 	hdr.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusUnauthorized)
 	if r.Method != http.MethodHead {
@@ -209,6 +215,11 @@ func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (vi
 	}
 	a, notFound := views.Access{Via: views.ViaMember}, oauth.ErrNotFound
 	if artifact.IsLinkToken(ck.Value) {
+		// A share link is for the people the page is published to, and a
+		// staged version is not published yet.
+		if p.Staged {
+			return views.Access{}, nil
+		}
 		a.Via, notFound = views.ViaShareLink, artifact.ErrLinkNotFound
 		_, err = g.links.CheckShareLink(r.Context(), p.Slug, ck.Value)
 	} else {
@@ -326,6 +337,12 @@ func (g *Gate) callback(w http.ResponseWriter, r *http.Request, host string) {
 // link expires, and the browser goes on to the page without the token in
 // its address bar or history.
 func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Published) {
+	if p.Staged {
+		g.page(w, r, http.StatusForbidden, page{Title: "Not published yet",
+			Message: "A share link opens the published page, and this version of it is not published yet.",
+			Link:    "/", LinkText: "Sign in to open it"})
+		return
+	}
 	token := r.URL.Query().Get("token")
 	l, err := g.links.OpenShareLink(r.Context(), p.Slug, token)
 	if errors.Is(err, artifact.ErrLinkNotFound) {

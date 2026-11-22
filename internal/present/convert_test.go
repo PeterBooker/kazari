@@ -86,9 +86,9 @@ func TestConversions(t *testing.T) {
 		CreatedAt: day(1), UpdatedAt: day(2),
 	}
 
-	v := artifact.Version{ID: 9, Number: 3, Label: "fix", CreatedBy: "ben", CreatedAt: day(2), SizeBytes: 12,
+	v := artifact.Version{ID: 9, Number: 3, Label: "fix", CreatedBy: "ben", CreatedAt: day(2), SizeBytes: 12, Staged: true,
 		Files: []artifact.File{{Path: "index.html", Hash: "ab12", Size: 12, ContentType: "text/html"}}}
-	wantVersion := api.Version{Number: 3, Label: "fix", CreatedBy: "ben", CreatedAt: day(2), SizeBytes: 12,
+	wantVersion := api.Version{Number: 3, Label: "fix", CreatedBy: "ben", CreatedAt: day(2), SizeBytes: 12, Staged: true,
 		URL:   "https://demo--v3.art.test/",
 		Files: []api.File{{Path: "index.html", Hash: "ab12", Size: 12, ContentType: "text/html"}}}
 
@@ -149,19 +149,19 @@ func TestConversions(t *testing.T) {
 			name:  "Result",
 			got:   links.Result(a, 3),
 			want:  api.PublishResult{URL: "https://demo.art.test/", Version: 3, VersionURL: "https://demo--v3.art.test/", Artifact: wantArtifact},
-			unset: []string{"PublishResult.Import", "PublishResult.Unchanged", "PublishResult.Warnings"},
+			unset: []string{"PublishResult.Import", "PublishResult.Staged", "PublishResult.Unchanged", "PublishResult.Warnings"},
 		},
 		{
 			name:  "Result of the published version",
 			got:   links.Result(a, 0),
 			want:  api.PublishResult{URL: "https://demo.art.test/", Version: 2, VersionURL: "https://demo--v2.art.test/", Artifact: wantArtifact},
-			unset: []string{"PublishResult.Import", "PublishResult.Unchanged", "PublishResult.Warnings"},
+			unset: []string{"PublishResult.Import", "PublishResult.Staged", "PublishResult.Unchanged", "PublishResult.Warnings"},
 		},
 		{
 			name: "Imported",
-			got:  links.Imported(a, &artifact.Version{Number: 3, Unchanged: true, Warnings: []string{"no index.html"}}, report),
+			got:  links.Imported(a, &artifact.Version{Number: 3, Unchanged: true, Staged: true, Warnings: []string{"no index.html"}}, report),
 			want: api.PublishResult{URL: "https://demo.art.test/", Version: 3, VersionURL: "https://demo--v3.art.test/", Unchanged: true,
-				Warnings: []string{"no index.html"}, Artifact: wantArtifact, Import: wantReport},
+				Staged: true, Warnings: []string{"no index.html"}, Artifact: wantArtifact, Import: wantReport},
 		},
 		{name: "ShareLink", got: present.ShareLink(sl, day(8)), want: wantShare, unset: []string{"ShareLink.Active"}},
 		{
@@ -178,10 +178,10 @@ func TestConversions(t *testing.T) {
 		},
 		{
 			name: "Edit",
-			got: links.Edit(a, &artifact.Version{Number: 3, Warnings: []string{"w"}}, "index.html", []artifact.EditOutcome{
+			got: links.Edit(a, &artifact.Version{Number: 3, Staged: true, Warnings: []string{"w"}}, "index.html", []artifact.EditOutcome{
 				{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>", ExcerptOf: 2}}),
-			want: api.EditResult{URL: "https://demo.art.test/", Version: 3, VersionURL: "https://demo--v3.art.test/", Path: "index.html",
-				Warnings: []string{"w"}, Artifact: wantArtifact,
+			want: api.EditResult{URL: "https://demo.art.test/", Version: 3, VersionURL: "https://demo--v3.art.test/", Staged: true,
+				Path: "index.html", Warnings: []string{"w"}, Artifact: wantArtifact,
 				Edits: []api.EditOutcome{{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>", ExcerptOf: 2}}},
 		},
 		{name: "Stale", got: links.Stale(a), want: api.StaleResult{StaleAt: day(3), ExpiresAt: day(4), Artifact: wantArtifact}},

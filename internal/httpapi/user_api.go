@@ -541,7 +541,7 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 	}
 	actor := present.Actor(p)
 	visibilityOnly := req.Visibility != nil && len(files) == 0 && req.Name == nil && req.Description == nil &&
-		len(req.Metadata) == 0 && !req.Restore && expected == 0
+		len(req.Metadata) == 0 && !req.Restore && !req.Stage && expected == 0
 	if !visibilityOnly && !p.HasScope(auth.ScopeWrite) {
 		return artifact.Errorf(artifact.ErrForbidden, "scope %q required", auth.ScopeWrite)
 	}
@@ -561,6 +561,7 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 			BaseVersion:     req.BaseVersion,
 			KeepStale:       req.KeepStale,
 			Restore:         req.Restore,
+			Stage:           req.Stage,
 			Files:           files,
 		})
 		if err != nil {
@@ -626,6 +627,7 @@ func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 		ExpectedVersion: expected,
 		BaseVersion:     req.BaseVersion,
 		KeepStale:       req.KeepStale,
+		Stage:           req.Stage,
 	})
 	if err != nil {
 		return err

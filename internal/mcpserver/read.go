@@ -172,8 +172,8 @@ func readHeader(path string, version, published, latest int, what string) string
 	case version != latest:
 		state = fmt.Sprintf("latest %d; edit_file and update_artifact need base_version: %d to change this text", latest, version)
 	case published != latest:
-		state = fmt.Sprintf("the latest; version %d is published, so edit_file and update_artifact need base_version: %d "+
-			"to change this text", published, version)
+		state = fmt.Sprintf("the latest; version %d is published, so edit_file and update_artifact need base_version: %d, "+
+			"or stage: true, to change this text", published, version)
 	default:
 		state = "the latest"
 	}

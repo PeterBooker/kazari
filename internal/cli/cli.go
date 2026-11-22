@@ -83,8 +83,8 @@ type CLI struct {
 	Unstale    UnstaleCmd    `cmd:"" help:"Clear the stale mark."`
 	Visibility VisibilityCmd `cmd:"" help:"Set public, unlisted, members or unpublished."`
 	Share      ShareCmd      `cmd:"" help:"Share links that open a members artifact."`
-	Rollback   RollbackCmd   `cmd:"" help:"Publish an earlier version; until a later one is published, update, deploy and edit need --base to say which version they build on."`
-	Edit       EditCmd       `cmd:"" help:"Change text in a file and publish it as a new version."`
+	Rollback   RollbackCmd   `cmd:"" help:"Publish an earlier version, or a staged one; until the latest is published, update, deploy and edit need --base or --stage to say which version they build on."`
+	Edit       EditCmd       `cmd:"" help:"Change text in a file and publish it as a new version, or stage it with --stage."`
 	Files      FilesCmd      `cmd:"" help:"List and read an artifact's files."`
 	Skill      SkillCmd      `cmd:"" help:"Print the instance's Agent Skill (SKILL.md)."`
 	Me         MeCmd         `cmd:"" help:"Show the caller's identity."`

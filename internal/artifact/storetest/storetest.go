@@ -35,6 +35,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"AddVersion", testAddVersion},
 		{"AddVersionConflict", testAddVersionConflict},
 		{"AddVersionConcurrent", testAddVersionConcurrent},
+		{"StagedVersion", testStagedVersion},
 		{"Update", testUpdate},
 		{"UpdateErrors", testUpdateErrors},
 		{"UpdateCurrentRow", testUpdateCurrentRow},
@@ -332,6 +333,65 @@ func testAddVersion(t *testing.T, h *harness) {
 
 	err = h.addVersion(newArtifact("missing", "alice", at(0)), newVersion("alice", at(0), file("x", "x")), 0)
 	wantErr(t, "AddVersion missing", err, artifact.ErrNotFound)
+}
+
+func testStagedVersion(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.create(t, newArtifact("demo", "alice", at(0)))
+	cur := h.get(t, "demo")
+	cur.UpdatedAt = at(time.Hour)
+	v := newVersion("alice", cur.UpdatedAt, file("index.html", "staged"))
+	v.Staged = true
+	if err := h.addVersion(cur, v, 1); err != nil {
+		t.Fatalf("AddVersion staged: %v", err)
+	}
+	if got := h.get(t, "demo"); got.PublishedVersion != 1 || got.LatestVersion != 2 {
+		t.Errorf("after a staged AddVersion: published %d, latest %d, want 1 and 2", got.PublishedVersion, got.LatestVersion)
+	}
+
+	staged := func(what string) []bool {
+		t.Helper()
+		vs, err := h.store.ListVersions(h.ctx, "demo")
+		if err != nil {
+			t.Fatalf("%s: ListVersions: %v", what, err)
+		}
+		out := make([]bool, 0, len(vs))
+		for _, v := range vs {
+			got, err := h.store.GetVersion(h.ctx, "demo", v.Number)
+			if err != nil {
+				t.Fatalf("%s: GetVersion(%d): %v", what, v.Number, err)
+			}
+			p, err := h.store.ResolveVersion(h.ctx, "demo", v.Number)
+			if err != nil {
+				t.Fatalf("%s: ResolveVersion(%d): %v", what, v.Number, err)
+			}
+			if got.Staged != v.Staged || p.Staged != v.Staged {
+				t.Errorf("%s: version %d staged: ListVersions %t, GetVersion %t, ResolveVersion %t",
+					what, v.Number, v.Staged, got.Staged, p.Staged)
+			}
+			out = append(out, v.Staged)
+		}
+		return out
+	}
+	if got := staged("staged"); !slices.Equal(got, []bool{true, false}) {
+		t.Errorf("staged: versions 2 and 1 staged = %v, want [true false]", got)
+	}
+	if p, err := h.store.ResolvePublished(h.ctx, "demo"); err != nil || p.VersionNumber != 1 || p.Staged {
+		t.Errorf("staged: ResolvePublished = %+v, %v; want version 1, not staged", p, err)
+	}
+
+	cur = h.get(t, "demo")
+	cur.PublishedVersion = 2
+	h.update(t, cur, "alice")
+	if got := staged("published"); !slices.Equal(got, []bool{false, false}) {
+		t.Errorf("published: versions 2 and 1 staged = %v, want [false false]", got)
+	}
+
+	cur.PublishedVersion = 1
+	h.update(t, cur, "alice")
+	if got := staged("rolled back"); !slices.Equal(got, []bool{false, false}) {
+		t.Errorf("rolled back: versions 2 and 1 staged = %v, want [false false]", got)
+	}
 }
 
 func testAddVersionConflict(t *testing.T, h *harness) {

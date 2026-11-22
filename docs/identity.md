@@ -402,6 +402,8 @@ Rotating the key ends the grant when the old key does, so connect again with the
 
 An artifact with visibility `members` opens only for people who can sign in to this instance, and for holders of a [share link](api.md#share-links). The rule is the same on the latest host and on every version host.
 
+A [staged version](api.md#staging-a-version) goes through the same sign-in on its version host, whatever the artifact's visibility, and a share link does not open it. It opens for everyone who can open the page once it is published.
+
 "Members" means exactly the people the [provisioning policy](#provisioning-policy) admits, so there is no second list to keep. With `auto_provision` on, a first sign-in to view a page creates the account, as connecting an agent would.
 
 A browser that opens a members page without a view session goes through these steps:

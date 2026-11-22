@@ -89,6 +89,7 @@ type EditRequest struct {
 	ExpectedVersion int  // compared with LatestVersion; 0 = no check
 	BaseVersion     int  // the version edited, as in UpdateRequest
 	KeepStale       bool // a new version normally clears stale_at/expires_at
+	Stage           bool // as in UpdateRequest
 }
 
 const editAttempts = 3
@@ -139,7 +140,7 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, nil, s.editConflict(ctx, a, req, clean)
 	}
-	base, err := baseVersion(a, req.BaseVersion)
+	base, err := baseVersion(a, req.BaseVersion, req.Stage)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -164,6 +165,7 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 		ExpectedVersion: a.LatestVersion,
 		BaseVersion:     base, // the version the edits were applied to
 		KeepStale:       req.KeepStale,
+		Stage:           req.Stage,
 		Files:           []FileInput{{Path: clean, Content: strings.NewReader(edited), ContentType: f.ContentType}},
 	})
 	if err != nil {

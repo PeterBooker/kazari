@@ -109,7 +109,7 @@
     const description = (result._meta && result._meta.kazari && result._meta.kazari.description) || "";
     const pinned = config.versionURL.replace("{slug}", sc.slug).replace("{version}", String(sc.version));
     $("name").textContent = sc.name || sc.slug;
-    $("version").textContent = "version " + sc.version;
+    $("version").textContent = (sc.staged ? "staged version " : "version ") + sc.version;
     $("description").textContent = description;
     $("description").hidden = !description;
     $("url").textContent = sc.url;
@@ -118,8 +118,8 @@
     $("open-version").onclick = () => openLink(pinned);
     const frame = $("frame");
     frame.replaceChildren();
-    // A members page needs a sign-in, which cannot happen inside a frame.
-    const embed = config.embed && sc.visibility !== "members";
+    // A members page and a staged version need a sign-in, which cannot happen inside a frame.
+    const embed = config.embed && sc.visibility !== "members" && !sc.staged;
     frame.hidden = !embed;
     if (embed) {
       const f = document.createElement("iframe");

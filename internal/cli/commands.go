@@ -93,8 +93,11 @@ func (c *GetCmd) Run(r *runner) error {
 	fmt.Fprintln(tw, "VERSION\tLABEL\tCREATED BY\tCREATED\tSIZE\tURL")
 	for _, v := range d.Versions {
 		num := strconv.Itoa(v.Number)
-		if v.Number == d.Artifact.PublishedVersion {
+		switch {
+		case v.Number == d.Artifact.PublishedVersion:
 			num += " *"
+		case v.Staged:
+			num += " staged"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", num, dash(oneLine(v.Label)), dash(v.CreatedBy),
 			fmtTime(v.CreatedAt), humanSize(v.SizeBytes), v.URL)
@@ -558,6 +561,7 @@ type EditCmd struct {
 	Expected  int     `help:"Fail unless the latest version is N." placeholder:"N"`
 	Base      int     `help:"The version whose file to edit; needed when an earlier version is published." placeholder:"N"`
 	KeepStale bool    `name:"keep-stale" help:"Keep the stale mark."`
+	Stage     bool    `help:"Add the version without publishing it, for review at its version URL; kazari rollback SLUG N publishes it."`
 }
 
 func (c *EditCmd) Run(r *runner) error {
@@ -585,6 +589,7 @@ func (c *EditCmd) Run(r *runner) error {
 	}
 	res, err := cl.Edit(r.ctx, c.Slug, api.EditRequest{
 		Path: c.Path, Edits: edits, Label: c.Label, ExpectedVersion: c.Expected, BaseVersion: c.Base, KeepStale: c.KeepStale,
+		Stage: c.Stage,
 	})
 	if err != nil {
 		return r.baseHint(err, cl, c.Slug)
@@ -595,11 +600,8 @@ func (c *EditCmd) Run(r *runner) error {
 	if r.g.JSON {
 		return r.printJSON(res)
 	}
-	line := fmt.Sprintf("%s v%d → %s", c.Slug, res.Version, res.URL)
-	if res.VersionURL != "" {
-		line += " (pinned: " + res.VersionURL + ")"
-	}
-	fmt.Fprintln(termSafe{r.stdout}, line)
+	fmt.Fprintln(termSafe{r.stdout}, versionLine(c.Slug, res.Version, res.URL, res.VersionURL, res.Staged,
+		res.Artifact.PublishedVersion))
 	for i, e := range res.Edits {
 		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
 		if e.EndLine < e.StartLine {

@@ -222,7 +222,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if p.Visibility.Gated() {
+	if p.Gated() {
 		// A visitor without access ends on the sign-in page, whose policy
 		// severs a cross-site opener's window handle, so every answer on
 		// this host needs the same policy or the handle tells that opener
@@ -244,7 +244,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		host += artifact.VersionSeparator + strconv.Itoa(version)
 	}
 	if h.opts.Gate == nil {
-		if reserved || p.Visibility.Gated() {
+		if reserved || p.Gated() {
 			h.writeError(w, r, http.StatusNotFound)
 			return
 		}
@@ -255,7 +255,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Ahead of Allow, whose 401 a browser would keep the worker through.
 		// Every path gets this answer, so it does not show which files exist.
-		if isWorkerScript(r) && p.Visibility.Gated() {
+		if isWorkerScript(r) && p.Gated() {
 			admitted, err := h.opts.Gate.Admits(r, p, host)
 			if err != nil {
 				h.internalError(w, r, fmt.Errorf("check access to %s: %w", host, err))
@@ -519,7 +519,7 @@ func (h *handler) setCommonHeaders(w http.ResponseWriter, p *artifact.Published,
 	if csp := h.csp(p); csp != "" {
 		hdr.Set("Content-Security-Policy", csp)
 	}
-	gated := p != nil && p.Visibility.Gated()
+	gated := p != nil && p.Gated()
 	switch {
 	case gated:
 		hdr.Set("Cache-Control", cacheGated)
