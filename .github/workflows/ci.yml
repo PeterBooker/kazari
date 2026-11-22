@@ -4,19 +4,31 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 env:
   CGO_ENABLED: "0"
+  # The maintenance skill updates these.
+  STATICCHECK_VERSION: "v0.8.2"
+  GOVULNCHECK_VERSION: "v1.10.0"
+  GORELEASER_VERSION: "v2.20.3"
 
 jobs:
   lint:
     name: Format, vet, staticcheck, govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -31,45 +43,60 @@ jobs:
           fi
       - name: go mod tidy -diff
         run: go mod tidy -diff
+      - name: go fix -diff
+        run: go fix -diff ./...
       - name: go vet
         run: go vet ./...
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        run: go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" ./...
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./...
       - name: shellcheck
-        run: shellcheck site/static/install.sh deploy/packaging/*.sh
+        run: shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
       - name: goreleaser check
-        run: go run github.com/goreleaser/goreleaser/v2@latest check
-
-  install-script:
-    name: install.sh against the latest release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Install with the script
-        run: |
-          KAZARI_BINDIR="$HOME/bin" sh site/static/install.sh
-          "$HOME/bin/kazari" version
-          "$HOME/bin/kazari" --help | grep -q serve
+        run: go run "github.com/goreleaser/goreleaser/v2@$GORELEASER_VERSION" check
 
   test:
-    name: Test
+    name: Test with the race detector
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       CGO_ENABLED: "1" # the race detector needs cgo
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -race -count=1 ./...
+      - run: go test -race -count=1 -shuffle=on -timeout=5m ./...
+
+  shipped:
+    name: Test without cgo, benchmarks, smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Tests as shipped, without cgo
+        run: go test -count=1 -shuffle=on -timeout=5m ./...
+      - name: Benchmarks, one iteration each
+        run: go test -run='^$' -bench=. -benchtime=1x ./...
+      - name: Build
+        run: go build -trimpath -ldflags "-s -w" -o kazari ./cmd/kazari
+      - name: Smoke test
+        run: .github/scripts/smoke.sh ./kazari
 
   build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: Build and vet ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    timeout-minutes: 10
     strategy:
       matrix:
         include:
@@ -79,13 +106,27 @@ jobs:
             goarch: arm64
           - goos: darwin
             goarch: arm64
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/kazari
+      - run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/kazari
+      # Type-checks the test files for the target, which the build does not.
+      - run: go vet ./...
+
+  ok:
+    name: CI passed
+    if: always()
+    needs: [lint, test, shipped, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

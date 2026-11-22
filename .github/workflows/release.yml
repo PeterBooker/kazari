@@ -4,22 +4,44 @@ on:
   push:
     tags: ["*"]
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/peterbooker/kazari
 
 jobs:
-  release:
+  tag:
+    name: Check the tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: '[[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]'
+
+  ci:
+    needs: tag
+    permissions:
+      contents: read
+    uses: $/.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # A cache could be written by a run that built other code.
+          cache: false
       - uses: docker/setup-qemu-action@v4.4.0
       - uses: docker/setup-buildx-action@v4.4.1
       - uses: docker/login-action@v4.7.0
@@ -31,7 +53,59 @@ jobs:
       - uses: anchore/sbom-action/download-syft@v0.24.3
       - uses: goreleaser/goreleaser-action@v7.3.0
         with:
-          version: "~> v2"
+          version: v2.20.3 # as GORELEASER_VERSION in ci.yml
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+
+  verify:
+    name: Verify the release
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
+      ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@v4.1.2
+      - name: Download the release
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release
+      - name: Verify the signature of the checksums
+        working-directory: release
+        run: |
+          cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+      - name: Verify every file against the checksums
+        working-directory: release
+        run: sha256sum --check --strict checksums.txt
+      - name: Verify the build provenance
+        working-directory: release
+        run: |
+          gh attestation verify "kazari_${GITHUB_REF_NAME}_linux_amd64.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --source-ref "$GITHUB_REF" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+      - name: Verify the signature of the image
+        run: |
+          cosign verify "$IMAGE:$GITHUB_REF_NAME" \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
+      - name: Start the image
+        run: .github/scripts/smoke-image.sh "$IMAGE:$GITHUB_REF_NAME"
+
+  verify-install:
+    name: Verify install.sh
+    needs: release
+    permissions:
+      contents: read
+    uses: $/.github/workflows/install-script.yml
+    with:
+      version: ${{ github.ref_name }}

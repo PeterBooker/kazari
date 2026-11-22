@@ -24,12 +24,14 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # the full history, for each page's last-modified date (enableGitInfo)
+          persist-credentials: false
       - name: Install Hugo
         run: |
           base=https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}
@@ -50,6 +52,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

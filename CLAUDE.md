@@ -13,14 +13,28 @@ CGO_ENABLED=0 go build -o kazari ./cmd/kazari
 # tests, always with the race detector
 go test -race ./...
 
-# what CI runs on every pull request
+# what CI runs on every pull request (.github/workflows/ci.yml, which pins the tools' versions in its env)
 test -z "$(gofmt -l .)"
-go vet ./...
+go mod tidy -diff
+go fix -diff ./...
+go vet ./...                    # also with GOOS/GOARCH set to linux/arm64 and darwin/arm64
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-go mod tidy -diff
-shellcheck site/static/install.sh deploy/packaging/*.sh
+shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check
+go test -race -count=1 -shuffle=on -timeout=5m ./...
+CGO_ENABLED=0 go test -count=1 -shuffle=on -timeout=5m ./...      # the configuration that ships
+CGO_ENABLED=0 go test -run='^$' -bench=. -benchtime=1x ./...      # every benchmark once
+.github/scripts/smoke.sh ./kazari                                 # the built binary: serve --local, publish, fetch
+
+# only when .github/ changed (workflows.yml)
+pipx run zizmor==1.32.0 .
+go run github.com/rhysd/actionlint/cmd/actionlint@latest
+gh actions-lock --verify
+
+# only when deploy/, go.mod, go.sum or .goreleaser.yaml changed (package.yml): the release dry run
+# below, and the image started with .github/scripts/smoke-image.sh
+docker build --file deploy/Dockerfile --tag kazari:dev . && .github/scripts/smoke-image.sh kazari:dev
 
 # local server: http://*.kazari.localhost:8080 in proxy mode, data in ./.data, no token. A fresh
 # ./.data prints a setup link on stderr that creates the first admin with a password; then the

@@ -116,7 +116,15 @@ cosign verify-blob checksums.txt \
 sha256sum --check --ignore-missing checksums.txt
 ```
 
-`sha256sum` prints the archive's name followed by `OK`. Unpack the archive and install the binary:
+`sha256sum` prints the archive's name followed by `OK`.
+
+Releases after 0.6.1 also record a build provenance attestation for each file, which names the workflow run that built it. To check the archive's with the [GitHub CLI](https://cli.github.com/), run:
+
+```sh
+gh attestation verify kazari_${VERSION}_linux_amd64.tar.gz --repo PeterBooker/kazari
+```
+
+Unpack the archive and install the binary:
 
 ```sh
 tar -xzf kazari_${VERSION}_linux_amd64.tar.gz
