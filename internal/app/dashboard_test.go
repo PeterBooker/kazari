@@ -77,6 +77,20 @@ func (b *browser) setPassword(link string, extra url.Values) response {
 	return b.send(http.MethodPost, page, form, origin(page))
 }
 
+// welcomed follows the answer to a link's form through the sign-in host,
+// which signs the browser in, back to the account page.
+func (b *browser) welcomed(done response) {
+	b.t.Helper()
+	loc := done.header.Get("Location")
+	if done.status != http.StatusSeeOther || !strings.HasPrefix(loc, "http://mcp.localhost/oauth/signin?") {
+		b.t.Fatalf("the link's form: status %d to %q: %s", done.status, loc, truncate(done.body))
+	}
+	callback := b.follow(b.get(loc), "the handoff at the sign-in host")
+	if r := b.get(callback); r.status != http.StatusFound || r.header.Get("Location") != "/account/" {
+		b.t.Fatalf("callback after the handoff: status %d to %q", r.status, r.header.Get("Location"))
+	}
+}
+
 // newAdmin invites an admin over the admin API and sets their password.
 func newAdmin(t *testing.T, addr, handle string) {
 	t.Helper()
@@ -125,12 +139,9 @@ func TestSetupToDashboard(t *testing.T) {
 		wantStatus(t, get(t, client(addr), link), http.StatusSeeOther, "a fetch of the link")
 	}
 	b := newBrowser(t, addr)
-	done := b.setPassword(link, url.Values{"handle": {"peter"}, "name": {"Peter"}, "email": {"peter@example.com"}})
-	if done.status != http.StatusSeeOther || done.header.Get("Location") != "/account/" {
-		t.Fatalf("setup: status %d to %q: %s", done.status, done.header.Get("Location"), truncate(done.body))
-	}
-	// Setting the password signs the first admin in on the apex alone, and
-	// the link is used up.
+	b.welcomed(b.setPassword(link, url.Values{"handle": {"peter"}, "name": {"Peter"}, "email": {"peter@example.com"}}))
+	// Setting the password signs the first admin in, through the sign-in
+	// host, and the link is used up.
 	welcome := b.get("http://localhost/account/")
 	wantStatus(t, welcome, http.StatusOK, "the account page after setup")
 	if !strings.Contains(welcome.body, "Welcome, <b>Peter</b>") || !strings.Contains(welcome.body, "http://mcp.localhost/") {
@@ -145,7 +156,8 @@ func TestSetupToDashboard(t *testing.T) {
 	if u.Host != "mcp.localhost" || u.Query().Get("host") != "@admin" {
 		t.Fatalf("sign-in URL = %s", signIn)
 	}
-	cb := b.signIn(signIn, "peter@example.com", testPassword)
+	// The browser's one sign-in opens the dashboard too, with no form.
+	cb := b.get(b.follow(b.get(signIn), "the sign-in host, signed in by the setup link"))
 	if cb.status != http.StatusFound || cb.header.Get("Location") != "/" {
 		t.Fatalf("callback: status %d to %q", cb.status, cb.header.Get("Location"))
 	}
@@ -194,7 +206,7 @@ func TestSetupToDashboard(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"POST /account/setup", "user.redeem_link", "POST /oauth/signin", "user.check_password",
+	for _, name := range []string{"POST /account/setup", "user.redeem_link", "GET /oauth/signin", "GET /account/callback",
 		"GET /session/callback", "oauth.redeem", "GET /{$}", "UserStore.UseLink"} {
 		if !traced[name] {
 			t.Errorf("no span %q", name)
@@ -353,10 +365,7 @@ func TestAccountOnApex(t *testing.T) {
 		t.Fatalf("invite link = %q", inv.Link.URL)
 	}
 	b := newBrowser(t, addr)
-	done := b.setPassword(inv.Link.URL, nil)
-	if done.status != http.StatusSeeOther || done.header.Get("Location") != "/account/" {
-		t.Fatalf("invite: status %d to %q", done.status, done.header.Get("Location"))
-	}
+	b.welcomed(b.setPassword(inv.Link.URL, nil))
 	// The invite signed her in: the account page opens without a sign-in.
 	page := b.get("http://localhost/account/")
 	wantStatus(t, page, http.StatusOK, "the account page")
@@ -379,12 +388,10 @@ func TestAccountOnApex(t *testing.T) {
 	if err != nil || me.Handle != "ana" {
 		t.Fatalf("the key from the account page: %+v, %v", me, err)
 	}
-	// The dashboard is not theirs: she signs in at the sign-in host, and
-	// the dashboard refuses the member.
+	// The dashboard is not theirs: the sign-in host lets the signed-in
+	// browser through, and the dashboard refuses the member.
 	toSignIn := b.follow(b.get("http://admin.localhost/"), "the dashboard as a member")
-	if cb := b.signIn(toSignIn, "ana", testPassword); cb.status != http.StatusFound {
-		t.Fatalf("sign-in for the dashboard: status %d: %s", cb.status, truncate(cb.body))
-	}
+	b.get(b.follow(b.get(toSignIn), "a signed-in browser at the sign-in host"))
 	wantStatus(t, b.get("http://admin.localhost/"), http.StatusForbidden, "the dashboard as a member")
 }
 

@@ -81,10 +81,8 @@ func TestInviteLink(t *testing.T) {
 		t.Fatalf("the link after two refused passwords: %v", err)
 	}
 
-	resp, body = b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}})
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
-		t.Fatalf("setting the password: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
-	}
+	resp, _ = b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}})
+	b.welcomed(resp)
 	cleared := false
 	for _, c := range resp.Cookies() {
 		cleared = cleared || (c.Name == "kazari_link" && c.MaxAge < 0)
@@ -98,6 +96,9 @@ func TestInviteLink(t *testing.T) {
 	// The link and the new password show who it is: the browser is signed
 	// in, and the account page welcomes them with the next step.
 	page := b.page()
+	if !strings.Contains(page, "Welcome,") {
+		t.Fatal("no welcome after the handoff")
+	}
 	for _, want := range []string{"Welcome, <b>Ana Sousa</b>", "Your password is set and you are signed in.", "Signed in by choosing a password with a link", "Connect your AI agent", e.mcp.URL + "/"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("account page after the invite lacks %q", want)
@@ -141,9 +142,7 @@ func TestResetLink(t *testing.T) {
 	}
 	const next = "another long password"
 	resp, _ = fresh.post("/account/reset", url.Values{"password": {next}, "confirm": {next}})
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
-		t.Fatalf("reset: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
+	fresh.welcomed(resp)
 	// A used reset link ends every other session, and signs in this one.
 	if here.signedIn() || there.signedIn() {
 		t.Error("a session outlived the reset")
@@ -194,10 +193,8 @@ func TestSetupLink(t *testing.T) {
 		t.Error("the handle field has no pattern")
 	}
 	form.Set("handle", "peter")
-	resp, body = b.post("/account/setup", form)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
-		t.Fatalf("setup: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
-	}
+	resp, _ = b.post("/account/setup", form)
+	b.welcomed(resp)
 	u, err := e.users.GetUser(ctx, "peter")
 	if err != nil || u.Role != user.RoleAdmin || u.DisplayName != "Peter B" || u.Email != "peter@example.org" {
 		t.Fatalf("the first user = %+v, %v", u, err)
@@ -235,9 +232,7 @@ func TestSetupLinkRaces(t *testing.T) {
 		}
 	}
 	resp, _ := first.post("/account/setup", url.Values{"handle": {"one"}, "password": {password}, "confirm": {password}})
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
-		t.Fatalf("setup without a dashboard: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
+	first.welcomed(resp)
 	resp, body := second.post("/account/setup", url.Values{"handle": {"two"}, "password": {password}, "confirm": {password}})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("the second claim: status %d: %s", resp.StatusCode, body)
@@ -434,5 +429,26 @@ func TestLinkFormCarriesItsToken(t *testing.T) {
 	resp, body = b.post("/account/invite", url.Values{"password": {password}, "confirm": {password + "x"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, `name="form_token" value="`+account.LinkFormToken(token)+`"`) {
 		t.Errorf("the form shown again: status %d: %s", resp.StatusCode, body)
+	}
+}
+
+// The sign-in an invite opens is the browser's one: the sign-in host knows
+// it, and signing out on the account page ends it there too.
+func TestInviteSignInIsTheBrowsers(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	b := e.browser()
+	b.openLink("invite", e.invite("ana", ""))
+	resp, _ := b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}})
+	b.welcomed(resp)
+
+	signIn := e.mcp.URL + oauth.PathSignIn + "?" + url.Values{"host": {oauth.HostAccount}, "path": {"/"}, "nonce": {strings.Repeat("n", 43)}}.Encode()
+	if resp, body := b.getURL(signIn); resp.StatusCode != http.StatusFound {
+		t.Fatalf("the sign-in host after the invite: status %d, want the browser signed in: %s", resp.StatusCode, body)
+	}
+	if resp, _ := b.post("/account/signout", url.Values{"form_token": {b.token()}}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("sign out: status %d", resp.StatusCode)
+	}
+	if resp, body := b.getURL(signIn); resp.StatusCode != http.StatusOK || !strings.Contains(body, `name="password"`) {
+		t.Errorf("the sign-in host after signing out: status %d, want the form", resp.StatusCode)
 	}
 }

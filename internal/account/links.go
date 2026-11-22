@@ -155,9 +155,9 @@ func (s *server) renderLink(w http.ResponseWriter, r *http.Request, status int, 
 }
 
 // redeemLink uses the open link up: it sets the password, and for a setup
-// link creates the first admin. The person is then signed in here, as the
-// link and the new password show who they are, and lands on the account
-// page's welcome. Every field is checked before anything is used, so one
+// link creates the first admin. The person is then signed in, as the link
+// and the new password show who they are, through the sign-in host so that
+// every host shares the sign-in, and lands on the account page's welcome. Every field is checked before anything is used, so one
 // answer names every mistake.
 func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -228,13 +228,12 @@ func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 			return
 		}
 		s.setLinkCookie(w, "")
-		// The password is set whatever follows: without a session the next
-		// page asks for it, as it always did.
-		if err := s.sess.Start(r.Context(), w, redeemed.Handle); err != nil {
+		// The password is set whatever follows: without the handoff the
+		// next page asks for it.
+		s.sess.SetFlash(w, "welcome")
+		if err := s.sess.Handoff(r.Context(), w, r, redeemed.Handle, Prefix); err != nil {
 			s.log.ErrorContext(r.Context(), "account: sign in after link", "err", err)
 			s.done(w, r, "password-set")
-			return
 		}
-		s.done(w, r, "welcome")
 	}
 }

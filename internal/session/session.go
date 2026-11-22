@@ -20,6 +20,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -41,9 +42,9 @@ type Provider interface {
 	Redeem(ctx context.Context, code, host, nonce string) (oauth.View, error)
 	ControlSession(ctx context.Context, host, token string) (oauth.ControlSession, error)
 	SignOut(ctx context.Context, host, token string) error
-	// StartControl opens a session on the control host for a person the
-	// host itself has just identified.
-	StartControl(ctx context.Context, host, handle string) (oauth.View, error)
+	// LinkCode is a single-use code that signs handle in at the sign-in
+	// host, for a person the host itself has just identified.
+	LinkCode(ctx context.Context, handle string) (string, error)
 }
 
 // Options configures a Manager.
@@ -130,6 +131,11 @@ func (m *Manager) Presented(r *http.Request) bool {
 // reusing the browser's current one so that several tabs can sign in at
 // once.
 func (m *Manager) SignIn(w http.ResponseWriter, r *http.Request, returnTo string) {
+	m.redirect(w, r, returnTo, nil, http.StatusFound)
+}
+
+// redirect sends the browser to the sign-in host with extra parameters.
+func (m *Manager) redirect(w http.ResponseWriter, r *http.Request, returnTo string, extra url.Values, status int) {
 	var nonce string
 	if ck, err := r.Cookie(m.name("_nonce")); err == nil && len(ck.Value) == nonceLen {
 		nonce = ck.Value
@@ -145,7 +151,8 @@ func (m *Manager) SignIn(w http.ResponseWriter, r *http.Request, returnTo string
 		"path":  {oauth.ReturnPath(returnTo)},
 		"nonce": {base64.RawURLEncoding.EncodeToString(sum[:])},
 	}
-	http.Redirect(w, r, m.opts.SignInURL+"?"+q.Encode(), http.StatusFound)
+	maps.Copy(q, extra)
+	http.Redirect(w, r, m.opts.SignInURL+"?"+q.Encode(), status)
 }
 
 // Open ends a sign-in: it exchanges the code in the request's query for a
@@ -177,15 +184,18 @@ func (m *Manager) Open(w http.ResponseWriter, r *http.Request) (*Session, string
 	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host, m: m}, oauth.ReturnPath(v.Path), nil
 }
 
-// Start signs the browser in as handle on this host alone, without the
-// sign-in host: for a person the host has just identified itself, such as
-// by a link they redeemed.
-func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, handle string) error {
-	v, err := m.p.StartControl(ctx, m.opts.Host, handle)
+// Handoff signs the browser in as handle, a person this host has just
+// identified itself, such as by a link they redeemed: it sends the browser
+// through the sign-in host, which opens the browser's one sign-in session
+// there and returns to returnTo with a code, as SignIn does. Every other
+// host then joins that session, and signing out anywhere ends it. Should
+// the code open nothing, the sign-in page asks for handle's password.
+func (m *Manager) Handoff(ctx context.Context, w http.ResponseWriter, r *http.Request, handle, returnTo string) error {
+	code, err := m.p.LinkCode(ctx, handle)
 	if err != nil {
 		return err
 	}
-	m.setCookie(w, "", v.Token, v.ExpiresAt.Sub(m.opts.Now()))
+	m.redirect(w, r, returnTo, url.Values{oauth.ParamHandoff: {code}, "login": {handle}}, http.StatusSeeOther)
 	return nil
 }
 

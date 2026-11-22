@@ -353,6 +353,26 @@ func (b *browser) signIn(login, secret string) {
 	}
 }
 
+// welcomed follows the answer to a link's form through the sign-in host,
+// which signs the browser in there, back to the account page.
+func (b *browser) welcomed(resp *http.Response) {
+	b.e.t.Helper()
+	t := b.e.t
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, b.e.mcp.URL+oauth.PathSignIn+"?") ||
+		!strings.Contains(loc, oauth.ParamHandoff+"=") {
+		t.Fatalf("the link's form: status %d to %q, want the sign-in host with a handoff", resp.StatusCode, loc)
+	}
+	resp, body := b.getURL(loc)
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.apex.URL+account.CallbackPath+"?code=") {
+		t.Fatalf("the handoff: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
+	resp, body = b.getURL(resp.Header.Get("Location"))
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/account/" {
+		t.Fatalf("callback after the handoff: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
+}
+
 // page loads the account page of a signed-in browser.
 func (b *browser) page() string {
 	b.e.t.Helper()

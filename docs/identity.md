@@ -110,7 +110,7 @@ Only an admin can invite an admin: add `--role admin`. The person's email, when 
 
 A password has at least 15 characters by default (`auth.local.min_password_length`) and at most 256. Length is the only rule: no character classes are required, and a password manager's output or a few unrelated words both work.
 
-Setting a password with an invite, a reset or the setup link signs the person in, in that browser and on the account page alone. The account page then welcomes them, with connecting an agent as the first step. The dashboard and the sign-in page for an agent ask for the new password once.
+Setting a password with an invite, a reset or the setup link signs the person in, in that browser, as signing in with the password would: the browser passes through the sign-in page once and lands on the account page, which welcomes them with connecting an agent as the first step. The dashboard, members pages and an agent's sign-in then open with that sign-in, and signing out anywhere ends it everywhere.
 
 ### Signing in with a password
 

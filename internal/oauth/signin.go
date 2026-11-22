@@ -146,6 +146,17 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 			"This sign-in link is not valid. Open the page you wanted again.", "")
 		return
 	}
+	if code := q.Get(ParamHandoff); code != "" {
+		done, err := s.handoff(w, r, code, t)
+		if err != nil {
+			s.log.ErrorContext(ctx, "oauth: hand off", "err", err)
+			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+			return
+		}
+		if done {
+			return
+		}
+	}
 	sess, err := s.liveSession(ctx, r)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: load session", "err", err)
@@ -739,26 +750,72 @@ func (s *Service) Redeem(ctx context.Context, code, host, nonce string) (_ View,
 // invite, a reset or the setup link, in the audit trail.
 const ViaLink = "link"
 
-// StartControl signs handle in on the control host directly, for a person
-// who has just shown who they are there: they redeemed a link and chose a
-// password. The sign-in belongs to no browser on the sign-in host, so it
-// opens that control host alone; signing out ends it as any other.
-func (s *Service) StartControl(ctx context.Context, host, handle string) (View, error) {
-	if !strings.HasPrefix(host, controlMark) {
-		return View{}, fmt.Errorf("oauth: %q is not a control host", host)
-	}
+// hostHandoff is the label of a LinkCode's code: the sign-in host itself,
+// which no host's Redeem names.
+const hostHandoff = "@signin"
+
+// ParamHandoff is the sign-in page's parameter that carries a LinkCode.
+const ParamHandoff = "handoff"
+
+// LinkCode is a single-use code that signs handle in at the sign-in host,
+// for a person a host has just identified: they redeemed a link and chose a
+// password. The host sends the browser to the sign-in page with it as the
+// handoff parameter; the sign-in host then opens the browser's one sign-in
+// session there, as a password would, and the browser goes on to the host
+// as after any sign-in. Every other host joins that session, and signing
+// out anywhere ends it.
+func (s *Service) LinkCode(ctx context.Context, handle string) (string, error) {
 	now := s.now()
-	sess := &Session{Hash: hashSecret(randomString(secretBytes)), UserHandle: handle, CreatedAt: now, ExpiresAt: now.Add(s.opts.SessionTTL)}
-	if err := s.store.CreateSession(ctx, sess); err != nil {
-		return View{}, fmt.Errorf("oauth: start control session: %w", err)
+	expires := now.Add(s.opts.ViewCodeTTL)
+	// A code belongs to a session; this one holds the person until the
+	// code is used, and opens nothing itself.
+	anchor := &Session{Hash: hashSecret(randomString(secretBytes)), UserHandle: handle, CreatedAt: now, ExpiresAt: expires}
+	if err := s.store.CreateSession(ctx, anchor); err != nil {
+		return "", fmt.Errorf("oauth: link code: %w", err)
 	}
-	token := randomString(secretBytes)
-	v := &ViewSession{Hash: hashSecret(token), SessionID: sess.ID, Host: host, CreatedAt: now, ExpiresAt: sess.ExpiresAt}
-	if err := s.store.CreateViewSession(ctx, v); err != nil {
-		return View{}, fmt.Errorf("oauth: start control session: %w", err)
+	code := randomString(secretBytes)
+	if err := s.store.CreateViewCode(ctx, &ViewCode{Hash: hashSecret(code), SessionID: anchor.ID, Host: hostHandoff, ExpiresAt: expires}); err != nil {
+		return "", fmt.Errorf("oauth: link code: %w", err)
 	}
-	s.record(ctx, handle, ActionSignIn, handle, map[string]string{"via": ViaLink})
-	return View{Token: token, ExpiresAt: v.ExpiresAt}, nil
+	return code, nil
+}
+
+// handoff signs the browser in with a code from LinkCode and sends it on to
+// t. ok is false when the code opens nothing, and nothing was written.
+func (s *Service) handoff(w http.ResponseWriter, r *http.Request, code string, t signInTarget) (bool, error) {
+	ctx := r.Context()
+	if len(code) != tokenLen {
+		return false, nil
+	}
+	c, err := s.store.ConsumeViewCode(ctx, hashSecret(code), s.now())
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCodeUsed) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if c.Host != hostHandoff || !s.now().Before(c.ExpiresAt) {
+		return false, nil
+	}
+	anchor, err := s.store.GetSessionByID(ctx, c.SessionID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if live, err := s.sessionLive(ctx, anchor.UserHandle, "", anchor.ExpiresAt); err != nil || !live {
+		return false, err
+	}
+	if err := s.store.DeleteSession(ctx, anchor.ID); err != nil {
+		return false, err
+	}
+	sess, err := s.startSession(ctx, w, s.signInBinding(r), anchor.UserHandle, "", ViaLink)
+	if err != nil {
+		return false, err
+	}
+	s.sendToHost(w, r, sess, t)
+	return true, nil
 }
 
 // Viewer returns the handle of the person whose view session on host

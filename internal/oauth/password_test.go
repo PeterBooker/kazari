@@ -766,3 +766,68 @@ func TestSignInForAPageLeadsOutsiders(t *testing.T) {
 		t.Errorf("the sign-in page for a page speaks of a Kazari instance")
 	}
 }
+
+// A link code signs the browser in at the sign-in host as a password does:
+// the browser holds one sign-in, every host joins it without a form, and
+// signing out on one host ends it on all of them.
+func TestLinkCodeOneSignIn(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	ctx := context.Background()
+	e.person("ana", "", "")
+	code, err := e.svc.LinkCode(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code)
+	first, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	if err != nil {
+		t.Fatalf("Redeem after the handoff: %v", err)
+	}
+	ev := e.rec.actions(oauth.ActionSignIn)
+	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != oauth.ViaLink {
+		t.Errorf("sign-in audit = %+v, want one by ana via the link", ev)
+	}
+
+	// The next host needs no form: the browser is signed in.
+	resp, _ = e.get(signInQuery("other", "/"))
+	second, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.svc.CountSessions(ctx, "ana"); err != nil || n != 1 {
+		t.Errorf("CountSessions = %d, %v; want the one sign-in", n, err)
+	}
+
+	if err := e.svc.SignOut(ctx, "other", second.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Viewer(ctx, "demo", first.Token); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("Viewer on the first host after signing out on the second = %v, want ErrNotFound", err)
+	}
+
+	// The code works once; used again, the sign-in page asks for the
+	// password with the name filled in.
+	_, body := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code + "&login=ana")
+	if !strings.Contains(body, `name="password"`) || !strings.Contains(body, `name="login" value="ana"`) {
+		t.Errorf("a used code: the sign-in form with the name, got %s", body)
+	}
+	if n, _ := e.svc.CountSessions(ctx, "ana"); n != 0 {
+		t.Errorf("a used code opened a session: %d", n)
+	}
+}
+
+// A link code opens nothing on any host itself, only at the sign-in host.
+func TestLinkCodeRedeemsNowhereElse(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	ctx := context.Background()
+	e.person("ana", "", "")
+	code, err := e.svc.LinkCode(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"demo", oauth.HostAccount, oauth.HostAdmin} {
+		if _, err := e.svc.Redeem(ctx, code, host, browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+			t.Errorf("Redeem of a link code on %s = %v, want ErrNotFound", host, err)
+		}
+	}
+}

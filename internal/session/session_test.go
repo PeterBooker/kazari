@@ -25,6 +25,7 @@ type provider struct {
 	code, nonceHash string
 	live            map[string]oauth.ControlSession // token -> session
 	signedOut       []string
+	linked          string // the handle of the last LinkCode
 	err             error
 }
 
@@ -58,12 +59,12 @@ func (p *provider) SignOut(_ context.Context, _, token string) error {
 	return nil
 }
 
-func (p *provider) StartControl(_ context.Context, host, handle string) (oauth.View, error) {
+func (p *provider) LinkCode(_ context.Context, handle string) (string, error) {
 	if p.err != nil {
-		return oauth.View{}, p.err
+		return "", p.err
 	}
-	p.live["started-token"] = oauth.ControlSession{Handle: handle, SessionID: 8, ExpiresAt: t0.Add(12 * time.Hour)}
-	return oauth.View{Token: "started-token", ExpiresAt: t0.Add(12 * time.Hour)}, nil
+	p.linked = handle
+	return "the-link-code", nil
 }
 
 func manager(p *provider, insecure bool) *session.Manager {
@@ -437,25 +438,32 @@ func TestCallbackAndSignOut(t *testing.T) {
 	}
 }
 
-// Start signs the browser in on this host without the sign-in host.
-func TestStart(t *testing.T) {
+// Handoff sends the browser through the sign-in host with a code that signs
+// it in there, so the sign-in it opens is the browser's one, and the code
+// comes back as any sign-in's does.
+func TestHandoff(t *testing.T) {
 	p := &provider{live: map[string]oauth.ControlSession{}}
 	m := manager(p, false)
 	b := &browser{}
 	w := httptest.NewRecorder()
-	if err := m.Start(t.Context(), w, "ana"); err != nil {
-		t.Fatalf("Start = %v", err)
+	if err := m.Handoff(t.Context(), w, b.request("POST", "https://admin.art.test/invite"), "ana", "/welcome"); err != nil {
+		t.Fatalf("Handoff = %v", err)
+	}
+	loc, err := url.Parse(w.Header().Get("Location"))
+	if err != nil || w.Code != http.StatusSeeOther || loc.Scheme+"://"+loc.Host+loc.Path != "https://mcp.art.test/oauth/signin" {
+		t.Fatalf("Handoff: status %d to %q", w.Code, w.Header().Get("Location"))
+	}
+	q := loc.Query()
+	if q.Get(oauth.ParamHandoff) != "the-link-code" || q.Get("login") != "ana" || q.Get("host") != oauth.HostAdmin ||
+		q.Get("path") != "/welcome" || len(q.Get("nonce")) != 43 || p.linked != "ana" {
+		t.Errorf("handoff query = %v, linked %q", q, p.linked)
 	}
 	set := b.take(t, w)
-	if len(set) != 1 || set[0].Name != "__Host-kazari_admin" || set[0].Value != "started-token" || !set[0].HttpOnly || !set[0].Secure {
-		t.Fatalf("Start set the cookies %+v", set)
-	}
-	s, err := m.Get(b.request("GET", "https://admin.art.test/"))
-	if err != nil || s == nil || s.Handle != "ana" {
-		t.Errorf("Get after Start = %+v, %v; want ana's session", s, err)
+	if len(set) != 1 || set[0].Name != "__Host-kazari_admin_nonce" {
+		t.Errorf("Handoff set the cookies %+v, want the nonce alone", set)
 	}
 	p.err = errors.New("store down")
-	if err := m.Start(t.Context(), httptest.NewRecorder(), "ana"); err == nil {
-		t.Error("Start with a failing provider = nil")
+	if err := m.Handoff(t.Context(), httptest.NewRecorder(), b.request("POST", "https://admin.art.test/invite"), "ana", "/"); err == nil {
+		t.Error("Handoff with a failing provider = nil")
 	}
 }
