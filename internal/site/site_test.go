@@ -811,8 +811,18 @@ func TestDeletedVersion(t *testing.T) {
 	if rec := do(t, h, http.MethodGet, "demo.art.test", "/", nil); rec.Code != http.StatusOK {
 		t.Errorf("the published host beside a deleted version: status %d, want 200", rec.Code)
 	}
+	fx.res.versions["demo"][1].Visibility = artifact.Members
+	if rec := do(t, h, http.MethodGet, "demo--v1.art.test", "/", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("deleted version of a members page: status %d, want 404", rec.Code)
+	}
+	fx.res.versions["demo"][1].Visibility = artifact.Public
 	fx.res.versions["demo"][1].UnpublishedAt = new(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 	if rec := do(t, h, http.MethodGet, "demo--v1.art.test", "/", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("deleted version of an unpublished page: status %d, want 404", rec.Code)
+	}
+	fx.res.versions["demo"][1].UnpublishedAt = nil
+	fx.res.versions["demo"][1].DeletedAt = new(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if rec := do(t, h, http.MethodGet, "demo--v1.art.test", "/", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("deleted version of a page in the bin: status %d, want 404", rec.Code)
 	}
 }

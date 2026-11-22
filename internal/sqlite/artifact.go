@@ -291,34 +291,48 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 	if err != nil {
 		return nil, artifactErr("get version", err)
 	}
-	var (
-		v       artifact.Version
-		created int64
-	)
-	err = s.db.QueryRowContext(ctx,
-		`SELECT id, number, label, created_by, created_at, size_bytes, staged FROM version
-		 WHERE artifact_id = ? AND number = ?`, aid, number).
-		Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged)
-	if errors.Is(err, sql.ErrNoRows) {
-		var latest int
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(number), 0) FROM version WHERE artifact_id = ?`, aid).Scan(&latest); err != nil {
+	// One statement, so a version deleted meanwhile is either read whole
+	// or not found, never found without its files.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT v.id, v.number, v.label, v.created_by, v.created_at, v.size_bytes, v.staged,
+		        f.path, f.blob_hash, f.size, f.content_type, f.uploaded_by
+		 FROM version v JOIN version_file f ON f.version_id = v.id
+		 WHERE v.artifact_id = ? AND v.number = ? ORDER BY f.path`, aid, number)
+	if err != nil {
+		return nil, artifactErr("get version", err)
+	}
+	defer rows.Close()
+	var v *artifact.Version
+	for rows.Next() {
+		var (
+			row     artifact.Version
+			created int64
+			f       artifact.File
+		)
+		if err := rows.Scan(&row.ID, &row.Number, &row.Label, &row.CreatedBy, &created, &row.SizeBytes, &row.Staged,
+			&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy); err != nil {
 			return nil, artifactErr("get version", err)
 		}
-		if number >= 1 && number < latest {
-			return nil, artifact.Errorf(artifact.ErrVersionNotFound, "version %d of %s was deleted", number, slug)
+		if v == nil {
+			row.CreatedAt = fromNanos(created)
+			v = &row
 		}
-		return nil, artifact.ErrVersionNotFound
+		v.Files = append(v.Files, f)
 	}
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, artifactErr("get version", err)
 	}
-	v.CreatedAt = fromNanos(created)
-	files, err := s.files(ctx, v.ID)
-	if err != nil {
+	if v != nil {
+		return v, nil
+	}
+	var latest int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(number), 0) FROM version WHERE artifact_id = ?`, aid).Scan(&latest); err != nil {
 		return nil, artifactErr("get version", err)
 	}
-	v.Files = files
-	return &v, nil
+	if number >= 1 && number < latest {
+		return nil, artifact.Errorf(artifact.ErrVersionNotFound, "version %d of %s was deleted", number, slug)
+	}
+	return nil, artifact.ErrVersionNotFound
 }
 
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
@@ -781,9 +795,16 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 	return page, nil
 }
 
+// artifactResolveSelect takes what goes in the latest number's place: every
+// page view resolves the published version, which needs no latest number.
 const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), COALESCE(v.staged, 0),
-	COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0),
-	a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
+	%s, a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
+
+var (
+	artifactResolvePublished = fmt.Sprintf(artifactResolveSelect, "0")
+	artifactResolveVersion   = fmt.Sprintf(artifactResolveSelect,
+		"COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0)")
+)
 
 func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
 	var (
@@ -809,7 +830,7 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolvePublished")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
+	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolvePublished+`
 		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
 		WHERE a.slug = ?`, slug))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -826,7 +847,7 @@ func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *a
 func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolveVersion")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveSelect+`
+	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveVersion+`
 		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
 		WHERE a.slug = ?`, number, slug))
 	if errors.Is(err, sql.ErrNoRows) {

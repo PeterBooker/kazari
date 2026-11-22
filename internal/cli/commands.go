@@ -529,7 +529,7 @@ func (c *VersionsRmCmd) Run(r *runner) error {
 		}
 	}
 	if r.g.JSON {
-		return r.printJSON(api.DeletedVersions{Deleted: numbers, Artifact: last.Artifact})
+		return r.printJSON(api.DeletedVersions{Deleted: slices.Sorted(slices.Values(numbers)), Artifact: last.Artifact})
 	}
 	return nil
 }

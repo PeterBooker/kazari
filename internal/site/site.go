@@ -215,8 +215,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !p.Servable() {
 		// An offline artifact is not found on every host, whatever became
-		// of the version.
-		if p.PurgedAt != nil || (p.VersionDeleted && p.UnpublishedAt == nil && p.DeletedAt == nil) {
+		// of the version, and a members page answers before its gate, so
+		// it does not say which of its versions were deleted.
+		if p.PurgedAt != nil || (p.VersionDeleted && p.UnpublishedAt == nil && p.DeletedAt == nil && !p.Visibility.Gated()) {
 			h.miss(w, r, http.StatusGone)
 			return
 		}

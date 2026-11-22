@@ -507,13 +507,14 @@ func testDeleteVersions(t *testing.T, h *harness) {
 func testListKeepVersions(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	for _, tc := range []struct {
+		name    string
 		slug    string
 		meta    map[string]string
 		deleted bool
 	}{
-		{"keeps", map[string]string{artifact.MetaKeepVersions: "3"}, false},
-		{"plain", map[string]string{"kazari.keep": "3"}, false},
-		{"binned", map[string]string{artifact.MetaKeepVersions: "3"}, true},
+		{"sets the key", "keeps", map[string]string{artifact.MetaKeepVersions: "3"}, false},
+		{"another key", "plain", map[string]string{"kazari.keep": "3"}, false},
+		{"in the bin", "binned", map[string]string{artifact.MetaKeepVersions: "3"}, true},
 	} {
 		a := newArtifact(tc.slug, "alice", at(0))
 		a.Metadata = tc.meta
@@ -1151,7 +1152,7 @@ func testResolve(t *testing.T, h *harness) {
 	}
 
 	want := &artifact.Published{
-		Slug: "demo", VersionID: v2.ID, VersionNumber: 2, LatestVersion: 2, Visibility: artifact.Public,
+		Slug: "demo", VersionID: v2.ID, VersionNumber: 2, Visibility: artifact.Public,
 		Metadata: map[string]string{artifact.MetaSPA: "true", "x": "y"},
 	}
 	p, err := h.store.ResolvePublished(h.ctx, "demo")
@@ -1170,7 +1171,7 @@ func testResolve(t *testing.T, h *harness) {
 		t.Fatal(err)
 	}
 	want1 := *want
-	want1.VersionID, want1.VersionNumber = v1.ID, 1
+	want1.VersionID, want1.VersionNumber, want1.LatestVersion = v1.ID, 1, 2
 	if diff := cmp.Diff(&want1, p, cmpOpts...); diff != "" {
 		t.Fatalf("ResolveVersion(1) (-want +got):\n%s", diff)
 	}

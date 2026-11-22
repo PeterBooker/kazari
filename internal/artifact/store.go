@@ -68,7 +68,8 @@ type Store interface {
 	List(ctx context.Context, q ListQuery) (ListPage, error)
 
 	// ResolvePublished includes the lifecycle times so the caller can choose
-	// between 404 and 410. ErrNotFound only when no row exists at all.
+	// between 404 and 410, and leaves LatestVersion 0. ErrNotFound only when
+	// no row exists at all.
 	ResolvePublished(ctx context.Context, slug string) (*Published, error)
 
 	// ResolveVersion is ResolvePublished for one version number, with

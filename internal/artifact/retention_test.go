@@ -198,22 +198,23 @@ func TestSweepKeepsVersions(t *testing.T) {
 
 func TestKeepVersionsMetadata(t *testing.T) {
 	for _, tc := range []struct {
+		name  string
 		value string
 		ok    bool
 	}{
-		{"1", true},
-		{"10", true},
-		{strconv.Itoa(artifact.MaxKeepVersions), true},
-		{"0", false},
-		{"-3", false},
-		{"+3", false},
-		{"03", false},
-		{"ten", false},
-		{strconv.Itoa(artifact.MaxKeepVersions + 1), false},
+		{"the least", "1", true},
+		{"a common number", "10", true},
+		{"the most", strconv.Itoa(artifact.MaxKeepVersions), true},
+		{"zero", "0", false},
+		{"negative", "-3", false},
+		{"a sign", "+3", false},
+		{"a leading zero", "03", false},
+		{"a word", "ten", false},
+		{"past the most", strconv.Itoa(artifact.MaxKeepVersions + 1), false},
 	} {
 		err := artifact.ValidateMetadataPair(artifact.MetaKeepVersions, tc.value)
 		if (err == nil) != tc.ok {
-			t.Errorf("ValidateMetadataPair(%s, %q) = %v, want ok %t", artifact.MetaKeepVersions, tc.value, err, tc.ok)
+			t.Errorf("%s: ValidateMetadataPair(%s, %q) = %v, want ok %t", tc.name, artifact.MetaKeepVersions, tc.value, err, tc.ok)
 		}
 	}
 }

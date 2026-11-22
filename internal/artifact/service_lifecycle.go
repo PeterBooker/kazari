@@ -94,15 +94,18 @@ func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version
 		span.SetAttributes(versionKey.Int(version))
 		endSpan(span, err)
 	}()
+	var outOfRange bool
 	a, err := s.modify(ctx, actor, slug, false, audit.ArtifactPublish, func(a *Artifact) (map[string]string, error) {
 		if version < 1 || version > a.LatestVersion {
+			outOfRange = true
 			return nil, Errorf(ErrVersionNotFound, "version %d does not exist", version)
 		}
 		a.PublishedVersion = version
 		return map[string]string{"version": strconv.Itoa(version)}, nil
 	})
-	if errors.Is(err, ErrVersionNotFound) && version >= 1 {
-		return nil, Errorf(ErrVersionNotFound, "version %d of %s does not exist or was deleted", version, slug)
+	// The store found no version for a number below the latest.
+	if errors.Is(err, ErrVersionNotFound) && !outOfRange {
+		return nil, Errorf(ErrVersionNotFound, "version %d of %s was deleted", version, slug)
 	}
 	return a, err
 }
