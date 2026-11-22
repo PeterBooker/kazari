@@ -29,8 +29,8 @@ func TestShareLinkPasswordTool(t *testing.T) {
 		"slug": "team", "name": "Team", "description": "x", "visibility": "members",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>team</h1>"}},
 	})
-	created, res := ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "team", "password": "open sesame"})
-	if !created.Password || !strings.Contains(firstLine(res), "and the password") || strings.Contains(text(res), "open sesame") {
+	created, res := ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "team", "password": "open sesame please"})
+	if !created.Password || !strings.Contains(firstLine(res), "and the password") || strings.Contains(text(res), "open sesame please") {
 		t.Errorf("create_share_link with a password = %+v, %q; want password true, said once, never repeated", created, firstLine(res))
 	}
 	if msg := fails(t, cs, "create_share_link", map[string]any{"slug": "team", "password": "short"}); !strings.HasPrefix(msg, "invalid_argument: ") {

@@ -121,7 +121,7 @@
 <div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .Err.days}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
 {{if .Err.days}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>Give a number of days from 1 to {{.MaxLinkDays}}.</span></p>{{end}}</div>
 <div class="field"><label for="link-password">Password <span class="optional">(optional)</span></label><input class="input" id="link-password" name="password" type="password" autocomplete="new-password" minlength="{{.MinLinkPassword}}" maxlength="{{.MaxLinkPassword}}"{{if .Err.password}} aria-invalid="true" aria-describedby="link-password-err"{{end}}>
-{{if .Err.password}}<p class="error" id="link-password-err">{{template "icon/alert"}}<span>Use {{.MinLinkPassword}} to {{.MaxLinkPassword}} characters, or leave it empty.</span></p>{{end}}</div>
+{{if .Err.password}}<p class="error" id="link-password-err">{{template "icon/alert"}}<span>Use {{.MinLinkPassword}} to {{.MaxLinkPassword}} characters, such as a few words, or leave it empty.</span></p>{{end}}</div>
 <button type="submit" class="btn btn-primary">{{template "icon/link"}}Make a share link</button>
 </form>
 <p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days. With a password, the page asks for it before it opens.</p>

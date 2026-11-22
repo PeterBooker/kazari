@@ -28,7 +28,7 @@ func TestShareLinkPassword(t *testing.T) {
 	alice := e.user(t, "alice")
 	e.create(t, alice, "demo")
 
-	l, token, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "open sesame")
+	l, token, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "open sesame please")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestShareLinkPassword(t *testing.T) {
 
 	_, _, err = e.svc.UnlockShareLink(e.ctx, "demo", token, "open says me")
 	wantErr(t, "UnlockShareLink with a wrong password", err, artifact.ErrForbidden)
-	got, cookie, err = e.svc.UnlockShareLink(e.ctx, "demo", token, "open sesame")
+	got, cookie, err = e.svc.UnlockShareLink(e.ctx, "demo", token, "open sesame please")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,14 +82,14 @@ func TestShareLinkPassword(t *testing.T) {
 	}
 	_, err = e.svc.CheckShareLink(e.ctx, "demo", cookie)
 	wantErr(t, "CheckShareLink with the cookie of a revoked link", err, artifact.ErrLinkNotFound)
-	_, _, err = e.svc.UnlockShareLink(e.ctx, "demo", token, "open sesame")
+	_, _, err = e.svc.UnlockShareLink(e.ctx, "demo", token, "open sesame please")
 	wantErr(t, "UnlockShareLink of a revoked link", err, artifact.ErrLinkNotFound)
 
-	_, short, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", time.Hour, "open sesame")
+	_, short, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", time.Hour, "open sesame please")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, shortCookie, err := e.svc.UnlockShareLink(e.ctx, "demo", short, "open sesame")
+	_, shortCookie, err := e.svc.UnlockShareLink(e.ctx, "demo", short, "open sesame please")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,15 +107,18 @@ func TestShareLinkPasswordRules(t *testing.T) {
 		password string
 		ok       bool
 	}{
-		{"the shortest", "12345678", true},
-		{"too short", "1234567", false},
+		{"the shortest", "123456789012", true},
+		{"too short", "12345678901", false},
 		{"the longest", strings.Repeat("é", artifact.ShareLinkPasswordMax), true},
 		{"too long", strings.Repeat("é", artifact.ShareLinkPasswordMax+1), false},
 		{"not UTF-8", "\xff\xfe\xfd\xfc\xfb\xfa\xf9\xf8", false},
 	} {
 		_, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, tc.password)
-		if (err == nil) != tc.ok || (err != nil && !errors.Is(err, artifact.ErrInvalidArgument)) {
-			t.Errorf("%s: CreateShareLink = %v, want ok %t or invalid_argument", tc.name, err, tc.ok)
+		if (err == nil) != tc.ok || (err != nil && (!errors.Is(err, artifact.ErrInvalidArgument) || !errors.Is(err, artifact.ErrLinkPassword))) {
+			t.Errorf("%s: CreateShareLink = %v, want ok %t or invalid_argument marked as the password's", tc.name, err, tc.ok)
+		}
+		if artifact.CodeOf(err) != "" && artifact.CodeOf(err) != "invalid_argument" {
+			t.Errorf("%s: CreateShareLink code = %q, want invalid_argument", tc.name, artifact.CodeOf(err))
 		}
 	}
 
@@ -131,6 +134,10 @@ func TestShareLinkPasswordRules(t *testing.T) {
 	none := newEnv(t, artifact.Options{})
 	bob := none.user(t, "bob")
 	none.create(t, bob, "demo")
-	_, _, err = none.svc.CreateShareLink(none.ctx, bob, "demo", "", 0, "open sesame")
-	wantErr(t, "CreateShareLink with a password and nothing to hash it", err, artifact.ErrInvalidArgument)
+	_, _, err = none.svc.CreateShareLink(none.ctx, bob, "demo", "", 0, "open sesame please")
+	wantErr(t, "CreateShareLink with a password and nothing to hash it", err, artifact.ErrLinkPassword)
+	_, _, err = none.svc.CreateShareLink(none.ctx, bob, "demo", "bad\x00label", 0, "")
+	if errors.Is(err, artifact.ErrLinkPassword) {
+		t.Errorf("a bad label's refusal = %v, which says it is the password's", err)
+	}
 }

@@ -51,8 +51,8 @@ func TestRunShare(t *testing.T) {
 	}
 
 	// Off a terminal, --password reads the first line of stdin.
-	r = runCLIWith(t, nil, strings.NewReader("open sesame\n"), nil, "--url", srv.URL, "--token", "t", "share", "create", "team", "--password")
-	if r.code != 0 || body != `{"password":"open sesame"}` {
+	r = runCLIWith(t, nil, strings.NewReader("open sesame please\n"), nil, "--url", srv.URL, "--token", "t", "share", "create", "team", "--password")
+	if r.code != 0 || body != `{"password":"open sesame please"}` {
 		t.Fatalf("create --password: %+v, body %s; want the password sent", r, body)
 	}
 	if r := runCLIWith(t, nil, strings.NewReader(""), nil, "--url", srv.URL, "--token", "t", "share", "create", "team", "--password"); r.code != 2 {

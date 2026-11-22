@@ -95,7 +95,7 @@ var (
 	lockedCookie = lockedToken + ".proof"
 )
 
-const lockedPassword = "open sesame"
+const lockedPassword = "open sesame please"
 
 func (f *fakeLinks) CheckShareLink(_ context.Context, slug, cookie string) (*artifact.ShareLink, error) {
 	if slug != "team" || f.gone || (cookie != linkToken && cookie != lockedCookie) {

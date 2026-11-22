@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
@@ -641,14 +640,16 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 		return refuse("label", "Keep the note to one line of plain text, at most "+strconv.Itoa(artifact.LabelMaxBytes)+" bytes.")
 	}
 	password := r.PostForm.Get("password")
-	if n := utf8.RuneCountInString(password); password != "" && (n < artifact.ShareLinkPasswordMin || n > artifact.ShareLinkPasswordMax) {
-		return refuse("password", "Use "+strconv.Itoa(artifact.ShareLinkPasswordMin)+" to "+
-			strconv.Itoa(artifact.ShareLinkPasswordMax)+" characters, or leave it empty.")
+	passwordRule := "Use " + strconv.Itoa(artifact.ShareLinkPasswordMin) + " to " +
+		strconv.Itoa(artifact.ShareLinkPasswordMax) + " characters, such as a few words, or leave it empty."
+	if password != "" && artifact.CheckLinkPassword(password) != nil {
+		return refuse("password", passwordRule)
 	}
-	// The days, the note's length and the password are checked above, so
-	// what the service still refuses here is the note.
 	l, token, err := s.d.Artifacts.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour, password)
-	if errors.Is(err, artifact.ErrInvalidArgument) {
+	switch {
+	case errors.Is(err, artifact.ErrLinkPassword):
+		return refuse("password", "This instance cannot keep a password for a link. Leave it empty.")
+	case errors.Is(err, artifact.ErrInvalidArgument):
 		return refuse("label", "That note was not accepted. Use plain text on one line.")
 	}
 	if err != nil {

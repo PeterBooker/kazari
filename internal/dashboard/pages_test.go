@@ -385,13 +385,18 @@ func TestPageShareLinkPassword(t *testing.T) {
 	e, b := pagesEnv(t)
 	b.get("/pages/members-one")
 	r := b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"short"}})
-	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Use 8 to 256 characters, or leave it empty.") {
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Use 12 to 256 characters, such as a few words, or leave it empty.") {
 		t.Fatalf("a short password: status %d, want 422 saying how long it must be", r.StatusCode)
 	}
 	b.get("/pages/members-one")
-	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"open sesame"}})
+	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"\xff\xfe twelve bytes"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, `id="link-password-err"`) {
+		t.Fatalf("a password that is not UTF-8: status %d, want 422 beside the password", r.StatusCode)
+	}
+	b.get("/pages/members-one")
+	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"open sesame please"}})
 	if r.StatusCode != http.StatusOK || !strings.Contains(r.body, "Send the password apart from the link") ||
-		strings.Contains(r.body, "open sesame") {
+		strings.Contains(r.body, "open sesame please") {
 		t.Fatalf("a link with a password: status %d, want the link shown once with a note on the password, and never the password:\n%s",
 			r.StatusCode, r.body)
 	}

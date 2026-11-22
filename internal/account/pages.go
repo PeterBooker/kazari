@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -280,11 +279,14 @@ func (s *server) createLink(w http.ResponseWriter, r *http.Request, v visit, act
 		return refuse("label")
 	}
 	password := r.PostForm.Get("password")
-	if n := utf8.RuneCountInString(password); password != "" && (n < artifact.ShareLinkPasswordMin || n > artifact.ShareLinkPasswordMax) {
+	if password != "" && artifact.CheckLinkPassword(password) != nil {
 		return refuse("password")
 	}
 	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour, password)
-	if errors.Is(err, artifact.ErrInvalidArgument) {
+	switch {
+	case errors.Is(err, artifact.ErrLinkPassword):
+		return refuse("password")
+	case errors.Is(err, artifact.ErrInvalidArgument):
 		return refuse("label")
 	}
 	if err != nil {

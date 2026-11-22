@@ -259,11 +259,11 @@ func TestOwnPageShareLinkPassword(t *testing.T) {
 		t.Fatalf("the share-link form has no password field:\n%s", body)
 	}
 	resp, body := b.form("/account/pages/notes/links", url.Values{"days": {"3"}, "password": {"short"}})
-	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Use 8 to 256 characters") {
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Use 12 to 256 characters") {
 		t.Errorf("a short password: status %d, want 422 saying how long it must be", resp.StatusCode)
 	}
-	resp, body = b.form("/account/pages/notes/links", url.Values{"days": {"3"}, "password": {"open sesame"}})
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "and the password") || strings.Contains(body, "open sesame") {
+	resp, body = b.form("/account/pages/notes/links", url.Values{"days": {"3"}, "password": {"open sesame please"}})
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "and the password") || strings.Contains(body, "open sesame please") {
 		t.Fatalf("a link with a password: status %d, want the link shown once, its password never:\n%s", resp.StatusCode, body)
 	}
 	links, err := e.arts.ListShareLinks(t.Context(), artifact.Actor{Handle: "ana"}, "notes")

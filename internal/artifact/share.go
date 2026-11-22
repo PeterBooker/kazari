@@ -3,6 +3,7 @@ package artifact
 import (
 	"context"
 	"crypto/hmac"
+	"errors"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -67,14 +68,27 @@ func IsLinkCookie(s string) bool {
 // Share-link passwords are ShareLinkPasswordMin to ShareLinkPasswordMax
 // characters.
 const (
-	ShareLinkPasswordMin = 8
+	ShareLinkPasswordMin = 12
 	ShareLinkPasswordMax = 256
 )
 
-func checkLinkPassword(password string) error {
+// ErrLinkPassword matches, with errors.Is, a refusal of a share link's
+// password, so a form can put it beside the password; the error's code is
+// still invalid_argument.
+var ErrLinkPassword = errors.New("artifact: share link password refused")
+
+type linkPasswordError struct{ error }
+
+func (e linkPasswordError) Is(target error) bool { return target == ErrLinkPassword }
+func (e linkPasswordError) Unwrap() error        { return e.error }
+
+// CheckLinkPassword refuses a share link's password that is not
+// ShareLinkPasswordMin to ShareLinkPasswordMax characters of UTF-8.
+func CheckLinkPassword(password string) error {
 	n := utf8.RuneCountInString(password)
 	if !utf8.ValidString(password) || n < ShareLinkPasswordMin || n > ShareLinkPasswordMax {
-		return Errorf(ErrInvalidArgument, "a share link's password is %d to %d characters", ShareLinkPasswordMin, ShareLinkPasswordMax)
+		return linkPasswordError{Errorf(ErrInvalidArgument, "a share link's password is %d to %d characters",
+			ShareLinkPasswordMin, ShareLinkPasswordMax)}
 	}
 	return nil
 }
@@ -140,11 +154,11 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 		return nil, "", err
 	}
 	if password != "" {
-		if err := checkLinkPassword(password); err != nil {
+		if err := CheckLinkPassword(password); err != nil {
 			return nil, "", err
 		}
 		if s.opts.Passwords == nil {
-			return nil, "", Errorf(ErrInvalidArgument, "this instance cannot keep share-link passwords")
+			return nil, "", linkPasswordError{Errorf(ErrInvalidArgument, "this instance cannot keep share-link passwords")}
 		}
 	}
 	a, err := s.shareable(ctx, actor, slug)
