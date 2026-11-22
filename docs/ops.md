@@ -735,14 +735,14 @@ Each period is a `lifecycle` setting in the [configuration](configuration.md#lif
 
 A page can register a service worker on its own host. The browser keeps that worker after the person who uploaded it loses the artifact, so Kazari answers every worker-script request (`Service-Worker: script`) itself. The answer is a small script that replaces the worker and unregisters it, sent instead of the file when:
 
-- the artifact or version is not served: unpublished, soft-deleted, purged or never there;
+- the artifact or version is not served: unpublished, soft-deleted, purged, deleted or never there;
 - the path holds no file, or a file that is not JavaScript;
 - the artifact is `members` and the visitor has no access;
 - the script's uploader can no longer change the artifact: they are disabled, or under `auth.write_policy: owner` they are neither its owner nor an admin.
 
-The uploader is whoever first put that content at that path in the artifact, so a new version that carries the script on does not change it. To keep a worker after a transfer, or after its author is disabled, publish the script with changed content. Enabling the user again restores the script.
+The uploader is whoever first put that content at that path in the artifact, so a new version that carries the script on does not change it, and nor does deleting the version it was uploaded in. To keep a worker after a transfer, or after its author is disabled, publish the script with changed content. Enabling the user again restores the script.
 
-A purged artifact also sends `Clear-Site-Data: "storage"`. Other answers leave the origin's storage alone, because a first registration looks the same as an update check, and a page that registers a missing script would lose its visitors' data on every load.
+A purged artifact, and the host of a deleted version of a page that is not `members`, also send `Clear-Site-Data: "storage"`. Other answers leave the origin's storage alone, because a first registration looks the same as an update check, and a page that registers a missing script would lose its visitors' data on every load.
 
 The browser checks for an update only when it returns to the host, and it runs the check after the navigation. The first visit after the change therefore still passes through the old worker, which can see that request and its response, and a browser that never returns keeps the worker. On a `--v<N>` host, whose files are cached as immutable, a worker that asked for cached updates can put the check off for up to a day. After disabling a user or transferring an artifact, revoke any share link that matters.
 
@@ -756,7 +756,7 @@ Each user has a quota, `quota_bytes`. A new user gets `limits.default_user_quota
 
 Usage is the sum of the sizes of every version of every artifact the user owns, counted logically, plus 4 KiB for each file of each version, whatever its size, because every version keeps a database row per file. A 5 MiB site of 20 files with ten versions uses 50.8 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
 
-To free the space of an artifact edited often, delete its old versions: `kazari versions prune <slug> --keep 20` once, or its `kazari.keep_versions` metadata for every [sweep](#scheduled-jobs) ([deleting versions](cli.md#versions)). The usage drops at once.
+To free the space of an artifact edited often, delete its old versions: run `kazari versions prune <slug> --keep 20` once, or set its `kazari.keep_versions` metadata for every [sweep](#scheduled-jobs) ([deleting versions](cli.md#versions)). The usage drops at once.
 
 Kazari checks the owner's quota whenever a version is added, whoever adds it. Under the `shared` write policy, a version that another member adds to someone else's artifact counts against the owner's quota too, and a version that would exceed it gets `403 quota_exceeded`. An admin transfer moves the artifact's usage to the new owner.
 
@@ -964,7 +964,7 @@ In proxy mode, the proxy has its own limit. nginx defaults to `client_max_body_s
 
 ### `404` or `410` on a page
 
-`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period, or, on a `--v<N>` host, that the version was deleted.
+`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period, or, on a `--v<N>` host of a page that is not `members`, that the version was deleted.
 
 `kazari get <slug>` shows which timestamps are set.
 

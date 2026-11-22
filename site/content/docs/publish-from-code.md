@@ -99,7 +99,7 @@ These commands change an artifact after its first publish:
 | `kazari update q3-report --delete drafts/notes.html` | Removes one file in a new version. |
 | `kazari update q3-report --name "Q3 report (final)"` | Changes fields only; no new version. |
 | `kazari rollback q3-report 2` | Serves version 2 again, or makes a staged version 2 live. Nothing is deleted. |
-| `kazari versions prune q3-report --keep 20` | Deletes all but the 20 newest versions, keeping the published one and any staged ones, to free quota. `--dry-run` lists them first. |
+| `kazari versions prune q3-report --keep 20` | Deletes all but the 20 newest versions, keeping the published one and staged ones newer than it, to free quota. `--dry-run` lists them first. |
 | `kazari visibility q3-report unlisted` | Hides it from other people's listings. `unpublished` takes it offline. |
 | `kazari visibility q3-report members` | Opens it only for people who sign in to the instance. |
 | `kazari share create q3-report --expires 14d` | Prints a link that opens a members page for someone outside, for two weeks. `kazari share revoke` ends it. |

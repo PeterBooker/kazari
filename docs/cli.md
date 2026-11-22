@@ -543,7 +543,7 @@ A prune also keeps the published version and staged versions newer than it, howe
 kazari versions rm q3-report 4 7
 ```
 
-Each deleted version's address answers `410`, and the next `gc` removes the files no other version holds. To prune a page on every sweep instead, set its metadata: `kazari update q3-report --meta kazari.keep_versions=20`. [Deleting versions](api.md#delete-a-version-delete-artifactsslugversionsn) in the API reference has the full rules.
+Each deleted version's address answers `410`, or `404` on a `members` page, and the next `gc` removes the files no other version holds. To prune a page on every sweep instead, set its metadata: `kazari update q3-report --meta kazari.keep_versions=20`. [Deleting versions](api.md#delete-a-version-delete-artifactsslugversionsn) in the API reference has the full rules.
 
 ### visibility
 

@@ -124,8 +124,8 @@ func (t texts) skillText(o Options) string {
 			"version than the latest is published, after a rollback or with a staged version, `edit_file` and " +
 			"`update_artifact` need `base_version` to publish: the published version to fix the page people see, or the " +
 			"latest to carry on from it. Ask the user which, unless they said. On a page edited often, metadata " +
-			"`kazari.keep_versions` (such as `\"20\"`) keeps that many of the newest versions, besides the published and " +
-			"staged ones, and the server deletes older ones, so the page stops filling its owner's quota.",
+			"`kazari.keep_versions` (such as `\"20\"`) keeps that many of the newest versions, besides the published one and " +
+			"staged ones newer than it, and the server deletes older ones, so the page stops filling its owner's quota.",
 		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
 			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
 			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",

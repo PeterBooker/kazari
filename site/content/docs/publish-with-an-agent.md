@@ -91,7 +91,7 @@ Some requests, and what the agent does with each:
 | "Make the headline bigger on `signup-flow`, but let me see it before anyone else does." | Calls `edit_file` with `stage: true` and gives you the staged version's address, which only signed-in members can open. |
 | "Publish the staged version of `signup-flow`." | Calls `publish_version` with its number, and the change goes live. |
 | "Roll `signup-flow` back to version 2." | Calls `publish_version`. Version 3 is kept. |
-| "Keep only the last 20 versions of `signup-flow`." | Sets the metadata `kazari.keep_versions` to `20`; the server deletes older versions, except the published and staged ones. |
+| "Keep only the last 20 versions of `signup-flow`." | Sets the metadata `kazari.keep_versions` to `20`; the server deletes older versions, except the published one and staged ones newer than it. |
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
 | "Make `signup-flow` members-only and give me a link for the client that lasts two weeks." | Calls `set_visibility` with `members`, then `create_share_link` with `expires_in: 14d`, and gives you the link. |
 | "Stop the client's link to `signup-flow`." | Calls `list_share_links`, then `revoke_share_link`. |

@@ -582,7 +582,7 @@ func (s *server) pagesDeleteVersionConfirm(w http.ResponseWriter, r *http.Reques
 	d.Title = "Delete version " + version + " of " + a.Slug
 	d.Ends = []string{
 		"Version " + version + " is gone for good: nothing brings it back.",
-		"Its own address " + host + " answers that the page is gone.",
+		"Its own address " + host + " stops serving it.",
 		"The space it took counts against the owner's storage no more.",
 	}
 	d.Stays = []string{"Every other version, and the page at its address, stay as they are."}

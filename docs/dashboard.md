@@ -225,7 +225,7 @@ A staged version opens only for people signed in to the instance until it is pub
 
 #### Deleting a version
 
-**Delete this version** frees the storage an old version takes. It asks for confirmation, then deletes the version for good, and its own address answers that the page is gone (`kazari versions rm <slug> <version>`). The list offers it on every version but the published one and the newest, which always stay.
+**Delete this version** frees the storage an old version takes. It asks for confirmation, then deletes the version for good, and its own address stops serving it (`kazari versions rm <slug> <version>`). The list offers it on every version but the published one and the newest, which always stay.
 
 To keep only the newest versions of a page edited often, use `kazari versions prune` or the page's `kazari.keep_versions` metadata ([deleting versions](cli.md#versions)).
 

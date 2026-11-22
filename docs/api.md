@@ -36,7 +36,7 @@ Every credential carries scopes, which decide the routes it can call:
 | `artifacts:delete` | `DELETE /artifacts/{slug}`, soft and hard                               |
 | `admin`            | The admin API. Held only by admin users, and implies every other scope  |
 
-A credential without `artifacts:delete` can mark stale only the artifacts its user owns, because the expiry ends in a purge.
+A credential without `artifacts:delete` can mark stale, delete versions of, or set `kazari.keep_versions` on only the artifacts its user owns, because each ends in deleting for good.
 
 A credential without `artifacts:share` cannot send `visibility`: a new artifact gets `serve.default_visibility`, and an existing one keeps what it has. A key issued without naming scopes holds all four artifact scopes.
 
@@ -169,7 +169,7 @@ The server interprets keys under `kazari.` itself, and accepts only these:
 
 #### Write policy
 
-By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can. An unpublished or soft-deleted artifact is the exception under both: only the people who can [read it](#get-an-artifact-get-artifactsslug) can change, republish or restore it. Marking an artifact stale is the other exception: unless you own it or are an admin, it also needs `artifacts:delete`.
+By default (`auth.write_policy: shared`), anyone with `artifacts:write` can change an artifact. Under `owner`, only the artifact's owner and admins can. An unpublished or soft-deleted artifact is the exception under both: only the people who can [read it](#get-an-artifact-get-artifactsslug) can change, republish or restore it. Marking an artifact stale, deleting its versions and setting its `kazari.keep_versions` are the other exception: unless you own it or are an admin, they also need `artifacts:delete`.
 
 ## User API
 
@@ -185,6 +185,8 @@ The user API's base URL is `https://api.<base>/v1`. These are its routes, with t
 | `DELETE` | `/artifacts/{slug}`                      | delete | `204`                       |
 | `POST`   | `/artifacts/{slug}/edit`                 | write  | `200` edit result           |
 | `POST`   | `/artifacts/{slug}/publish`              | write  | `200` publish result        |
+| `DELETE` | `/artifacts/{slug}/versions/{n}`         | write  | `200` deleted versions      |
+| `POST`   | `/artifacts/{slug}/versions/prune`       | write  | `200` deleted versions      |
 | `POST`   | `/artifacts/{slug}/stale`                | write  | `200` stale result          |
 | `DELETE` | `/artifacts/{slug}/stale`                | write  | `200` publish result        |
 | `GET`    | `/artifacts/{slug}/files/{path...}`      | read   | `200` file bytes            |
@@ -595,9 +597,9 @@ The response lists what was deleted, with the artifact:
 { "deleted": [2], "artifact": { ... } }
 ```
 
-The version's address answers `410` from then on, its usage leaves the owner's quota at once, and the next `gc` run removes the blobs no other version holds. Reading or publishing it is `404 version_not_found`, whose message says it was deleted.
+The version's address answers `410` from then on, or `404` on a `members` page, its usage leaves the owner's quota at once, and the next `gc` run removes the blobs no other version holds. Reading or publishing it is `404 version_not_found`, whose message says it was deleted.
 
-Deleting the published or the latest version is `422 invalid_argument`. Deleting versions of an artifact you do not own takes `artifacts:delete`, as [marking one stale](#write-policy) does, and the audit log records `artifact.version_delete`.
+Deleting the published or the latest version is `422 invalid_argument`. Deleting versions of an artifact you do not own takes `artifacts:delete` ([write policy](#write-policy)), and the audit log records `artifact.version_delete`.
 
 ### Prune versions: `POST /artifacts/{slug}/versions/prune`
 
