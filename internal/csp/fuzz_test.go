@@ -60,3 +60,23 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+func FuzzMerge(f *testing.F) {
+	f.Add("default-src 'self'; script-src 'self'; frame-ancestors 'none'", "script-src https://cdn.test; frame-src https://y.test")
+	f.Add("default-src 'none'", "img-src * data:; frame-ancestors *")
+	f.Add("", "IMG-SRC https://x.test;;")
+	f.Fuzz(func(t *testing.T, policy, add string) {
+		got := csp.Merge(policy, add)
+		if again := csp.Merge(got, add); again != got {
+			t.Errorf("Merge(Merge(%q, %q)) = %q, want %q", policy, add, again, got)
+		}
+		before, after := csp.Parse(policy), csp.Parse(got)
+		for name, src := range before {
+			if name == "frame-ancestors" || name == "base-uri" || name == "form-action" || name == "sandbox" {
+				if diff := cmp.Diff(src, after[name]); diff != "" {
+					t.Errorf("Merge(%q, %q) changed %s (-want +got):\n%s", policy, add, name, diff)
+				}
+			}
+		}
+	})
+}

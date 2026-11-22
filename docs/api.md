@@ -150,7 +150,7 @@ The server interprets keys under `kazari.` itself, and accepts only these:
 | ------------------ | ------------------------- | -------------------------------------------------------------------- |
 | `kazari.spa`       | `true`, `false`           | `true` serves `index.html` for any missing path without an extension |
 | `kazari.indexable` | `true`, `false`           | `true` drops `X-Robots-Tag: noindex`                                 |
-| `kazari.csp`       | Printable ASCII, one line | Replaces the instance CSP, when `serve.allow_csp_override` is on     |
+| `kazari.csp`       | Fetch directives and origins, such as `frame-src https://www.youtube.com` | Adds those origins to the instance CSP, when `serve.allow_csp_override` is on ([per-artifact CSP](configuration.md#per-artifact-csp)) |
 
 #### Write policy
 

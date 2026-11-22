@@ -46,3 +46,73 @@ func TestHostAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestMerge(t *testing.T) {
+	const base = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'"
+	tests := []struct {
+		name, add, want string
+	}{
+		{"empty", "", base},
+		{"adds to a directive", "script-src https://cdn.example.com",
+			"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdn.example.com; frame-ancestors 'none'"},
+		{"new directive starts from default-src", "frame-src https://www.youtube.com",
+			"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'; frame-src 'self' https://www.youtube.com"},
+		{"no duplicates", "script-src https://cdn.jsdelivr.net", base},
+		{"frame-ancestors stays", "frame-ancestors *", base},
+		{"wildcard left out", "img-src *", "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'; img-src 'self'"},
+	}
+	for _, tt := range tests {
+		if got := csp.Merge(base, tt.add); got != tt.want {
+			t.Errorf("%s: Merge(%q) = %q, want %q", tt.name, tt.add, got, tt.want)
+		}
+	}
+	if got, want := csp.Merge("default-src 'none'", "img-src https://i.test"), "default-src 'none'; img-src https://i.test"; got != want {
+		t.Errorf("Merge over 'none' = %q, want %q", got, want)
+	}
+}
+
+func TestValidateAddition(t *testing.T) {
+	tests := []struct {
+		add string
+		ok  bool
+	}{
+		{"script-src https://cdn.example.com; frame-src https://www.youtube.com", true},
+		{"img-src data: blob:", true},
+		{"script-src 'unsafe-eval'", true},
+		{"frame-ancestors https://x.test", false},
+		{"base-uri https://x.test", false},
+		{"connect-src *", false},
+		{"default-src https:", false},
+		{"img-src 'none'", false},
+		{"script-src", false},
+	}
+	for _, tt := range tests {
+		if err := csp.ValidateAddition(tt.add); (err == nil) != tt.ok {
+			t.Errorf("ValidateAddition(%q) = %v, want ok %v", tt.add, err, tt.ok)
+		}
+	}
+}
+
+func TestAllows(t *testing.T) {
+	src := []string{"'self'", "data:", "https://fonts.googleapis.com", "*.jsdelivr.net"}
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"https://fonts.googleapis.com/css2?family=Inter", true},
+		{"https://cdn.jsdelivr.net/npm/x.js", true},
+		{"https://cdnjs.cloudflare.com/x.css", false},
+		{"https://example.com/a.png", false},
+	}
+	for _, tt := range tests {
+		if got := csp.Allows(src, tt.url); got != tt.want {
+			t.Errorf("Allows(%q) = %v, want %v", tt.url, got, tt.want)
+		}
+	}
+	if !csp.Allows([]string{"https:"}, "https://any.test/x.png") {
+		t.Error("Allows(https:, https://any.test) = false, want true")
+	}
+	if !csp.Allows([]string{"*"}, "https://any.test/x.png") {
+		t.Error("Allows(*, https://any.test) = false, want true")
+	}
+}

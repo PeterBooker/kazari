@@ -138,7 +138,7 @@ func TestValidateMetadata(t *testing.T) {
 		{"indexable true", map[string]string{artifact.MetaIndexable: "true"}, 0, true},
 		{"indexable TRUE", map[string]string{artifact.MetaIndexable: "TRUE"}, 0, false},
 		{"csp", map[string]string{artifact.MetaCSP: "default-src 'self'"}, 0, true},
-		{"csp with newline", map[string]string{artifact.MetaCSP: "default-src 'self'\r\nX-Evil: 1"}, 0, false},
+		{"csp with newline", map[string]string{artifact.MetaCSP: "img-src https://i.test\r\nX-Evil: 1"}, 0, false},
 		{"unknown kazari key", map[string]string{"kazari.theme": "dark"}, 0, false},
 		{"kazari prefix lookalike", map[string]string{"kazarix.theme": "dark"}, 0, true},
 	}
@@ -257,10 +257,12 @@ func TestValidateMetadataCSP(t *testing.T) {
 		v    string
 		ok   bool
 	}{
-		{"policy", "default-src 'self'; frame-ancestors 'none'", true},
-		{"line break", "default-src 'self'\r\nX-Evil: 1", false},
-		{"NUL", "default-src 'self'\x00", false},
-		{"tab", "default-src\t'self'", false},
+		{"additions", "script-src https://cdn.example.com; frame-src https://www.youtube.com", true},
+		{"frame-ancestors", "default-src 'self'; frame-ancestors 'none'", false},
+		{"wildcard", "default-src *", false},
+		{"line break", "img-src https://i.test\r\nX-Evil: 1", false},
+		{"NUL", "img-src https://i.test\x00", false},
+		{"tab", "img-src\thttps://i.test", false},
 		{"non-ASCII", "default-src https://\u00e9.example", false},
 	}
 	for _, tt := range tests {

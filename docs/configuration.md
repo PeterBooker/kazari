@@ -296,7 +296,7 @@ How artifacts are served:
 | Key                  | Type        | Default   | Meaning                                                                          |
 | -------------------- | ----------- | --------- | -------------------------------------------------------------------------------- |
 | `csp`                | string      | see below | `Content-Security-Policy` sent with every artifact response; `""` sends none.    |
-| `allow_csp_override` | bool        | `true`    | Let an artifact's `kazari.csp` metadata replace `csp` for its own files.         |
+| `allow_csp_override` | bool        | `true`    | Let an artifact's `kazari.csp` metadata add sources to `csp` for its own files.  |
 | `reserved_slugs`     | string list | see below | Slugs no artifact can take or be served under. Each must be non-empty and lower-case. |
 | `default_visibility` | string      | `public`  | Visibility of an artifact created without one: `public`, `unlisted` or `members`. |
 | `share_link_max_ttl` | duration    | `90d`     | The longest a share link can stay valid.                                         |
@@ -306,14 +306,18 @@ How artifacts are served:
 The default policy allows inline scripts and styles plus the common CDNs:
 
 ```text
-default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'
+default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'
 ```
 
 `frame-ancestors` in `csp` also decides whether the MCP preview app embeds pages. With `'none'`, the default, or `'self'`, it shows links only. With an MCP host's app origins listed, it embeds the published version. See [the preview app](mcp.md#preview-app).
 
 #### Per-artifact CSP
 
-Each artifact is its own origin, so a looser per-artifact CSP only affects that artifact's visitors. On a multi-tenant instance, consider `allow_csp_override: false`.
+An artifact adds origins to the instance policy with its `kazari.csp` metadata, for a library or an embed the default does not allow. The value lists fetch directives and the sources to add, such as `frame-src https://www.youtube.com; style-src https://cdn.example.com`.
+
+Each source is added to that directive. A directive the instance policy does not list starts from its `default-src` sources. The other directives, among them `frame-ancestors`, `base-uri` and `form-action`, stay as `csp` sets them. A source must name an origin: `*` and a bare scheme such as `https:` are refused.
+
+To keep every artifact on the instance policy, set `allow_csp_override: false`.
 
 #### Reserved slugs
 

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/PeterBooker/kazari/internal/csp"
 )
 
 const (
@@ -136,6 +138,9 @@ func ValidateMetadataPair(k, v string) error {
 		// proxy might mangle.
 		if !printableASCII(v) {
 			return Errorf(ErrInvalidMetadata, "metadata %s must be printable ASCII on one line", k)
+		}
+		if err := csp.ValidateAddition(v); err != nil {
+			return Errorf(ErrInvalidMetadata, "metadata %s adds sources to the instance policy: %v", k, err)
 		}
 	default:
 		return Errorf(ErrInvalidMetadata, "unknown server metadata key %q", k)

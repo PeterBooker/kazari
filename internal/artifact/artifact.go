@@ -30,7 +30,7 @@ const Unpublished = "unpublished"
 const (
 	MetaSPA       = "kazari.spa"       // "true" serves index.html for any extension-less miss
 	MetaIndexable = "kazari.indexable" // "true" drops the X-Robots-Tag: noindex header
-	MetaCSP       = "kazari.csp"       // replaces the instance Content-Security-Policy
+	MetaCSP       = "kazari.csp"       // adds sources to the instance Content-Security-Policy
 )
 
 // Artifact is the record behind a slug.

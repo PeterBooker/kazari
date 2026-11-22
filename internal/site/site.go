@@ -23,6 +23,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/views"
 )
@@ -81,8 +82,8 @@ type Options struct {
 	// DefaultCSP is sent with every response; empty sends none unless the
 	// artifact has its own.
 	DefaultCSP string
-	// AllowCSPOverride lets an artifact's kazari.csp metadata replace
-	// DefaultCSP for its own files.
+	// AllowCSPOverride lets an artifact's kazari.csp metadata add sources
+	// to DefaultCSP for its own files.
 	AllowCSPOverride bool
 	NotFoundPage     []byte       // nil uses a built-in page
 	GonePage         []byte       // 410 for purged artifacts; nil uses a built-in page
@@ -509,7 +510,7 @@ func (h *handler) setErrorHeaders(w http.ResponseWriter, p *artifact.Published) 
 
 func (h *handler) csp(p *artifact.Published) string {
 	if p != nil && p.CSP != "" && h.opts.AllowCSPOverride {
-		return p.CSP
+		return csp.Merge(h.opts.DefaultCSP, p.CSP)
 	}
 	return h.opts.DefaultCSP
 }

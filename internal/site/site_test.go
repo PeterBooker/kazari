@@ -194,7 +194,7 @@ func newFixture(t *testing.T) *fixture {
 	fx.add(t, "spa-bare", 5, 1, map[string]string{artifact.MetaSPA: "true"}, []testFile{
 		{"index.html", "text/html", "bare shell"},
 	})
-	fx.add(t, "csp", 6, 1, map[string]string{artifact.MetaCSP: "default-src *"}, []testFile{
+	fx.add(t, "csp", 6, 1, map[string]string{artifact.MetaCSP: "frame-src https://www.youtube.com; frame-ancestors *"}, []testFile{
 		{"index.html", "text/html", "csp index"},
 		{"404.html", "text/html", "csp not found"},
 	})
@@ -574,11 +574,11 @@ func TestCSP(t *testing.T) {
 		want   string // "" means the header is absent
 	}{
 		{"default", Options{DefaultCSP: testCSP}, "csp.art.test", "/", 200, testCSP},
-		{"override allowed", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src *"},
-		{"override on artifact 404.html", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/x", 404, "default-src *"},
+		{"override allowed", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src 'self'; frame-ancestors 'none'; frame-src 'self' https://www.youtube.com"},
+		{"override on artifact 404.html", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/x", 404, "default-src 'self'; frame-ancestors 'none'; frame-src 'self' https://www.youtube.com"},
 		{"no override without metadata", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "demo.art.test", "/", 200, testCSP},
 		{"instance page ignores override", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "nobody.art.test", "/", 404, testCSP},
-		{"override with empty default", Options{AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src *"},
+		{"override with empty default", Options{AllowCSPOverride: true}, "csp.art.test", "/", 200, "frame-src https://www.youtube.com"},
 		{"both empty", Options{}, "csp.art.test", "/", 200, ""},
 		{"both empty with override allowed", Options{AllowCSPOverride: true}, "demo.art.test", "/", 200, ""},
 	}
