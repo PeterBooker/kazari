@@ -112,9 +112,11 @@ func newTexts(links present.Links, o Options) texts {
 		"Work in this order:\n"+
 		"- New page: create_artifact, then report the url from the result to the user.\n"+
 		"%s"+
-		"- Change a page: read_file with anchors: true, then edit_file with expected_version set to the latest_version "+
-		"the read returned. On version_conflict or anchor_mismatch, read again and redo the edit; never resend it "+
-		"unchanged. update_artifact adds, replaces or deletes whole files.\n"+
+		"- Change a page: edit_file with text edits (old_text copied from the file) and expected_version set to the "+
+		"latest_version you last saw, from the create, edit or read result. Read first only when you have not seen the "+
+		"current text, and once you know where the change is, read just that window with start_line and end_line; ask "+
+		"for anchors only for anchor edits. On version_conflict or anchor_mismatch, read again and redo the edit; never "+
+		"resend it unchanged. update_artifact adds, replaces or deletes whole files.\n"+
 		"- Content above %s: begin_upload, then upload_chunk for each file or, with a shell, one archive sent to "+
 		"archive_url; then create_artifact or update_artifact with upload_id.\n"+
 		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
@@ -140,7 +142,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 	return map[string]string{
 		"create_artifact": strings.Join([]string{
 			fmt.Sprintf("Create a new artifact (a static web page or site) and publish it as version 1 at %s. "+
-				"Returns url, version and the artifact record; report the url to the user.", t.pageURL),
+				"Returns url, version, latest_version and the artifact's state; report the url to the user.", t.pageURL),
 			t.slugRules, t.limits, t.serving, t.csp, t.metadata, t.inline,
 			t.visibility,
 			"label is an optional note on the version.",
@@ -180,7 +182,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"name, description and visibility (\"public\", \"unlisted\" or \"members\") replace the stored values when " +
 				"given; visibility needs the artifacts:share scope. metadata is merged into the stored map; a key set to " +
 				"null is deleted.",
-			"expected_version: pass the latest_version you last saw (from get_artifact or a previous result). If " +
+			"expected_version: pass the latest_version you last saw (from a previous result, or get_artifact). If " +
 				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
 				"again, re-apply your change and retry. Omit it to skip the check.",
 			"restore: true brings back a soft-deleted artifact (get_artifact shows deleted_at) and then applies the " +
@@ -198,20 +200,28 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			fmt.Sprintf("Change one text file of an artifact with edits and publish the result as a new version at %s; "+
 				"every other file carries over from the latest version. Prefer it to update_artifact for a change inside "+
 				"a file: only the changed text is sent.", t.pageURL),
-			"Text edits: {old_text, new_text}. old_text is copied exactly from the file and must match once (add " +
+			"Text edits (the default): {old_text, new_text}. old_text is copied exactly from the file and must match once (add " +
 				"surrounding lines, or set replace_all). If it does not match exactly, whole lines are compared ignoring " +
 				"trailing whitespace, then ignoring indentation (new_text is re-indented to fit); each edit's match in the " +
 				"result says which was used. Edits apply in order. A miss names the closest lines with their anchors.",
-			"Anchor edits: {start, end, new_text} with anchors from read_file with anchors: true (\"12:3fa0\"). The " +
-				"lines from start to end (inclusive; end defaults to start) are replaced by new_text; empty new_text " +
-				"deletes them. All anchors in a call refer to the file as read and must not overlap; a line that changed " +
-				"fails with anchor_mismatch and nothing is written.",
+			"Anchor edits: {start, end, new_text} with anchors (\"12:3fa0\") from read_file with anchors: true or from an " +
+				"earlier edit's excerpt. The lines from start to end (inclusive; end defaults to start) are replaced by " +
+				"new_text; empty new_text deletes them. {after, new_text} or {before, new_text} inserts new_text as new " +
+				"lines after or before the anchored line, which stays as it is. All anchors in a call refer to the file " +
+				"as read and must not overlap; a line that changed fails with anchor_mismatch and nothing is written. " +
+				"Anchors cost a read and pay off only when you do not have the exact text of a long block you replace, " +
+				"when the text repeats in the file, or after a text edit missed; otherwise text edits are cheaper and as " +
+				"safe, since expected_version already stops an edit against changed content.",
 			fmt.Sprintf("One call takes text edits or anchor edits, not both, at most %d. expected_version: the "+
-				"latest_version you read; if someone published since, the call fails with version_conflict and changes "+
-				"nothing. Without it, edits that still apply are applied to the newest content.", artifact.MaxEdits),
-			"The result has the new version and, per edit, start_line, end_line and an anchored excerpt of the new " +
-				"text, so a follow-up anchor edit needs no new read. A new version clears a pending stale mark unless " +
-				"keep_stale is true.",
+				"latest_version you last saw, from the create, edit or read result; if someone published since, the call "+
+				"fails with version_conflict and changes nothing. Without it, edits that still apply are applied to the "+
+				"newest content.", artifact.MaxEdits),
+			fmt.Sprintf("The result has the new version and latest_version and, per edit, start_line, end_line and an "+
+				"anchored excerpt of the new text with %d lines around it, so a follow-up anchor edit needs no new read. "+
+				"In a new text of more than %d lines that you sent as is, the lines between its first and last are bare "+
+				"anchors (\"9:395c\"), since you have their text. Edits whose excerpts would overlap share one: "+
+				"excerpt_of names the edit that holds it. A new version clears a pending stale mark unless keep_stale "+
+				"is true.", artifact.ExcerptContext, artifact.ExcerptFullLines),
 			t.limits,
 		}, "\n\n"),
 
@@ -249,14 +259,16 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"size, stale/expiry and deletion state) and its versions, newest first, each with its pinned URL. "+
 			"include_files adds file lists (path, size, sha256 hash, content_type), newest version first and up to "+
 			"%d files in one result; next_files_before, when present, is the files_before that gets the next page. "+
-			"Use latest_version as expected_version for update_artifact.", artifact.MaxListedFiles),
+			"Use latest_version as expected_version for update_artifact and edit_file; their results, and "+
+			"create_artifact's, carry it too.", artifact.MaxListedFiles),
 
 		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. Text files up "+
 			"to %s come back inline as text; other files up to %s come back as a base64 blob resource; anything larger "+
 			"returns a download URL on the REST API (%s, bearer authentication). anchors: true prefixes every line of a "+
-			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits. start_line "+
-			"and end_line (1-based, inclusive; end_line defaults to the end) read a window of a text file of any size up "+
-			"to %s instead, with the same anchors when asked; the result states start_line, end_line and total_lines, "+
+			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits; text edits "+
+			"need no anchors. start_line and end_line (1-based, inclusive; end_line defaults to the end) read only those "+
+			"lines of any text file, up to %s, with the same anchors when asked; use them when an earlier read, an edit "+
+			"result or an import outline already says where the change is. The result states start_line, end_line and total_lines, "+
 			"holds as many whole lines as fit %s, and says where to continue when it was cut short. The "+
 			"structured result always carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
 			"version (the version read) and latest_version, and for text the file's content (anchored when asked). "+

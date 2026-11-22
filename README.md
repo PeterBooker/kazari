@@ -12,7 +12,7 @@ The documentation and guides are at <https://kazari.io/docs/>.
 
 - **One origin per artifact.** `demo.art.example.com` serves the published version, and `demo--v3.art.example.com` pins version 3 forever. Each artifact is its own browser origin, so one page cannot read another's storage.
 - **Immutable, content-addressed versions.** Every publish is a new version, and files are stored once by SHA-256. Roll back or forward with one call; `expected_version` and `If-Match` stop lost updates.
-- **Three ways in, one service layer.** REST (`api.<base>/v1`), MCP over Streamable HTTP (`mcp.<base>/`, nineteen tools) and the `kazari` CLI all call the same code and return the same JSON.
+- **Three ways in, one service layer.** REST (`api.<base>/v1`), MCP over Streamable HTTP (`mcp.<base>/`, nineteen tools) and the `kazari` CLI all call the same code. Over MCP, results are trimmed to what a model needs next.
 - **Edits in place.** Agents change a page with exact or line-anchored edits instead of resending whole files. Whitespace-tolerant matches are reported, and stale anchors are refused before anything is written.
 - **Copies of existing pages.** `import_page` fetches a page with its stylesheets, fonts and images onto the instance, removes its scripts and reports an outline of its sections for the edits that follow, so an agent whose own fetch returns text can start from a real page. Any publish can name a URL for a file instead of sending its bytes.
 - **A skill per instance.** The server generates an Agent Skill with its own limits and CSP. It serves the skill over MCP (`skill://kazari/SKILL.md`, the Skills extension), through a tool, and as `kazari skill`. Hosts that support MCP Apps show published pages as a preview card.

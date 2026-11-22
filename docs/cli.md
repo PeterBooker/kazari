@@ -230,7 +230,7 @@ kazari update q3-report --delete drafts/notes.html
 kazari files cat <slug> <path> [--version N] [--anchors]
 ```
 
-Writes one file of the published version, or of version `N`, to stdout. `--anchors` prefixes every line of a text file with its anchor (`12:3fa0|`), which `edit --start` and `--end` take.
+Writes one file of the published version, or of version `N`, to stdout. `--anchors` prefixes every line of a text file with its anchor (`12:3fa0|`), which `edit --start`, `--end`, `--after` and `--before` take.
 
 To save version 1 of a page:
 
@@ -243,6 +243,7 @@ kazari files cat q3-report index.html --version 1 > old-index.html
 ```text
 kazari edit <slug> <path> --old TEXT --new TEXT [--all] [--expected N] [--label L] [--keep-stale]
 kazari edit <slug> <path> --start ANCHOR [--end ANCHOR] --new TEXT [flags]
+kazari edit <slug> <path> --after ANCHOR | --before ANCHOR --new TEXT [flags]
 kazari edit <slug> <path> --edits FILE [flags]
 ```
 
@@ -298,9 +299,24 @@ https://q3-report.art.example.com/
 edit 1: removed at line 20 (anchor)
 ```
 
+#### Inserting lines
+
+`--after` and `--before` insert `--new` as new lines next to the line with that anchor, which stays as it is. To add a paragraph after line 21:
+
+```sh
+kazari edit q3-report index.html --after 21:e03a --new "    <p>Margins held.</p>"
+```
+
+It prints:
+
+```text
+https://q3-report.art.example.com/
+edit 1: lines 22-22 (anchor)
+```
+
 #### Several edits at once
 
-`--edits` reads a JSON array of edits from a file, or from stdin with `-`. Each edit is either `{"old_text", "new_text", "replace_all"}` or `{"start", "end", "new_text"}`.
+`--edits` reads a JSON array of edits from a file, or from stdin with `-`. Each edit is `{"old_text", "new_text", "replace_all"}`, `{"start", "end", "new_text"}`, or `{"after", "new_text"}` or `{"before", "new_text"}`.
 
 ### get
 

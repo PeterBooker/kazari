@@ -49,7 +49,7 @@ const editPage = "<html>\n  <body>\n    <h1>Q3</h1>\n    <p>Up.</p>\n  </body>\n
 func TestEditFile(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": editPage}, {"path": "app.js", "content": "run()"}}})
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "anchors": true})
@@ -58,14 +58,14 @@ func TestEditFile(t *testing.T) {
 		t.Fatalf("read_file anchors = %+v %q", rf, firstLine(res))
 	}
 
-	out, res := ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
+	out, res := ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{{"old_text": "<h1>Q3</h1>", "new_text": "<h1>Q4</h1>"}}})
 	if out.Version != 2 || out.Edits[0].Match != artifact.MatchExact ||
 		firstLine(res) != "Published https://demo.art.test/ (version 2): edited index.html; edit 1 lines 3-3 (exact)." {
 		t.Fatalf("edit_file = %+v %q", out, firstLine(res))
 	}
 
-	out, res = ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
+	out, res = ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
 		"edits": []map[string]any{{"old_text": "<h1>Q4</h1>\n<p>Up.</p>", "new_text": "<h1>Q4</h1>\n<p>Up 4%.</p>\n<p>Costs flat.</p>"}}})
 	if !strings.Contains(firstLine(res), "lines 3-5 (indentation)") {
 		t.Errorf("fuzzy edit summary = %q", firstLine(res))
@@ -80,7 +80,7 @@ func TestEditFile(t *testing.T) {
 			start, _, _ = strings.Cut(l, "|")
 		}
 	}
-	out, _ = ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 3,
+	out, _ = ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 3,
 		"edits": []map[string]any{{"old_text": "", "start": start, "new_text": ""}}})
 	if out.Version != 4 || out.Edits[0].Match != artifact.MatchAnchor || out.Edits[0].EndLine != 4 {
 		t.Errorf("anchor edit = %+v", out)
@@ -277,7 +277,7 @@ func TestHardDeleteConfirmation(t *testing.T) {
 		},
 	})
 	create := func(cs *mcp.ClientSession) {
-		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+		ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 			"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	}
 	create(cs)
@@ -302,7 +302,7 @@ func TestHardDeleteConfirmation(t *testing.T) {
 	}
 
 	plain := e.connect(t, member)
-	ok[api.PublishResult](t, plain, "create_artifact", map[string]any{"slug": "other", "name": "x", "description": "x",
+	ok[mcpserver.WriteResult](t, plain, "create_artifact", map[string]any{"slug": "other", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	if out, _ := ok[api.OK](t, plain, "delete_artifact", map[string]any{"slug": "other", "hard": true}); !out.OK {
 		t.Errorf("purge without elicitation = %+v", out)
@@ -344,7 +344,7 @@ func TestReadFileWindowDoesNotBufferTheFile(t *testing.T) {
 		fmt.Fprintf(&sb, "<p>%s</p>\n", strings.Repeat("x", 90))
 	}
 	big := sb.String()
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": big}}})
 
 	runtime.GC()
@@ -403,7 +403,7 @@ func TestReadFileWindowEdges(t *testing.T) {
 			e := newEnv(t)
 			e.opts.MaxInlineReadBytes = limit
 			cs := e.connect(t, member)
-			ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+			ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 				"files": []map[string]any{{"path": "index.html", "content": b64([]byte(c.content)), "encoding": "base64"}}})
 			args := map[string]any{"slug": "demo", "path": "index.html"}
 			maps.Copy(args, c.args)
@@ -426,7 +426,7 @@ func TestReadFileWindowEdges(t *testing.T) {
 	cs := e.connect(t, member)
 	for pad := range 9 {
 		slug := fmt.Sprintf("pad-%d", pad)
-		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": slug, "name": "Demo", "description": "d",
+		ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": slug, "name": "Demo", "description": "d",
 			"files": []map[string]any{{"path": "index.html", "content": strings.Repeat("x", pad) + "\n" + many.String()}}})
 		rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": slug, "path": "index.html",
 			"start_line": 20001, "end_line": 20001})
@@ -434,7 +434,7 @@ func TestReadFileWindowEdges(t *testing.T) {
 			t.Errorf("pad %d: window = %+v", pad, rf)
 		}
 		bad := strings.Repeat("x", pad) + "\n" + many.String()[:32<<10] + "\xe2\x82\n" + many.String()
-		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": slug + "-bad", "name": "Demo", "description": "d",
+		ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": slug + "-bad", "name": "Demo", "description": "d",
 			"files": []map[string]any{{"path": "index.html", "content": b64([]byte(bad)), "encoding": "base64"}}})
 		if msg := fails(t, cs, "read_file", map[string]any{"slug": slug + "-bad", "path": "index.html", "start_line": 1}); !strings.HasPrefix(msg, "invalid_argument: index.html is not UTF-8 text") {
 			t.Errorf("pad %d: error %q", pad, msg)
@@ -451,7 +451,7 @@ func TestReadFileWindow(t *testing.T) {
 		fmt.Fprintf(&sb, "<p>line %d %s</p>\n", i, strings.Repeat("x", 90))
 	}
 	big := sb.String()
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": big}, {"path": "logo.png", "content": b64(pngBytes), "encoding": "base64"}}})
 
 	rf, _ := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
@@ -470,7 +470,7 @@ func TestReadFileWindow(t *testing.T) {
 	}
 
 	start, _, _ := strings.Cut(strings.SplitN(rf.Content, "\n", 2)[0], "|")
-	out, _ := ok[api.EditResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
+	out, _ := ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{{"start": start, "new_text": "<p>edited</p>"}}})
 	if out.Version != 2 || out.Edits[0].StartLine != 2000 {
 		t.Errorf("anchor edit from a window = %+v", out)

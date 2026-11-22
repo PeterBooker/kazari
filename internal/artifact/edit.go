@@ -32,10 +32,16 @@ const (
 	MatchAnchor             = "anchor"
 )
 
-// maxFuzzyLines caps the old text that whitespace-tolerant and closest
-// matching try, bounding their memory.
+// ExcerptContext is the lines an edit's excerpt shows on each side of its new
+// text; a new text of more than ExcerptFullLines lines shows only its first
+// and last lines in full. maxFuzzyLines caps the old text that
+// whitespace-tolerant and closest matching try, bounding their memory.
 const (
-	excerptContext   = 2
+	ExcerptContext   = 2
+	ExcerptFullLines = 4
+)
+
+const (
 	excerptMax       = 24
 	excerptLineBytes = 160
 	similarityBytes  = 512
@@ -44,14 +50,17 @@ const (
 
 // Edit is one change to a text file: NewText replaces OldText, which must
 // match once unless ReplaceAll, or the lines Start to End inclusive (End
-// defaults to Start). Anchors ("12:3fa0") come from AnchorLines; one request
-// uses one kind of edit.
+// defaults to Start), or goes in as new lines After or Before an anchored
+// line. Anchors ("12:3fa0") come from AnchorLines; one request uses text
+// edits or anchor edits, not both.
 type Edit struct {
 	OldText    string
 	NewText    string
 	ReplaceAll bool
 	Start      string
 	End        string
+	After      string
+	Before     string
 }
 
 // EditOutcome reports how one edit applied.
@@ -64,7 +73,11 @@ type EditOutcome struct {
 	EndLine   int
 	// Excerpt is those lines and a few around them, anchored as by
 	// AnchorLines (long lines clipped) so an anchor edit needs no fresh read.
-	Excerpt string
+	// The inner lines of a long new text the caller sent verbatim are bare
+	// anchors. Edits whose excerpts would overlap share the first one's:
+	// ExcerptOf is then that edit's 1-based number and Excerpt is empty.
+	Excerpt   string
+	ExcerptOf int
 }
 
 // EditRequest edits one text file of the latest version into a new version.
@@ -190,19 +203,28 @@ func ApplyEdits(name, content string, edits []Edit, maxBytes int64) (string, []E
 	}
 	anchors := 0
 	for i, e := range edits {
-		switch {
-		case e.OldText != "" && e.Start != "":
-			return "", nil, Errorf(ErrInvalidArgument, "edit %d: give old_text or start, not both", i+1)
-		case e.OldText == "" && e.Start == "":
-			if e.End != "" {
-				return "", nil, Errorf(ErrInvalidArgument, "edit %d: end needs a start anchor", i+1)
+		kinds := 0
+		for _, f := range []string{e.OldText, e.Start, e.After, e.Before} {
+			if f != "" {
+				kinds++
 			}
+		}
+		switch {
+		case kinds > 1:
+			return "", nil, Errorf(ErrInvalidArgument, "edit %d: give one of old_text, start, after or before", i+1)
+		case kinds == 0 && e.End != "":
+			return "", nil, Errorf(ErrInvalidArgument, "edit %d: end needs a start anchor", i+1)
+		case kinds == 0:
 			return "", nil, Errorf(ErrInvalidArgument,
-				"edit %d: give old_text (the exact text to replace) or a start anchor from a read with anchors", i+1)
-		case e.Start != "":
-			anchors++
-		case e.End != "":
+				"edit %d: give old_text (the exact text to replace), a start anchor from a read with anchors, or after or before to insert lines", i+1)
+		case e.End != "" && e.Start == "" && e.OldText != "":
 			return "", nil, Errorf(ErrInvalidArgument, "edit %d: end applies to anchor edits; use start and end, or old_text alone", i+1)
+		case e.End != "" && e.Start == "":
+			return "", nil, Errorf(ErrInvalidArgument, "edit %d: end applies only with start; an insert takes after or before alone", i+1)
+		case (e.After != "" || e.Before != "") && e.NewText == "":
+			return "", nil, Errorf(ErrInvalidArgument, "edit %d: an insert needs new_text", i+1)
+		case e.OldText == "":
+			anchors++
 		}
 	}
 	if anchors != 0 && anchors != len(edits) {
@@ -232,8 +254,8 @@ func ApplyEdits(name, content string, edits []Edit, maxBytes int64) (string, []E
 		if r[1] > r[0] {
 			out[i].EndLine = lines[2*i+1]
 		}
-		out[i].Excerpt = excerpt(ed.text, r, out[i].StartLine, out[i].EndLine)
 	}
+	excerpts(ed.text, out)
 	return ed.text, out, nil
 }
 
@@ -782,8 +804,17 @@ func dice(a, b []uint16) float64 {
 type anchorEdit struct {
 	idx        int // position in the request
 	from, to   int // 1-based lines
+	insert     string
 	start, end int // bytes
 	repl       string
+	lead       int // bytes of repl before the new text: a break after a last line that had none
+}
+
+func (a anchorEdit) lines() string {
+	if a.insert != "" {
+		return fmt.Sprintf("%s line %d", a.insert, a.from)
+	}
+	return fmt.Sprintf("lines %d-%d", a.from, a.to)
 }
 
 type lineSpan struct {
@@ -793,11 +824,21 @@ type lineSpan struct {
 }
 
 func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
-	type parsed struct{ from, to int }
+	type parsed struct {
+		from, to int
+		insert   string
+	}
 	ps := make([]parsed, len(edits))
 	hashes := map[int]string{}
 	for i, e := range edits {
-		from, h, err := ParseAnchor(e.Start)
+		first, insert := e.Start, ""
+		switch {
+		case e.After != "":
+			first, insert = e.After, "after"
+		case e.Before != "":
+			first, insert = e.Before, "before"
+		}
+		from, h, err := ParseAnchor(first)
 		if err != nil {
 			return nil, Errorf(ErrInvalidArgument, "edit %d: %v", i+1, err)
 		}
@@ -812,7 +853,7 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 		if to < from {
 			return nil, Errorf(ErrInvalidArgument, "edit %d: end (line %d) is before start (line %d)", i+1, to, from)
 		}
-		ps[i] = parsed{from, to}
+		ps[i] = parsed{from, to, insert}
 	}
 	spans := map[int]lineSpan{}
 	total := 0
@@ -825,7 +866,7 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 	})
 	resolved := make([]anchorEdit, 0, len(edits))
 	for i, e := range edits {
-		for _, a := range []string{e.Start, e.End} {
+		for _, a := range []string{e.Start, e.End, e.After, e.Before} {
 			if a == "" {
 				continue
 			}
@@ -834,21 +875,43 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 			}
 		}
 		from, to := spans[ps[i].from], spans[ps[i].to]
-		repl := e.NewText
 		eol := ed.text[to.start+len(to.text) : to.next] // "\n", or "" for a last line without one
 		crlf := eol == "\n" && strings.HasSuffix(to.text, "\r")
-		repl = fitBreaks(repl, crlf)
-		if repl != "" && eol != "" && !strings.HasSuffix(repl, "\n") {
-			repl += fitBreaks("\n", crlf) // the replaced lines ended with a line break
+		ae := anchorEdit{idx: i, from: ps[i].from, to: ps[i].to, insert: ps[i].insert, start: from.start, end: to.next}
+		repl := fitBreaks(e.NewText, crlf)
+		brk := fitBreaks("\n", crlf)
+		switch {
+		case ae.insert == "before":
+			ae.end = ae.start
+		case ae.insert == "after" && eol == "":
+			// The new lines follow a last line that had no break, so they
+			// bring one before them and keep the file's missing final break.
+			crlf = from.start >= 2 && ed.text[from.start-2] == '\r'
+			brk = fitBreaks("\n", crlf)
+			repl = brk + fitBreaks(e.NewText, crlf)
+			ae.start, ae.end, ae.lead = to.next, to.next, len(brk)
+			ae.repl = repl
+			resolved = append(resolved, ae)
+			continue
+		case ae.insert == "after":
+			ae.start = ae.end
 		}
-		resolved = append(resolved, anchorEdit{idx: i, from: ps[i].from, to: ps[i].to, start: from.start, end: to.next, repl: repl})
+		if repl != "" && (eol != "" || ae.insert != "") && !strings.HasSuffix(repl, "\n") {
+			repl += brk // the lines around the new text are whole lines
+		}
+		ae.repl = repl
+		resolved = append(resolved, ae)
 	}
 	byPos := slices.Clone(resolved)
-	slices.SortFunc(byPos, func(a, b anchorEdit) int { return cmp.Compare(a.start, b.start) })
+	// An insert sorts before a replacement that starts where it does, and two
+	// inserts at one place keep the order of the request.
+	slices.SortStableFunc(byPos, func(a, b anchorEdit) int {
+		return cmp.Or(cmp.Compare(a.start, b.start), cmp.Compare(a.end, b.end))
+	})
 	for k := 1; k < len(byPos); k++ {
 		if p, c := byPos[k-1], byPos[k]; c.start < p.end {
-			return nil, Errorf(ErrInvalidArgument, "edits %d and %d overlap (lines %d-%d and %d-%d)",
-				min(p.idx, c.idx)+1, max(p.idx, c.idx)+1, p.from, p.to, c.from, c.to)
+			return nil, Errorf(ErrInvalidArgument, "edits %d and %d overlap (%s and %s)",
+				min(p.idx, c.idx)+1, max(p.idx, c.idx)+1, p.lines(), c.lines())
 		}
 	}
 	ms := make([]match, len(byPos))
@@ -861,7 +924,7 @@ func (ed *editor) applyAnchors(edits []Edit) ([]EditOutcome, error) {
 	}
 	ed.ranges = make([][2]int, len(resolved))
 	for k, a := range byPos {
-		ed.ranges[a.idx] = moved[k]
+		ed.ranges[a.idx] = [2]int{moved[k][0] + a.lead, moved[k][1]}
 	}
 	out := make([]EditOutcome, len(edits))
 	for i := range out {
@@ -1074,66 +1137,174 @@ func copyLineFrom(bw *bufio.Writer, br *bufio.Reader, r io.ReadSeeker, off int64
 	}
 }
 
-// excerpt anchors the lines r spans, startLine to endLine, with context,
-// reading only the lines it shows.
-func excerpt(text string, r [2]int, startLine, endLine int) string {
-	if text == "" {
-		return ""
-	}
-	// a and e are the first and last byte of the new text; an edit that
-	// removed the last lines starts past the end.
-	a, aLine := r[0], startLine
-	if a >= len(text) {
-		a = len(text) - 1
-		if text[a] == '\n' {
-			aLine--
-		}
-	}
-	e, eLine := a, aLine
-	if r[1] > r[0] {
-		e, eLine = r[1]-1, endLine
-	}
-	from, back := lineStartBack(text, a, excerptContext)
-	firstShown := aLine - back
-	if eLine-aLine+1 <= excerptMax {
-		return anchored(splitLines(text[from:lineEndForward(text, e, excerptContext)]), firstShown, 0)
-	}
-	half := excerptMax / 2
-	head := splitLines(text[from:lineEndForward(text, a, half-1)])
-	tailFrom, tailBack := lineStartBack(text, e, half-1)
-	tail := splitLines(text[tailFrom:lineEndForward(text, e, excerptContext)])
-	tailFirst := eLine - tailBack
-	return anchored(head, firstShown, 0) + fmt.Sprintf("\n... %d lines not shown ...\n", tailFirst-firstShown-len(head)) +
-		anchored(tail, tailFirst, 0)
+// lineShow is how an excerpt shows a line; a line two edits show differently
+// takes the higher.
+type lineShow uint8
+
+const (
+	showElided lineShow = iota + 1
+	showBare
+	showFull
+)
+
+type showSpan struct {
+	from, to int // 1-based lines, inclusive
+	show     lineShow
 }
 
-// lineStartBack returns the start of the line n lines before the one
-// holding off, and how many lines it went back (fewer at the top).
-func lineStartBack(text string, off, n int) (int, int) {
-	i := strings.LastIndexByte(text[:off], '\n') + 1
-	steps := 0
-	for steps < n && i > 0 {
-		i = strings.LastIndexByte(text[:i-1], '\n') + 1
-		steps++
-	}
-	return i, steps
+// excerptView is the lines one excerpt shows: from to to, in spans.
+type excerptView struct {
+	owner    int // the first edit, by request order, whose lines it shows
+	from, to int
+	spans    []showSpan
 }
 
-// lineEndForward returns the end, before its line break, of the line n
-// lines after the one holding off (or of the last line).
-func lineEndForward(text string, off, n int) int {
-	end := len(text)
-	if k := strings.IndexByte(text[off:], '\n'); k >= 0 {
-		end = off + k
+// excerpts fills each outcome's Excerpt from text, reading only the lines it
+// shows. An edit's excerpt is its new text with ExcerptContext lines around
+// it; inside a new text of more than ExcerptFullLines lines that the caller
+// sent verbatim, only the first and last lines show their content, and the
+// middle of one longer than excerptMax lines is left out. Excerpts that
+// overlap or touch become one, given to the first of their edits.
+func excerpts(text string, outs []EditOutcome) {
+	if text == "" || len(outs) == 0 {
+		return
 	}
-	for ; n > 0 && end+1 < len(text); n-- {
-		next := end + 1
-		end = len(text)
-		if k := strings.IndexByte(text[next:], '\n'); k >= 0 {
-			end = next + k
+	total := lineCount(text)
+	views := make([]excerptView, len(outs))
+	for i, o := range outs {
+		views[i] = excerptOf(i, o, total)
+	}
+	slices.SortStableFunc(views, func(a, b excerptView) int { return cmp.Compare(a.from, b.from) })
+	merged := views[:1]
+	for _, v := range views[1:] {
+		last := &merged[len(merged)-1]
+		if v.from > last.to+1 {
+			merged = append(merged, v)
+			continue
+		}
+		outs[max(v.owner, last.owner)].ExcerptOf = min(v.owner, last.owner) + 1
+		last.owner = min(v.owner, last.owner)
+		last.to = max(last.to, v.to)
+		last.spans = append(last.spans, v.spans...)
+	}
+	for i := range outs {
+		if outs[i].ExcerptOf != 0 {
+			// A group can take over another's owner after it gave an edit
+			// away, so follow the chain to the excerpt that stays.
+			for outs[outs[i].ExcerptOf-1].ExcerptOf != 0 {
+				outs[i].ExcerptOf = outs[outs[i].ExcerptOf-1].ExcerptOf
+			}
 		}
 	}
-	return end
+	bufs := make([]strings.Builder, len(merged))
+	shows := make([][]showSpan, len(merged))
+	for g := range merged {
+		shows[g] = flatten(merged[g])
+	}
+	g, k, elided := 0, 0, 0
+	eachLine(text, func(i, _ int, line string) bool {
+		n := i + 1
+		for g < len(merged) && n > merged[g].to {
+			g, k = g+1, 0
+		}
+		if g == len(merged) {
+			return false
+		}
+		v := merged[g]
+		if n < v.from {
+			return true
+		}
+		for shows[g][k].to < n {
+			k++
+		}
+		b := &bufs[g]
+		show := shows[g][k].show
+		if show == showElided {
+			elided++
+			return true
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		if elided > 0 {
+			fmt.Fprintf(b, "... %d lines not shown ...\n", elided)
+			elided = 0
+		}
+		b.WriteString(Anchor(n, line))
+		if show == showFull {
+			b.WriteByte('|')
+			b.WriteString(clipLine(line))
+		}
+		return true
+	})
+	for g, v := range merged {
+		outs[v.owner].Excerpt = bufs[g].String()
+	}
+}
+
+// excerptOf is the view of one edit's excerpt in a file of total lines; its
+// spans do not overlap.
+func excerptOf(i int, o EditOutcome, total int) excerptView {
+	first, last := o.StartLine, o.EndLine
+	if last < first {
+		// Nothing new: show around where the text was, which is past the
+		// end when the edit removed the last lines.
+		first = min(first, total)
+		last = first
+	}
+	v := excerptView{owner: i, from: max(1, first-ExcerptContext), to: min(total, last+ExcerptContext)}
+	n := last - first + 1
+	inner := showFull
+	if n > ExcerptFullLines && o.Match != MatchIndentation {
+		inner = showBare
+	}
+	if o.EndLine < o.StartLine || n <= 2 || inner == showFull && n <= excerptMax {
+		v.spans = []showSpan{{v.from, v.to, showFull}}
+		return v
+	}
+	v.spans = []showSpan{{v.from, first, showFull}}
+	if n > excerptMax {
+		half := excerptMax / 2
+		v.spans = append(v.spans,
+			showSpan{first + 1, first + half - 1, inner},
+			showSpan{first + half, last - half, showElided},
+			showSpan{last - half + 1, last - 1, inner})
+	} else {
+		v.spans = append(v.spans, showSpan{first + 1, last - 1, inner})
+	}
+	v.spans = append(v.spans, showSpan{last, v.to, showFull})
+	return v
+}
+
+// flatten turns the spans of a merged view, which overlap where its edits'
+// excerpts did, into a sorted run covering v.from to v.to, each line shown
+// in the highest way any span asks for.
+func flatten(v excerptView) []showSpan {
+	cuts := []int{v.from, v.to + 1}
+	for _, s := range v.spans {
+		cuts = append(cuts, s.from, s.to+1)
+	}
+	slices.Sort(cuts)
+	cuts = slices.Compact(cuts)
+	var out []showSpan
+	for j := 0; j+1 < len(cuts); j++ {
+		from, to := cuts[j], cuts[j+1]-1
+		if from < v.from || to > v.to {
+			continue
+		}
+		show := lineShow(0)
+		for _, s := range v.spans {
+			if s.from <= from && to <= s.to {
+				show = max(show, s.show)
+			}
+		}
+		if n := len(out); n > 0 && out[n-1].show == show {
+			out[n-1].to = to
+			continue
+		}
+		out = append(out, showSpan{from, to, show})
+	}
+	return out
 }
 
 // anchored renders lines numbered from first; skip > 0 elides that many

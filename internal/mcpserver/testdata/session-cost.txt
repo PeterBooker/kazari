@@ -1,0 +1,9 @@
+create_artifact notes                       331
+create_artifact agenda                      338
+create_artifact links                       331
+edit_file notes (text)                     1520
+edit_file agenda (text)                    1531
+edit_file links (text)                     1520
+read_file notes (window, anchors)           626
+edit_file notes (insert)                   1186
+total                                      7383

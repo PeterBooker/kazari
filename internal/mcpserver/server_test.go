@@ -290,7 +290,7 @@ func TestToolsRoundTrip(t *testing.T) {
 	cs := e.connect(t, member)
 	const html = "<!doctype html><title>Demo</title><img src=\"assets/logo.png\">"
 
-	created, res := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	created, res := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug":        "demo",
 		"name":        "Demo",
 		"description": "A demo page",
@@ -301,7 +301,7 @@ func TestToolsRoundTrip(t *testing.T) {
 			{"path": "assets/logo.png", "content": b64(pngBytes), "encoding": "base64"},
 		},
 	})
-	if created.URL != "https://demo.art.test/" || created.Version != 1 || created.Artifact.Owner != "alice" {
+	if created.URL != "https://demo.art.test/" || created.Version != 1 || created.LatestVersion != 1 || created.Slug != "demo" {
 		t.Fatalf("create = %+v", created)
 	}
 	if got := firstLine(res); got != "Published https://demo.art.test/ (version 1)" {
@@ -338,7 +338,7 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Errorf("list by other team = %+v", list)
 	}
 
-	updated, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{
+	updated, _ := ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{
 		"slug":             "demo",
 		"expected_version": 1,
 		"metadata":         map[string]any{"team": nil, "topic": "otters"},
@@ -347,11 +347,13 @@ func TestToolsRoundTrip(t *testing.T) {
 			{"path": "about.html", "content": "<p>about</p>"},
 		},
 	})
-	if updated.Version != 2 || updated.Artifact.LatestVersion != 2 || updated.Artifact.Metadata["topic"] != "otters" {
+	if updated.Version != 2 || updated.LatestVersion != 2 {
 		t.Fatalf("update = %+v", updated)
 	}
-	if _, has := updated.Artifact.Metadata["team"]; has {
-		t.Errorf("metadata team not deleted: %v", updated.Artifact.Metadata)
+	if md, _ := ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo"}); md.Artifact.Metadata["topic"] != "otters" {
+		t.Errorf("metadata topic not set: %v", md.Artifact.Metadata)
+	} else if _, has := md.Artifact.Metadata["team"]; has {
+		t.Errorf("metadata team not deleted: %v", md.Artifact.Metadata)
 	}
 	msg := fails(t, cs, "update_artifact", map[string]any{
 		"slug": "demo", "expected_version": 1,
@@ -369,8 +371,8 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Errorf("v2 files = %v (version %d)", paths, detail.Versions[0].Number)
 	}
 
-	rolled, res := ok[api.PublishResult](t, cs, "publish_version", map[string]any{"slug": "demo", "version": 1})
-	if rolled.Version != 1 || rolled.Artifact.PublishedVersion != 1 || rolled.Artifact.LatestVersion != 2 {
+	rolled, res := ok[mcpserver.WriteResult](t, cs, "publish_version", map[string]any{"slug": "demo", "version": 1})
+	if rolled.Version != 1 || rolled.PublishedVersion != 1 || rolled.LatestVersion != 2 {
 		t.Errorf("publish_version = %+v", rolled)
 	}
 	if got := firstLine(res); got != "Published https://demo.art.test/ (version 1)" {
@@ -384,18 +386,18 @@ func TestToolsRoundTrip(t *testing.T) {
 	if got := stale.ExpiresAt.Sub(stale.StaleAt); got != 72*time.Hour {
 		t.Errorf("stale grace = %v", got)
 	}
-	unstale, _ := ok[api.PublishResult](t, cs, "unmark_stale", map[string]any{"slug": "demo"})
-	if unstale.Artifact.StaleAt != nil || unstale.Artifact.ExpiresAt != nil {
-		t.Errorf("unmark_stale = %+v", unstale.Artifact)
+	unstale, _ := ok[mcpserver.WriteResult](t, cs, "unmark_stale", map[string]any{"slug": "demo"})
+	if unstale.ExpiresAt != nil {
+		t.Errorf("unmark_stale = %+v", unstale)
 	}
 
-	off, res := ok[api.PublishResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "unpublished"})
-	if off.Artifact.UnpublishedAt == nil || !strings.HasPrefix(firstLine(res), "Unpublished https://demo.art.test/") {
-		t.Errorf("unpublish = %+v, %q", off.Artifact, firstLine(res))
+	off, res := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "unpublished"})
+	if off.UnpublishedAt == nil || !strings.HasPrefix(firstLine(res), "Unpublished https://demo.art.test/") {
+		t.Errorf("unpublish = %+v, %q", off, firstLine(res))
 	}
-	on, _ := ok[api.PublishResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "public"})
-	if on.Artifact.UnpublishedAt != nil || on.Artifact.Visibility != "public" {
-		t.Errorf("republish = %+v", on.Artifact)
+	on, _ := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "public"})
+	if on.UnpublishedAt != nil || on.Visibility != "public" {
+		t.Errorf("republish = %+v", on)
 	}
 
 	if done, res := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !done.OK ||
@@ -418,9 +420,9 @@ func TestToolsRoundTrip(t *testing.T) {
 	if len(list.Items) != 1 || list.Items[0].DeletedAt == nil {
 		t.Errorf("list deleted only = %+v", list.Items)
 	}
-	restored, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo again", "restore": true})
-	if restored.Artifact.DeletedAt != nil || restored.Artifact.Name != "Demo again" || restored.Artifact.LatestVersion != 2 {
-		t.Errorf("restore = %+v", restored.Artifact)
+	restored, _ := ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo again", "restore": true})
+	if restored.DeletedAt != nil || restored.Name != "Demo again" || restored.LatestVersion != 2 {
+		t.Errorf("restore = %+v", restored)
 	}
 	if done, _ := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo", "hard": true}); !done.OK {
 		t.Errorf("hard delete = %+v", done)
@@ -514,12 +516,15 @@ func TestChunkedPublish(t *testing.T) {
 	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html",
 		"offset": 0, "content": "staged"})
 
-	pub, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	pub, _ := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "bundle", "name": "Bundle", "description": "A large bundle", "upload_id": up.UploadID,
 		"files": []map[string]any{{"path": "index.html", "content": "inline wins"}},
 	})
-	if pub.Version != 1 || pub.Artifact.SizeBytes != int64(len(data))+int64(len("inline wins")) {
+	if pub.Version != 1 {
 		t.Fatalf("create from upload = %+v", pub)
+	}
+	if d, _ := ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "bundle"}); d.Artifact.SizeBytes != int64(len(data))+int64(len("inline wins")) {
+		t.Fatalf("size after create from upload = %d", d.Artifact.SizeBytes)
 	}
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "bundle", "path": "data.bin"})
@@ -565,7 +570,7 @@ func TestUploadCleanedUpOnFailure(t *testing.T) {
 func TestResourcesAndPrompt(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{
 			{"path": "index.html", "content": "<h1>hi</h1>"},
@@ -667,11 +672,11 @@ func TestToolPanicRecovered(t *testing.T) {
 func TestUpdateFromUpload(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": "<p>v1</p>"}, {"path": "old.txt", "content": "x"}}})
 	up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
 	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "data.json", "offset": 0, "content": `{"n":1}`})
-	pub, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "expected_version": 1,
+	pub, _ := ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "expected_version": 1,
 		"upload_id": up.UploadID, "files": []map[string]any{{"path": "old.txt", "delete": true}}})
 	if pub.Version != 2 {
 		t.Fatalf("update from upload = %+v", pub)
@@ -759,8 +764,8 @@ func TestMarkStaleWithoutDeleteScope(t *testing.T) {
 	carol := e.connect(t, auth.Principal{Handle: "carol", Scopes: rw, Source: auth.SourceAPIKey})
 	aliceCI := e.connect(t, auth.Principal{Handle: "alice", Scopes: rw, Source: auth.SourceAPIKey})
 	page := []map[string]any{{"path": "index.html", "content": "<h1>x</h1>"}}
-	ok[api.PublishResult](t, alice, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "A page.", "files": page})
-	ok[api.PublishResult](t, carol, "create_artifact", map[string]any{"slug": "preview", "name": "Preview", "description": "A page.", "files": page})
+	ok[mcpserver.WriteResult](t, alice, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "A page.", "files": page})
+	ok[mcpserver.WriteResult](t, carol, "create_artifact", map[string]any{"slug": "preview", "name": "Preview", "description": "A page.", "files": page})
 
 	msg := fails(t, carol, "mark_stale", map[string]any{"slug": "demo", "grace": "72h"})
 	if !strings.Contains(msg, "forbidden") || !strings.Contains(msg, "artifacts:delete") {

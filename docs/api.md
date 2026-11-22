@@ -452,9 +452,17 @@ An anchor edit replaces a range of lines. This one replaces lines 12 to 14, incl
 { "start": "12:3fa0", "end": "14:9b1c", "new_text": "..." }
 ```
 
-`end` defaults to `start`, and an empty `new_text` deletes the lines. Anchors come from reading the file with `?anchors=true` (see [Read a file](#read-a-file-get-artifactsslugfilespath)).
+`end` defaults to `start`, and an empty `new_text` deletes the lines. Anchors come from reading the file with `?anchors=true` (see [Read a file](#read-a-file-get-artifactsslugfilespath)), or from an earlier edit's excerpt.
 
-Every anchor refers to the file as read, and the ranges must not overlap. If a line's content has changed since it was read, the request fails with `409 anchor_mismatch`.
+To insert lines next to a line that stays, give `after` or `before` with its anchor instead of `start`. This one adds a paragraph after line 12:
+
+```json
+{ "after": "12:3fa0", "new_text": "<p>Revenue grew.</p>" }
+```
+
+An insert needs a `new_text`. Inserts at the same place keep the order of the request.
+
+Every anchor refers to the file as read, and the ranges must not overlap; an insert overlaps a range only when it falls inside it. If a line's content has changed since it was read, the request fails with `409 anchor_mismatch`.
 
 #### Conflicts and limits
 
@@ -485,6 +493,8 @@ Each entry in `edits` describes one edit:
 - `match` is `exact`, `trailing_whitespace`, `indentation` or `anchor`.
 - `start_line` and `end_line` are where the new text of the edit's first replacement sits in the new version. `end_line` is one less than `start_line` when the edit left no text.
 - `excerpt` shows those lines, with two more on each side, anchored, so a follow-up anchor edit needs no new read. It holds at most 24 lines of new text, and lines longer than 160 bytes are clipped with a note.
+- In a new text of more than four lines that was sent as it is, the excerpt shows the first and last lines in full and the lines between as bare anchors, such as `8:a36d`. A text re-indented by an `indentation` match shows in full.
+- `excerpt_of` is set when the edit's excerpt would overlap or touch an earlier one: that edit's excerpt, named by its 1-based number, shows both, and this edit's `excerpt` is empty.
 
 ### Roll back or forward: `POST /artifacts/{slug}/publish`
 

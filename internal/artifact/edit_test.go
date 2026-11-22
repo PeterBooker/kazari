@@ -2,6 +2,7 @@ package artifact_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"strings"
@@ -161,7 +162,12 @@ func TestApplyEditsTextErrors(t *testing.T) {
 			[]string{"nothing similar"}},
 		{"same text", []artifact.Edit{{OldText: "a", NewText: "a"}}, artifact.ErrInvalidArgument, []string{"the same"}},
 		{"neither mode", []artifact.Edit{{NewText: "a"}}, artifact.ErrInvalidArgument, []string{"old_text", "start anchor"}},
-		{"both modes", []artifact.Edit{{OldText: "a", Start: "1:0000", NewText: "b"}}, artifact.ErrInvalidArgument, []string{"not both"}},
+		{"both modes", []artifact.Edit{{OldText: "a", Start: "1:0000", NewText: "b"}}, artifact.ErrInvalidArgument, []string{"one of old_text, start, after or before"}},
+		{"insert and replace", []artifact.Edit{{Start: anchor(page, 1), After: anchor(page, 1), NewText: "b"}}, artifact.ErrInvalidArgument,
+			[]string{"one of"}},
+		{"insert without text", []artifact.Edit{{After: anchor(page, 1)}}, artifact.ErrInvalidArgument, []string{"insert needs new_text"}},
+		{"insert with end", []artifact.Edit{{Before: anchor(page, 1), End: anchor(page, 2), NewText: "b"}}, artifact.ErrInvalidArgument,
+			[]string{"end applies only with start"}},
 		{"mixed", []artifact.Edit{{OldText: "a", NewText: "b"}, {Start: anchor(page, 1), NewText: "b"}}, artifact.ErrInvalidArgument,
 			[]string{"separate calls"}},
 		{"end without start", []artifact.Edit{{OldText: "a", End: "1:0000", NewText: "b"}}, artifact.ErrInvalidArgument,
@@ -359,7 +365,13 @@ func TestApplyEditsAnchorErrors(t *testing.T) {
 		{"overlap", []artifact.Edit{
 			{Start: anchor(moved, 3), End: anchor(moved, 5), NewText: "x"},
 			{Start: anchor(moved, 5), NewText: "y"},
-		}, artifact.ErrInvalidArgument, []string{"edits 1 and 2 overlap", "lines 3-5 and 5-5"}},
+		}, artifact.ErrInvalidArgument, []string{"edits 1 and 2 overlap", "lines 3-5 and lines 5-5"}},
+		{"insert inside a replacement", []artifact.Edit{
+			{Start: anchor(moved, 3), End: anchor(moved, 5), NewText: "x"},
+			{After: anchor(moved, 4), NewText: "y"},
+		}, artifact.ErrInvalidArgument, []string{"edits 1 and 2 overlap", "lines 3-5 and after line 4"}},
+		{"insert at a changed line", []artifact.Edit{{Before: anchor(page, 3), NewText: "x"}}, artifact.ErrAnchorMismatch,
+			[]string{"line 3 is now"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -649,5 +661,133 @@ func TestServiceEdit(t *testing.T) {
 	if _, _, _, err := e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html",
 		Edits: []artifact.Edit{{OldText: "Q1", NewText: "Q2"}}}); !errors.Is(err, artifact.ErrNotFound) {
 		t.Errorf("edit of a deleted artifact: err = %v, want not_found", err)
+	}
+}
+
+func TestApplyEditsInserts(t *testing.T) {
+	got, outs, err := artifact.ApplyEdits("index.html", page, []artifact.Edit{
+		{After: anchor(page, 3), NewText: "    <p>Intro.</p>"},
+		{Start: anchor(page, 5), NewText: "    <p>Costs fell 2%.</p>"},
+		{Before: anchor(page, 6) + "|  </body>", NewText: "    <p>End.</p>\n"},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<html>\n  <body>\n    <h1>Q3 report</h1>\n    <p>Intro.</p>\n    <p>Revenue grew.</p>\n" +
+		"    <p>Costs fell 2%.</p>\n    <p>End.</p>\n  </body>\n</html>\n"
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("content (-want +got):\n%s", diff)
+	}
+	for i, l := range [][2]int{{4, 4}, {6, 6}, {7, 7}} {
+		if o := outs[i]; o.Match != artifact.MatchAnchor || o.StartLine != l[0] || o.EndLine != l[1] {
+			t.Errorf("edit %d = %s lines %d-%d, want lines %d-%d", i+1, o.Match, o.StartLine, o.EndLine, l[0], l[1])
+		}
+	}
+
+	cases := []struct {
+		name, in string
+		edits    func(in string) []artifact.Edit
+		want     string
+		line     int
+	}{
+		{"inserts at one place keep their order", page, func(in string) []artifact.Edit {
+			return []artifact.Edit{
+				{Before: anchor(in, 5), NewText: "B"},
+				{After: anchor(in, 4), NewText: "A"},
+				{Start: anchor(in, 5), NewText: "C"},
+			}
+		}, strings.Replace(page, "    <p>Costs fell.</p>\n", "B\nA\nC\n", 1), 5},
+		{"before the first line", "a\n", func(in string) []artifact.Edit {
+			return []artifact.Edit{{Before: anchor(in, 1), NewText: "x"}}
+		}, "x\na\n", 1},
+		{"after a last line without a break", "a\nb", func(in string) []artifact.Edit {
+			return []artifact.Edit{{After: anchor(in, 2), NewText: "c"}}
+		}, "a\nb\nc", 3},
+		{"after a last line without a break, crlf", "a\r\nb", func(in string) []artifact.Edit {
+			return []artifact.Edit{{After: anchor(in, 2), NewText: "c\nd"}}
+		}, "a\r\nb\r\nc\r\nd", 3},
+		{"crlf", "a\r\nb\r\n", func(in string) []artifact.Edit {
+			return []artifact.Edit{{After: artifact.Anchor(1, "a\r"), NewText: "x"}}
+		}, "a\r\nx\r\nb\r\n", 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, outs, err := artifact.ApplyEdits("index.html", c.in, c.edits(c.in), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want || outs[0].StartLine != c.line {
+				t.Errorf("got %q at line %d, want %q at line %d", got, outs[0].StartLine, c.want, c.line)
+			}
+		})
+	}
+}
+
+func numbered(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	return b.String()
+}
+
+func TestApplyEditsExcerptLongNewText(t *testing.T) {
+	in := numbered(12)
+	newText := "n1\nn2\nn3\nn4\nn5\nn6\n"
+	t.Run("inner lines bare", func(t *testing.T) {
+		got, outs, err := artifact.ApplyEdits("index.html", in, []artifact.Edit{{OldText: "line 5\n", NewText: newText}}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(got, "\n")
+		full := func(n int) string { return anchor(got, n) + "|" + lines[n-1] }
+		want := strings.Join([]string{full(3), full(4), full(5), anchor(got, 6), anchor(got, 7), anchor(got, 8),
+			anchor(got, 9), full(10), full(11), full(12)}, "\n")
+		if outs[0].Excerpt != want {
+			t.Errorf("excerpt:\n%s\nwant:\n%s", outs[0].Excerpt, want)
+		}
+	})
+	t.Run("reindented text in full", func(t *testing.T) {
+		in := strings.ReplaceAll(in, "line", "  line")
+		_, outs, err := artifact.ApplyEdits("index.html", in, []artifact.Edit{{OldText: "    line 5\n", NewText: newText}}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if outs[0].Match != artifact.MatchIndentation || strings.Count(outs[0].Excerpt, "|") != 10 {
+			t.Errorf("%s excerpt:\n%s", outs[0].Match, outs[0].Excerpt)
+		}
+	})
+	t.Run("middle left out", func(t *testing.T) {
+		long := numbered(40)
+		_, outs, err := artifact.ApplyEdits("index.html", in, []artifact.Edit{{OldText: "line 5\n", NewText: long}}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ex := outs[0].Excerpt
+		if !strings.Contains(ex, "\n... 16 lines not shown ...\n") || strings.Count(ex, "|") != 6 || strings.Count(ex, "\n") != 28 {
+			t.Errorf("excerpt:\n%s", ex)
+		}
+	})
+}
+
+func TestApplyEditsExcerptsShared(t *testing.T) {
+	got, outs, err := artifact.ApplyEdits("index.html", numbered(20), []artifact.Edit{
+		{OldText: "line 5\n", NewText: "five\n"},
+		{OldText: "line 3\n", NewText: "three\n"},
+		{OldText: "line 18\n", NewText: "eighteen\n"},
+		{OldText: "line 8\n", NewText: "eight\n"},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outs[1].ExcerptOf != 1 || outs[1].Excerpt != "" || outs[3].ExcerptOf != 1 || outs[3].Excerpt != "" {
+		t.Fatalf("edits 2 and 4 = %+v, %+v; want both in edit 1's excerpt", outs[1], outs[3])
+	}
+	if outs[0].ExcerptOf != 0 || outs[2].ExcerptOf != 0 || !strings.HasPrefix(outs[2].Excerpt, anchor(got, 16)+"|") {
+		t.Errorf("edits 1 and 3 = %+v, %+v", outs[0], outs[2])
+	}
+	first := strings.Split(outs[0].Excerpt, "\n")
+	if len(first) != 10 || first[0] != anchor(got, 1)+"|line 1" || first[9] != anchor(got, 10)+"|line 10" {
+		t.Errorf("shared excerpt:\n%s", outs[0].Excerpt)
 	}
 }
