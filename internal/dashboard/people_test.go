@@ -243,10 +243,14 @@ func TestInviteShowsLinkOnce(t *testing.T) {
 			t.Errorf("the response sets a cookie beside the link: %s", c)
 		}
 	}
-	for _, want := range []string{"Shown once", "It works once", "Opening it changes nothing", "Kazari sends no email", "cannot be shown again, only replaced", "data-copy-target"} {
+	for _, want := range []string{"Shown once", "It works once", "Opening it changes nothing", "Kazari sends no email", "cannot be shown again, only replaced", "data-copy-target",
+		"A message to send with it", "Hi Cara Lima,", "invite to art.test", "https://mcp.art.test/\n</code>", `data-copy-target="message"`} {
 		if !strings.Contains(r.body, want) {
 			t.Errorf("the invite result lacks %q", want)
 		}
+	}
+	if strings.Count(r.body, token) != 2 {
+		t.Errorf("the link is shown %d times, want twice: in its field and in the message", strings.Count(r.body, token))
 	}
 	l, u, err := e.users.Link(ctx, token)
 	if err != nil || u.Handle != "cara" || l.Purpose != user.PurposeInvite || l.CreatedBy != "boss" {
@@ -1421,5 +1425,25 @@ func TestShownOnceFormSentTwice(t *testing.T) {
 	other.get("/people/ana")
 	if r := b.post("/people/ana/keys", url.Values{"scopes": {auth.ScopeRead}, "once": {other.once}}); r.StatusCode != http.StatusForbidden {
 		t.Errorf("another session's value: status %d, want 403", r.StatusCode)
+	}
+}
+
+// Every mistake of the invite form is named in one answer, with a handle
+// that would do.
+func TestInviteFormOnePass(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	b := e.signedIn("boss")
+	b.get("/invites/new")
+	r := b.post("/invites/new", url.Values{"handle": {"Ana Admin"}, "name": {"Ana"}, "quota": {"500"}})
+	if r.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d", r.StatusCode)
+	}
+	strictMarkup(t, "the invite form", r.body)
+	for _, want := range []string{"Use 2 to 32 characters of a to z", `<span class="mono">ana-admin</span> would do.`, "Say the unit", "Correct the marked fields",
+		`pattern="[a-z0-9][a-z0-9_\-]*"`} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("the invite form lacks %q", want)
+		}
 	}
 }
