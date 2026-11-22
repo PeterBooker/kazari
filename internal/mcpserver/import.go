@@ -19,7 +19,7 @@ type ImportInput struct {
 	Name        string            `json:"name,omitempty" jsonschema:"human-readable title; default the page's title"`
 	Description string            `json:"description,omitempty" jsonschema:"one or two sentences on what the page is; default the page's meta description"`
 	Visibility  string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members (only people signed in to this instance, or with a share link); omitted means the instance default"`
-	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable and kazari.csp are interpreted by the server"`
+	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable, kazari.csp and kazari.keep_versions are interpreted by the server"`
 	Label       string            `json:"label,omitempty" jsonschema:"optional note on this version"`
 	KeepScripts bool              `json:"keep_scripts,omitempty" jsonschema:"keep the page's scripts and event handlers; by default they are removed"`
 }

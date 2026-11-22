@@ -123,7 +123,9 @@ func (t texts) skillText(o Options) string {
 		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again. While an earlier " +
 			"version than the latest is published, after a rollback or with a staged version, `edit_file` and " +
 			"`update_artifact` need `base_version` to publish: the published version to fix the page people see, or the " +
-			"latest to carry on from it. Ask the user which, unless they said.",
+			"latest to carry on from it. Ask the user which, unless they said. On a page edited often, metadata " +
+			"`kazari.keep_versions` (such as `\"20\"`) keeps that many of the newest versions, besides the published and " +
+			"staged ones, and the server deletes older ones, so the page stops filling its owner's quota.",
 		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
 			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
 			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",
@@ -360,7 +362,7 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeTooLarge: fmt.Sprintf("The limits are in the create_artifact description and cannot be raised by the call. "+
 			"Content above %s that is within them goes through begin_upload and upload_chunk.", size(o.InlineGuidanceBytes)),
 		api.CodeTooManyFiles:   "Bundle fewer files, for example by inlining small CSS and JavaScript into the HTML.",
-		api.CodeQuotaExceeded:  "The owner's storage quota is full. Tell the user: deleting old artifacts or a larger quota from an admin frees space.",
+		api.CodeQuotaExceeded:  "The owner's storage quota is full, and every version counts in full. Tell the user: deleting old artifacts, old versions (metadata kazari.keep_versions on a page edited often), or a larger quota from an admin frees space.",
 		api.CodeUploadNotFound: "The upload expired, was discarded or was published by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
 		api.CodeDigestMismatch: "The body sent to archive_url is not the archive begin_upload was told about: check its size " +
