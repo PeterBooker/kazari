@@ -1,6 +1,6 @@
 ---
 name: maintenance
-description: Update Kazari's dependencies - the Go toolchain, Go modules, Docker base images, GitHub Actions, goreleaser and Hugo. Use when asked to update, upgrade or bump any of them, to check what is out of date, or to fix a govulncheck finding.
+description: Update Kazari's dependencies - the Go toolchain, Go modules, Docker base images, GitHub Actions, goreleaser, the tools CI runs (staticcheck, govulncheck, zizmor, actionlint) and Hugo. Use when asked to update, upgrade or bump any of them, to check what is out of date, or to fix a govulncheck finding.
 ---
 
 # Maintenance: updating dependencies
@@ -12,16 +12,15 @@ A request that names one area ("bump Hugo") touches only that area; "update the 
 | Go toolchain; a govulncheck finding in the standard library | `go.md` |
 | Go modules; a govulncheck finding in a module | `modules.md` |
 | Docker base images | `docker.md` |
-| GitHub Actions, goreleaser | `actions.md` |
+| GitHub Actions, goreleaser, the tools CI runs | `actions.md` |
 | Hugo | `hugo.md` |
-
-staticcheck and govulncheck run at `@latest`: nothing to pin.
 
 Before changing anything, run `go test -race ./...` once, so a failure that was already there is not blamed on an update.
 
 ## What to take
 
 - Patch and minor updates: take them.
+- The tools CI runs: take them, then fix what a newer linter reports in the same commit.
 - GitHub Actions majors: take them after reading the release notes. Usually it is a newer Node runtime; check for renamed or removed inputs that the workflows use.
 - A new Debian release of the distroless image: take it. The image is static with no libc, and `nonroot` stays UID 65532.
 - A Go minor release: take it after reading the release notes (`go.md`).

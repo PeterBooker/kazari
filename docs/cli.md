@@ -507,7 +507,7 @@ These two commands print information about you and this binary:
 
 ```text
 kazari me        # handle, admin flag, scopes, credential source, slug patterns, expiry, storage used of quota
-kazari version   # version, commit, build date and Go version of this binary
+kazari version   # version, commit, the commit's date and Go version of this binary
 ```
 
 ## Admin commands

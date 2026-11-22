@@ -88,20 +88,45 @@ These commands build a binary, run the same checks as CI and make a local releas
 # build, stamped with the version from git
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/PeterBooker/kazari/internal/buildinfo.version=$(git describe --tags --always --dirty)" -o kazari ./cmd/kazari
 
-go test -race ./...                                       # tests with the race detector
+go test -race -count=1 -shuffle=on -timeout=5m ./...      # tests with the race detector, in a random order
+CGO_ENABLED=0 go test -count=1 -shuffle=on ./...          # the same tests as the binary ships, without cgo
+CGO_ENABLED=0 go test -run='^$' -bench=. -benchtime=1x ./...   # every benchmark once
 test -z "$(gofmt -l .)"                                   # formatting check
+go mod tidy -diff                                         # go.mod and go.sum are tidy
+go fix -diff ./...                                        # no pending modernizer fix
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...    # lint
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
-shellcheck site/static/install.sh deploy/packaging/*.sh   # the install and package scripts
+shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check   # the release configuration
+.github/scripts/smoke.sh ./kazari                         # start the binary, publish a page, fetch it
 
 goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release dry run
 ```
 
-On pull requests and pushes to `main`, GitHub Actions runs these checks, `go mod tidy -diff`, the cross-builds, and `install.sh` against the latest release.
+A test that fails under `-shuffle=on` prints its seed; run it again with `-shuffle=<seed>`.
 
-To release, push a tag named for the version without a `v`, such as `0.3.0`. The workflow runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`.
+### What CI runs
+
+GitHub Actions runs five workflows from `.github/workflows/`:
+
+| Workflow | Runs | What it does |
+| -------- | ---- | ------------ |
+| `ci.yml` | Every pull request and push to `main`, and before a release | The commands above, with the build and `go vet` repeated for `linux/arm64` and `darwin/arm64`. The job **CI passed** succeeds only when every other job did, so it is the one check to require on `main` |
+| `workflows.yml` | A change under `.github/` | [zizmor](https://docs.zizmor.sh/) and actionlint on the workflows, and `gh actions-lock --verify` on the lockfile |
+| `package.yml` | A change to `deploy/`, `go.mod`, `go.sum` or `.goreleaser.yaml` | Builds `deploy/Dockerfile` and the release dry run, and starts both images with `.github/scripts/smoke-image.sh` |
+| `install-script.yml` | A change to `site/static/install.sh` | Installs the latest release with the script |
+| `scheduled.yml` | Daily, and by hand from the Actions tab | govulncheck, the race tests five times in a random order, the install script, and the coverage of the whole module in the run's summary |
+
+`ci.yml` and `workflows.yml` name the version of each tool they run, so a new release of a linter cannot fail a pull request that did not change. Coverage is reported and gates nothing.
+
+### Releasing
+
+To release, push a tag named for the version without a `v`, such as `0.3.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
+
+Two builds of one commit give the same archives and packages: the binary and every file carry the commit's time, not the time of the build.
+
+After publishing, the workflow checks what it published: the signatures, every file against `checksums.txt`, the provenance, that the image starts, and that `install.sh` installs the new version. A failure there means the release is out and needs a look.
 
 ## Building the website
 
