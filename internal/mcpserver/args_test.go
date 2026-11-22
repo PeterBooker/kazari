@@ -1,6 +1,7 @@
 package mcpserver_test
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -28,9 +29,7 @@ func TestEditFileForgivesCommonSlips(t *testing.T) {
 			ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 				"files": []map[string]any{{"path": "index.html", "content": editPage}}})
 			args := map[string]any{"slug": "demo", "path": "index.html"}
-			for k, v := range c.args {
-				args[k] = v
-			}
+			maps.Copy(args, c.args)
 			out, _ := ok[mcpserver.EditFileResult](t, cs, "edit_file", args)
 			if out.Version != 2 {
 				t.Errorf("edit_file = %+v, want version 2", out)

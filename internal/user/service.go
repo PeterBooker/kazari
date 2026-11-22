@@ -779,6 +779,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	return auth.Principal{
 		Handle:     u.Handle,
 		Admin:      u.Role == RoleAdmin && slices.Contains(scopes, auth.ScopeAdmin),
+		Role:       string(u.Role),
 		Scopes:     scopes,
 		Source:     auth.SourceAPIKey,
 		KeyID:      k.Prefix,

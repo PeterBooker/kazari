@@ -74,6 +74,10 @@ main() {
 	echo "Next, on a server: put the configuration in /etc/kazari (https://kazari.io/docs/install/),"
 	echo "then run: sudo kazari check"
 	echo "On a laptop, to try it: kazari serve --local"
+	echo
+	echo "To publish to an instance, sign in with a key from https://<base>/account/:"
+	echo "  kazari login --url https://api.<base>"
+	echo "or set KAZARI_URL=https://api.<base> and KAZARI_TOKEN=kzk_..."
 }
 
 fail() {

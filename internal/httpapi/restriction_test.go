@@ -191,7 +191,7 @@ func TestMeShowsRestrictionAndExpiry(t *testing.T) {
 		Slugs: []string{"weekly-*", "report"}, ExpiresIn: 90 * day})
 	var me api.Me
 	e.call(http.MethodGet, e.u("/v1/me"), narrow, nil, http.StatusOK, &me)
-	want := api.Me{Handle: "alice", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceAPIKey,
+	want := api.Me{Handle: "alice", Role: "member", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceAPIKey,
 		Slugs: []string{"weekly-*", "report"}, ExpiresAt: k.ExpiresAt}
 	if diff := cmp.Diff(want, me); diff != "" {
 		t.Errorf("GET /me (-want +got):\n%s", diff)

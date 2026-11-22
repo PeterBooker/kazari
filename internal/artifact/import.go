@@ -84,8 +84,8 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (_
 	if err := ValidateSlug(req.Slug, s.opts.ReservedSlugs); err != nil {
 		return nil, nil, nil, err
 	}
-	if _, err := s.store.Get(ctx, req.Slug); err == nil {
-		return nil, nil, nil, Errorf(ErrSlugTaken, "slug %q is already taken", req.Slug)
+	if cur, err := s.store.Get(ctx, req.Slug); err == nil {
+		return nil, nil, nil, s.slugTaken(ctx, actor, cur)
 	} else if CodeOf(err) != ErrNotFound.Code {
 		return nil, nil, nil, err
 	}

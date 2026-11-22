@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"path/filepath"
@@ -599,9 +600,7 @@ func TestUploadKeptOnRefusal(t *testing.T) {
 	}
 	for _, r := range refusals {
 		args := map[string]any{"name": "x", "description": "x", "upload_id": up.UploadID}
-		for k, v := range r.args {
-			args[k] = v
-		}
+		maps.Copy(args, r.args)
 		if msg := fails(t, cs, r.tool, args); !strings.HasPrefix(msg, r.want) {
 			t.Errorf("%s: %s = %q, want prefix %q", r.name, r.tool, msg, r.want)
 		}

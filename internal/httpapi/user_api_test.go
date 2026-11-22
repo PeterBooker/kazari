@@ -709,6 +709,13 @@ func TestMe(t *testing.T) {
 	if !slices.Equal(roScopes, readOnly) {
 		t.Errorf("read-only key scopes = %v", roScopes)
 	}
+
+	e.admin("root")
+	_, narrow := e.key(user.IssueKeyRequest{Handle: "root", Scopes: auth.MemberScopes})
+	e.call(http.MethodGet, e.u("/v1/me"), narrow, nil, http.StatusOK, &me)
+	if me.Role != "admin" || me.Admin {
+		t.Errorf("me of an admin's member-scoped key: role %q, admin %t; want role admin, admin false", me.Role, me.Admin)
+	}
 }
 
 func TestEdit(t *testing.T) {

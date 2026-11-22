@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -130,7 +131,86 @@ func (h *userAPI) nextBundle(mr *multipart.Reader) (*bundle, error) {
 	if p.FormName() != "bundle" {
 		return nil, invalid("the second part must be \"bundle\", not %q", p.FormName())
 	}
-	return readBundle(p, h.o.TempDir, h.o.MaxBodyBytes)
+	return h.readAnyBundle(p)
+}
+
+// readAnyBundle tells a gzip-compressed tar, a plain tar and a zip apart by
+// their first bytes, not by a Content-Type the sender may not have set.
+func (h *userAPI) readAnyBundle(r io.Reader) (*bundle, error) {
+	br := bufio.NewReaderSize(r, 512)
+	head, _ := br.Peek(tarMagicEnd)
+	switch {
+	case bytes.HasPrefix(head, []byte{0x1f, 0x8b}):
+		return readBundle(br, h.o.TempDir, h.o.MaxBodyBytes)
+	case bytes.HasPrefix(head, []byte("PK")):
+		return h.readZipBundle(br)
+	case len(head) == tarMagicEnd && string(head[tarMagicStart:]) == "ustar":
+		return readTarBundle(br, h.o.TempDir, h.o.MaxBodyBytes)
+	}
+	return nil, invalid("the bundle is neither a gzip-compressed tar, a tar nor a zip")
+}
+
+// The ustar magic sits at offset 257 of the first header; GNU tar writes
+// "ustar " there too.
+const (
+	tarMagicStart = 257
+	tarMagicEnd   = tarMagicStart + len("ustar")
+)
+
+// readZipBundle spills the zip whole, since its directory is at the end.
+// The request body is already capped, so the spill is too.
+func (h *userAPI) readZipBundle(r io.Reader) (*bundle, error) {
+	f, err := os.CreateTemp(h.o.TempDir, spillPrefix+"*")
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: spill bundle: %w", err)
+	}
+	b := &bundle{f: f}
+	n, err := io.Copy(f, r)
+	if err != nil {
+		if artifact.CodeOf(err) == "" {
+			err = bodyErr("reading the bundle", err)
+		}
+		return nil, errors.Join(err, b.Close())
+	}
+	maxFiles := artifact.DefaultMaxFiles
+	if h.d.Uploads != nil {
+		maxFiles = h.d.Uploads.MaxFiles()
+	}
+	if b.files, err = readZip(f, n, maxFiles); err != nil {
+		return nil, errors.Join(err, b.Close())
+	}
+	return b, nil
+}
+
+// stripTopDir drops a directory every path starts with, when that directory
+// holds an index.html and the root does not: what "tar czf site.tar.gz site"
+// makes. A bundle of only assets/... is left alone, since an update may mean
+// to add files there.
+func stripTopDir(files []artifact.FileInput) []artifact.FileInput {
+	if len(files) == 0 {
+		return files
+	}
+	dir, _, ok := strings.Cut(files[0].Path, "/")
+	if !ok || dir == "" {
+		return files
+	}
+	prefix := dir + "/"
+	hasIndex := false
+	for _, f := range files {
+		if !strings.HasPrefix(f.Path, prefix) {
+			return files
+		}
+		hasIndex = hasIndex || f.Path == prefix+"index.html"
+	}
+	if !hasIndex {
+		return files
+	}
+	out := make([]artifact.FileInput, len(files))
+	for i, f := range files {
+		f.Path = strings.TrimPrefix(f.Path, prefix)
+		out[i] = f
+	}
+	return out
 }
 
 // bundle spills its entries to one temporary file, never memory: the service
@@ -150,17 +230,23 @@ func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 		return nil, bodyErr("the bundle is not gzip", err)
 	}
 	defer zr.Close()
+	return readTarBundle(zr, dir, limit)
+}
+
+// readTarBundle is readBundle for a tar that is not compressed, or already
+// decompressed.
+func readTarBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	f, err := os.CreateTemp(dir, spillPrefix+"*")
 	if err != nil {
 		return nil, fmt.Errorf("httpapi: spill bundle: %w", err)
 	}
 	b := &bundle{f: f}
-	capped := &capReader{r: zr, left: limit,
+	capped := &capReader{r: r, left: limit,
 		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle is over %s uncompressed", artifact.FormatBytes(limit))}
 	if err := b.fill(tar.NewReader(capped), limit, capped.err); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
-	// Drain so the gzip checksum is verified.
+	// Drain so a gzip checksum is verified.
 	if _, err := io.Copy(io.Discard, capped); err != nil {
 		if artifact.CodeOf(err) == "" {
 			err = bodyErr("the bundle is corrupt", err)

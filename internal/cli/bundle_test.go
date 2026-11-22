@@ -115,16 +115,12 @@ func TestTarGzReproducible(t *testing.T) {
 }
 
 func TestTarGzErrors(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "f")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
 		name string
 		dir  string
 	}{
 		{"missing", filepath.Join(t.TempDir(), "nope")},
-		{"not a directory", file},
+		{"not a directory or a file", "/dev/null"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -10,139 +12,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/config"
 )
-
-// PublishCmd creates an artifact from a directory.
-type PublishCmd struct {
-	Dir         string            `arg:"" help:"Directory to publish."`
-	Slug        string            `help:"Artifact slug (required)." placeholder:"SLUG"`
-	Name        *string           `help:"Display name." placeholder:"NAME"`
-	Description *string           `help:"Description." placeholder:"TEXT"`
-	Label       string            `help:"Version label." placeholder:"LABEL"`
-	Visibility  string            `help:"public, unlisted or members (default: the instance's)." placeholder:"VISIBILITY"`
-	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
-	Update      bool              `help:"If the slug exists, add a version that mirrors the directory (files missing from it are deleted)."`
-}
-
-func (c *PublishCmd) Run(r *runner) error {
-	if c.Slug == "" {
-		return usagef("publish: --slug is required")
-	}
-	switch c.Visibility {
-	case "", "public", "unlisted", "members":
-	default:
-		return usagef("publish: --visibility must be public, unlisted or members")
-	}
-	files, err := bundleFiles(c.Dir)
-	if err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		return fmt.Errorf("publish: no files to publish in %s", c.Dir)
-	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
-
-	create := func() (*api.PublishResult, error) {
-		bundle := TarGzReader(c.Dir)
-		defer bundle.Close()
-		return cl.CreateBundle(r.ctx, api.CreateManifest{
-			Slug: c.Slug, Name: deref(c.Name), Description: deref(c.Description), Visibility: c.Visibility,
-			Metadata: nilIfEmpty(c.Meta), Label: c.Label,
-		}, bundle)
-	}
-	updateExisting := func(cur *api.ArtifactDetail) (*api.PublishResult, error) {
-		m := api.UpdateArtifactRequest{Label: c.Label, ExpectedVersion: cur.Artifact.LatestVersion, Name: c.Name, Description: c.Description}
-		if c.Visibility != "" {
-			m.Visibility = &c.Visibility
-		}
-		m.Metadata = metaPatch(c.Meta)
-		for _, p := range removedFiles(cur, files) {
-			m.Files = append(m.Files, api.FileInput{Path: p, Delete: true})
-		}
-		bundle := TarGzReader(c.Dir)
-		defer bundle.Close()
-		return cl.UpdateBundle(r.ctx, c.Slug, m, bundle)
-	}
-
-	var res *api.PublishResult
-	if !c.Update {
-		res, err = create()
-	} else {
-		var cur *api.ArtifactDetail
-		cur, err = cl.Get(r.ctx, c.Slug, true)
-		switch {
-		case IsCode(err, api.CodeNotFound):
-			res, err = create()
-			if IsCode(err, api.CodeSlugTaken) { // created concurrently
-				if cur, err = cl.Get(r.ctx, c.Slug, true); err == nil {
-					res, err = updateExisting(cur)
-				}
-			}
-		case err == nil:
-			res, err = updateExisting(cur)
-		}
-	}
-	if err != nil {
-		return err
-	}
-	return r.printResult(res)
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-// metaPatch turns --meta pairs into the update request's patch; nil when
-// there are none.
-func metaPatch(meta map[string]string) map[string]*string {
-	if len(meta) == 0 {
-		return nil
-	}
-	out := make(map[string]*string, len(meta))
-	for k, v := range meta {
-		out[k] = &v
-	}
-	return out
-}
-
-func removedFiles(cur *api.ArtifactDetail, local []string) []string {
-	var out []string
-	for _, v := range cur.Versions {
-		if v.Number != cur.Artifact.LatestVersion {
-			continue
-		}
-		for _, f := range v.Files {
-			if _, found := slices.BinarySearch(local, f.Path); !found {
-				out = append(out, f.Path)
-			}
-		}
-	}
-	return out
-}
-
-func nilIfEmpty(m map[string]string) map[string]string {
-	if len(m) == 0 {
-		return nil
-	}
-	return m
-}
-
-func (r *runner) printResult(res *api.PublishResult) error {
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintln(r.stdout, res.URL)
-	return nil
-}
 
 // ImportCmd copies a web page into a new artifact.
 type ImportCmd struct {
@@ -193,51 +66,6 @@ func (c *ImportCmd) Run(r *runner) error {
 	return nil
 }
 
-// UpdateCmd adds a version, changes fields, or both.
-type UpdateCmd struct {
-	Slug        string            `arg:"" help:"Artifact slug."`
-	Dir         string            `arg:"" optional:"" help:"Directory whose files are added, replacing those at the same paths."`
-	Label       string            `help:"Version label." placeholder:"LABEL"`
-	Expected    int               `help:"Fail unless the latest version is N." placeholder:"N"`
-	KeepStale   bool              `name:"keep-stale" help:"Keep the stale mark."`
-	Name        *string           `help:"Display name." placeholder:"NAME"`
-	Description *string           `help:"Description." placeholder:"TEXT"`
-	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
-	Delete      []string          `help:"Delete the file at PATH (repeatable)." sep:"none" placeholder:"PATH"`
-}
-
-func (c *UpdateCmd) Run(r *runner) error {
-	m := api.UpdateArtifactRequest{Label: c.Label, ExpectedVersion: c.Expected, KeepStale: c.KeepStale, Name: c.Name, Description: c.Description}
-	m.Metadata = metaPatch(c.Meta)
-	for _, p := range c.Delete {
-		m.Files = append(m.Files, api.FileInput{Path: p, Delete: true})
-	}
-	if c.Dir == "" && m.Name == nil && m.Description == nil && m.Metadata == nil && len(m.Files) == 0 {
-		return usagef("update: nothing to update: give a directory, --delete, --name, --description or --meta")
-	}
-	if c.Dir != "" {
-		if _, err := bundleFiles(c.Dir); err != nil {
-			return err
-		}
-	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
-	var res *api.PublishResult
-	if c.Dir != "" {
-		bundle := TarGzReader(c.Dir)
-		defer bundle.Close()
-		res, err = cl.UpdateBundle(r.ctx, c.Slug, m, bundle)
-	} else {
-		res, err = cl.Update(r.ctx, c.Slug, m)
-	}
-	if err != nil {
-		return err
-	}
-	return r.printResult(res)
-}
-
 // GetCmd shows an artifact and its versions.
 type GetCmd struct {
 	Slug  string `arg:"" help:"Artifact slug."`
@@ -251,7 +79,7 @@ func (c *GetCmd) Run(r *runner) error {
 	}
 	d, err := cl.Get(r.ctx, c.Slug, c.Files)
 	if err != nil {
-		return err
+		return r.nearSlug(err, cl, c.Slug)
 	}
 	if r.g.JSON {
 		return r.printJSON(d)
@@ -409,13 +237,61 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 	return nil
 }
 
+// nearSlug adds the closest slug the caller can see to not_found, when
+// one is close enough to be a typo.
+func (r *runner) nearSlug(err error, cl *Client, slug string) error {
+	if !IsCode(err, api.CodeNotFound) {
+		return err
+	}
+	l, lerr := cl.List(r.ctx, ListParams{Mine: "any", Deleted: "include", Limit: 200})
+	if lerr != nil {
+		return err
+	}
+	best, bestDist := "", 3
+	for _, a := range l.Items {
+		if d := editDistance(slug, a.Slug); d < bestDist {
+			best, bestDist = a.Slug, d
+		}
+	}
+	if best == "" {
+		return err
+	}
+	return withHints(err, fmt.Sprintf("did you mean %s?", best))
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 // RmCmd deletes an artifact.
 type RmCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
-	Hard bool   `help:"Purge now instead of a soft delete (needs artifacts:delete)."`
+	Hard bool   `help:"Purge now instead of a soft delete (needs artifacts:delete); asks for the slug on a terminal."`
+	Yes  bool   `help:"Purge without asking; needed for --hard when stdin is not a terminal."`
 }
 
 func (c *RmCmd) Run(r *runner) error {
+	if c.Hard && !c.Yes {
+		if err := r.confirmPurge(c.Slug); err != nil {
+			return err
+		}
+	}
 	cl, err := r.userClient()
 	if err != nil {
 		return err
@@ -434,15 +310,31 @@ func (c *RmCmd) Run(r *runner) error {
 	return nil
 }
 
+// confirmPurge asks for the slug typed out, since a purge cannot be undone.
+func (r *runner) confirmPurge(slug string) error {
+	if !r.terminal() {
+		return usagef("rm: --hard purges %s and every version for good; add --yes to do it without a terminal to confirm on", slug)
+	}
+	fmt.Fprintf(r.stderr, "This purges %s and every version for good. Type the slug to confirm: ", slug)
+	line, err := bufio.NewReader(r.stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("rm: read the confirmation: %w", err)
+	}
+	if strings.TrimSpace(line) != slug {
+		return usagef("rm: not purged: the slug did not match")
+	}
+	return nil
+}
+
 // StaleCmd marks an artifact stale.
 type StaleCmd struct {
 	Slug  string `arg:"" help:"Artifact slug."`
-	Grace string `help:"Time until expiry, a Go duration such as 72h (default: the server's)." placeholder:"DURATION"`
+	Grace string `help:"Time until expiry, such as 72h, 3d or 2w (default: the server's)." placeholder:"DURATION"`
 }
 
 func (c *StaleCmd) Run(r *runner) error {
 	if c.Grace != "" {
-		if _, err := time.ParseDuration(c.Grace); err != nil {
+		if _, err := config.ParseDuration(c.Grace); err != nil {
 			return usagef("stale: --grace: %v", err)
 		}
 	}
@@ -643,6 +535,10 @@ func (c *RollbackCmd) Run(r *runner) error {
 		return r.printJSON(res)
 	}
 	fmt.Fprintf(r.stdout, "%s now serves version %d: %s\n", c.Slug, res.Version, res.URL)
+	if res.Artifact.LatestVersion > res.Version {
+		fmt.Fprintf(r.stderr, "the next change needs --base: %d to build on this version, %d to build on the latest\n",
+			res.Version, res.Artifact.LatestVersion)
+	}
 	return nil
 }
 
@@ -660,6 +556,7 @@ type EditCmd struct {
 	Edits     string  `help:"Read a JSON array of edits from FILE (- for stdin) instead of the flags above." placeholder:"FILE"`
 	Label     string  `help:"Version label." placeholder:"LABEL"`
 	Expected  int     `help:"Fail unless the latest version is N." placeholder:"N"`
+	Base      int     `help:"The version whose file to edit; needed when an earlier version is published." placeholder:"N"`
 	KeepStale bool    `name:"keep-stale" help:"Keep the stale mark."`
 }
 
@@ -687,15 +584,22 @@ func (c *EditCmd) Run(r *runner) error {
 		return err
 	}
 	res, err := cl.Edit(r.ctx, c.Slug, api.EditRequest{
-		Path: c.Path, Edits: edits, Label: c.Label, ExpectedVersion: c.Expected, KeepStale: c.KeepStale,
+		Path: c.Path, Edits: edits, Label: c.Label, ExpectedVersion: c.Expected, BaseVersion: c.Base, KeepStale: c.KeepStale,
 	})
 	if err != nil {
-		return err
+		return r.baseHint(err, cl, c.Slug)
+	}
+	for _, w := range res.Warnings {
+		fmt.Fprintf(termSafe{r.stderr}, "warning: %s\n", w)
 	}
 	if r.g.JSON {
 		return r.printJSON(res)
 	}
-	fmt.Fprintln(r.stdout, res.URL)
+	line := fmt.Sprintf("%s v%d → %s", c.Slug, res.Version, res.URL)
+	if res.VersionURL != "" {
+		line += " (pinned: " + res.VersionURL + ")"
+	}
+	fmt.Fprintln(termSafe{r.stdout}, line)
 	for i, e := range res.Edits {
 		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
 		if e.EndLine < e.StartLine {
@@ -735,9 +639,39 @@ func (r *runner) readEdits(name string) ([]api.Edit, error) {
 	return edits, nil
 }
 
-// FilesCmd reads files.
+// FilesCmd lists and reads files.
 type FilesCmd struct {
+	Ls  FilesLsCmd  `cmd:"" help:"List the files of a version."`
 	Cat FilesCatCmd `cmd:"" help:"Write a file to stdout."`
+}
+
+// FilesLsCmd lists one version's files.
+type FilesLsCmd struct {
+	Slug    string `arg:"" help:"Artifact slug."`
+	Version int    `help:"List version N instead of the published one." placeholder:"N"`
+}
+
+func (c *FilesLsCmd) Run(r *runner) error {
+	if c.Version < 0 {
+		return usagef("files ls: --version must be a positive integer")
+	}
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	_, v, err := cl.VersionFiles(r.ctx, c.Slug, c.Version)
+	if err != nil {
+		return r.nearSlug(err, cl, c.Slug)
+	}
+	if r.g.JSON {
+		return r.printJSON(v.Files)
+	}
+	tw := newTable(r.stdout)
+	fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
+	for _, f := range v.Files {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, humanSize(f.Size), f.ContentType, shortHash(f.Hash))
+	}
+	return tw.Flush()
 }
 
 // FilesCatCmd writes one file to stdout.
@@ -797,7 +731,14 @@ func (c *MeCmd) Run(r *runner) error {
 	}
 	tw := newTable(r.stdout)
 	fmt.Fprintf(tw, "handle:\t%s\n", me.Handle)
-	fmt.Fprintf(tw, "admin:\t%t\n", me.Admin)
+	switch {
+	case me.Role == "":
+		fmt.Fprintf(tw, "admin:\t%t\n", me.Admin)
+	case me.Role == "admin" && !me.Admin:
+		fmt.Fprintf(tw, "role:\tadmin (this key has no admin scope)\n")
+	default:
+		fmt.Fprintf(tw, "role:\t%s\n", me.Role)
+	}
 	fmt.Fprintf(tw, "scopes:\t%s\n", dash(strings.Join(me.Scopes, ", ")))
 	fmt.Fprintf(tw, "source:\t%s\n", dash(me.Source))
 	if len(me.Slugs) > 0 {

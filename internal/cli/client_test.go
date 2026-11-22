@@ -483,14 +483,21 @@ func TestClientErrors(t *testing.T) {
 			HTTPError{Status: 409, Err: api.Error{Code: "slug_taken", Message: "slug demo is taken"}}},
 		{"offset mismatch", 409, `{"error":{"code":"upload_offset_mismatch","message":"bad offset","current":12}}`,
 			HTTPError{Status: 409, Err: api.Error{Code: "upload_offset_mismatch", Message: "bad offset", Current: new(int64(12))}}},
-		{"plain text", 502, "  bad gateway\n", HTTPError{Status: 502, Err: api.Error{Code: "http_502", Message: "bad gateway"}}},
-		{"empty", 503, "", HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "Service Unavailable"}}},
-		{"json without code", 400, `{"oops":1}`, HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `{"oops":1}`}}},
+		{"plain text", 502, "  bad gateway\n", HTTPError{Status: 502, Err: api.Error{Code: "http_502", Message: "HTTP 502 Bad Gateway from {url}: bad gateway"}}},
+		{"empty", 503, "", HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "HTTP 503 Service Unavailable from {url}"}}},
+		{"json without code", 400, `{"oops":1}`, HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `HTTP 400 Bad Request from {url}: {"oops":1}`}}},
+		{"html page", 500, "<!doctype html><title>oops</title>\n<p>broken</p>", HTTPError{Status: 500, Err: api.Error{Code: "http_500",
+			Message: "{url} answered HTTP 500 Internal Server Error, which is not the Kazari API; it is usually https://api.<base>"}}},
+		{"no such route", 404, "404 page not found\n", HTTPError{Status: 404, Err: api.Error{Code: "http_404",
+			Message: "{url} answered HTTP 404 Not Found, which is not the Kazari API; it is usually https://api.<base>"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, _ := fakeServer(t, tt.status, tt.body)
-			_, err := NewClient(srv.URL, "tok", nil).Get(t.Context(), "demo", false)
+			tt.want.Err.Message = strings.NewReplacer("{url}", srv.URL, "{host}", strings.TrimPrefix(srv.URL, "http://")).Replace(tt.want.Err.Message)
+			c := NewClient(srv.URL, "tok", nil)
+			c.sleep = func(context.Context, time.Duration) error { return nil }
+			_, err := c.Get(t.Context(), "demo", false)
 			var he *HTTPError
 			if !errors.As(err, &he) {
 				t.Fatalf("err = %v (%T), want *HTTPError", err, err)

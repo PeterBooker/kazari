@@ -523,7 +523,7 @@ func TestAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := auth.Principal{Handle: "boss", Admin: true, Scopes: []string{auth.ScopeRead, auth.ScopeAdmin},
+	want := auth.Principal{Handle: "boss", Admin: true, Role: "admin", Scopes: []string{auth.ScopeRead, auth.ScopeAdmin},
 		Source: auth.SourceAPIKey, KeyID: k.Prefix, QuotaBytes: 99}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("Principal (-want +got):\n%s", diff)

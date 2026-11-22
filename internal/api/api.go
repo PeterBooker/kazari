@@ -203,6 +203,9 @@ type UpdateArtifactRequest struct {
 	Restore         bool               `json:"restore,omitempty"`
 	Files           []FileInput        `json:"files,omitempty"`
 	UploadID        string             `json:"upload_id,omitempty"`
+	// Mirror deletes the base version's files that the request does not
+	// carry, so the new version holds exactly what was sent. REST only.
+	Mirror bool `json:"mirror,omitempty"`
 }
 
 // EditRequest is the JSON body of POST /artifacts/{slug}/edit: edits to one
@@ -359,6 +362,7 @@ type ChunkResult struct {
 type Me struct {
 	Handle     string     `json:"handle"`
 	Admin      bool       `json:"admin"`
+	Role       string     `json:"role,omitempty"`
 	Scopes     []string   `json:"scopes"`
 	Source     string     `json:"source"`
 	Slugs      []string   `json:"slugs,omitempty"`

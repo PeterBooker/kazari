@@ -243,8 +243,8 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	}
 	// Fail before streaming when the slug is taken; the store's unique
 	// constraint is the real guard.
-	if _, err := s.store.Get(ctx, req.Slug); err == nil {
-		return nil, nil, Errorf(ErrSlugTaken, "slug %q is already taken", req.Slug)
+	if cur, err := s.store.Get(ctx, req.Slug); err == nil {
+		return nil, nil, s.slugTaken(ctx, actor, cur)
 	} else if CodeOf(err) != ErrNotFound.Code {
 		return nil, nil, err
 	}
@@ -291,6 +291,20 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	}
 	v.Warnings = s.warnings(ctx, got, v.Files)
 	return got, v, nil
+}
+
+// slugTaken names what holds the slug: a tombstone with the day it is freed,
+// or the bin, which the caller can restore it from when they may see it.
+func (s *Service) slugTaken(ctx context.Context, actor Actor, a *Artifact) error {
+	switch {
+	case a.PurgedAt != nil:
+		return Errorf(ErrSlugTaken, "slug %q was purged and is free again after %s",
+			a.Slug, a.PurgedAt.Add(s.opts.Tombstone).UTC().Format(time.DateOnly))
+	case a.DeletedAt != nil && s.checkReadable(ctx, actor, a) == nil:
+		return Errorf(ErrSlugTaken, "slug %q is in the bin; restore it with kazari restore %s or update_artifact restore: true",
+			a.Slug, a.Slug)
+	}
+	return Errorf(ErrSlugTaken, "slug %q is already taken", a.Slug)
 }
 
 // holdBlobs runs fn under blobMu's read side. Every content reader is local

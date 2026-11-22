@@ -188,19 +188,19 @@
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
           <div class="panel-text">
-            <p>The same binary as the server. Publish a directory, add versions, roll back, retire.</p>
+            <p>The same binary as the server. Publish a directory, deploy new versions, roll back, retire.</p>
             <a class="card-link" href="{{ (site.GetPage "/docs/cli").RelPermalink }}">CLI reference {{ partial "icon.html" "arrow" }}</a>
           </div>
           {{ partial "snippet.html" (dict "lang" "console" "code" `
 $ kazari publish ./site --slug q3-report --name "Q3 report"
-https://q3-report.art.example.com/
-$ kazari update q3-report ./site --label "fix chart"
+q3-report v1 → https://q3-report.art.example.com/
+$ kazari deploy ./site --slug q3-report --label "fix chart"
 $ kazari rollback q3-report 1
-$ kazari stale q3-report --grace 72h` ) }}
+$ kazari stale q3-report --grace 3d` ) }}
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-rest" aria-labelledby="tab-rest" hidden>
           <div class="panel-text">
-            <p>JSON for small pages, a tar.gz bundle for sites, chunked or archive uploads for anything large.</p>
+            <p>JSON for small pages, a tar.gz or zip bundle for sites, chunked or archive uploads for anything large.</p>
             <a class="card-link" href="{{ (site.GetPage "/docs/api").RelPermalink }}">REST API reference {{ partial "icon.html" "arrow" }}</a>
           </div>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `

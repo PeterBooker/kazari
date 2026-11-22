@@ -188,7 +188,7 @@ func TestRequireScope(t *testing.T) {
 }
 
 func TestRequireAdmin(t *testing.T) {
-	adminToken := auth.Principal{Handle: "admin", Admin: true, Scopes: auth.AllScopes, Source: auth.SourceAdminToken}
+	adminToken := auth.Principal{Handle: "admin", Admin: true, Role: "admin", Scopes: auth.AllScopes, Source: auth.SourceAdminToken}
 	tests := []struct {
 		name     string
 		token    string

@@ -88,23 +88,23 @@ The response carries the page's `url` and its `version`.
 
 ### With the CLI
 
-With `kazari` installed on your machine, write a one-line page into `site/`, point the CLI at the server with your key, and publish the directory:
+With `kazari` installed on your machine, write a one-line page into `site/`, sign the CLI in to the server with your key, and publish the directory:
 
 ```sh
 mkdir -p site && echo '<!doctype html><title>Hello</title><h1>Hello</h1>' > site/index.html
-export KAZARI_URL=http://api.kazari.localhost:8080 KAZARI_TOKEN=kzk_...
+kazari login --url http://api.kazari.localhost:8080   # paste your key when it asks
 kazari publish ./site --slug hello
 ```
 
-The CLI prints the page's address, `http://hello.kazari.localhost:8080/`.
+The CLI prints the version and the page's address, `hello v1 → http://hello.kazari.localhost:8080/`.
 
 ## 4. Look around
 
 With the page published, try its versions:
 
 - Open `http://hello.kazari.localhost:8080/` for the published version, and `http://hello--v1.kazari.localhost:8080/` for version 1, which never changes.
-- Publish again, by asking your agent to change the heading or by running `kazari update hello ./site`. A `--v2` address appears, and `--v1` stays as it was.
-- Roll back by asking your agent to "roll hello back to version 1". With the CLI, and `KAZARI_URL` and `KAZARI_TOKEN` exported as above, `kazari get hello` lists the versions and `kazari rollback hello 1` serves version 1 again.
+- Publish again, by asking your agent to change the heading or by editing `site/index.html` and running `kazari deploy ./site --slug hello`. A `--v2` address appears, and `--v1` stays as it was.
+- Roll back by asking your agent to "roll hello back to version 1". With the CLI, `kazari get hello` lists the versions and `kazari rollback hello 1` serves version 1 again. The next `kazari deploy` then asks you to choose with `--base` whether to build on version 1 or on the latest.
 
 > [!NOTE]
 > Browsers and systemd-resolved resolve `*.localhost`, but some other resolvers cannot. If a tool cannot, add the names to `/etc/hosts`: `127.0.0.1 kazari.localhost api.kazari.localhost admin.kazari.localhost mcp.kazari.localhost hello.kazari.localhost`.
