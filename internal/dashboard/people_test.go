@@ -243,10 +243,14 @@ func TestInviteShowsLinkOnce(t *testing.T) {
 			t.Errorf("the response sets a cookie beside the link: %s", c)
 		}
 	}
-	for _, want := range []string{"Shown once", "It works once", "Opening it changes nothing", "Kazari sends no email", "cannot be shown again, only replaced", "data-copy-target"} {
+	for _, want := range []string{"Shown once", "It works once", "Opening it changes nothing", "Kazari sends no email", "cannot be shown again, only replaced", "data-copy-target",
+		"A message to send with it", "Hi Cara Lima,", "invite to art.test", "https://mcp.art.test/\n</code>", `data-copy-target="message"`} {
 		if !strings.Contains(r.body, want) {
 			t.Errorf("the invite result lacks %q", want)
 		}
+	}
+	if strings.Count(r.body, token) != 2 {
+		t.Errorf("the link is shown %d times, want twice: in its field and in the message", strings.Count(r.body, token))
 	}
 	l, u, err := e.users.Link(ctx, token)
 	if err != nil || u.Handle != "cara" || l.Purpose != user.PurposeInvite || l.CreatedBy != "boss" {
@@ -564,7 +568,7 @@ func TestPersonKeyRules(t *testing.T) {
 		"admin for a member":   {url.Values{"scopes": {auth.ScopeAdmin}}, `<p class="error" id="key-scopes-err">`},
 		"no scope":             {url.Values{"label": {"empty"}}, "Tick at least one thing"},
 		"a pattern of its own": {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, `aria-describedby="key-slugs-help key-slugs-err" aria-invalid="true"`},
-		"the pattern's words":  {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, "Write each pattern as a slug, or a slug prefix ending in *"},
+		"the pattern's words":  {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, "Write each as the first part of a page"},
 		"days of words":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"soon"}}, `aria-describedby="key-days-help key-days-err" aria-invalid="true"`},
 		"too many days":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"3651"}}, "Enter a number of days from 1 to 3650"},
 	} {
@@ -1421,5 +1425,25 @@ func TestShownOnceFormSentTwice(t *testing.T) {
 	other.get("/people/ana")
 	if r := b.post("/people/ana/keys", url.Values{"scopes": {auth.ScopeRead}, "once": {other.once}}); r.StatusCode != http.StatusForbidden {
 		t.Errorf("another session's value: status %d, want 403", r.StatusCode)
+	}
+}
+
+// Every mistake of the invite form is named in one answer, with a handle
+// that would do.
+func TestInviteFormOnePass(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	b := e.signedIn("boss")
+	b.get("/invites/new")
+	r := b.post("/invites/new", url.Values{"handle": {"Ana Admin"}, "name": {"Ana"}, "quota": {"500"}})
+	if r.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d", r.StatusCode)
+	}
+	strictMarkup(t, "the invite form", r.body)
+	for _, want := range []string{"Use 2 to 32 characters of a to z", `<span class="mono">ana-admin</span> would do.`, "Say the unit", "Correct the marked fields",
+		`pattern="[a-z0-9][a-z0-9_\-]*"`} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("the invite form lacks %q", want)
+		}
 	}
 }

@@ -77,6 +77,20 @@ func (b *browser) setPassword(link string, extra url.Values) response {
 	return b.send(http.MethodPost, page, form, origin(page))
 }
 
+// welcomed follows the answer to a link's form through the sign-in host,
+// which signs the browser in, back to the account page.
+func (b *browser) welcomed(done response) {
+	b.t.Helper()
+	loc := done.header.Get("Location")
+	if done.status != http.StatusSeeOther || !strings.HasPrefix(loc, "http://mcp.localhost/oauth/signin?") {
+		b.t.Fatalf("the link's form: status %d to %q: %s", done.status, loc, truncate(done.body))
+	}
+	callback := b.follow(b.get(loc), "the handoff at the sign-in host")
+	if r := b.get(callback); r.status != http.StatusFound || r.header.Get("Location") != "/account/" {
+		b.t.Fatalf("callback after the handoff: status %d to %q", r.status, r.header.Get("Location"))
+	}
+}
+
 // newAdmin invites an admin over the admin API and sets their password.
 func newAdmin(t *testing.T, addr, handle string) {
 	t.Helper()
@@ -125,11 +139,14 @@ func TestSetupToDashboard(t *testing.T) {
 		wantStatus(t, get(t, client(addr), link), http.StatusSeeOther, "a fetch of the link")
 	}
 	b := newBrowser(t, addr)
-	done := b.setPassword(link, url.Values{"handle": {"peter"}, "name": {"Peter"}, "email": {"peter@example.com"}})
-	if done.status != http.StatusSeeOther || !strings.HasPrefix(done.header.Get("Location"), "http://admin.localhost") {
-		t.Fatalf("setup: status %d to %q: %s", done.status, done.header.Get("Location"), truncate(done.body))
+	b.welcomed(b.setPassword(link, url.Values{"handle": {"peter"}, "name": {"Peter"}, "email": {"peter@example.com"}}))
+	// Setting the password signs the first admin in, through the sign-in
+	// host, and the link is used up.
+	welcome := b.get("http://localhost/account/")
+	wantStatus(t, welcome, http.StatusOK, "the account page after setup")
+	if !strings.Contains(welcome.body, "Welcome, <b>Peter</b>") || !strings.Contains(welcome.body, "http://mcp.localhost/") {
+		t.Errorf("the welcome after setup = %q", truncate(welcome.body))
 	}
-	// Setting a password signs nobody in, and the link is used up.
 	signIn := b.follow(b.get("http://admin.localhost/"), "the dashboard after setup")
 	other := newBrowser(t, addr)
 	other.send(http.MethodGet, link, nil, nil)
@@ -139,7 +156,8 @@ func TestSetupToDashboard(t *testing.T) {
 	if u.Host != "mcp.localhost" || u.Query().Get("host") != "@admin" {
 		t.Fatalf("sign-in URL = %s", signIn)
 	}
-	cb := b.signIn(signIn, "peter@example.com", testPassword)
+	// The browser's one sign-in opens the dashboard too, with no form.
+	cb := b.get(b.follow(b.get(signIn), "the sign-in host, signed in by the setup link"))
 	if cb.status != http.StatusFound || cb.header.Get("Location") != "/" {
 		t.Fatalf("callback: status %d to %q", cb.status, cb.header.Get("Location"))
 	}
@@ -188,7 +206,7 @@ func TestSetupToDashboard(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"POST /account/setup", "user.redeem_link", "POST /oauth/signin", "user.check_password",
+	for _, name := range []string{"POST /account/setup", "user.redeem_link", "GET /oauth/signin", "GET /account/callback",
 		"GET /session/callback", "oauth.redeem", "GET /{$}", "UserStore.UseLink"} {
 		if !traced[name] {
 			t.Errorf("no span %q", name)
@@ -347,19 +365,8 @@ func TestAccountOnApex(t *testing.T) {
 		t.Fatalf("invite link = %q", inv.Link.URL)
 	}
 	b := newBrowser(t, addr)
-	done := b.setPassword(inv.Link.URL, nil)
-	if done.status != http.StatusSeeOther || done.header.Get("Location") != "/account/" {
-		t.Fatalf("invite: status %d to %q", done.status, done.header.Get("Location"))
-	}
-	signIn := b.follow(b.get("http://localhost/account/"), "the account page without a session")
-	u, _ := url.Parse(signIn)
-	if u.Host != "mcp.localhost" || u.Query().Get("host") != "@account" {
-		t.Fatalf("sign-in URL = %s", signIn)
-	}
-	cb := b.signIn(signIn, "ana", testPassword)
-	if cb.status != http.StatusFound || cb.header.Get("Location") != "/account/" {
-		t.Fatalf("callback: status %d to %q: %s", cb.status, cb.header.Get("Location"), truncate(cb.body))
-	}
+	b.welcomed(b.setPassword(inv.Link.URL, nil))
+	// The invite signed her in: the account page opens without a sign-in.
 	page := b.get("http://localhost/account/")
 	wantStatus(t, page, http.StatusOK, "the account page")
 	token := formTokenRE.FindStringSubmatch(page.body)
@@ -607,5 +614,49 @@ func TestAccountAndDashboardMetrics(t *testing.T) {
 		if strings.Contains(scrape.body, secret) {
 			t.Errorf("the scrape carries %q", secret)
 		}
+	}
+}
+
+// A browser that opens a host whose root is no page finds words and links,
+// not an error: the apex, the connector address and the API address. A
+// client of the API or of MCP gets what it always got.
+func TestFrontPages(t *testing.T) {
+	in := start(t, testConfig(t))
+	addr := in.app.Addrs().HTTP
+	b := newBrowser(t, addr)
+	for _, tt := range []struct {
+		name, url string
+		want      []string
+	}{
+		{"the apex", "http://localhost/", []string{"Sign in to your account", `href="http://localhost/account/"`, `value="http://mcp.localhost/"`, "Open the dashboard"}},
+		{"the connector address", "http://mcp.localhost/", []string{"The connector <b>address</b>", `value="http://mcp.localhost/"`, `href="/oauth/assets/theme.`}},
+		{"the API address", "http://api.localhost/", []string{"The API <b>address</b>", "export KAZARI_URL=http://api.localhost", `href="/assets/theme.`}},
+	} {
+		r := b.get(tt.url)
+		wantStatus(t, r, http.StatusOK, tt.name)
+		if !strings.HasPrefix(r.header.Get("Content-Type"), "text/html") || r.header.Get("Content-Security-Policy") == "" {
+			t.Errorf("%s: Content-Type %q, CSP %q", tt.name, r.header.Get("Content-Type"), r.header.Get("Content-Security-Policy"))
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(r.body, want) {
+				t.Errorf("%s lacks %q", tt.name, want)
+			}
+		}
+		for _, bad := range []string{"An Kazari", "<style", " style="} {
+			if strings.Contains(r.body, bad) {
+				t.Errorf("%s holds %q", tt.name, bad)
+			}
+		}
+		css := regexp.MustCompile(`href="(/[a-z/]+/theme\.[^"]+\.css)"`).FindStringSubmatch(r.body)
+		if css == nil {
+			t.Errorf("%s loads no stylesheet", tt.name)
+			continue
+		}
+		host := strings.TrimSuffix(tt.url, "/")
+		wantStatus(t, get(t, client(addr), host+css[1]), http.StatusOK, tt.name+": its stylesheet")
+	}
+	api := get(t, client(addr), "http://api.localhost/")
+	if strings.HasPrefix(api.header.Get("Content-Type"), "text/html") {
+		t.Errorf("a client of the API at its root got the page: %q", truncate(api.body))
 	}
 }

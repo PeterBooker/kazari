@@ -123,9 +123,14 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 		!strings.HasPrefix(text, "forbidden: this credential is restricted to slugs matching weekly-*") {
 		t.Errorf("create_artifact outside the restriction: %q", text)
 	}
-	if text, failed := toolText(t, cs, "set_visibility", map[string]any{"slug": "weekly-report", "visibility": "unlisted"}); !failed ||
-		!strings.HasPrefix(text, `forbidden: scope "artifacts:share" required`) {
-		t.Errorf("set_visibility without the share scope: %q", text)
+	tools, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "set_visibility" {
+			t.Errorf("set_visibility is offered without the share scope")
+		}
 	}
 	wantStatus(t, get(t, hc, "http://weekly-report.localhost/"), http.StatusOK, "the published page")
 
@@ -174,7 +179,8 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 		t.Fatalf("GET /me with the connection = %+v, %v; want the key's restriction and expiry", viaOAuth, err)
 	}
 	oauthCS := mcpSession(t, addr, first.AccessToken)
-	if text, failed := toolText(t, oauthCS, "update_artifact", map[string]any{"slug": "weekly-report", "files": file}); failed {
+	if text, failed := toolText(t, oauthCS, "update_artifact", map[string]any{"slug": "weekly-report",
+		"files": []map[string]string{{"path": "index.html", "content": "<h1>Weekly, again</h1>"}}}); failed {
 		t.Fatalf("update through the connection: %s", text)
 	}
 	if text, failed := toolText(t, oauthCS, "get_artifact", map[string]any{"slug": "payroll"}); !failed || !strings.HasPrefix(text, "forbidden:") {

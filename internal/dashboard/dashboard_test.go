@@ -152,6 +152,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	e.views = views.NewRecorder(viewStore, views.RecorderOptions{Readers: true, Now: e.clock.Now})
 	deps := dashboard.Deps{
 		Views:    views.New(viewStore, views.Options{Now: e.clock.Now}),
+		Flags:    sqlite.NewFlagStore(db),
 		Sessions: e.oauth, Users: e.users, Artifacts: e.artifacts, Grants: e.oauth, Audit: e.audit, Recorder: e.audit,
 		Jobs: e.jobs, Links: present.Links{URL: func(sub string) string {
 			if sub == "" {

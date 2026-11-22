@@ -61,17 +61,21 @@ func TestParseFileURI(t *testing.T) {
 }
 
 func TestDescribeCSP(t *testing.T) {
-	got := describeCSP("default-src 'none'; script-src 'self' https://cdn.example.com; frame-ancestors 'none'")
+	policy := "default-src 'none'; script-src 'self' https://cdn.example.com; frame-ancestors 'none'"
+	got := describeCSP(policy, true)
 	for _, s := range []string{"scripts from own files, https://cdn.example.com", "styles from nowhere",
-		"cannot be embedded", "Policy: default-src 'none'"} {
+		"frames from nowhere", "cannot be embedded", "add origins with metadata kazari.csp", "warnings name blocked origins"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("describeCSP lacks %q: %s", s, got)
 		}
 	}
-	if strings.Contains(got, "frames from") {
-		t.Errorf("describeCSP mentions frame-src the policy does not set: %s", got)
+	if strings.Contains(got, "media") || strings.Contains(got, policy) {
+		t.Errorf("describeCSP names media-src the policy does not set, or repeats the raw policy: %s", got)
 	}
-	if got := describeCSP(""); !strings.Contains(got, "none is sent") {
+	if got := describeCSP(policy, false); strings.Contains(got, "add origins") || !strings.Contains(got, "does not take kazari.csp") {
+		t.Errorf("describeCSP without overrides = %s", got)
+	}
+	if got := describeCSP("", true); !strings.Contains(got, "none is sent") {
 		t.Errorf("empty CSP = %q", got)
 	}
 }
@@ -99,6 +103,25 @@ func TestDecode(t *testing.T) {
 	}
 	if _, err := decode("p", "x", "hex"); err == nil {
 		t.Errorf("decode with encoding hex: no error")
+	}
+	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg=="
+	for _, c := range []struct{ path, content, enc, want string }{
+		{"img/a.png", "data:image/png;base64," + png, "base64", "\x89PNG"},
+		{"img/a.PNG", png, "base64", "\x89PNG"},
+		{"notes.txt", png, "", png[:4]},
+		{"img/a.png", "a short caption", "", "a short"},
+		{"img/a.png", "caption text", "", "caption"},
+	} {
+		got, err := decode(c.path, c.content, c.enc)
+		if err != nil || !strings.HasPrefix(got, c.want) {
+			t.Errorf("decode(%q, %.20q, %q) = %.20q, %v; want it to start with %q", c.path, c.content, c.enc, got, err, c.want)
+		}
+	}
+	for _, content := range []string{png, "data:image/png;base64," + png} {
+		_, err := decode("img/a.png", content, "")
+		if err == nil || !strings.Contains(err.Error(), `add encoding: "base64"`) {
+			t.Errorf("decode(img/a.png, %.20q, \"\") = %v, want an error naming encoding base64", content, err)
+		}
 	}
 }
 

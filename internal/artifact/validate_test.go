@@ -9,6 +9,25 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
+func TestSuggestSlug(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Q3_Report", "q3-report"},
+		{"my demo page", "my-demo-page"},
+		{"--weekly--notes--", "weekly-notes"},
+		{"demo", ""},
+		{"A", ""},
+		{"Café menu", "caf-menu"},
+	} {
+		if got := artifact.SuggestSlug(c.in); got != c.want {
+			t.Errorf("SuggestSlug(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	err := artifact.ValidateSlug("Q3_Report", nil)
+	if err == nil || !strings.HasSuffix(err.Error(), `; "q3-report" would do`) {
+		t.Errorf("ValidateSlug(%q) = %v, want a suggestion", "Q3_Report", err)
+	}
+}
+
 func TestValidateSlug(t *testing.T) {
 	reserved := []string{"api", "admin", "www"}
 	tests := []struct {
@@ -68,7 +87,10 @@ func TestValidatePath(t *testing.T) {
 		{"traversal", "../x", ""},
 		{"deep traversal", "a/../../b", ""},
 		{"collapses to nothing", "a/..", ""},
-		{"absolute", "/etc/passwd", ""},
+		{"leading slash", "/index.html", "index.html"},
+		{"leading slashes", "//a/b.css", "a/b.css"},
+		{"root", "/", ""},
+		{"leading slash traversal", "/../x", ""},
 		{"trailing slash", "dir/", ""},
 		{"NUL", "a\x00b", ""},
 		{"newline", "a\nb", ""},
@@ -138,7 +160,7 @@ func TestValidateMetadata(t *testing.T) {
 		{"indexable true", map[string]string{artifact.MetaIndexable: "true"}, 0, true},
 		{"indexable TRUE", map[string]string{artifact.MetaIndexable: "TRUE"}, 0, false},
 		{"csp", map[string]string{artifact.MetaCSP: "default-src 'self'"}, 0, true},
-		{"csp with newline", map[string]string{artifact.MetaCSP: "default-src 'self'\r\nX-Evil: 1"}, 0, false},
+		{"csp with newline", map[string]string{artifact.MetaCSP: "img-src https://i.test\r\nX-Evil: 1"}, 0, false},
 		{"unknown kazari key", map[string]string{"kazari.theme": "dark"}, 0, false},
 		{"kazari prefix lookalike", map[string]string{"kazarix.theme": "dark"}, 0, true},
 	}
@@ -236,6 +258,14 @@ func TestParseVisibility(t *testing.T) {
 			t.Errorf("ParseVisibility(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
 	}
+	for _, in := range []string{"private", "Hidden", "internal"} {
+		if _, err := artifact.ParseVisibility(in); err == nil || !strings.Contains(err.Error(), `did you mean "members"?`) {
+			t.Errorf("ParseVisibility(%q) = %v, want a hint at members", in, err)
+		}
+	}
+	if _, err := artifact.ParseVisibility("everyone"); err == nil || strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("ParseVisibility(%q) = %v, want no hint", "everyone", err)
+	}
 }
 
 func TestErrorIs(t *testing.T) {
@@ -257,10 +287,12 @@ func TestValidateMetadataCSP(t *testing.T) {
 		v    string
 		ok   bool
 	}{
-		{"policy", "default-src 'self'; frame-ancestors 'none'", true},
-		{"line break", "default-src 'self'\r\nX-Evil: 1", false},
-		{"NUL", "default-src 'self'\x00", false},
-		{"tab", "default-src\t'self'", false},
+		{"additions", "script-src https://cdn.example.com; frame-src https://www.youtube.com", true},
+		{"frame-ancestors", "default-src 'self'; frame-ancestors 'none'", false},
+		{"wildcard", "default-src *", false},
+		{"line break", "img-src https://i.test\r\nX-Evil: 1", false},
+		{"NUL", "img-src https://i.test\x00", false},
+		{"tab", "img-src\thttps://i.test", false},
 		{"non-ASCII", "default-src https://\u00e9.example", false},
 	}
 	for _, tt := range tests {
@@ -270,5 +302,19 @@ func TestValidateMetadataCSP(t *testing.T) {
 				t.Errorf("ValidateMetadataPair(%q) = %v, ok want %v", tt.v, err, tt.ok)
 			}
 		})
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"}, {1023, "1023 B"}, {1024, "1 KiB"}, {1536, "1.5 KiB"}, {25 << 20, "25 MiB"}, {53477376, "51 MiB"}, {3 << 30, "3 GiB"},
+	}
+	for _, tt := range tests {
+		if got := artifact.FormatBytes(tt.n); got != tt.want {
+			t.Errorf("FormatBytes(%d) = %q, want %q", tt.n, got, tt.want)
+		}
 	}
 }

@@ -146,6 +146,17 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 			"This sign-in link is not valid. Open the page you wanted again.", "")
 		return
 	}
+	if code := q.Get(ParamHandoff); code != "" {
+		done, err := s.handoff(w, r, code, t)
+		if err != nil {
+			s.log.ErrorContext(ctx, "oauth: hand off", "err", err)
+			s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+			return
+		}
+		if done {
+			return
+		}
+	}
 	sess, err := s.liveSession(ctx, r)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: load session", "err", err)
@@ -167,10 +178,15 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 		}
 		// The form has no expiry, so the cookie outlasts a pending sign-in.
 		s.setNamedCookie(w, s.named(signInCookie), binding, s.opts.SessionTTL)
-		s.renderSignIn(w, http.StatusOK, t.form(), q.Get("with") == withKey, "")
+		page := t.form()
+		prefill(&page, q)
+		s.renderSignIn(w, http.StatusOK, page, q.Get("with") == withKey, "")
 		return
 	}
 
+	if s.idpUnavailable(w, r) {
+		return
+	}
 	verifier := oauth2.GenerateVerifier()
 	req := &SignInRequest{
 		ID:               signInStatePrefix + randomString(secretBytes),
@@ -212,6 +228,9 @@ func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, 
 	p.Lifetime = lifetime(s.opts.SessionTTL)
 	if s.opts.RecoverURL != "" {
 		p.Recover = PathRecover
+		if q := p.pending().Encode(); q != "" {
+			p.Recover += "?" + q
+		}
 	}
 	if p.Password && s.passkeys != nil {
 		if c, err := s.passkeys.SignIn(); err != nil {
@@ -230,6 +249,51 @@ func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, 
 	}
 	s.pages.render(w, status, "signin", p, p.formTarget)
 }
+
+// pending names the sign-in the page continues, for a page that leaves it
+// and comes back: the recovery form.
+func (p signInPage) pending() url.Values {
+	if p.RequestID != "" {
+		return url.Values{"request_id": {p.RequestID}}
+	}
+	if p.Host == "" {
+		return nil
+	}
+	return url.Values{"host": {p.Host}, "path": {p.Path}, "nonce": {p.Nonce}}
+}
+
+// serveRecover sends a browser on to the recovery form with the sign-in it
+// came from, so that the form can return to it. Only a sign-in this page
+// could continue is passed on.
+func (s *Service) serveRecover(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var carry url.Values
+	if id := q.Get("request_id"); len(id) == tokenLen && pkceValue.MatchString(id) {
+		carry = url.Values{"request_id": {id}}
+	} else if t, ok := s.target(q.Get("host"), q.Get("path"), q.Get("nonce")); ok {
+		carry = url.Values{"host": {t.host}, "path": {t.path}, "nonce": {t.nonceHash}}
+	}
+	to := s.opts.RecoverURL
+	if len(carry) > 0 {
+		to += "?" + carry.Encode()
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// prefill fills in what a link to the sign-in form may: the name to sign in
+// with, and the notice of a fixed word.
+func prefill(p *signInPage, q url.Values) {
+	if login := strings.TrimSpace(q.Get("login")); len(login) <= maxAccountKey {
+		p.Login = login
+	}
+	if q.Get("notice") == noticeRecovered {
+		p.Notice = noticeRecovered
+	}
+}
+
+// noticeRecovered is the notice of a sign-in form reached from the recovery
+// form, once the new password is set.
+const noticeRecovered = "recovered"
 
 // lifetime describes d in whole hours ("12 hours"), or minutes below one.
 func lifetime(d time.Duration) string {
@@ -680,6 +744,78 @@ func (s *Service) Redeem(ctx context.Context, code, host, nonce string) (_ View,
 		return View{}, fmt.Errorf("oauth: redeem: %w", err)
 	}
 	return View{Token: token, ExpiresAt: v.ExpiresAt, Path: c.Path}, nil
+}
+
+// ViaLink is how a person signed in who was signed in by redeeming an
+// invite, a reset or the setup link, in the audit trail.
+const ViaLink = "link"
+
+// hostHandoff is the label of a LinkCode's code: the sign-in host itself,
+// which no host's Redeem names.
+const hostHandoff = "@signin"
+
+// ParamHandoff is the sign-in page's parameter that carries a LinkCode.
+const ParamHandoff = "handoff"
+
+// LinkCode is a single-use code that signs handle in at the sign-in host,
+// for a person a host has just identified: they redeemed a link and chose a
+// password. The host sends the browser to the sign-in page with it as the
+// handoff parameter; the sign-in host then opens the browser's one sign-in
+// session there, as a password would, and the browser goes on to the host
+// as after any sign-in. Every other host joins that session, and signing
+// out anywhere ends it.
+func (s *Service) LinkCode(ctx context.Context, handle string) (string, error) {
+	now := s.now()
+	expires := now.Add(s.opts.ViewCodeTTL)
+	// A code belongs to a session; this one holds the person until the
+	// code is used, and opens nothing itself.
+	anchor := &Session{Hash: hashSecret(randomString(secretBytes)), UserHandle: handle, CreatedAt: now, ExpiresAt: expires}
+	if err := s.store.CreateSession(ctx, anchor); err != nil {
+		return "", fmt.Errorf("oauth: link code: %w", err)
+	}
+	code := randomString(secretBytes)
+	if err := s.store.CreateViewCode(ctx, &ViewCode{Hash: hashSecret(code), SessionID: anchor.ID, Host: hostHandoff, ExpiresAt: expires}); err != nil {
+		return "", fmt.Errorf("oauth: link code: %w", err)
+	}
+	return code, nil
+}
+
+// handoff signs the browser in with a code from LinkCode and sends it on to
+// t. ok is false when the code opens nothing, and nothing was written.
+func (s *Service) handoff(w http.ResponseWriter, r *http.Request, code string, t signInTarget) (bool, error) {
+	ctx := r.Context()
+	if len(code) != tokenLen {
+		return false, nil
+	}
+	c, err := s.store.ConsumeViewCode(ctx, hashSecret(code), s.now())
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCodeUsed) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if c.Host != hostHandoff || !s.now().Before(c.ExpiresAt) {
+		return false, nil
+	}
+	anchor, err := s.store.GetSessionByID(ctx, c.SessionID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if live, err := s.sessionLive(ctx, anchor.UserHandle, "", anchor.ExpiresAt); err != nil || !live {
+		return false, err
+	}
+	if err := s.store.DeleteSession(ctx, anchor.ID); err != nil {
+		return false, err
+	}
+	sess, err := s.startSession(ctx, w, s.signInBinding(r), anchor.UserHandle, "", ViaLink)
+	if err != nil {
+		return false, err
+	}
+	s.sendToHost(w, r, sess, t)
+	return true, nil
 }
 
 // Viewer returns the handle of the person whose view session on host

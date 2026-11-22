@@ -79,7 +79,7 @@ An invite creates the user and a link that lets them choose a password. Invite a
 kazari admin users invite ana --email ana@example.com --name "Ana Lima"
 ```
 
-The command prints the link, `https://art.example.com/account/invite?token=kzl_...`, on stdout. Send it to the person over a channel you trust.
+The command prints the link, `https://art.example.com/account/invite?token=kzl_...`, on stdout. Send it to the person over a channel you trust, with the connector address, `https://mcp.art.example.com/`, for their agent. The dashboard writes this message for you beside the link.
 
 A link behaves the same whatever it is for:
 
@@ -110,7 +110,7 @@ Only an admin can invite an admin: add `--role admin`. The person's email, when 
 
 A password has at least 15 characters by default (`auth.local.min_password_length`) and at most 256. Length is the only rule: no character classes are required, and a password manager's output or a few unrelated words both work.
 
-Setting a password does not sign the person in. The next page is the sign-in page, where they enter it once more.
+Setting a password with an invite, a reset or the setup link signs the person in, in that browser, as signing in with the password would: the browser passes through the sign-in page once and lands on the account page, which welcomes them with connecting an agent as the first step. The dashboard, members pages and an agent's sign-in then open with that sign-in, and signing out anywhere ends it everywhere.
 
 ### Signing in with a password
 
@@ -118,7 +118,7 @@ The sign-in page asks for a handle or an email, and the password. A browser stay
 
 When an MCP client connects, `/oauth/authorize` shows this sign-in page first, unless the browser is already signed in. The consent page follows, naming the client, the account and the scopes, with **Approve** and **Deny**. A grant approved this way lasts as one approved after a provider sign-in does: no key bounds it.
 
-**Use an API key instead**, under the form, opens the form that takes a key in place of the password ([Signing in with an API key](#signing-in-with-an-api-key)).
+**Use an API key instead**, under **More ways to sign in** below the form, opens the form that takes a key in place of the password ([Signing in with an API key](#signing-in-with-an-api-key)).
 
 After several wrong passwords the page asks the person to wait before the next attempt, a second at first and never more than a minute. A wait ends by itself, and no account is ever locked.
 
@@ -170,18 +170,21 @@ A person who has lost their password opens **Lost your password? Use a recovery 
 
 Using a code sets the new password and signs the person out of every browser, as a reset link does. The code is used up, and their API keys and connected apps keep working.
 
+When the person came from a sign-in, such as connecting an agent or opening a members page, the recovery form returns them to it with their name filled in, and they sign in with the new password and carry on.
+
 Wrong codes slow the next attempt as wrong passwords do, a second at first and never more than a minute. A person with no codes left asks an admin for a [reset link](#resetting-a-password).
 
 ### The account page
 
-Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows:
+Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows, in this order:
 
+- **Connect your AI agent**: the connector address with a copy button, the steps for claude.ai and the Claude desktop app, and the Claude Code command;
+- the pages they own, each with **Manage**, which opens [the page's own page](#managing-your-pages);
+- their connected apps, each of which they can disconnect;
 - their profile: handle, name, email and role, which only an admin changes;
 - their recent sign-ins and the recent security events of the account, such as a changed password, a new key or a reset link an admin made for them, each with who acted, since nobody is told of these by email;
 - the password form, passkeys and recovery codes, on an instance with built-in accounts;
-- their API keys, with issue, rotate and revoke;
-- their connected apps, each of which they can disconnect;
-- the pages they own.
+- their API keys, with issue, rotate and revoke.
 
 On an instance with an identity provider the page has no password form, passkeys or recovery codes, and everything else is the same.
 
@@ -201,7 +204,7 @@ The password form [confirms it is you](#confirming-it-is-you) and asks for the n
 
 #### Keys from the account page
 
-A person issues, rotates and revokes their own API keys on the account page, without a key in hand. What a new key can hold depends on how they signed in:
+A person issues, rotates and revokes their own API keys on the account page, without a key in hand. **What the key may do** has a box for each scope, all ticked at first, and **Page addresses** limits the key to pages whose address matches, such as `weekly-*`. What a new key can hold depends on how they signed in:
 
 - After signing in with a password or at the identity provider, a new key holds the member scopes at most (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`), for an admin too. A key with the `admin` scope comes from the dashboard or from `kazari admin keys issue`.
 - After signing in with an API key, a new key is bounded by that key, as on [`/me/keys`](api.md#your-own-keys-mekeys): no scope it lacks, a restriction inside its own, and an expiry no later.
@@ -211,6 +214,17 @@ The page revokes any of the person's keys. It rotates any but one that holds `ad
 A new or rotated key is shown once, on the page that answers the form. Reloading that page offers to send the form again, and doing so makes no second key: the page says **Form already sent**.
 
 A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count. A key can still be rotated at the limit, because the key it replaces does not count against it.
+
+#### Managing your pages
+
+**Manage** beside a page opens `https://<base>/account/pages/<slug>`, where a person changes their own page without an agent or the command line:
+
+- **Who can open it**: public, unlisted or members only, or publish a hidden page again;
+- **Share links**: make one for someone who cannot sign in, such as a client, and revoke one. The link is shown once. The form is offered on a published members-only page alone; elsewhere the section says why, with a button that makes the page members-only;
+- **Versions**: **Publish this version** puts an earlier version back at the page's address;
+- **Lifecycle**: **Mark stale** with a grace period in days, **Keep the page**, **Move to the bin** and **Restore the page**.
+
+Each change is made as the person, with the rules of the [API](api.md): the write policy decides whose pages they may change, and after a sign-in with an API key the page offers only what that key's scopes allow. Under the default `owner` policy another member's page opens for looking, with nothing to change.
 
 ### Moving to an identity provider, or back
 
@@ -298,7 +312,9 @@ Put the client secret in the environment file, not the YAML:
 KAZARI_AUTH_OIDC_CLIENT_SECRET=the-client-secret
 ```
 
-At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server does not start and logs `oidc: discover <issuer>: ...`. Kazari requests the scopes `openid email profile`.
+At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server starts anyway and serves its pages, logs `identity provider unreachable` with the error, and tries again every 30 seconds through the `oidc-discovery` job. Until it succeeds, sign-in answers `503` with "Sign-in is temporarily unavailable". Kazari requests the scopes `openid email profile`.
+
+`kazari check` and `kazari admin ready` fetch the discovery document too, and fail with what to fix when the issuer cannot be reached or names itself differently.
 
 The `issuer` must be exactly the `issuer` value that the provider's discovery document states, including any trailing slash.
 
@@ -307,17 +323,17 @@ The `issuer` must be exactly the `issuer` value that the provider's discovery do
 After the ID token is verified, Kazari resolves the person to a user in this order:
 
 1. **Known identity.** An identity already linked by `(issuer, subject)` signs in as its user.
-2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty), an existing user with that email gets this identity linked and signs in. An existing **admin** links this way only when `admin_emails` names the address; any other admin needs an identity linked by hand ([Admin-created users](#admin-created-users)), so a verified address alone never takes over an admin account.
-3. **Auto-provision.** Otherwise, if `auto_provision` is on and the verified email's domain is in `allowed_domains`, Kazari creates a new user. Its role is `admin` if the email is in `admin_emails`, else `member`; its quota is `limits.default_user_quota`; its display name is the IdP's `name`.
+2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty, or `admin_emails` lists the address), an existing user with that email gets this identity linked and signs in. An existing **admin** links this way only when `admin_emails` names the address; any other admin needs an identity linked by hand ([Admin-created users](#admin-created-users)), so a verified address alone never takes over an admin account.
+3. **Provision.** Otherwise, if the verified email is in `admin_emails`, Kazari creates a new admin, whatever `allowed_domains` and `auto_provision` say. If `auto_provision` is on and the verified email's domain is in `allowed_domains`, it creates a new member. The new user's quota is `limits.default_user_quota`, and its display name is the IdP's `name`.
 4. **Refused.** Otherwise the person sees "No access ... Ask your administrator for access." and nothing is issued.
 
 A disabled user is always refused at step 1 or 2. Every successful sign-in updates the identity's `last_login_at` and the email it last signed in with.
 
 What this means in practice:
 
-- With `allowed_domains` empty, nobody is auto-provisioned. Only admin-created users with a matching email, or a linked identity, can sign in.
+- With `allowed_domains` empty, nobody outside `admin_emails` is auto-provisioned. Only the addresses in `admin_emails`, admin-created users with a matching email, or a linked identity, can sign in. At start, an instance with no users whose `auth.oidc` would let nobody in logs a warning.
 - With `auto_provision: false`, `allowed_domains` limits which admin-created users can link by email.
-- `admin_emails` does two things: a user provisioned with a listed email is an admin, and an existing admin with a listed email may link by email. It never changes the role of an existing user; to promote one, use `kazari admin users update <handle> --role admin`.
+- `admin_emails` does two things: a listed email is provisioned as an admin on its first sign-in, and an existing admin with a listed email may link by email. It never changes the role of an existing user; to promote one, use `kazari admin users update <handle> --role admin`.
 - After the first sign-in the match is on `(issuer, subject)`, so a later change of email address at the IdP does not create a second user.
 
 ### Handles
@@ -358,7 +374,7 @@ The dashboard has the same on a person's page, and the [admin API](api.md#identi
 
 ## Signing in with an API key
 
-On an instance without an identity provider, an API key signs a person in wherever a password does. With built-in accounts on, the sign-in page offers it as **Use an API key instead**. With `auth.local.enabled: false`, the key form is the only one.
+On an instance without an identity provider, an API key signs a person in wherever a password does. With built-in accounts on, the sign-in page offers it as **Use an API key instead**, under **More ways to sign in**. With `auth.local.enabled: false`, the key form is the only one.
 
 The form takes any of the person's keys that holds `artifacts:read`. The browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. A key [restricted to some artifacts](api.md#restricted-credentials) is refused there, because a session opens every members page.
 
@@ -366,7 +382,7 @@ What the session can do follows the key. It opens the dashboard only when the ke
 
 When an MCP client connects, the same link leads to a consent page with an API key field in place of a sign-in. Approving with a valid key binds the grant to that key's user and to the key ([Approving with an API key](#approving-with-an-api-key)).
 
-Browser sign-ins are recorded as `oauth.signin`, with `via: oidc`, `via: password` or `via: api_key`.
+Browser sign-ins are recorded as `oauth.signin`, with `via: oidc`, `via: password`, `via: passkey`, `via: api_key`, or `via: link` for the sign-in that follows choosing a password with a link.
 
 ### Approving with an API key
 
@@ -411,6 +427,8 @@ browser ──1──▶ team.<base>/report       no view cookie: 302, sets a no
 Every response to a `GET` on a members host, whether a page, an error, the redirect to sign in or a `/.kazari/` page, carries `Cross-Origin-Opener-Policy: same-origin`, as the sign-in page does. A window opened by another site therefore looks the same to its opener with access or without, so the opener cannot tell whether the visitor can see the page. It also means a members page has no `window.opener` from a page on another origin, and a popup it opens to another origin returns a handle that reads as closed. Public and unlisted artifacts do not send this header.
 
 Every sign-in session lasts 12 hours, and every view session it opened ends with it. A disabled user, or a revoked API key, loses access on the next request.
+
+The sign-in page of a members page starts with a note for a visitor who is no member: ask the person who sent the page for a share link. A share link to a page that is offline or gone opens a page that says the same.
 
 The account page and the dashboard are opened the same way, each with a cookie of its own on its own host: `__Host-kazari_account` on the apex and `__Host-kazari_admin` on the admin host.
 
@@ -570,9 +588,11 @@ The handle or email is unknown, the password is wrong, the account has no passwo
 
 Several sign-ins with a wrong password came for this account, or from this address, shortly before. The wait starts at a second, doubles with each further failure and is never more than a minute. It ends by itself, and a sign-in with the right password clears the account's count.
 
-### Kazari does not start: `oidc: discover <issuer>: ...`
+### "Sign-in is temporarily unavailable"
 
-The issuer is unreachable from the server, or its discovery document names a different issuer. Fetch `<issuer>/.well-known/openid-configuration` from the server and copy its `issuer` value exactly, trailing slash included. For Entra, use the tenant ID, not `common`.
+Kazari has not reached the identity provider since it started, and the log has `identity provider unreachable` with the reason. The issuer is unreachable from the server, or its discovery document names a different issuer. Run `sudo kazari check`, whose `oidc` line says which; then fetch `<issuer>/.well-known/openid-configuration` from the server and copy its `issuer` value exactly, trailing slash included. For Entra, use the tenant ID, not `common`.
+
+Kazari retries every 30 seconds and logs `identity provider reached` once it succeeds; `kazari admin jobs run oidc-discovery` tries at once.
 
 ### "Sign-in failed: The identity provider's response could not be verified."
 
@@ -588,8 +608,8 @@ The person signed in, but the [provisioning policy](#provisioning-policy) did no
 
 1. Is the email present at all? For Entra, add the `email` optional claim, or make `preferred_username` an address.
 2. Is it verified? For Google, check that the account is a Workspace account of that domain.
-3. Is its domain in `allowed_domains`?
-4. Is `auto_provision` on, or does an admin-created user have that email?
+3. Is its domain in `allowed_domains`, or the address in `admin_emails`?
+4. Is `auto_provision` on, is the address in `admin_emails`, or does an admin-created user have that email?
 5. Is the user disabled?
 
 ### "Sign-in expired."

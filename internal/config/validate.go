@@ -3,10 +3,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -15,8 +17,19 @@ import (
 func (c *Config) Validate() error {
 	var v validator
 
-	v.hostname("base_domain", c.BaseDomain)
+	if v.hostname("base_domain", c.BaseDomain) && isPlaceholderDomain(c.BaseDomain) {
+		v.add("base_domain", c.BaseDomain+" is the example placeholder; replace it with a domain you control")
+	}
 	v.required("data_dir", c.DataDir)
+	if e := c.TLS.Email; e != "" {
+		_, domain, ok := strings.Cut(e, "@")
+		switch {
+		case !ok || domain == "" || strings.ContainsAny(e, " \t<>"):
+			v.add("tls.email", "must be an email address, or empty for an ACME account without a contact")
+		case isPlaceholderDomain(domain):
+			v.add("tls.email", e+" is the example placeholder; replace it with your address, or remove it")
+		}
+	}
 	v.oneOf("external_scheme", c.ExternalScheme, "http", "https")
 	if c.ExternalPort < 0 || c.ExternalPort > 65535 {
 		v.add("external_port", "must be between 0 and 65535")
@@ -29,11 +42,13 @@ func (c *Config) Validate() error {
 	} else {
 		v.required("listen.https", c.Listen.HTTPS)
 	}
+	v.listenAddr("listen.http", c.Listen.HTTP)
+	v.listenAddr("listen.https", c.Listen.HTTPS)
+	v.listenAddr("admin.listen", c.Admin.Listen)
 
 	if v.oneOf("tls.mode", c.TLS.Mode, "acme", "files", "self-signed") && !c.Listen.ProxyMode {
 		switch c.TLS.Mode {
 		case "acme":
-			v.required("tls.email", c.TLS.Email)
 			if c.TLS.CA != "letsencrypt" && c.TLS.CA != "letsencrypt-staging" && !isHTTPSURL(c.TLS.CA) {
 				v.add("tls.ca", "must be letsencrypt, letsencrypt-staging or an https ACME directory URL")
 			}
@@ -217,7 +232,36 @@ func (v *validator) positive(section string, s any) {
 	}
 }
 
-func (v *validator) hostname(key, host string) {
+// listenAddr requires host:port, which a bare port is not.
+func (v *validator) listenAddr(key, addr string) {
+	if addr == "" {
+		return
+	}
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return
+	}
+	port := "8080"
+	if _, err := strconv.Atoi(strings.TrimPrefix(addr, ":")); err == nil {
+		port = strings.TrimPrefix(addr, ":")
+	}
+	v.add(key, fmt.Sprintf("%q is not host:port; write 127.0.0.1:%s for this machine only, or :%s for every address", addr, port, port))
+}
+
+// placeholderDomains are the documentation domains of RFC 2606, which the
+// shipped examples use.
+var placeholderDomains = []string{"example.com", "example.org", "example.net"}
+
+// isPlaceholderDomain reports a documentation domain or a name under one.
+func isPlaceholderDomain(d string) bool {
+	d = strings.ToLower(strings.TrimSuffix(d, "."))
+	return slices.ContainsFunc(placeholderDomains, func(p string) bool {
+		return d == p || strings.HasSuffix(d, "."+p)
+	})
+}
+
+// hostname reports whether host is a valid host name.
+func (v *validator) hostname(key, host string) bool {
+	n := len(v.errs)
 	switch {
 	case host == "":
 		v.add(key, "required")
@@ -232,6 +276,7 @@ func (v *validator) hostname(key, host string) {
 	case !isHostname(host):
 		v.add(key, "must be a host name of letters, digits, hyphens and dots")
 	}
+	return len(v.errs) == n
 }
 
 func isHostname(host string) bool {

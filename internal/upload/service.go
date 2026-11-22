@@ -282,9 +282,11 @@ func (s *Service) write(id string, f StagedFile, chunk []byte) error {
 // Files opens the staged files as FileInputs sorted by path; each Content
 // reads its file up to the size recorded for it, so a chunk appended while
 // the publish runs changes nothing. An empty upload is
-// artifact.ErrInvalidArgument. Call cleanup after the publish succeeds or
-// fails: it closes the files and removes the upload.
-func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.FileInput, _ func() error, err error) {
+// artifact.ErrInvalidArgument. Call done once the publish has succeeded or
+// failed: it closes the files, and removes the upload when consumed is true.
+// A refused publish keeps the upload, so the caller can correct the call and
+// send it again without staging the content a second time.
+func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.FileInput, _ func(consumed bool) error, err error) {
 	ctx, span := s.span(ctx, "upload.files", id)
 	defer func() { endSpan(span, err) }()
 	unlock := s.locks.lock(id)
@@ -325,13 +327,16 @@ func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.Fil
 		once       sync.Once
 		cleanupErr error
 	)
-	cleanup := func() error {
+	done := func(consumed bool) error {
 		once.Do(func() {
-			cleanupErr = errors.Join(closeAll(), s.remove(context.WithoutCancel(ctx), id))
+			cleanupErr = closeAll()
+			if consumed {
+				cleanupErr = errors.Join(cleanupErr, s.remove(context.WithoutCancel(ctx), id))
+			}
 		})
 		return cleanupErr
 	}
-	return inputs, cleanup, nil
+	return inputs, done, nil
 }
 
 // openStaged trims the file to its recorded size.

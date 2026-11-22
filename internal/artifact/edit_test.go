@@ -232,19 +232,19 @@ func TestApplyEditsFuzzyRefusalMemory(t *testing.T) {
 		{"indentation, ambiguous", strings.Repeat("x\n", 400),
 			artifact.Edit{OldText: " x", NewText: large}, artifact.ErrEditAmbiguous, "matches 400 places"},
 		{"indentation, over the limit", strings.Repeat("x\n", 400),
-			artifact.Edit{OldText: " x", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+			artifact.Edit{OldText: " x", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "over the 1 MiB file limit"},
 		{"crlf, ambiguous", strings.Repeat("x\r\n", 400),
 			artifact.Edit{OldText: "x ", NewText: large}, artifact.ErrEditAmbiguous, "matches 400 places"},
 		{"crlf, over the limit", strings.Repeat("x\r\n", 400),
-			artifact.Edit{OldText: "x ", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+			artifact.Edit{OldText: "x ", NewText: large, ReplaceAll: true}, artifact.ErrTooLarge, "over the 1 MiB file limit"},
 		{"over the replacement cap", strings.Repeat("x\n", artifact.MaxReplacements+5),
 			artifact.Edit{OldText: " x", NewText: small, ReplaceAll: true}, artifact.ErrInvalidArgument, "more than 10000 places"},
 		{"long indentation, one match", wide + "x\n" + wide + "y\n",
-			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "over the 1 MiB file limit"},
 		{"long indentation, replace_all", strings.Repeat(narrow+"x\n"+narrow+"y\n", 8),
-			artifact.Edit{OldText: "x\ny", NewText: lines, ReplaceAll: true}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+			artifact.Edit{OldText: "x\ny", NewText: lines, ReplaceAll: true}, artifact.ErrTooLarge, "over the 1 MiB file limit"},
 		{"long indentation, crlf", wide + "x\r\n" + wide + "y\r\n",
-			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "more than the 1048576-byte file limit"},
+			artifact.Edit{OldText: "x\ny", NewText: lines}, artifact.ErrTooLarge, "over the 1 MiB file limit"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -393,7 +393,7 @@ func TestApplyEditsReview(t *testing.T) {
 		in := strings.Repeat("a", 1000)
 		_, _, err := artifact.ApplyEdits("index.html", in, []artifact.Edit{
 			{OldText: "a", NewText: strings.Repeat("b", 1<<20), ReplaceAll: true}}, 25<<20)
-		if !errors.Is(err, artifact.ErrTooLarge) || !strings.Contains(err.Error(), "more than the 26214400-byte file limit") {
+		if !errors.Is(err, artifact.ErrTooLarge) || !strings.Contains(err.Error(), "over the 25 MiB file limit") {
 			t.Errorf("err = %v", err)
 		}
 		_, _, err = artifact.ApplyEdits("index.html", "x\n", []artifact.Edit{
@@ -650,9 +650,17 @@ func TestServiceEdit(t *testing.T) {
 	if _, err := e.svc.Publish(e.ctx, alice, "demo", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, v, _, err := e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", ExpectedVersion: 2,
-		Edits: []artifact.Edit{{OldText: "Q4", NewText: "Q1"}}}); err != nil || v.Number != 3 {
-		t.Fatalf("edit after rollback = %v, %v", v, err)
+	if _, _, _, err := e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", ExpectedVersion: 2,
+		Edits: []artifact.Edit{{OldText: "Q4", NewText: "Q1"}}}); !errors.Is(err, artifact.ErrPublishedNotLatest) {
+		t.Fatalf("edit after rollback without a base: err = %v, want published_not_latest", err)
+	}
+	_, v, _, err = e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", ExpectedVersion: 2, BaseVersion: 2,
+		Edits: []artifact.Edit{{OldText: "Q4", NewText: "Q1"}}})
+	if err != nil || v.Number != 3 {
+		t.Fatalf("edit after rollback on the latest = %v, %v", v, err)
+	}
+	if v.Label != "edit index.html (1 edit)" {
+		t.Errorf("edit label = %q, want %q", v.Label, "edit index.html (1 edit)")
 	}
 
 	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {

@@ -63,22 +63,22 @@ func hashLinkToken(token string) string {
 // shareable loads slug for a share-link change by actor: the artifact must
 // be live or unpublished (not deleted or purged), readable by actor and
 // changeable under the write policy, the same rules as a visibility change.
-func (s *Service) shareable(ctx context.Context, actor Actor, slug string) error {
+func (s *Service) shareable(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
 	if actor.Handle == "" {
-		return Errorf(ErrForbidden, "an authenticated actor is required")
+		return nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
 	if err := checkSlug(actor, slug); err != nil {
-		return err
+		return nil, err
 	}
 	a, err := s.store.Get(ctx, slug)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	involved, err := s.involved(ctx, actor, slug)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.checkWritable(actor, a, involved, false)
+	return a, s.checkWritable(actor, a, involved, false)
 }
 
 // CreateShareLink creates a link that opens slug without signing in until
@@ -104,8 +104,14 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 	if err := validateText("label", label, LabelMaxBytes, false); err != nil {
 		return nil, "", err
 	}
-	if err := s.shareable(ctx, actor, slug); err != nil {
+	a, err := s.shareable(ctx, actor, slug)
+	if err != nil {
 		return nil, "", err
+	}
+	// The link would open nothing: an unpublished page is served to nobody.
+	if a.UnpublishedAt != nil {
+		return nil, "", Errorf(ErrInvalidArgument,
+			"%s is unpublished, so a share link would open nothing; set its visibility to members first", slug)
 	}
 	token, prefix := newLinkToken()
 	now := s.now()
@@ -113,16 +119,18 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 	if err := s.store.CreateShareLink(ctx, slug, l, hashLinkToken(token)); err != nil {
 		return nil, "", err
 	}
-	s.record(ctx, actor, audit.ShareLinkCreate, slug, map[string]string{
-		"prefix": prefix, "expires_at": l.ExpiresAt.Format(time.RFC3339),
-	})
+	details := map[string]string{"prefix": prefix, "expires_at": l.ExpiresAt.Format(time.RFC3339)}
+	if label != "" {
+		details["label"] = label
+	}
+	s.record(ctx, actor, audit.ShareLinkCreate, slug, details)
 	return l, token, nil
 }
 
 // ListShareLinks returns slug's links, newest first, to an actor who may
 // change its sharing.
 func (s *Service) ListShareLinks(ctx context.Context, actor Actor, slug string) ([]ShareLink, error) {
-	if err := s.shareable(ctx, actor, slug); err != nil {
+	if _, err := s.shareable(ctx, actor, slug); err != nil {
 		return nil, err
 	}
 	return s.store.ListShareLinks(ctx, slug)
@@ -136,7 +144,7 @@ func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix
 		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("revoke"))
 		endSpan(span, err)
 	}()
-	if err := s.shareable(ctx, actor, slug); err != nil {
+	if _, err := s.shareable(ctx, actor, slug); err != nil {
 		return err
 	}
 	if err := s.store.RevokeShareLink(ctx, slug, prefix, s.now()); err != nil {

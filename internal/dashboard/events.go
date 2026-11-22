@@ -151,6 +151,9 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 	},
 	audit.ShareLinkCreate: func(s *eventLine, e audit.Event) {
 		s.words("created share link ").mono(e.Details["prefix"]).words(" for ").page(e.Slug, true)
+		if label := e.Details["label"]; label != "" {
+			s.words(", for " + label)
+		}
 	},
 	audit.ShareLinkRevoke: func(s *eventLine, e audit.Event) {
 		s.words("revoked share link ").mono(e.Details["prefix"]).words(" for ").page(e.Slug, true)
@@ -289,6 +292,8 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 			s.words("signed in with key ").mono(e.Details["key_prefix"])
 		case "oidc":
 			s.words("signed in at the provider")
+		case oauth.ViaLink:
+			s.words("signed in by choosing a password with a link")
 		default:
 			s.words("signed in")
 		}

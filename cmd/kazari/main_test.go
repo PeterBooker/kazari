@@ -62,7 +62,7 @@ func TestMainExitsWithTheCommandsResult(t *testing.T) {
 			name: "a command the server refuses",
 			args: []string{"me"},
 			env:  map[string]string{"KAZARI_URL": refusing.URL, "KAZARI_TOKEN": "dummy-token"},
-			code: 1,
+			code: 6,
 		},
 	}
 	for _, tt := range tests {

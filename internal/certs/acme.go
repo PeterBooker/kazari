@@ -27,6 +27,8 @@ type ACMEConfig struct {
 	// fail if that fails. Otherwise failures are only logged.
 	Sync   bool
 	Logger *slog.Logger // nil means slog.Default()
+	// DNSProvider names the provider for the hints of a failed order.
+	DNSProvider string
 }
 
 // ACME obtains and renews certificates by DNS-01, which wildcard
@@ -37,6 +39,8 @@ type ACME struct {
 	stopOnce   sync.Once
 	domains    []string
 	manageSync bool
+	// lastErr is the error of the last failed order, nil once one succeeds.
+	lastErr atomic.Pointer[error]
 }
 
 var _ Source = (*ACME)(nil)
@@ -72,10 +76,15 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 		},
 		Logger: zl,
 	})
+	a := &ACME{
+		cache:      cache,
+		domains:    append([]string(nil), cfg.Domains...),
+		manageSync: cfg.Sync,
+	}
 	magic := certmagic.New(cache, certmagic.Config{
 		Storage: &certmagic.FileStorage{Path: cfg.StorageDir},
 		Logger:  zl,
-		OnEvent: certEvents(logger),
+		OnEvent: a.certEvents(logger, cfg.DNSProvider),
 	})
 	issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{
 		CA:          ca,
@@ -86,13 +95,17 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 	})
 	magic.Issuers = []certmagic.Issuer{issuer}
 	current.Store(magic)
+	a.magic = magic
+	return a, nil
+}
 
-	return &ACME{
-		magic:      magic,
-		cache:      cache,
-		domains:    append([]string(nil), cfg.Domains...),
-		manageSync: cfg.Sync,
-	}, nil
+// LastError returns the error of the last failed certificate order, nil
+// before any failed and once one succeeded.
+func (a *ACME) LastError() error {
+	if p := a.lastErr.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // GetCertificate returns the managed certificate matching the handshake.
@@ -138,8 +151,9 @@ func (a *ACME) stop() {
 
 // certEvents logs the outcome of each certificate order in plain words, so
 // an operator watching the log after the first start learns whether the
-// wildcard certificate arrived without reading CertMagic's own lines.
-func certEvents(logger *slog.Logger) func(context.Context, string, map[string]any) error {
+// wildcard certificate arrived without reading CertMagic's own lines, and
+// keeps the last failure for LastError.
+func (a *ACME) certEvents(logger *slog.Logger, provider string) func(context.Context, string, map[string]any) error {
 	return func(ctx context.Context, event string, data map[string]any) error {
 		name, _ := data["identifier"].(string)
 		renewal, _ := data["renewal"].(bool)
@@ -147,10 +161,16 @@ func certEvents(logger *slog.Logger) func(context.Context, string, map[string]an
 		case "cert_obtaining":
 			logger.InfoContext(ctx, "obtaining certificate", "name", name, "renewal", renewal)
 		case "cert_obtained":
+			a.lastErr.Store(nil)
 			logger.InfoContext(ctx, "certificate obtained", "name", name, "renewal", renewal, "issuer", data["issuer"])
 		case "cert_failed":
-			logger.ErrorContext(ctx, "certificate not obtained", "name", name, "renewal", renewal, "error", data["error"],
-				"hint", "check the DNS records and the DNS API token with kazari check; retries continue in the background")
+			err, ok := data["error"].(error)
+			if !ok {
+				err = fmt.Errorf("%v", data["error"])
+			}
+			a.lastErr.Store(&err)
+			logger.ErrorContext(ctx, "certificate not obtained", "name", name, "renewal", renewal, "error", err,
+				"hint", ObtainHint(provider, err))
 		}
 		return nil
 	}

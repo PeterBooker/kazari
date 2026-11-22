@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -135,9 +136,9 @@ func TestGetArtifactPagesFileLists(t *testing.T) {
 	if _, _, err := e.art.Create(e.ctx, alice, artifact.CreateRequest{Slug: "wide", Files: rows}); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
+	for i := range 2 {
 		if _, _, err := e.art.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "wide",
-			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader("x")}}}); err != nil {
+			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader(fmt.Sprint(i))}}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -513,8 +514,16 @@ func TestChunkedUpload(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: e.alice, contentType: "application/json",
 		body: bytes.NewReader(mustJSON(t, api.CreateArtifactRequest{Slug: "chunked", UploadID: up2.UploadID}))}),
 		409, api.CodeSlugTaken)
-	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); err == nil {
-		t.Error("upload survived a failed publish")
+	e.apiErr(e.send(req{method: http.MethodPut, url: e.u("/v1/artifacts/chunked"), token: e.alice, contentType: "application/json",
+		body: bytes.NewReader(mustJSON(t, api.UpdateArtifactRequest{UploadID: up2.UploadID, ExpectedVersion: 9}))}),
+		412, api.CodeVersionConflict)
+	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); err != nil {
+		t.Errorf("upload after refused publishes: %v", err)
+	}
+	e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "chunked-2", UploadID: up2.UploadID},
+		http.StatusCreated, nil)
+	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("upload after a publish: err = %v, want ErrUploadNotFound", err)
 	}
 
 	var up3 api.Upload
@@ -699,6 +708,13 @@ func TestMe(t *testing.T) {
 	}
 	if !slices.Equal(roScopes, readOnly) {
 		t.Errorf("read-only key scopes = %v", roScopes)
+	}
+
+	e.admin("root")
+	_, narrow := e.key(user.IssueKeyRequest{Handle: "root", Scopes: auth.MemberScopes})
+	e.call(http.MethodGet, e.u("/v1/me"), narrow, nil, http.StatusOK, &me)
+	if me.Role != "admin" || me.Admin {
+		t.Errorf("me of an admin's member-scoped key: role %q, admin %t; want role admin, admin false", me.Role, me.Admin)
 	}
 }
 

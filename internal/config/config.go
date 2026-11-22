@@ -4,12 +4,13 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,8 +25,8 @@ import (
 // DefaultCSP is the default serve.csp.
 const DefaultCSP = "default-src 'self'; " +
 	"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; " +
-	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-	"font-src 'self' https://fonts.gstatic.com; " +
+	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; " +
+	"font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; " +
 	"img-src 'self' data: https:; " +
 	"connect-src 'self'; " +
 	"frame-ancestors 'none'"
@@ -227,10 +228,15 @@ type Log struct {
 	Format string `yaml:"format"`
 }
 
-// Default returns the built-in defaults; BaseDomain and DataDir are left
-// empty and must be set.
+// DefaultDataDir is data_dir's default: the systemd unit's StateDirectory
+// and the data volume of the image.
+const DefaultDataDir = "/var/lib/kazari"
+
+// Default returns the built-in defaults; BaseDomain is left empty and must
+// be set.
 func Default() Config {
 	return Config{
+		DataDir:        DefaultDataDir,
 		ExternalScheme: "https",
 		Listen: Listen{
 			HTTPS: ":443",
@@ -321,70 +327,183 @@ func Local() Config {
 	return c
 }
 
-// DefaultEnvFile is the dotenv file Load reads by default.
+// DefaultEnvFile is the dotenv file Load reads when no other is found.
 const DefaultEnvFile = ".env"
 
+// EnvFileName is the dotenv file Load reads beside a configuration file:
+// /etc/kazari/kazari.env, which the systemd unit names as its
+// EnvironmentFile.
+const EnvFileName = "kazari.env"
+
 // Load is LoadWith over the process environment and a dotenv file: envFile,
-// which must exist, or else DefaultEnvFile if it exists. The process
-// environment wins over the dotenv file. Beside a config file, a
-// DefaultEnvFile nobody named feeds ${NAME} references only: a KAZARI_*
-// override from it could send a secret in the file to another destination.
-func Load(path, envFile string) (Config, error) {
-	dotenv, err := loadDotenv(envFile)
+// which must exist; else EnvFileName beside the file at path, if it exists;
+// else DefaultEnvFile, if it exists. The process environment wins over the
+// dotenv file. Beside a config file, a DefaultEnvFile nobody named feeds
+// ${NAME} references only: a KAZARI_* override from it could send a secret
+// in the file to another destination. The Origin is filled as far as
+// loading got, also on error.
+func Load(path, envFile string) (Config, Origin, error) {
+	origin := Origin{File: path}
+	dot, err := findDotenv(path, envFile, &origin)
 	if err != nil {
-		return Config{}, err
+		return Config{}, origin, err
 	}
-	refs := EnvLookup(dotenv)
-	overrides := refs
-	if path != "" && envFile == "" {
+	used := map[string]bool{}
+	refs := func(key string) (string, bool) {
+		used[key] = true
+		return dot.lookup(key)
+	}
+	overrides := dot.lookup
+	if path != "" && !dot.named {
 		overrides = os.LookupEnv
 	}
-	return validated(load(Default(), path, refs, overrides))
+	cfg, err := load(Default(), path, refs, overrides, dot.where, &origin)
+	if path != "" && !dot.named {
+		for _, k := range slices.Sorted(maps.Keys(dot.vars)) {
+			if _, set := os.LookupEnv(k); strings.HasPrefix(k, envPrefix+"_") && !used[k] && !set {
+				origin.Ignored = append(origin.Ignored, k)
+			}
+		}
+	}
+	if err != nil {
+		return Config{}, origin, err
+	}
+	cfg, err = validated(cfg, origin)
+	return cfg, origin, err
 }
 
-func loadDotenv(envFile string) (map[string]string, error) {
+// dotenv is the dotenv file Load reads, if any.
+type dotenv struct {
+	file  string
+	named bool // named by the caller or found beside the config file
+	vars  map[string]string
+}
+
+func (d dotenv) lookup(key string) (string, bool) {
+	if v, ok := os.LookupEnv(key); ok {
+		return v, true
+	}
+	v, ok := d.vars[key]
+	return v, ok
+}
+
+// where names the dotenv file key comes from, "" for the process
+// environment.
+func (d dotenv) where(key string) string {
+	if _, ok := os.LookupEnv(key); ok {
+		return ""
+	}
+	if _, ok := d.vars[key]; ok {
+		return d.file
+	}
+	return ""
+}
+
+func findDotenv(path, envFile string, origin *Origin) (dotenv, error) {
 	if envFile != "" {
-		return LoadEnvFile(envFile)
+		vars, err := LoadEnvFile(envFile)
+		if err != nil {
+			return dotenv{}, err
+		}
+		origin.EnvFiles = append(origin.EnvFiles, envFile)
+		return dotenv{file: envFile, named: true, vars: vars}, nil
 	}
-	m, err := LoadEnvFile(DefaultEnvFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+	if path != "" {
+		beside := filepath.Join(filepath.Dir(path), EnvFileName)
+		vars, err := LoadEnvFile(beside)
+		switch {
+		case err == nil:
+			origin.EnvFiles = append(origin.EnvFiles, beside)
+			return dotenv{file: beside, named: true, vars: vars}, nil
+		case errors.Is(err, fs.ErrPermission):
+			// The service itself, under systemd, has the file's variables
+			// from EnvironmentFile and no permission to read it.
+			origin.Unreadable = beside + ": permission denied"
+		case !errors.Is(err, fs.ErrNotExist):
+			return dotenv{}, err
+		}
 	}
-	return m, err
+	vars, err := LoadEnvFile(DefaultEnvFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return dotenv{}, nil
+	case err != nil:
+		return dotenv{}, err
+	}
+	label := DefaultEnvFile
+	if path != "" {
+		label += " (references only)"
+	}
+	origin.EnvFiles = append(origin.EnvFiles, label)
+	return dotenv{file: DefaultEnvFile, named: path == "", vars: vars}, nil
 }
 
 // LoadLocal is Load for the Local preset: no file, the dotenv file as Load
-// reads it, and KAZARI_* overrides on top of the preset.
-func LoadLocal(envFile string) (Config, error) {
-	dotenv, err := loadDotenv(envFile)
+// reads it, and KAZARI_* overrides on top of the preset. external_port
+// follows the port of listen.http unless it is set too.
+func LoadLocal(envFile string) (Config, Origin, error) {
+	origin := Origin{Preset: "--local"}
+	dot, err := findDotenv("", envFile, &origin)
 	if err != nil {
-		return Config{}, err
+		return Config{}, origin, err
 	}
-	return LoadWithBase(Local(), "", EnvLookup(dotenv))
+	return loadLocal(dot.lookup, dot.where, origin)
+}
+
+// LoadLocalWith is LoadLocal over lookup alone.
+func LoadLocalWith(lookup func(key string) (string, bool)) (Config, error) {
+	cfg, _, err := loadLocal(lookup, nil, Origin{Preset: "--local"})
+	return cfg, err
+}
+
+func loadLocal(lookup func(string) (string, bool), where func(string) string, origin Origin) (Config, Origin, error) {
+	cfg, err := load(Local(), "", lookup, lookup, where, &origin)
+	if err != nil {
+		return Config{}, origin, err
+	}
+	if _, set := origin.Keys["external_port"]; !set {
+		if _, port, err := net.SplitHostPort(cfg.Listen.HTTP); err == nil {
+			if n, err := strconv.Atoi(port); err == nil && n > 0 {
+				cfg.ExternalPort = n
+			}
+		}
+	}
+	cfg, err = validated(cfg, origin)
+	return cfg, origin, err
 }
 
 // LoadWith applies, in order, Default, the YAML file at path (skipped when
 // empty; a missing file satisfies fs.ErrNotExist; unknown keys are errors),
-// the KAZARI_<PATH> overrides (lists comma-separated; any KAZARI_AUTH_OIDC_*
-// enables auth.oidc; a secret also reads KAZARI_<PATH>_FILE), then Validate.
-// lookup resolves both ${NAME} references and overrides.
+// the KAZARI_<PATH> overrides (lists comma-separated; a non-empty
+// KAZARI_AUTH_OIDC_* enables auth.oidc; a secret also reads
+// KAZARI_<PATH>_FILE), then Validate. lookup resolves both ${NAME}
+// references and overrides.
 func LoadWith(path string, lookup func(key string) (string, bool)) (Config, error) {
 	return LoadWithBase(Default(), path, lookup)
 }
 
 // LoadWithBase is LoadWith starting from base instead of Default.
 func LoadWithBase(base Config, path string, lookup func(key string) (string, bool)) (Config, error) {
-	return validated(load(base, path, lookup, lookup))
-}
-
-func validated(cfg Config, err error) (Config, error) {
+	origin := Origin{File: path}
+	cfg, err := load(base, path, lookup, lookup, nil, &origin)
 	if err != nil {
 		return Config{}, err
 	}
-	if err := cfg.Validate(); err != nil {
-		return Config{}, fmt.Errorf("config: invalid:\n%w", err)
+	return validated(cfg, origin)
+}
+
+func validated(cfg Config, origin Origin) (Config, error) {
+	err := cfg.Validate()
+	if err == nil {
+		return cfg, nil
 	}
-	return cfg, nil
+	if cfg.Auth.OIDC != nil && strings.Contains(err.Error(), "auth.oidc.") {
+		if _, ok := origin.Keys["auth.oidc"]; ok {
+			err = errors.Join(err, fmt.Errorf("auth.oidc: on because of %s; remove that to sign in with built-in accounts",
+				origin.Describe("auth.oidc")))
+		}
+	}
+	return Config{}, fmt.Errorf("config: invalid:\n%w", err)
 }
 
 // Peek is LoadWith without Validate: enough for a client on the server's
@@ -400,32 +519,50 @@ func Peek(path string, lookup func(key string) (string, bool)) (Config, error) {
 			}
 			return "", true
 		}
-		if err := decodeFile(path, &cfg, lenient); err != nil {
+		if err := decodeFile(path, &cfg, lenient, map[string]int{}); err != nil {
 			return Config{}, err
 		}
 	}
-	if err := applyEnv(&cfg, lookup); err != nil {
+	if err := applyEnv(&cfg, lookup, map[string]string{}); err != nil {
 		return Config{}, fmt.Errorf("config: environment: %w", err)
 	}
 	return cfg, nil
 }
 
 // load resolves ${NAME} references through refs and KAZARI_* overrides
-// through overrides.
-func load(base Config, path string, refs, overrides func(key string) (string, bool)) (Config, error) {
+// through overrides, and records in origin where each value came from;
+// where names the dotenv file of a variable, and may be nil.
+func load(base Config, path string, refs, overrides func(key string) (string, bool), where func(string) string, origin *Origin) (Config, error) {
 	cfg := base
+	lines := map[string]int{}
 	if path != "" {
-		if err := decodeFile(path, &cfg, refs); err != nil {
+		if err := decodeFile(path, &cfg, refs, lines); err != nil {
 			return Config{}, err
 		}
 	}
-	if err := applyEnv(&cfg, overrides); err != nil {
+	envs := map[string]string{}
+	if err := applyEnv(&cfg, overrides, envs); err != nil {
 		return Config{}, fmt.Errorf("config: environment: %w", err)
+	}
+	origin.Keys = make(map[string]Source, len(lines)+len(envs))
+	for k, line := range lines {
+		origin.Keys[k] = Source{Line: line}
+	}
+	for k, name := range envs {
+		s := origin.Keys[k]
+		s.Env = name
+		if where != nil {
+			s.EnvFile = where(name)
+		}
+		origin.Keys[k] = s
 	}
 	return cfg, nil
 }
 
-func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) error {
+// decodeFile decodes the file at path into cfg key by key, so that every
+// error names its line and key and none stops the others, and records in
+// lines the line of each key it set.
+func decodeFile(path string, cfg *Config, lookup func(string) (string, bool), lines map[string]int) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -437,54 +574,195 @@ func decodeFile(path string, cfg *Config, lookup func(string) (string, bool)) er
 	if doc.Kind == 0 {
 		return nil // empty, or nothing but comments
 	}
-	if err := checkKeys(&doc, path); err != nil {
-		return err
+	keysErr := checkKeys(&doc, path)
+	expandErr := expandNode(&doc, path, lookup)
+	d := decoder{path: path, lines: lines}
+	d.decode(&doc, reflect.ValueOf(cfg).Elem(), "")
+	return errors.Join(keysErr, expandErr, errors.Join(d.errs...))
+}
+
+type decoder struct {
+	path  string
+	lines map[string]int
+	errs  []error
+}
+
+func (d *decoder) fail(n *yaml.Node, key, msg string) {
+	d.errs = append(d.errs, fmt.Errorf("config: %s: line %d: %s: %s", d.path, n.Line, key, msg))
+}
+
+func (d *decoder) decode(n *yaml.Node, v reflect.Value, key string) {
+	if n.Kind == yaml.DocumentNode {
+		for _, c := range n.Content {
+			d.decode(c, v, key)
+		}
+		return
 	}
-	if err := expandNode(&doc, path, lookup); err != nil {
-		return err
+	if n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
 	}
-	expanded, err := yaml.Marshal(&doc)
-	if err != nil {
-		return fmt.Errorf("config: %s: %w", path, err)
+	t := v.Type()
+	switch {
+	case t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct:
+		// An optional mapping, such as auth.oidc: present unless null.
+		if isNull(n) {
+			v.SetZero()
+			return
+		}
+		if v.IsNil() {
+			p := reflect.New(t.Elem())
+			if def, ok := p.Interface().(interface{ applyDefaults() }); ok {
+				def.applyDefaults()
+			}
+			v.Set(p)
+		}
+		d.lines[key] = n.Line
+		d.decode(n, v.Elem(), key)
+	case t.Kind() == reflect.Struct && !isTextUnmarshaler(v):
+		if isNull(n) {
+			return
+		}
+		if n.Kind != yaml.MappingNode {
+			what := key
+			if what == "" {
+				what = "the file"
+			}
+			d.fail(n, what, "want a mapping of keys, got "+describeNode(n))
+			return
+		}
+		d.mapping(n, v, key, map[*yaml.Node]bool{})
+	default:
+		if err := n.Decode(v.Addr().Interface()); err != nil {
+			d.fail(n, key, describeDecodeError(err, n, t))
+			return
+		}
+		d.lines[key] = n.Line
 	}
-	// Pre-filled so its defaults survive a mapping that omits them; dropped
-	// below if the mapping is absent or null.
-	oidc := &OIDC{}
-	oidc.applyDefaults()
-	cfg.Auth.OIDC = oidc
-	dec := yaml.NewDecoder(bytes.NewReader(expanded))
-	dec.KnownFields(true)
-	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("config: %s: %w", path, withoutLines(err))
+}
+
+// mapping applies merged mappings first, so the mapping's own keys win.
+// Unknown keys are left to checkKeys.
+func (d *decoder) mapping(n *yaml.Node, v reflect.Value, key string, merged map[*yaml.Node]bool) {
+	fields := map[string]int{}
+	for i := range v.NumField() {
+		if name := keyName(v.Type().Field(i)); name != "" {
+			fields[name] = i
+		}
 	}
-	var probe struct {
-		Auth struct {
-			OIDC *yaml.Node `yaml:"oidc"`
-		} `yaml:"auth"`
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].ShortTag() != "!!merge" {
+			continue
+		}
+		m := n.Content[i+1]
+		targets := []*yaml.Node{m}
+		if m.Kind == yaml.SequenceNode {
+			targets = m.Content
+		}
+		for _, t := range targets {
+			if t.Kind == yaml.AliasNode && t.Alias != nil {
+				t = t.Alias
+			}
+			if t.Kind == yaml.MappingNode && !merged[t] {
+				merged[t] = true
+				d.mapping(t, v, key, merged)
+			}
+		}
 	}
-	if err := doc.Decode(&probe); err != nil {
-		return fmt.Errorf("config: %s: %w", path, err)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k := n.Content[i]
+		if k.ShortTag() == "!!merge" {
+			continue
+		}
+		idx, ok := fields[k.Value]
+		if !ok {
+			continue
+		}
+		path := k.Value
+		if key != "" {
+			path = key + "." + k.Value
+		}
+		d.decode(n.Content[i+1], v.Field(idx), path)
+		if _, set := d.lines[path]; set {
+			d.lines[path] = k.Line // the key's, for a value on the lines below it
+		}
 	}
-	if probe.Auth.OIDC == nil {
-		cfg.Auth.OIDC = nil
+}
+
+func isNull(n *yaml.Node) bool {
+	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null"
+}
+
+// describeDecodeError says what a key wants and what the file holds, in
+// place of the decoder's "cannot unmarshal !!str `lots` into int".
+func describeDecodeError(err error, n *yaml.Node, t reflect.Type) string {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err.Error()
 	}
-	return nil
+	if want := describeType(t); want != "" && !sameShape(n, t) {
+		return "want " + want + ", got " + describeNode(n)
+	}
+	var msgs []string
+	for _, e := range te.Errors {
+		if m := yamlLine.ReplaceAllString(e, ""); !slices.Contains(msgs, m) {
+			msgs = append(msgs, m)
+		}
+	}
+	return strings.Join(msgs, "; ")
 }
 
 var yamlLine = regexp.MustCompile(`^line \d+: `)
 
-// withoutLines drops line numbers from a decoding error: they refer to the
-// re-encoded document, not to the file.
-func withoutLines(err error) error {
-	var te *yaml.TypeError
-	if !errors.As(err, &te) {
-		return err
+// sameShape reports whether n is the kind of node t is decoded from, so
+// that the error lies inside it.
+func sameShape(n *yaml.Node, t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
 	}
-	out := &yaml.TypeError{Errors: make([]string, len(te.Errors))}
-	for i, e := range te.Errors {
-		out.Errors[i] = yamlLine.ReplaceAllString(e, "")
+	switch t.Kind() {
+	case reflect.Slice:
+		return n.Kind == yaml.SequenceNode
+	case reflect.Map:
+		return n.Kind == yaml.MappingNode
 	}
-	return out
+	return false
+}
+
+func describeType(t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t {
+	case reflect.TypeFor[Bytes]():
+		return "a size such as 50MiB"
+	case reflect.TypeFor[Duration]():
+		return "a duration such as 90s, 15m or 14d"
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "a string"
+	case reflect.Bool:
+		return "true or false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return "a whole number"
+	case reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.Slice:
+		return "a list"
+	case reflect.Map:
+		return "a mapping"
+	}
+	return ""
+}
+
+func describeNode(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		return "a list"
+	case yaml.MappingNode:
+		return "a mapping"
+	}
+	return strconv.Quote(n.Value)
 }
 
 // DBPath is the SQLite database file.

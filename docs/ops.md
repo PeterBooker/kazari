@@ -6,7 +6,7 @@ Most of the everyday tasks here, such as disabling a user, taking a page down or
 
 ## Data layout
 
-Everything Kazari keeps lives under `data_dir`, which the systemd unit and the Docker image set to `/var/lib/kazari`. Under systemd's `DynamicUser`, the real path is `/var/lib/private/kazari`. The directory holds:
+Everything Kazari keeps lives under `data_dir`, `/var/lib/kazari` by default, which the systemd unit and the Docker image provide. Under systemd's `DynamicUser`, the real path is `/var/lib/private/kazari`. The directory holds:
 
 | Path                                          | Contents                                                                                 |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -15,6 +15,7 @@ Everything Kazari keeps lives under `data_dir`, which the systemd unit and the D
 | `uploads/<id>/<n>`                            | Chunked uploads in progress. Disposable                                                  |
 | `certmagic/`                                  | ACME account, certificates and locks (`tls.mode: acme` only)                             |
 | `admin.sock`                                  | The admin socket, mode `0600`; recreated at every start                                  |
+| `kazari.lock`                                 | Held by the running server, with its process id, so a second server on the directory stops |
 | `tmp/`                                        | Multipart bundles spilled to disk while they are published and the database copy of a running backup, removed afterwards. Disposable |
 
 Kazari writes each blob to a temporary `.put-*` file and renames it, so a partial blob is never visible.
@@ -41,11 +42,21 @@ The command prints the number of files, their size and the directory, which then
 
 `uploads/` and `tmp/` are left out, as they need no backup. `--no-certs` leaves `certmagic/` out too; an instance restored without it asks for a new certificate.
 
-Under Compose, write into a directory that is mounted from the host:
+Under Compose, nothing inside the container survives its next recreation, so send the backup to the host. The simplest way is `-` in place of the directory, which writes the archive as tar to standard output:
 
 ```sh
+docker compose exec -T kazari kazari admin backup - > kazari-2026-11-21.tar
+```
+
+To write into a directory instead, uncomment the `./backups:/backup` mount in `compose.yml`. The server runs as UID 65532, which must own the directory on the host:
+
+```sh
+mkdir backups && sudo chown 65532:65532 backups
+docker compose up -d
 docker compose exec kazari kazari admin backup /backup/2026-11-21
 ```
+
+`kazari admin backup -` works anywhere, for example to pipe the archive to other storage. It refuses to write to a terminal.
 
 #### What a backup needs
 
@@ -110,36 +121,65 @@ Each night's backup lands in a directory named for its date. Removing old ones, 
 
 ### Restoring from a backup
 
-Restore with the server stopped. To restore a directory written by `kazari admin backup`, replace the database and the blobs with the backup's:
+`kazari admin restore-backup` copies a directory written by `kazari admin backup` into the data directory of a stopped server. It needs no running server and finds the data directory from the configuration, as `kazari admin` does. Stop the server, restore, then start it again:
 
 ```sh
 sudo systemctl stop kazari
-cd /var/lib/private/kazari
-sudo rm -rf kazari.db kazari.db-wal kazari.db-shm blobs
-sudo cp -a /backup/kazari/2026-11-21/. .
-sudo chown -R --reference=. kazari.db blobs certmagic
+sudo kazari admin restore-backup /backup/kazari/2026-11-21 --force
+sudo systemctl start kazari
+sudo kazari admin ready
+```
+
+`--force` replaces the database, the blobs and the staged uploads the directory holds, and its certificates when the backup has some; without it, the command refuses a data directory that already holds an instance. The restored files are readable by their owner alone and belong to the data directory's owner, the user the server runs as.
+
+The command refuses while a server holds the directory, naming its process id. `--data-dir` names another directory, which is created when it does not exist.
+
+At its next start Kazari applies any migrations the backup's database lacks, and the `gc` job later removes blobs that nothing in it references.
+
+#### Restoring on a new host
+
+Install Kazari as on the old host, with the same `kazari.yaml` and dotenv file. Under systemd, start the service once, so systemd creates the data directory for its user, then stop it and restore:
+
+```sh
+sudo systemctl start kazari
+sudo systemctl stop kazari
+sudo kazari admin restore-backup /backup/kazari/2026-11-21 --force
 sudo systemctl start kazari
 ```
 
-The `chown` gives the restored files to the user the server runs as, which owns the data directory. Leave `certmagic` out of it if the backup has none.
+#### Restoring an archive
 
-To restore an archive downloaded from the dashboard, unpack it in place of the `cp`:
+To restore an archive downloaded from the dashboard or written by `kazari admin backup -`, unpack it into an empty directory and restore that:
 
 ```sh
-sudo tar -xf kazari-art.example.com-20261121-030000.tar -C /var/lib/private/kazari
+mkdir /tmp/restore
+tar -xf kazari-art.example.com-20261121-030000.tar -C /tmp/restore
+sudo kazari admin restore-backup /tmp/restore --force
 ```
 
-At its next start Kazari applies any migrations the backup's database lacks, and the `gc` job later removes blobs that nothing in it references.
+#### Restoring under Docker Compose
+
+The data lives in the volume `kazari_data`, owned by UID 65532. Stop the container, copy the backup into the volume with a throwaway container, give the files to that user, and start again:
+
+```sh
+docker compose stop kazari
+mkdir restore && tar -xf kazari-2026-11-21.tar -C restore
+docker run --rm -v kazari_data:/data -v "$PWD/restore:/b:ro" busybox \
+  sh -c 'rm -rf /data/kazari.db /data/kazari.db-wal /data/kazari.db-shm /data/blobs /data/uploads && cp -a /b/. /data && chown -R 65532:65532 /data'
+docker compose start kazari
+```
+
+The volume is called `kazari_data` when `compose.yml` sits in a directory named `kazari`; `docker volume ls` shows its name otherwise.
 
 ### Backing up by hand
 
 The archive is the recommended way. To back up with your own tools instead, for example to keep the blobs in step with `rsync`, copy the database first, with SQLite's online backup, then the blobs straight after:
 
 ```sh
-cd /var/lib/private/kazari
-sqlite3 kazari.db ".backup /backup/kazari/kazari.db"
-rsync -a --delete blobs/ /backup/kazari/blobs/
-rsync -a certmagic/ /backup/kazari/certmagic/     # optional; saves a re-issue after a restore
+sudo sqlite3 /var/lib/private/kazari/kazari.db ".backup /backup/kazari/kazari.db"
+sudo rsync -a --delete /var/lib/private/kazari/blobs/ /backup/kazari/blobs/
+# optional; saves a re-issue after a restore
+sudo rsync -a /var/lib/private/kazari/certmagic/ /backup/kazari/certmagic/
 ```
 
 This needs the `sqlite3` command, which the Docker image does not have.
@@ -149,15 +189,15 @@ This needs the `sqlite3` command, which the Docker image does not have.
 
 The database first and the blobs second gives a complete backup. Blobs are immutable and deleted only once no version references them, so a later blob copy holds everything the database snapshot refers to. The only gap is blobs of artifacts purged in between, which the snapshot no longer needs once it is restored and swept.
 
-To restore such a copy, stop the server and put the blobs back first and the database second:
+To restore such a copy, stop the server and put the blobs back first and the database second, then give the files to the data directory's owner:
 
 ```sh
 sudo systemctl stop kazari
-cd /var/lib/private/kazari
-rsync -a --delete /backup/kazari/blobs/ blobs/
-rm -f kazari.db-wal kazari.db-shm
-cp /backup/kazari/kazari.db kazari.db
-rsync -a /backup/kazari/certmagic/ certmagic/
+sudo rsync -a --delete /backup/kazari/blobs/ /var/lib/private/kazari/blobs/
+sudo rm -f /var/lib/private/kazari/kazari.db-wal /var/lib/private/kazari/kazari.db-shm
+sudo cp /backup/kazari/kazari.db /var/lib/private/kazari/kazari.db
+sudo rsync -a /backup/kazari/certmagic/ /var/lib/private/kazari/certmagic/
+sudo chown -R --reference=/var/lib/private/kazari /var/lib/private/kazari
 sudo systemctl start kazari
 ```
 
@@ -180,6 +220,18 @@ sudo systemctl restart kazari
 
 The package keeps `/etc/kazari/kazari.yaml` and `/etc/kazari/kazari.env` as they are. Installing by hand follows [installing the binary](install.md#installing-the-binary), with the checksums and signature verified, then a restart.
 
+After any upgrade, check the running server:
+
+```sh
+sudo kazari admin ready --fresh
+```
+
+It runs the [readiness checks](#checking-readiness) now, against the new release's rules; a line that fails says what to change.
+
+### Skipping releases
+
+An upgrade can skip releases: the new binary applies every migration the database lacks, in order, and each release is tested as a starting point. Read the notes below for every release you skip, oldest first, since their changes add up.
+
 ### Upgrading under Docker Compose
 
 With `KAZARI_VERSION` pinned in `.env`, set it to the new version; with the default `latest`, nothing changes. Then pull and recreate:
@@ -191,6 +243,15 @@ docker compose up -d
 
 The container keeps its data in the volume `kazari_data`.
 
+### Upgrading to 0.8
+
+Four things change in how an instance is run:
+
+- **`tls.email` is optional, and placeholders fail.** A `base_domain` or `tls.email` under `example.com`, `example.org` or `example.net` stops the server, so a copied example cannot start. An empty `tls.email` registers the ACME account without a contact.
+- **Listener addresses are `host:port`.** A bare port such as `8080` in `listen.http`, `listen.https` or `admin.listen` fails validation; write `127.0.0.1:8080` or `:8080`.
+- **One server per data directory.** A second server started on the same `data_dir` stops with `another kazari (pid N) is using <data_dir>`.
+- **The identity provider no longer stops the start.** An unreachable provider makes sign-in answer "temporarily unavailable" until the new `oidc-discovery` job reaches it, and `admin_emails` provisions its addresses as admins whatever `allowed_domains` says ([provisioning policy](identity.md#provisioning-policy)).
+
 ### Upgrading to 0.7
 
 Kazari 0.7 adds [built-in accounts](identity.md#built-in-accounts) and the [dashboard](dashboard.md). An instance that signs people in at an identity provider keeps doing so. Four things change for the others, and for scripts:
@@ -200,9 +261,9 @@ Kazari 0.7 adds [built-in accounts](identity.md#built-in-accounts) and the [dash
 - **The audit log answers an object.** `GET /v1/audit` and `kazari --json admin audit` answered an array of events. They now answer `{"events": [...], "next_cursor": "..."}`, so a script that read the array reads `events` ([audit log](api.md#audit-log)).
 - **A fifth job runs.** `update-check` asks GitHub for the newest release once a day ([the update check](#the-update-check)). `kazari admin jobs list` shows it, and `admin.update_check: false` turns it off.
 
-### Users named admin or scheduler
+#### Users named admin or scheduler
 
-Kazari 0.5 reserved the handles `admin` and `scheduler` for new users only. The first start after this change renames any user who still holds one to the first free suffix, such as `admin-2`, and records a `user.update` event with `handle` and `renamed_from`. API keys, sign-ins, OAuth grants and artifacts stay with the user; versions and share links show the new handle. Scripts and links that name the user need the new handle.
+Kazari 0.5 reserved the handles `admin` and `scheduler` for new users only. The first start of 0.7 renames any user who still holds one to the first free suffix, such as `admin-2`, and records a `user.update` event with `handle` and `renamed_from`. API keys, sign-ins, OAuth grants and artifacts stay with the user; versions and share links show the new handle. Scripts and links that name the user need the new handle.
 
 Events from before the rename keep the actor they had, so `admin` there can be the operator or that user: `credential` tells them apart, `admin_token` or `local` for the operator. Earlier releases also made a user called `admin` involved in any artifact the operator hid or transferred, which opens it to that user while it is offline. The migration removes that involvement where the audit log shows only operator events for the artifact from that actor. It stays where the log also shows the user acting, or shows an event with no `credential`, because those cannot be attributed; review them with `kazari admin audit --slug <slug>`.
 
@@ -241,7 +302,8 @@ These are the checks:
 | `config`      |                                         | The configuration is not valid          |
 | `dns`         | As in `kazari check`                    | As in `kazari check`                    |
 | `dns token`   | As in `kazari check`                    | As in `kazari check`                    |
-| `certificate` | It expires within 14 days               | It has expired                          |
+| `certificate` | It expires within 14 days, or there is none five minutes after start | It has expired, or an order failed, quoting the error |
+| `oidc`        |                                         | The identity provider's discovery fails or names another issuer |
 | `disk`        | Under 10% of the data directory's disk is free | Under 2% is free                 |
 | `database`, `blobs` | The blob directory cannot be read | Never: they report sizes                |
 | `dashboard`   | `admin.listen` is set without `admin.public_url` | The dashboard's address is plain `http` on a host other than this machine |
@@ -554,7 +616,7 @@ Spans do contain slugs, versions, file paths, OAuth client ids and control-plane
 
 ## Scheduled jobs
 
-Kazari runs seven maintenance jobs on its own:
+Kazari runs seven maintenance jobs on its own, and an eighth with an identity provider:
 
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -562,6 +624,7 @@ Kazari runs seven maintenance jobs on its own:
 | `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
+| `oidc-discovery` | 30 seconds                                         | With `auth.oidc`, retries discovery until the identity provider answers, then does nothing ([sign-in is temporarily unavailable](identity.md#sign-in-is-temporarily-unavailable)) |
 | `update-check`   | 1 day                                              | Asks GitHub for the newest release, so the dashboard can say when the instance is behind ([the update check](#the-update-check)) |
 | `views-flush`    | 1 minute                                           | Writes the [page views](#page-views) counted since its last run                                     |
 | `views-prune`    | 1 day                                              | Deletes daily view counts older than `analytics.retention`                                           |
@@ -836,7 +899,7 @@ The actions, with the details each records:
 | `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
 | `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`); `password` stands for any sign-in to a built-in account, a passkey's too |
 | `oauth.revoke`        | OAuth grant revoked (`grant`, or `user` for all of a user's; `reason: refresh_replay` when Kazari revoked it because a retired refresh token was presented again) |
-| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey`, `api_key` or `link` (choosing a password with a link), and `key_prefix` for `api_key`) |
 | `dashboard.signin`    | An admin opened a session on the dashboard (`credential`)            |
 | `session.revoke`      | A person's browser sessions ended (`user`, `sessions`)               |
 | `invite.create`       | Invite, reset or setup link made (`id`, `purpose`, `expires_at`; `handle` unless `setup`; `revoke_all` when set) |

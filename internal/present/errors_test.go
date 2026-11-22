@@ -38,6 +38,7 @@ var errorRows = []struct {
 	{name: "artifact.ErrFileNotFound", err: artifact.ErrFileNotFound, status: http.StatusNotFound, code: api.CodeFileNotFound},
 	{name: "artifact.ErrSlugTaken", err: artifact.ErrSlugTaken, status: http.StatusConflict, code: api.CodeSlugTaken},
 	{name: "artifact.ErrVersionConflict", err: artifact.ErrVersionConflict, status: http.StatusPreconditionFailed, code: api.CodeVersionConflict},
+	{name: "artifact.ErrPublishedNotLatest", err: artifact.ErrPublishedNotLatest, status: http.StatusConflict, code: api.CodePublishedNotLatest},
 	{name: "artifact.ErrTooLarge", err: artifact.ErrTooLarge, status: http.StatusRequestEntityTooLarge, code: api.CodeTooLarge},
 	{name: "artifact.ErrTooManyFiles", err: artifact.ErrTooManyFiles, status: http.StatusUnprocessableEntity, code: api.CodeTooManyFiles},
 	{name: "artifact.ErrQuotaExceeded", err: artifact.ErrQuotaExceeded, status: http.StatusForbidden, code: api.CodeQuotaExceeded},

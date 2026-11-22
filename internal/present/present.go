@@ -5,6 +5,7 @@ package present
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -118,12 +119,22 @@ func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 	if version == 0 {
 		version = a.PublishedVersion
 	}
-	return api.PublishResult{URL: l.ArtifactURL(a.Slug), Version: version, Artifact: l.Artifact(a)}
+	return api.PublishResult{URL: l.ArtifactURL(a.Slug), Version: version, VersionURL: l.VersionURL(a.Slug, version),
+		Artifact: l.Artifact(a)}
 }
 
-// Imported is Result with the import report attached.
-func (l Links) Imported(a *artifact.Artifact, version int, r *artifact.ImportReport) api.PublishResult {
-	res := l.Result(a, version)
+// Published is Result for the version a create or update returned, with
+// what that publish found.
+func (l Links) Published(a *artifact.Artifact, v *artifact.Version) api.PublishResult {
+	res := l.Result(a, v.Number)
+	res.Unchanged = v.Unchanged
+	res.Warnings = v.Warnings
+	return res
+}
+
+// Imported is Published with the import report attached.
+func (l Links) Imported(a *artifact.Artifact, v *artifact.Version, r *artifact.ImportReport) api.PublishResult {
+	res := l.Published(a, v)
 	res.Import = Import(r)
 	return res
 }
@@ -184,24 +195,52 @@ func (l Links) CreatedShareLink(a *artifact.Artifact, sl *artifact.ShareLink, to
 }
 
 // ParseDuration reads a duration given on the wire: a Go duration such as
-// 72h, or whole days such as 14d. Empty is 0. field names the input in the
-// error, which is ErrInvalidArgument.
+// 72h, led by whole weeks and days if wanted, such as 2w, 14d or 1d12h.
+// Empty is 0. field names the input in the error, which is
+// ErrInvalidArgument.
 func ParseDuration(field, s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, nil
 	}
-	if days, ok := strings.CutSuffix(s, "d"); ok {
-		n, err := strconv.Atoi(days)
-		if err == nil && n > 0 {
-			return time.Duration(n) * 24 * time.Hour, nil
-		}
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d <= 0 {
-		return 0, artifact.Errorf(artifact.ErrInvalidArgument, "%s %q must be a positive duration such as 72h or 14d", field, s)
+	d, ok := parseLongDuration(s)
+	if !ok || d <= 0 {
+		return 0, artifact.Errorf(artifact.ErrInvalidArgument, "%s %q must be a positive duration such as 72h, 14d or 2w", field, s)
 	}
 	return d, nil
+}
+
+// maxUnits keeps a week or day count within time.Duration's range.
+const maxUnits = 10000
+
+func parseLongDuration(s string) (time.Duration, bool) {
+	var total time.Duration
+	for _, u := range []struct {
+		suffix byte
+		unit   time.Duration
+	}{{'w', 7 * 24 * time.Hour}, {'d', 24 * time.Hour}} {
+		i := strings.IndexByte(s, u.suffix)
+		if i <= 0 {
+			continue
+		}
+		n, err := strconv.Atoi(s[:i])
+		if err != nil || n < 0 || n > maxUnits || strings.ContainsAny(s[:i], "+-") {
+			return 0, false
+		}
+		total += time.Duration(n) * u.unit
+		s = s[i+1:]
+	}
+	if s == "" {
+		return total, true
+	}
+	if s[0] == '+' || s[0] == '-' {
+		return 0, false
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 || d > math.MaxInt64-total {
+		return 0, false
+	}
+	return total + d, true
 }
 
 // ParseOverlap is ParseDuration for a value that may be zero ("0", "0s"):
@@ -224,14 +263,15 @@ func RequireShare(p auth.Principal, visibility string) error {
 		return nil
 	}
 	return artifact.Errorf(artifact.ErrForbidden,
-		"scope %q required to set visibility; leave visibility out to keep the artifact's, or the instance default on a new one",
+		"scope %q required to set visibility: this credential cannot choose who opens a page; without visibility the "+
+			"artifact keeps its own, and a new one gets the instance default, so check with the person who asked first",
 		auth.ScopeShare)
 }
 
 // Edit converts the outcome of an edit of path that produced version.
-func (l Links) Edit(a *artifact.Artifact, version int, path string, outs []artifact.EditOutcome) api.EditResult {
-	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: version, Path: path,
-		Edits: make([]api.EditOutcome, 0, len(outs)), Artifact: l.Artifact(a)}
+func (l Links) Edit(a *artifact.Artifact, v *artifact.Version, path string, outs []artifact.EditOutcome) api.EditResult {
+	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: v.Number, VersionURL: l.VersionURL(a.Slug, v.Number), Path: path,
+		Edits: make([]api.EditOutcome, 0, len(outs)), Warnings: v.Warnings, Artifact: l.Artifact(a)}
 	for _, o := range outs {
 		r.Edits = append(r.Edits, api.EditOutcome(o))
 	}
@@ -363,7 +403,7 @@ func Me(p auth.Principal, used int64) api.Me {
 	if scopes == nil {
 		scopes = []string{}
 	}
-	return api.Me{Handle: p.Handle, Admin: p.Admin, Scopes: scopes, Source: p.Source, Slugs: p.Slugs, ExpiresAt: p.ExpiresAt,
+	return api.Me{Handle: p.Handle, Admin: p.Admin, Role: p.Role, Scopes: scopes, Source: p.Source, Slugs: p.Slugs, ExpiresAt: p.ExpiresAt,
 		QuotaBytes: p.QuotaBytes, UsedBytes: used}
 }
 
@@ -525,7 +565,7 @@ func statusFor(code string) int {
 	switch code {
 	case api.CodeNotFound, api.CodeVersionNotFound, api.CodeFileNotFound, api.CodeUploadNotFound, api.CodeLinkNotFound:
 		return http.StatusNotFound
-	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch:
+	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch, api.CodePublishedNotLatest:
 		return http.StatusConflict
 	case api.CodeVersionConflict:
 		return http.StatusPreconditionFailed

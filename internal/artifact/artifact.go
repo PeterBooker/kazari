@@ -30,7 +30,7 @@ const Unpublished = "unpublished"
 const (
 	MetaSPA       = "kazari.spa"       // "true" serves index.html for any extension-less miss
 	MetaIndexable = "kazari.indexable" // "true" drops the X-Robots-Tag: noindex header
-	MetaCSP       = "kazari.csp"       // replaces the instance Content-Security-Policy
+	MetaCSP       = "kazari.csp"       // adds sources to the instance Content-Security-Policy
 )
 
 // Artifact is the record behind a slug.
@@ -68,6 +68,20 @@ type Version struct {
 	CreatedAt time.Time
 	SizeBytes int64
 	Files     []File // sorted by Path; empty unless requested
+
+	// Unchanged, Warnings and Edited describe the publish that returned the
+	// version and are never stored. Unchanged means the files matched the
+	// latest version, which is returned instead of a new one. Edited is how
+	// the edits of each FileInput with Edits applied.
+	Unchanged bool
+	Warnings  []string
+	Edited    []FileEdits
+}
+
+// FileEdits reports the edits an update applied to one file.
+type FileEdits struct {
+	Path     string
+	Outcomes []EditOutcome
 }
 
 // File is one entry of a version.
@@ -78,12 +92,15 @@ type File struct {
 	ContentType string
 }
 
-// FileInput is a file being added to or removed from a version.
+// FileInput is a file being added to or removed from a version. On update,
+// Edits instead of Content changes the base version's text file at Path, as
+// Service.Edit does, so one version can hold edits to several files.
 type FileInput struct {
 	Path        string
 	Content     io.Reader // nil with Delete=true removes the path on update
 	ContentType string    // optional; derived from the extension, then sniffed
 	Delete      bool
+	Edits       []Edit
 }
 
 // Actor is who is calling the service.
@@ -129,10 +146,13 @@ type UpdateRequest struct {
 	Metadata        map[string]*string // nil value deletes the key
 	Visibility      *Visibility
 	Label           string
-	ExpectedVersion int  // compared with LatestVersion; 0 = no check
-	KeepStale       bool // a new version or a restore normally clears stale_at/expires_at
-	Restore         bool
-	Files           []FileInput
+	ExpectedVersion int // compared with LatestVersion; 0 = no check
+	// BaseVersion is the version a new one is built on; 0 is the latest,
+	// refused while an earlier version is published.
+	BaseVersion int
+	KeepStale   bool // a new version or a restore normally clears stale_at/expires_at
+	Restore     bool
+	Files       []FileInput
 }
 
 // ListQuery filters a listing. Viewer sees public artifacts plus any it

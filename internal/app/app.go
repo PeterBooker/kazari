@@ -34,6 +34,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/dashboard"
+	"github.com/PeterBooker/kazari/internal/dirlock"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/httpapi"
@@ -66,7 +67,11 @@ const (
 	viewsPruneEvery    = 24 * time.Hour
 	updateCheckEvery   = 24 * time.Hour
 	updateCheckTimeout = 15 * time.Second
-	staleTempAge       = time.Hour // older temp files are crash leftovers
+	// oidcStartTimeout bounds discovery at start; an unreachable provider
+	// is retried every oidcRetryEvery while the server runs.
+	oidcStartTimeout = 10 * time.Second
+	oidcRetryEvery   = 30 * time.Second
+	staleTempAge     = time.Hour // older temp files are crash leftovers
 	// telemetryFlushTimeout bounds the last export at shutdown, so a dead
 	// collector cannot hold the process.
 	telemetryFlushTimeout = 5 * time.Second
@@ -87,6 +92,12 @@ type Options struct {
 	// Argon2 replaces the parameters of password hashes, for tests: the
 	// real ones cost 64 MiB a hash.
 	Argon2 user.Argon2
+	// Origin says where the configuration came from, for the start log and
+	// the admin API's settings.
+	Origin config.Origin
+	// OIDCClient replaces the HTTP client of the identity provider, for
+	// tests.
+	OIDCClient *http.Client
 
 	// SpanExporter, MetricReader and LogExporter replace their signal's
 	// OTLP exporter whatever the endpoint, for tests.
@@ -125,6 +136,9 @@ type App struct {
 	admin      http.Handler // on cfg.Admin.Listen when set, else on the router
 	adminLocal http.Handler // on the admin socket, without credentials
 	oidcOn     bool
+	idp        *oidc.Lazy // nil without auth.oidc
+	origin     config.Origin
+	lock       *dirlock.Lock
 	started    chan struct{}
 
 	mu    sync.Mutex
@@ -134,8 +148,10 @@ type App struct {
 	closeErr  error
 }
 
-// New validates cfg, creates the data directories, opens the database and
-// runs OIDC discovery; nothing listens until Run.
+// New validates cfg, creates the data directories, takes the lock on the
+// data directory, opens the database and tries OIDC discovery, which
+// retries in the background while the provider is unreachable; nothing
+// listens until Run.
 func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("app: invalid config:\n%w", err)
@@ -149,24 +165,38 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		log = slog.Default()
 	}
 
-	for _, dir := range []string{cfg.DataDir, cfg.BlobDir(), cfg.UploadDir(), cfg.CertStorageDir(), tempDir(cfg)} {
+	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
+		return nil, fmt.Errorf("app: create data directory: %w", err)
+	}
+	// Before anything else touches the directory: two servers on one
+	// database would each run the jobs, and the second's exit would take
+	// the first's admin socket with it.
+	lock, err := dirlock.Acquire(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w; stop it first, or give this one another data_dir", err)
+	}
+	for _, dir := range []string{cfg.BlobDir(), cfg.UploadDir(), cfg.CertStorageDir(), tempDir(cfg)} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
+			lock.Release()
 			return nil, fmt.Errorf("app: create data directory: %w", err)
 		}
 	}
 
 	tel, err := telemetry.New(ctx, telemetryOptions(cfg, opts, log, now))
 	if err != nil {
+		lock.Release()
 		return nil, fmt.Errorf("app: %w", err)
 	}
 	log = tel.Logger(log)
-	a := &App{cfg: cfg, log: log, tel: tel, tracer: tel.Providers().Tracer(scope), started: make(chan struct{}), stderr: opts.Stderr}
+	a := &App{cfg: cfg, log: log, tel: tel, tracer: tel.Providers().Tracer(scope), started: make(chan struct{}), stderr: opts.Stderr,
+		origin: opts.Origin, lock: lock}
 	if a.stderr == nil {
 		a.stderr = os.Stderr
 	}
 	if err := a.start(ctx, now, opts); err != nil {
 		if a.db == nil {
 			a.flushTelemetry()
+			a.lock.Release()
 		} else {
 			a.Close()
 		}
@@ -286,6 +316,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		WritePolicy:       cfg.Auth.WritePolicy,
 		DefaultVisibility: artifact.Visibility(cfg.Serve.DefaultVisibility),
 		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
+		CSP:               cfg.Serve.CSP,
+		AllowCSPOverride:  cfg.Serve.AllowCSPOverride,
 		Quotas:            users,
 		Now:               now,
 		Logger:            log,
@@ -322,18 +354,29 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	mcpURL := cfg.ExternalURL("mcp")
 	var idp oauth.IdentityProvider
 	if o := cfg.Auth.OIDC; o != nil {
-		p, err := oidc.New(ctx, oidc.Config{
+		p, err := oidc.NewLazy(oidc.Config{
 			Issuer:       o.Issuer,
 			ClientID:     o.ClientID,
 			ClientSecret: o.ClientSecret,
 			RedirectURL:  mcpURL + strings.TrimPrefix(oauth.PathCallback, "/"),
+			HTTPClient:   opts.OIDCClient,
 			Telemetry:    tel,
 			Fetch:        fetchObs,
 		})
 		if err != nil {
 			return fmt.Errorf("app: %w", err)
 		}
+		// The pages and the API serve without the provider; only sign-in
+		// waits for it.
+		dctx, cancel := context.WithTimeout(ctx, oidcStartTimeout)
+		err = p.Discover(dctx)
+		cancel()
+		if err != nil {
+			log.WarnContext(ctx, "identity provider unreachable: sign-in answers that it is temporarily unavailable until it is reached",
+				"issuer", o.Issuer, "err", err, "retry", oidcRetryEvery.String(), "next", "kazari check tests auth.oidc.issuer")
+		}
 		idp = p
+		a.idp = p
 		a.oidcOn = true
 	}
 	var (
@@ -441,6 +484,18 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			return err
 		}},
 	}
+	if a.idp != nil {
+		jobs = append(jobs, scheduler.Job{Name: "oidc-discovery", Every: oidcRetryEvery, Run: func(ctx context.Context) error {
+			if a.idp.Ready() == nil {
+				return nil
+			}
+			if err := a.idp.Discover(ctx); err != nil {
+				return err
+			}
+			log.InfoContext(ctx, "identity provider reached: sign-in is available", "issuer", a.idp.Issuer())
+			return nil
+		}})
+	}
 	if a.views != nil {
 		jobs = append(jobs,
 			scheduler.Job{Name: "views-flush", Every: viewsFlushEvery, Run: a.views.Flush},
@@ -482,7 +537,10 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		}
 	}
 	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: tel}, jobs...)
-	ready := preflight.NewChecker(cfg, preflight.ReadyOptions{Now: now, CertNotAfter: a.certNotAfter, Providers: tel}, 0)
+	ready := preflight.NewChecker(cfg, preflight.ReadyOptions{
+		HTTPClient: opts.OIDCClient,
+		Now:        now, CertNotAfter: a.certNotAfter, CertError: a.certError, Started: now(), Providers: tel,
+	}, 0)
 	a.ready = ready
 
 	apiBase := cfg.ExternalURL("api") + "v1"
@@ -497,6 +555,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		MaxChunkBytes:       int64(cfg.Limits.MaxChunkBytes),
 		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
 		CSP:                 cfg.Serve.CSP,
+		AllowCSPOverride:    cfg.Serve.AllowCSPOverride,
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,
 		APIBaseURL:          apiBase,
 		MCPURL:              mcpURL,
@@ -530,6 +589,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Backup:    backups,
 		Ready:     ready,
 		Settings:  cfg.Redacted,
+		Sources:   a.origin.Sources,
 		Metrics:   a.tel.MetricsHandler(),
 		Views:     viewsSvc,
 		Links:     links,
@@ -591,6 +651,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		APIURL:          apiBase,
 		LocalAccounts:   cfg.LocalAccounts(),
 		MaxKeyTTL:       cfg.Auth.Tokens.MaxKeyTTL.Std(),
+		MaxShareLinkTTL: cfg.Serve.ShareLinkMaxTTL.Std(),
 		InsecureCookies: cfg.ExternalScheme == "http",
 		Now:             now,
 		Telemetry:       tel,
@@ -599,16 +660,17 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	// get the per-IP budget every other surface has before authentication.
 	accountIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	accountLimit := ratelimit.Middleware(accountIPs, ratelimit.IPKey, nil)
-	apexH, err := apexHandler(cfg)
-	if err != nil {
-		return err
-	}
+	front := account.NewFront(account.FrontOptions{
+		URL: strings.TrimSuffix(cfg.ExternalURL(""), "/"), MCPURL: mcpURL, APIURL: apiBase, AdminURL: dashboardURL(cfg),
+	})
+	apexH := apexHandler(front.Home)
 
 	adminHost := adminH
 	if cfg.DashboardEnabled() {
 		deps := dashboard.Deps{
 			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
 			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
+			Flags: sqlite.NewFlagStore(a.db),
 		}
 		// Assigned only when there is one: a nil *update.Checker in the
 		// interface would not be a nil interface.
@@ -649,8 +711,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	mcpIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	mcpLimit := ratelimit.Middleware(mcpIPs, ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
-		api:     a.surface(instrument.SurfaceAPI, true, apiH),
-		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		api:     a.surface(instrument.SurfaceAPI, true, apiHost(front.API, apiH)),
+		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(frontPage(front.Connector, mcpMux(oauthSvc.Handler(), mcpH)))),
 		admin:   publicAdmin,
 		apex:    a.surface(instrument.SurfaceApex, true, apexH),
 		account: a.surface(instrument.SurfaceAccount, true, accountLimit(accountH)),
@@ -690,6 +752,15 @@ func tlsMode(cfg config.Config) string {
 		return "proxy"
 	}
 	return cfg.TLS.Mode
+}
+
+// certError is the error of the last failed certificate order, nil when
+// none failed or the source orders none.
+func (a *App) certError() error {
+	if s, ok := a.certs.(interface{ LastError() error }); ok {
+		return s.LastError()
+	}
+	return nil
 }
 
 // certNotAfter is when the served certificate expires, or the zero time
@@ -789,11 +860,12 @@ func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
 			return nil, fmt.Errorf("app: %w", err)
 		}
 		s, err := certs.NewACME(certs.ACMEConfig{
-			Email:      cfg.TLS.Email,
-			CA:         cfg.TLS.CA,
-			Domains:    []string{cfg.BaseDomain, "*." + cfg.BaseDomain},
-			StorageDir: cfg.CertStorageDir(),
-			Logger:     log,
+			Email:       cfg.TLS.Email,
+			CA:          cfg.TLS.CA,
+			Domains:     []string{cfg.BaseDomain, "*." + cfg.BaseDomain},
+			StorageDir:  cfg.CertStorageDir(),
+			Logger:      log,
+			DNSProvider: cfg.TLS.DNSProvider,
 		}, dns)
 		if err != nil {
 			return nil, fmt.Errorf("app: %w", err)
@@ -841,6 +913,7 @@ func (a *App) Close() error {
 		if err := a.db.Close(); err != nil {
 			a.closeErr = fmt.Errorf("app: close database: %w", err)
 		}
+		a.lock.Release()
 	})
 	return a.closeErr
 }

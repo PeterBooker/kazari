@@ -3,10 +3,12 @@ package account
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -39,6 +41,31 @@ func (s *server) showKey(w http.ResponseWriter, r *http.Request, v visit, k *use
 	})
 }
 
+// scopeBox is one box of the new-key form.
+type scopeBox struct {
+	Name, Words string
+	Checked     bool
+}
+
+// scopeWords say what a scope lets a key do.
+var scopeWords = map[string]string{
+	auth.ScopeRead:   "List and read your pages",
+	auth.ScopeWrite:  "Create and update your pages",
+	auth.ScopeShare:  "Change who can open your pages, and make share links",
+	auth.ScopeDelete: "Delete your pages",
+	auth.ScopeAdmin:  "Administer the instance",
+}
+
+// scopeBoxes offers the scopes held, ticked when sent ticked, or all of them
+// before the form was sent.
+func scopeBoxes(held, ticked []string) []scopeBox {
+	boxes := make([]scopeBox, 0, len(held))
+	for _, sc := range held {
+		boxes = append(boxes, scopeBox{Name: sc, Words: scopeWords[sc], Checked: ticked == nil || slices.Contains(ticked, sc)})
+	}
+	return boxes
+}
+
 // maxKeyDays bounds the expiry field where the instance sets no limit, as
 // the dashboard's key form does: ten years, past which "no expiry" is the
 // honest choice.
@@ -46,9 +73,21 @@ const maxKeyDays = 3650
 
 func (s *server) issueKey(w http.ResponseWriter, r *http.Request, v visit) {
 	f := r.PostForm
-	form := keyForm{Label: strings.TrimSpace(f.Get("label")), Slugs: f.Get("slugs"), Days: strings.TrimSpace(f.Get("days"))}
+	form := keyForm{Label: strings.TrimSpace(f.Get("label")), Slugs: f.Get("slugs"), Days: strings.TrimSpace(f.Get("days")),
+		Scopes: slices.DeleteFunc(slices.Clone(f["scopes"]), func(sc string) bool { return !slices.Contains(principal(r).Scopes, sc) })}
+	// The form says it offered the boxes; without that, as from a script,
+	// no scope is a request for every scope the session holds.
+	if f.Get("scopes_offered") == "" {
+		form.Scopes = nil
+	} else if form.Scopes == nil {
+		form.Scopes = []string{}
+	}
 	refuse := func(status int, field, why string) {
 		s.renderAccount(w, r, status, v, accountPageData{Err: map[string]string{field: why}, Key: form})
+	}
+	if form.Scopes != nil && len(form.Scopes) == 0 {
+		refuse(http.StatusUnprocessableEntity, "scopes", "none")
+		return
 	}
 	var ttl time.Duration
 	if form.Days != "" {
@@ -66,6 +105,7 @@ func (s *server) issueKey(w http.ResponseWriter, r *http.Request, v visit) {
 	k, secret, err := s.d.Users.IssueKey(r.Context(), user.IssueKeyRequest{
 		Handle:    v.user.Handle,
 		Label:     form.Label,
+		Scopes:    form.Scopes,
 		Slugs:     strings.FieldsFunc(form.Slugs, func(c rune) bool { return c == ',' || c == ' ' || c == '\n' || c == '\r' || c == '\t' }),
 		ExpiresIn: ttl,
 		With:      v.sess.KeyPrefix,

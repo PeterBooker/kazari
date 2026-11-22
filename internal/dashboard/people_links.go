@@ -16,9 +16,11 @@ import (
 // peopleInviteData is the form that adds a person, as it was sent.
 type peopleInviteData struct {
 	Handle, Name, Email, Role, Quota string
-	Errors                           map[string]string
-	Local                            bool // built-in accounts: the person gets an invite link
-	DefaultQuota                     int64
+	// Suggestion is a handle that would do, made from what was typed.
+	Suggestion   string
+	Errors       map[string]string
+	Local        bool // built-in accounts: the person gets an invite link
+	DefaultQuota int64
 }
 
 func (s *server) peopleInviteTitle() string {
@@ -49,8 +51,21 @@ func (s *server) peopleInvite(w http.ResponseWriter, r *http.Request, c *request
 		}
 		req.QuotaBytes = &n
 	}
-	if d.Handle == "" {
+	// Every field is checked before anything is made, so one answer names
+	// every mistake.
+	switch {
+	case d.Handle == "":
 		d.Errors["handle"] = "Choose a handle: the short name they sign in and are listed with."
+	case user.ValidateHandle(d.Handle) != nil:
+		_, d.Errors["handle"] = peopleFieldError(user.ValidateHandle(d.Handle), d.Handle)
+	}
+	if d.Errors["handle"] != "" {
+		if d.Suggestion = user.SuggestHandle(d.Handle); d.Suggestion == "" {
+			d.Suggestion = user.SuggestHandle(d.Name)
+		}
+	}
+	if d.Role != "" && d.Role != string(user.RoleMember) && d.Role != string(user.RoleAdmin) {
+		d.Errors["role"] = "Choose member or admin."
 	}
 	if len(d.Errors) == 0 {
 		var (
@@ -109,7 +124,20 @@ func (s *server) peopleShowLink(w http.ResponseWriter, r *http.Request, c *reque
 			"It lets whoever opens it set the password of this account."
 		d.Notes = append(d.Notes, "Until they use it, "+u.Handle+" is listed as invited and cannot sign in.")
 	}
+	d.Snippets = []snippet{{ID: "message", Title: "A message to send with it", Button: "Copy the message", Text: s.linkMessage(name, l.Purpose, d.Value)}}
 	return s.showOnce(w, r, c, d)
+}
+
+// linkMessage is what an admin sends with a link: the link, the connector
+// address, and what to do with each.
+func (s *server) linkMessage(name string, purpose user.Purpose, link string) string {
+	what := "Here is your invite to " + s.o.BaseDomain + ", where your AI agent can publish web pages for you."
+	if purpose == user.PurposeReset {
+		what = "Here is a link to set a new password on " + s.o.BaseDomain + "."
+	}
+	return "Hi " + name + ",\n\n" + what + " Open this link and choose a password; it works once:\n\n" + link +
+		"\n\nThen add this address to your AI agent as a connector (in claude.ai: Settings, then Connectors, then Add custom connector):\n\n" +
+		s.o.MCPURL + "\n"
 }
 
 // peopleLocalUser loads the person a path names on an instance with

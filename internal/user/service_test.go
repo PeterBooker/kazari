@@ -523,7 +523,7 @@ func TestAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := auth.Principal{Handle: "boss", Admin: true, Scopes: []string{auth.ScopeRead, auth.ScopeAdmin},
+	want := auth.Principal{Handle: "boss", Admin: true, Role: "admin", Scopes: []string{auth.ScopeRead, auth.ScopeAdmin},
 		Source: auth.SourceAPIKey, KeyID: k.Prefix, QuotaBytes: 99}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("Principal (-want +got):\n%s", diff)
@@ -843,6 +843,19 @@ func TestResolveIdentity(t *testing.T) {
 		{"provision admin email, case-insensitive",
 			user.Options{AutoProvision: true, AllowedDomains: []string{"example.com"}, AdminEmails: []string{" Boss@EXAMPLE.com"}},
 			nil, identity("s1", "boss@example.com", true), "boss", user.RoleAdmin, nil},
+		{"provision admin email alone", user.Options{AutoProvision: true, AdminEmails: []string{"boss@example.com"}},
+			nil, identity("s1", "boss@example.com", true), "boss", user.RoleAdmin, nil},
+		{"provision admin email, domain not allowed",
+			user.Options{AutoProvision: true, AllowedDomains: []string{"corp.example"}, AdminEmails: []string{"boss@example.com"}},
+			nil, identity("s1", "boss@example.com", true), "boss", user.RoleAdmin, nil},
+		{"provision admin email, auto_provision off", user.Options{AdminEmails: []string{"boss@example.com"}},
+			nil, identity("s1", "boss@example.com", true), "boss", user.RoleAdmin, nil},
+		{"admin email, unverified", user.Options{AdminEmails: []string{"boss@example.com"}},
+			nil, identity("s1", "boss@example.com", false), "", "", user.ErrNotProvisioned},
+		{"email link, admin email outside allowed domains",
+			user.Options{AllowedDomains: []string{"corp.example"}, AdminEmails: []string{"root@example.com"}},
+			admin("root", "root@example.com"),
+			identity("s1", "root@example.com", true), "root", user.RoleAdmin, nil},
 		{"provision off", user.Options{AllowedDomains: []string{"example.com"}}, nil,
 			identity("s1", "new@example.com", true), "", "", user.ErrNotProvisioned},
 		{"provision, no allowed domains", user.Options{AutoProvision: true}, nil,

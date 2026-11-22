@@ -9,9 +9,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/blob"
@@ -60,6 +63,11 @@ type Options struct {
 	// MaxShareLinkTTL caps a share link's lifetime; links created without one
 	// live DefaultShareLinkTTL, or this when shorter.
 	MaxShareLinkTTL time.Duration
+	// CSP is the instance's Content-Security-Policy, which the checks after a
+	// publish hold pages against; AllowCSPOverride adds an artifact's
+	// kazari.csp to it, as the serving path does.
+	CSP              string
+	AllowCSPOverride bool
 	// Pages takes the snapshots Import publishes; nil disables Import.
 	Pages PageSource
 	// Quotas gives the owner's quota when another member adds a version
@@ -217,6 +225,11 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	if err := ValidateMetadata(req.Metadata, s.opts.MaxMetadataPairs); err != nil {
 		return nil, nil, err
 	}
+	if _, set := req.Metadata[MetaCSP]; set {
+		if err := s.checkCSPOverride(); err != nil {
+			return nil, nil, err
+		}
+	}
 	if len(req.Files) == 0 {
 		return nil, nil, Errorf(ErrInvalidArgument, "at least one file is required")
 	}
@@ -224,11 +237,14 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 		if in.Delete {
 			return nil, nil, Errorf(ErrInvalidArgument, "cannot delete %q from a new artifact", in.Path)
 		}
+		if len(in.Edits) > 0 {
+			return nil, nil, Errorf(ErrInvalidArgument, "cannot edit %q in a new artifact; send its content", in.Path)
+		}
 	}
 	// Fail before streaming when the slug is taken; the store's unique
 	// constraint is the real guard.
-	if _, err := s.store.Get(ctx, req.Slug); err == nil {
-		return nil, nil, Errorf(ErrSlugTaken, "slug %q is already taken", req.Slug)
+	if cur, err := s.store.Get(ctx, req.Slug); err == nil {
+		return nil, nil, s.slugTaken(ctx, actor, cur)
 	} else if CodeOf(err) != ErrNotFound.Code {
 		return nil, nil, err
 	}
@@ -260,6 +276,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 			return err
 		}
 		v.Files, v.SizeBytes = files, size
+		if a.Name == "" {
+			a.Name = s.pageTitle(ctx, files)
+		}
 		return s.store.Create(ctx, a, v, actor.QuotaBytes)
 	})
 	if err != nil {
@@ -270,7 +289,22 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	if err != nil {
 		return nil, nil, err
 	}
+	v.Warnings = s.warnings(ctx, got, v.Files)
 	return got, v, nil
+}
+
+// slugTaken names what holds the slug: a tombstone with the day it is freed,
+// or the bin, which the caller can restore it from when they may see it.
+func (s *Service) slugTaken(ctx context.Context, actor Actor, a *Artifact) error {
+	switch {
+	case a.PurgedAt != nil:
+		return Errorf(ErrSlugTaken, "slug %q was purged and is free again after %s",
+			a.Slug, a.PurgedAt.Add(s.opts.Tombstone).UTC().Format(time.DateOnly))
+	case a.DeletedAt != nil && s.checkReadable(ctx, actor, a) == nil:
+		return Errorf(ErrSlugTaken, "slug %q is in the bin; restore it with kazari restore %s or update_artifact restore: true",
+			a.Slug, a.Slug)
+	}
+	return Errorf(ErrSlugTaken, "slug %q is already taken", a.Slug)
 }
 
 // holdBlobs runs fn under blobMu's read side. Every content reader is local
@@ -413,15 +447,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	}
-	base := map[string]File{}
-	if a.LatestVersion > 0 {
-		latest, err := s.store.GetVersion(ctx, a.Slug, a.LatestVersion)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, f := range latest.Files {
-			base[f.Path] = f
-		}
+	baseNumber, err := baseVersion(a, req.BaseVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	base, err := s.versionFiles(ctx, a.Slug, baseNumber)
+	if err != nil {
+		return nil, nil, err
 	}
 	// Every version is charged to the owner, whoever adds it.
 	quotaBytes, err := s.ownerQuota(ctx, actor, a.OwnerHandle)
@@ -432,15 +464,34 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if err != nil {
 		return nil, nil, err
 	}
-	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	latest := base
+	if baseNumber != a.LatestVersion {
+		if latest, err = s.versionFiles(ctx, a.Slug, a.LatestVersion); err != nil {
+			return nil, nil, err
+		}
+	}
+	inputs, edited, err := s.applyFileEdits(ctx, base, baseNumber, req.Files)
+	if err != nil {
+		return nil, nil, err
+	}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
-		files, size, err := s.buildFiles(ctx, base, req.Files, quota, put)
+		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
 			return err
 		}
+		if sameFiles(files, latest) {
+			return errNoChange
+		}
 		v.Files, v.SizeBytes = files, size
+		if v.Label == "" {
+			v.Label = changeLabel(base, files)
+		}
 		return s.store.AddVersion(ctx, req.Slug, v, req.ExpectedVersion, quotaBytes, func(a *Artifact) error {
 			if err := apply(a); err != nil {
+				return err
+			}
+			if _, err := baseVersion(a, req.BaseVersion); err != nil {
 				return err
 			}
 			if !req.KeepStale {
@@ -449,6 +500,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			return nil
 		})
 	})
+	if errors.Is(err, errNoChange) {
+		got, uv, err := s.unchanged(ctx, actor, req)
+		if uv != nil {
+			uv.Edited = edited
+		}
+		return got, uv, err
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -457,7 +515,138 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if err != nil {
 		return nil, nil, err
 	}
+	v.Warnings = s.warnings(ctx, got, v.Files)
 	return got, v, nil
+}
+
+// errNoChange from buildFiles' caller means the files equal the latest
+// version's: no version is added.
+var errNoChange = errors.New("artifact: files unchanged")
+
+// unchanged applies req's fields without its files, which match the latest
+// version, and returns that version marked Unchanged.
+func (s *Service) unchanged(ctx context.Context, actor Actor, req UpdateRequest) (*Artifact, *Version, error) {
+	fields := req
+	fields.Files = nil
+	var got *Artifact
+	var err error
+	if req.Name == nil && req.Description == nil && req.Visibility == nil && len(req.Metadata) == 0 && !req.Restore {
+		got, err = s.store.Get(ctx, req.Slug)
+	} else {
+		got, _, err = s.update(ctx, actor, fields)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err := s.store.GetVersion(ctx, got.Slug, got.LatestVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	v.Unchanged = true
+	v.Warnings = s.warnings(ctx, got, v.Files)
+	return got, v, nil
+}
+
+func (s *Service) versionFiles(ctx context.Context, slug string, number int) (map[string]File, error) {
+	files := map[string]File{}
+	if number <= 0 {
+		return files, nil
+	}
+	v, err := s.store.GetVersion(ctx, slug, number)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range v.Files {
+		files[f.Path] = f
+	}
+	return files, nil
+}
+
+func sameFiles(files []File, latest map[string]File) bool {
+	if len(files) != len(latest) {
+		return false
+	}
+	for _, f := range files {
+		if l, ok := latest[f.Path]; !ok || l.Hash != f.Hash || l.ContentType != f.ContentType {
+			return false
+		}
+	}
+	return true
+}
+
+// changeLabel names what a version changed from its base, for a version
+// added without a label: "+logo.png ~index.html -old.css".
+func changeLabel(base map[string]File, files []File) string {
+	var parts []string
+	now := make(map[string]bool, len(files))
+	for _, f := range files {
+		now[f.Path] = true
+		switch b, ok := base[f.Path]; {
+		case !ok:
+			parts = append(parts, "+"+f.Path)
+		case b.Hash != f.Hash || b.ContentType != f.ContentType:
+			parts = append(parts, "~"+f.Path)
+		}
+	}
+	for _, p := range slices.Sorted(maps.Keys(base)) {
+		if !now[p] {
+			parts = append(parts, "-"+p)
+		}
+	}
+	return summarize(parts, LabelMaxBytes)
+}
+
+// summarize joins parts with spaces within maxBytes, ending "and N more"
+// when they do not all fit.
+func summarize(parts []string, maxBytes int) string {
+	var b strings.Builder
+	for i, p := range parts {
+		more := ""
+		if left := len(parts) - i - 1; left > 0 {
+			more = fmt.Sprintf(" and %d more", left)
+		}
+		if b.Len()+1+len(p)+len(more) > maxBytes && i > 0 {
+			fmt.Fprintf(&b, " and %d more", len(parts)-i)
+			break
+		}
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(truncate(p, maxBytes-len(more)-1))
+	}
+	return b.String()
+}
+
+func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// baseVersion is the version a change builds on. Without one named, it is
+// the latest, unless an earlier version is published: the change would
+// then quietly undo that rollback.
+func baseVersion(a *Artifact, requested int) (int, error) {
+	if requested < 0 || requested > a.LatestVersion {
+		return 0, Errorf(ErrVersionNotFound, "%s has no version %d; its latest is %d", a.Slug, requested, a.LatestVersion)
+	}
+	if requested > 0 {
+		return requested, nil
+	}
+	if a.PublishedVersion != 0 && a.PublishedVersion != a.LatestVersion {
+		return 0, Errorf(ErrPublishedNotLatest,
+			"version %d of %s is published but the latest is %d, so building on the latest would undo that rollback; "+
+				"set base_version to %d to change the published version, or to %d to build on the latest",
+			a.PublishedVersion, a.Slug, a.LatestVersion, a.PublishedVersion, a.LatestVersion)
+	}
+	return a.LatestVersion, nil
 }
 
 func (s *Service) recordUpdate(ctx context.Context, actor Actor, slug string, v *Version, restored bool) {
@@ -506,6 +695,11 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 				delete(m, k)
 				continue
 			}
+			if k == MetaCSP {
+				if err := s.checkCSPOverride(); err != nil {
+					return err
+				}
+			}
 			m[k] = *v
 		}
 		if err := ValidateMetadata(m, s.opts.MaxMetadataPairs); err != nil {
@@ -514,6 +708,16 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 		a.Metadata = m
 	}
 	return nil
+}
+
+// checkCSPOverride refuses kazari.csp where the instance ignores it, so a
+// caller is not told it worked.
+func (s *Service) checkCSPOverride() error {
+	if s.opts.AllowCSPOverride {
+		return nil
+	}
+	return Errorf(ErrInvalidMetadata, "this instance does not allow %s, so it would be ignored; ship the "+
+		"resources as files of the artifact instead", MetaCSP)
 }
 
 // checkWritable applies, in order, the lifecycle, the visibility and the

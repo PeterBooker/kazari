@@ -3,12 +3,14 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/backup"
+	"github.com/PeterBooker/kazari/internal/dirlock"
 	"github.com/PeterBooker/kazari/internal/preflight"
 )
 
@@ -194,13 +196,17 @@ func (c *AdminSetupLinkCmd) Run(r *runner) error {
 	return r.printLink(l, l, "setup link: whoever opens it becomes the first admin")
 }
 
-// AdminBackupCmd writes a backup into a directory.
+// AdminBackupCmd writes a backup into a directory, or a tar stream to
+// standard output.
 type AdminBackupCmd struct {
-	Dir     string `arg:"" help:"Directory to write into; it must be empty or not exist yet."`
+	Dir     string `arg:"" help:"Directory to write into; it must be empty or not exist yet. - writes the archive to standard output as tar."`
 	NoCerts bool   `name:"no-certs" help:"Leave out certmagic/, the certificate and its private key, which is included over the admin socket."`
 }
 
 func (c *AdminBackupCmd) Run(r *runner) error {
+	if c.Dir == "-" {
+		return c.stream(r)
+	}
 	// Before the server is asked: a backup started for a directory that
 	// cannot take it copies the whole database for nothing.
 	if err := backupTarget(c.Dir); err != nil {
@@ -250,7 +256,32 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	return nil
 }
 
-// treeStats counts the regular files under dir and sums their sizes.
+// stream writes the archive to standard output, for a backup that leaves a
+// container through docker exec or goes straight to other storage.
+func (c *AdminBackupCmd) stream(r *runner) error {
+	if f, ok := r.stdout.(*os.File); ok {
+		if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+			return usagef("admin backup -: standard output is a terminal; redirect it to a file, such as > kazari-backup.tar")
+		}
+	}
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	body, err := cl.Backup(r.ctx, cl.local && !c.NoCerts)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	if _, err := io.Copy(r.stdout, body); err != nil {
+		return fmt.Errorf("admin backup: the archive is incomplete: %w", err)
+	}
+	if !cl.local {
+		fmt.Fprintln(r.stderr, "certmagic/ is not included: the certificate's private key leaves the server only over the admin socket")
+	}
+	return nil
+}
+
 // backupTarget reports why dir cannot take a backup: it must be a directory
 // that is empty, or not exist yet.
 func backupTarget(dir string) error {
@@ -273,6 +304,7 @@ func backupTarget(dir string) error {
 	return nil
 }
 
+// treeStats counts the regular files under dir and sums their sizes.
 func treeStats(dir string) (files int, size int64, err error) {
 	err = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
@@ -287,6 +319,59 @@ func treeStats(dir string) (files int, size int64, err error) {
 		return nil
 	})
 	return files, size, err
+}
+
+// AdminRestoreBackupCmd restores a backup directory into the data
+// directory of a stopped server on this host.
+type AdminRestoreBackupCmd struct {
+	Dir     string `arg:"" help:"Backup directory that kazari admin backup wrote."`
+	DataDir string `name:"data-dir" help:"Data directory to restore into (default: data_dir of the server's configuration on this host, /var/lib/kazari unless it says otherwise)." placeholder:"PATH"`
+	Force   bool   `help:"Replace the database, blobs and staged uploads the data directory holds, and its certificates when the backup has some."`
+}
+
+func (c *AdminRestoreBackupCmd) Run(r *runner) error {
+	dataDir := c.DataDir
+	if dataDir == "" {
+		cfg, err := r.serverConfig()
+		if err != nil {
+			return usagef("admin restore-backup: %v; name the data directory with --data-dir", err)
+		}
+		dataDir = cfg.DataDir
+	}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return fmt.Errorf("admin restore-backup: %w", err)
+	}
+	lock, err := dirlock.Acquire(dataDir)
+	var locked *dirlock.LockedError
+	switch {
+	case errors.As(err, &locked):
+		return usagef("admin restore-backup: %v; stop the server first (sudo systemctl stop kazari, or docker compose stop kazari)", err)
+	case errors.Is(err, fs.ErrPermission):
+		return usagef("admin restore-backup: %v; run it as root, for example with sudo", err)
+	case err != nil:
+		return fmt.Errorf("admin restore-backup: %w", err)
+	}
+	defer lock.Release()
+	sum, err := backup.Restore(c.Dir, dataDir, backup.RestoreOptions{Replace: c.Force})
+	switch {
+	case errors.Is(err, backup.ErrNotBackup):
+		return usagef("admin restore-backup: %s holds no kazari.db; name a directory that kazari admin backup wrote", c.Dir)
+	case errors.Is(err, backup.ErrNotEmpty):
+		return usagef("admin restore-backup: %s already holds an instance; add --force to replace it with the backup", dataDir)
+	case errors.Is(err, fs.ErrPermission):
+		return usagef("admin restore-backup: %v; run it as root, for example with sudo", err)
+	case err != nil:
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(struct {
+			DataDir string `json:"data_dir"`
+			Files   int    `json:"files"`
+			Bytes   int64  `json:"bytes"`
+		}{dataDir, sum.Files, sum.Bytes})
+	}
+	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, humanSize(sum.Bytes), dataDir)
+	return nil
 }
 
 // AdminReadyCmd runs the readiness checks.

@@ -3,7 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -11,7 +13,8 @@ import (
 
 // expandNode replaces references in the scalar values of n through lookup:
 // ${NAME} (must be set, may be empty), ${NAME:-default} (default when unset
-// or empty) and $$ for "$"; any other "$" is kept. Keys and comments are not
+// or empty) and $$ for "$"; any other "$" is kept. A NAME unset or empty
+// takes the contents of the file NAME_FILE names, when that is set. Keys and comments are not
 // expanded. Substituting after parsing keeps a value from changing the
 // document's structure. A changed plain scalar has its tag cleared so YAML
 // resolves its type again (${PORT:-8080} is an integer); quoted ones stay
@@ -85,6 +88,18 @@ func (e *expander) expand(s string, line int) (string, bool) {
 				continue
 			}
 			v, ok := e.lookup(name)
+			if !ok || v == "" {
+				// As for a KAZARI_*_FILE override: Docker, Swarm and
+				// Kubernetes mount secrets as files.
+				fv, fok, err := secretFromFile(name+"_FILE", e.lookup)
+				switch {
+				case err != nil:
+					e.errs = append(e.errs, fmt.Errorf("config: %s: line %d: ${%s}: %w", e.path, line, name, err))
+					continue
+				case fok && (!ok || fv != ""):
+					v, ok = fv, true
+				}
+			}
 			switch {
 			case hasDef && v == "":
 				b.WriteString(def)
@@ -92,7 +107,8 @@ func (e *expander) expand(s string, line int) (string, bool) {
 				b.WriteString(v)
 			case !e.unset[name]:
 				e.unset[name] = true
-				e.errs = append(e.errs, fmt.Errorf("config: %s: ${%s} is not set", e.path, name))
+				e.errs = append(e.errs, fmt.Errorf("config: %s: line %d: ${%s} is not set; set %s, or %s_FILE to a file that holds it",
+					e.path, line, name, name, name))
 			}
 		default:
 			b.WriteByte('$')
@@ -171,9 +187,53 @@ func checkKeysIn(n *yaml.Node, t reflect.Type, prefix string, merged map[*yaml.N
 		}
 		ft, ok := fields[k.Value]
 		if !ok {
-			*errs = append(*errs, fmt.Errorf("line %d: unknown key %s", k.Line, key))
+			msg := fmt.Sprintf("line %d: unknown key %s", k.Line, key)
+			if near := nearest(k.Value, slices.Collect(maps.Keys(fields))); near != "" {
+				if prefix != "" {
+					near = prefix + "." + near
+				}
+				msg += "; did you mean " + near + "?"
+			}
+			*errs = append(*errs, errors.New(msg))
 			continue
 		}
 		checkKeysIn(v, ft, key, merged, errs)
 	}
+}
+
+// nearest returns the candidate closest to s in edit distance, "" when
+// none is close enough to be a typo of it.
+func nearest(s string, candidates []string) string {
+	slices.Sort(candidates)
+	best, bestDist := "", len(s)/3+1
+	if bestDist < 2 {
+		bestDist = 2
+	}
+	for _, c := range candidates {
+		if d := editDistance(s, c); d <= bestDist && (best == "" || d < editDistance(s, best)) {
+			best = c
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b, in bytes.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }

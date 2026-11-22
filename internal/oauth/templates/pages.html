@@ -9,13 +9,19 @@
 {{define "consent"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">Authorise <b>{{.ClientName}}</b></h1>
 {{if .Handle}}<p><strong>{{.ClientName}}</strong> wants to act as <strong>{{.Handle}}</strong> on this Kazari instance.</p>
 {{else}}<p><strong>{{.ClientName}}</strong> wants to act on your behalf on this Kazari instance.</p>
-{{end}}<p class="soft">Returns to <span class="mono">{{.RedirectHost}}</span><br>Client <span class="mono">{{.ClientID}}</span></p>
+{{end}}<p class="soft">Returns to <span class="mono">{{.RedirectHost}}</span></p>
 <div>
 <p>It will be allowed to:</p>
 <ul class="dash">
-{{range .Scopes}}<li>{{.Description}} <span class="mono soft">{{.Name}}</span></li>
+{{range .Scopes}}<li>{{.Description}}</li>
 {{end}}</ul>
 </div>
+<details class="more"><summary>Technical details</summary>
+<dl class="kv">
+<dt>Client</dt><dd class="mono">{{.ClientID}}</dd>
+<dt>Scopes</dt><dd class="mono">{{range $i, $s := .Scopes}}{{if $i}} {{end}}{{$s.Name}}{{end}}</dd>
+</dl>
+</details>
 {{if .Error}}{{template "alert" .Error}}{{end}}<form method="post" action="/oauth/consent">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
 {{if .AskKey}}<div class="field"><label for="api_key">API key</label>
@@ -44,8 +50,13 @@
 {{template "theme/door-close" .Foot}}{{end}}
 
 {{define "signin"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">{{.Title}}</h1>
-{{if .Site}}<p><strong>{{.Site}}</strong> is only open to members of this Kazari instance.</p>
+{{if .Site}}<div class="notice tone-note">
+<p class="notice-title">Not a member?</p>
+<p>Ask the person who sent you this page for a share link. It opens the page without signing in.</p>
+</div>
+<p><strong>{{.Site}}</strong> is open to the members of this instance. Members sign in here.</p>
 {{else}}<p>{{.Lede}}</p>
+{{end}}{{if eq .Notice "recovered"}}<p class="flash status tone-ok" role="status">Your new password is set. Sign in with it.</p>
 {{end}}{{if .Error}}{{template "alert" .Error}}{{end}}<form method="post" action="/oauth/signin">
 {{if .RequestID}}<input type="hidden" name="request_id" value="{{.RequestID}}">
 {{else}}<input type="hidden" name="host" value="{{.Host}}">
@@ -76,9 +87,12 @@
 </div>
 </form>
 {{end}}{{if or .Password .Switch}}<div class="door-alt">
-{{if .Switch}}<a class="link" href="{{.Switch}}">{{if .Password}}Use an API key instead{{else}}Use your password instead{{end}}</a>
-{{end}}{{if and .RequestID .KeyConsent}}<a class="link" href="/oauth/consent?with=key">Use an API key instead</a>
-{{end}}{{if and .Password .Recover}}<a class="link" href="{{.Recover}}">Lost your password? Use a recovery code</a>
+{{if and .Password .Recover}}<a class="link" href="{{.Recover}}">Lost your password? Use a recovery code</a>
+{{end}}{{if or (and .Password .Switch) (and .RequestID .KeyConsent)}}<details class="more"><summary>More ways to sign in</summary>
+{{if .Switch}}<p><a class="link" href="{{.Switch}}">Use an API key instead</a></p>
+{{end}}{{if and .RequestID .KeyConsent}}<p><a class="link" href="/oauth/consent?with=key">Use an API key instead</a></p>
+{{end}}</details>
+{{else if .Switch}}<a class="link" href="{{.Switch}}">Use your password instead</a>
 {{end}}{{if .Password}}<p class="help">No password yet, or no recovery code? Ask an admin of this instance for a link. Kazari sends no email.</p>
 {{end}}</div>
 {{end}}{{end}}{{template "theme/door-close" .Foot}}{{end}}

@@ -5,48 +5,49 @@ package api
 import "time"
 
 const (
-	CodeNotFound         = "not_found"
-	CodeVersionNotFound  = "version_not_found"
-	CodeFileNotFound     = "file_not_found"
-	CodeUploadNotFound   = "upload_not_found"
-	CodeSlugTaken        = "slug_taken"
-	CodeVersionConflict  = "version_conflict"
-	CodeTooLarge         = "too_large"
-	CodeTooManyFiles     = "too_many_files"
-	CodeTooManyUploads   = "too_many_uploads"
-	CodeQuotaExceeded    = "quota_exceeded"
-	CodeInvalidSlug      = "invalid_slug"
-	CodeInvalidPath      = "invalid_path"
-	CodeInvalidMetadata  = "invalid_metadata"
-	CodeInvalidArgument  = "invalid_argument"
-	CodeForbidden        = "forbidden"
-	CodeUnauthorized     = "unauthorized"
-	CodeGone             = "gone"
-	CodeOffsetMismatch   = "upload_offset_mismatch"
-	CodeDigestMismatch   = "upload_digest_mismatch"
-	CodeRateLimited      = "rate_limited"
-	CodeHandleTaken      = "handle_taken"
-	CodeEmailTaken       = "email_taken"
-	CodeInternal         = "internal"
-	CodeMethodNotAllowed = "method_not_allowed"
-	CodeEditNotFound     = "edit_not_found"
-	CodeEditAmbiguous    = "edit_ambiguous"
-	CodeAnchorMismatch   = "anchor_mismatch"
-	CodeLinkNotFound     = "share_link_not_found"
-	CodeFetchFailed      = "fetch_failed"
-	CodeJobRunning       = "job_running"
-	CodeLastAdmin        = "last_admin"
-	CodeTooManyKeys      = "too_many_keys"
-	CodeSetupDone        = "setup_done"
-	CodeBackupRunning    = "backup_running"
-	CodeNoSpace          = "no_space"
-	CodeBusy             = "busy"
+	CodeNotFound           = "not_found"
+	CodeVersionNotFound    = "version_not_found"
+	CodeFileNotFound       = "file_not_found"
+	CodeUploadNotFound     = "upload_not_found"
+	CodeSlugTaken          = "slug_taken"
+	CodeVersionConflict    = "version_conflict"
+	CodePublishedNotLatest = "published_not_latest"
+	CodeTooLarge           = "too_large"
+	CodeTooManyFiles       = "too_many_files"
+	CodeTooManyUploads     = "too_many_uploads"
+	CodeQuotaExceeded      = "quota_exceeded"
+	CodeInvalidSlug        = "invalid_slug"
+	CodeInvalidPath        = "invalid_path"
+	CodeInvalidMetadata    = "invalid_metadata"
+	CodeInvalidArgument    = "invalid_argument"
+	CodeForbidden          = "forbidden"
+	CodeUnauthorized       = "unauthorized"
+	CodeGone               = "gone"
+	CodeOffsetMismatch     = "upload_offset_mismatch"
+	CodeDigestMismatch     = "upload_digest_mismatch"
+	CodeRateLimited        = "rate_limited"
+	CodeHandleTaken        = "handle_taken"
+	CodeEmailTaken         = "email_taken"
+	CodeInternal           = "internal"
+	CodeMethodNotAllowed   = "method_not_allowed"
+	CodeEditNotFound       = "edit_not_found"
+	CodeEditAmbiguous      = "edit_ambiguous"
+	CodeAnchorMismatch     = "anchor_mismatch"
+	CodeLinkNotFound       = "share_link_not_found"
+	CodeFetchFailed        = "fetch_failed"
+	CodeJobRunning         = "job_running"
+	CodeLastAdmin          = "last_admin"
+	CodeTooManyKeys        = "too_many_keys"
+	CodeSetupDone          = "setup_done"
+	CodeBackupRunning      = "backup_running"
+	CodeNoSpace            = "no_space"
+	CodeBusy               = "busy"
 )
 
 // ErrorCodes is every code above, the bounded set metrics count errors by.
 var ErrorCodes = []string{
 	CodeNotFound, CodeVersionNotFound, CodeFileNotFound, CodeUploadNotFound, CodeSlugTaken,
-	CodeVersionConflict, CodeTooLarge, CodeTooManyFiles, CodeTooManyUploads, CodeQuotaExceeded,
+	CodeVersionConflict, CodePublishedNotLatest, CodeTooLarge, CodeTooManyFiles, CodeTooManyUploads, CodeQuotaExceeded,
 	CodeInvalidSlug, CodeInvalidPath, CodeInvalidMetadata, CodeInvalidArgument, CodeForbidden,
 	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeDigestMismatch, CodeRateLimited, CodeHandleTaken,
 	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
@@ -118,12 +119,18 @@ type ArtifactDetail struct {
 	NextFilesBefore int `json:"next_files_before,omitempty"`
 }
 
-// PublishResult is returned by create, update and publish.
+// PublishResult is returned by create, update and publish. VersionURL pins
+// Version. Unchanged means the files matched the latest version and no
+// version was added; Warnings say what will stop the version rendering as
+// published.
 type PublishResult struct {
-	URL      string        `json:"url"`
-	Version  int           `json:"version"`
-	Artifact Artifact      `json:"artifact"`
-	Import   *ImportReport `json:"import,omitempty"`
+	URL        string        `json:"url"`
+	Version    int           `json:"version"`
+	VersionURL string        `json:"version_url"`
+	Unchanged  bool          `json:"unchanged,omitempty"`
+	Warnings   []string      `json:"warnings,omitempty"`
+	Artifact   Artifact      `json:"artifact"`
+	Import     *ImportReport `json:"import,omitempty"`
 }
 
 // ImportReport says what an import fetched, left out and found.
@@ -191,10 +198,14 @@ type UpdateArtifactRequest struct {
 	Visibility      *string            `json:"visibility,omitempty"`
 	Label           string             `json:"label,omitempty"`
 	ExpectedVersion int                `json:"expected_version,omitempty"`
+	BaseVersion     int                `json:"base_version,omitempty"`
 	KeepStale       bool               `json:"keep_stale,omitempty"`
 	Restore         bool               `json:"restore,omitempty"`
 	Files           []FileInput        `json:"files,omitempty"`
 	UploadID        string             `json:"upload_id,omitempty"`
+	// Mirror deletes the base version's files that the request does not
+	// carry, so the new version holds exactly what was sent. REST only.
+	Mirror bool `json:"mirror,omitempty"`
 }
 
 // EditRequest is the JSON body of POST /artifacts/{slug}/edit: edits to one
@@ -204,6 +215,7 @@ type EditRequest struct {
 	Edits           []Edit `json:"edits"`
 	Label           string `json:"label,omitempty"`
 	ExpectedVersion int    `json:"expected_version,omitempty"`
+	BaseVersion     int    `json:"base_version,omitempty"`
 	KeepStale       bool   `json:"keep_stale,omitempty"`
 }
 
@@ -221,11 +233,13 @@ type Edit struct {
 
 // EditResult is the response of an edit.
 type EditResult struct {
-	URL      string        `json:"url"`
-	Version  int           `json:"version"`
-	Path     string        `json:"path"`
-	Edits    []EditOutcome `json:"edits"`
-	Artifact Artifact      `json:"artifact"`
+	URL        string        `json:"url"`
+	Version    int           `json:"version"`
+	VersionURL string        `json:"version_url"`
+	Path       string        `json:"path"`
+	Edits      []EditOutcome `json:"edits"`
+	Warnings   []string      `json:"warnings,omitempty"`
+	Artifact   Artifact      `json:"artifact"`
 }
 
 // EditOutcome reports one edit: Match is exact, trailing_whitespace, indentation
@@ -348,6 +362,7 @@ type ChunkResult struct {
 type Me struct {
 	Handle     string     `json:"handle"`
 	Admin      bool       `json:"admin"`
+	Role       string     `json:"role,omitempty"`
 	Scopes     []string   `json:"scopes"`
 	Source     string     `json:"source"`
 	Slugs      []string   `json:"slugs,omitempty"`

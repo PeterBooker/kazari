@@ -409,15 +409,16 @@ func TestFullFlow(t *testing.T) {
 		name       string
 		identity   auth.Identity
 		wantHandle string
+		wantRole   string
 		scope      string
 		wantScopes []string
 	}{
 		{"member gets member scopes", auth.Identity{Issuer: "https://idp.example", Subject: "a", Email: "alice@example.com", EmailVerified: true},
-			"alice", "", auth.MemberScopes},
+			"alice", "member", "", auth.MemberScopes},
 		{"admin gets member scopes", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
-			"boss", "", auth.MemberScopes},
+			"boss", "admin", "", auth.MemberScopes},
 		{"narrow request", auth.Identity{Issuer: "https://idp.example", Subject: "b", Email: "boss@example.com", EmailVerified: true},
-			"boss", "artifacts:read", []string{auth.ScopeRead}},
+			"boss", "admin", "artifacts:read", []string{auth.ScopeRead}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -459,7 +460,7 @@ func TestFullFlow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := auth.Principal{Handle: tt.wantHandle, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID, ClientID: clientID}
+			want := auth.Principal{Handle: tt.wantHandle, Role: tt.wantRole, Scopes: tt.wantScopes, Source: auth.SourceOAuth, KeyID: p2.KeyID, ClientID: clientID}
 			if diff := cmp.Diff(want, p2); diff != "" {
 				t.Errorf("principal (-want +got):\n%s", diff)
 			}
@@ -1117,7 +1118,7 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := auth.Principal{Handle: "boss", Scopes: auth.MemberScopes, Source: auth.SourceOAuth, KeyID: p.KeyID, ClientID: clientID}
+	want := auth.Principal{Handle: "boss", Role: "admin", Scopes: auth.MemberScopes, Source: auth.SourceOAuth, KeyID: p.KeyID, ClientID: clientID}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("principal of a stored admin-scoped token (-want +got):\n%s", diff)
 	}

@@ -89,12 +89,13 @@ func TestChromiumSignIn(t *testing.T) {
 	c.fill("#confirm", testPassword)
 	c.click(`form[action="/account/setup"] button[type="submit"]`)
 
-	c.wait("the sign-in page after setup", onSignIn+` && !!document.querySelector("#login")`)
-	c.shot("2-sign-in")
-	c.fill("#login", "peter")
-	c.fill("#password", testPassword)
-	c.click(`form[action="/oauth/signin"]:not([data-passkey]) button[type="submit"]`)
-	c.wait("the dashboard after the password sign-in", onDashboard)
+	c.wait("the account's welcome after setup", `location.origin === `+quote(apex)+` && location.pathname === "/account/" && `+
+		`document.body.textContent.includes("Welcome, Peter")`)
+	c.shot("2-welcome")
+	// The setup link signed the browser in at the sign-in host, so the
+	// dashboard opens with no form.
+	c.open(admin + "/")
+	c.wait("the dashboard after the setup link's sign-in", onDashboard)
 	c.shot("3-dashboard")
 
 	c.open(apex + "/account/")
@@ -191,7 +192,7 @@ func TestChromiumSignIn(t *testing.T) {
 	for _, e := range events.Events {
 		got[e.Actor+" via "+e.Details["via"]]++
 	}
-	if diff := cmp.Diff(map[string]int{"peter via password": 1, "peter via passkey": 2}, got); diff != "" {
+	if diff := cmp.Diff(map[string]int{"peter via link": 1, "peter via passkey": 2}, got); diff != "" {
 		t.Errorf("sign-ins in the audit log (-want +got):\n%s", diff)
 	}
 	for _, problem := range c.problems() {

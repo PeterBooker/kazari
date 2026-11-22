@@ -278,12 +278,31 @@ type Store interface {
 }
 
 // IdentityProvider sends a browser to sign in and turns the callback into
-// an Identity.
+// an Identity. One that also has a Ready method that returns an error
+// cannot sign anyone in yet, and the sign-in pages say so.
 type IdentityProvider interface {
 	// AuthURL takes the S256 PKCE challenge.
 	AuthURL(state, nonce, codeChallenge string) string
 	// Exchange redeems the callback code and verifies the ID token.
 	Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error)
+}
+
+// idpUnavailable reports, and answers, a sign-in the identity provider
+// cannot take yet, such as before it has been reached once.
+func (s *Service) idpUnavailable(w http.ResponseWriter, r *http.Request) bool {
+	p, ok := s.idp.(interface{ Ready() error })
+	if !ok {
+		return false
+	}
+	err := p.Ready()
+	if err == nil {
+		return false
+	}
+	s.log.WarnContext(r.Context(), "oauth: sign-in while the identity provider is unavailable", "err", err)
+	w.Header().Set("Retry-After", "30")
+	s.message(w, http.StatusServiceUnavailable, "Sign-in is temporarily unavailable",
+		"This instance cannot reach its identity provider yet. Please try again in a minute.", "")
+	return true
 }
 
 // Keys checks the API keys that grants and browser sessions are approved
@@ -532,6 +551,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	// every request, so the grant is never wider than the key is now.
 	return auth.Principal{
 		Handle:     u.Handle,
+		Role:       string(u.Role),
 		Scopes:     intersect(intersect(t.Scopes, s.opts.Scopes), user.ScopesFor(u)),
 		Source:     auth.SourceOAuth,
 		KeyID:      fmt.Sprintf("oauth:%d", t.FamilyID),

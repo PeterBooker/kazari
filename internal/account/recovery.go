@@ -3,9 +3,11 @@ package account
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -40,10 +42,57 @@ type recoverPageData struct {
 	Login                string
 	Err                  string
 	Seconds              int
+	// Pending is the sign-in the person left for this form, carried in its
+	// hidden fields and continued once the password is set.
+	Pending pendingSignIn
+}
+
+// pendingSignIn is a sign-in on the sign-in host: an MCP client's
+// authorization (RequestID) or a host's sign-in (Host, Path, Nonce). The
+// sign-in host checks it again; here it is only bounded.
+type pendingSignIn struct {
+	RequestID, Host, Path, Nonce string
+}
+
+// maxPendingField bounds each field of a pending sign-in; the longest is a
+// path, which the sign-in host bounds the same.
+const maxPendingField = 2048
+
+func readPending(v url.Values) pendingSignIn {
+	get := func(k string) string {
+		if s := v.Get(k); len(s) <= maxPendingField {
+			return s
+		}
+		return ""
+	}
+	if id := get("request_id"); id != "" {
+		return pendingSignIn{RequestID: id}
+	}
+	p := pendingSignIn{Host: get("host"), Path: get("path"), Nonce: get("nonce")}
+	if p.Host == "" || p.Nonce == "" {
+		return pendingSignIn{}
+	}
+	return p
+}
+
+// next is where the browser goes once the password is set: back to the
+// sign-in it left, with the name filled in, or "" when it left none.
+func (s *server) next(p pendingSignIn, login string) string {
+	q := url.Values{"login": {login}, "notice": {"recovered"}}
+	switch {
+	case p.RequestID != "":
+		return strings.TrimSuffix(s.o.SignInURL, oauth.PathSignIn) + oauth.PathConsent + "?" + q.Encode()
+	case p.Host != "":
+		q.Set("host", p.Host)
+		q.Set("path", p.Path)
+		q.Set("nonce", p.Nonce)
+		return s.o.SignInURL + "?" + q.Encode()
+	}
+	return ""
 }
 
 func (s *server) recoverPage(w http.ResponseWriter, r *http.Request) {
-	s.renderRecover(w, r, http.StatusOK, recoverPageData{})
+	s.renderRecover(w, r, http.StatusOK, recoverPageData{Pending: readPending(r.URL.Query())})
 }
 
 func (s *server) renderRecover(w http.ResponseWriter, r *http.Request, status int, d recoverPageData) {
@@ -67,7 +116,7 @@ func (s *server) recover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := r.PostForm
-	d := recoverPageData{Login: strings.TrimSpace(f.Get("login"))}
+	d := recoverPageData{Login: strings.TrimSpace(f.Get("login")), Pending: readPending(f)}
 	refuse := func(status int, why string) {
 		d.Err = why
 		s.renderRecover(w, r, status, d)
@@ -117,5 +166,9 @@ func (s *server) recover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.passwordDelay.Reset(account)
+	if to := s.next(d.Pending, d.Login); to != "" {
+		http.Redirect(w, r, to, http.StatusSeeOther)
+		return
+	}
 	s.done(w, r, "password-recovered")
 }

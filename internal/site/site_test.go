@@ -20,6 +20,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/gate"
 )
 
 const (
@@ -194,7 +195,7 @@ func newFixture(t *testing.T) *fixture {
 	fx.add(t, "spa-bare", 5, 1, map[string]string{artifact.MetaSPA: "true"}, []testFile{
 		{"index.html", "text/html", "bare shell"},
 	})
-	fx.add(t, "csp", 6, 1, map[string]string{artifact.MetaCSP: "default-src *"}, []testFile{
+	fx.add(t, "csp", 6, 1, map[string]string{artifact.MetaCSP: "frame-src https://www.youtube.com; frame-ancestors *"}, []testFile{
 		{"index.html", "text/html", "csp index"},
 		{"404.html", "text/html", "csp not found"},
 	})
@@ -574,11 +575,11 @@ func TestCSP(t *testing.T) {
 		want   string // "" means the header is absent
 	}{
 		{"default", Options{DefaultCSP: testCSP}, "csp.art.test", "/", 200, testCSP},
-		{"override allowed", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src *"},
-		{"override on artifact 404.html", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/x", 404, "default-src *"},
+		{"override allowed", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src 'self'; frame-ancestors 'none'; frame-src 'self' https://www.youtube.com"},
+		{"override on artifact 404.html", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "csp.art.test", "/x", 404, "default-src 'self'; frame-ancestors 'none'; frame-src 'self' https://www.youtube.com"},
 		{"no override without metadata", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "demo.art.test", "/", 200, testCSP},
 		{"instance page ignores override", Options{DefaultCSP: testCSP, AllowCSPOverride: true}, "nobody.art.test", "/", 404, testCSP},
-		{"override with empty default", Options{AllowCSPOverride: true}, "csp.art.test", "/", 200, "default-src *"},
+		{"override with empty default", Options{AllowCSPOverride: true}, "csp.art.test", "/", 200, "frame-src https://www.youtube.com"},
 		{"both empty", Options{}, "csp.art.test", "/", 200, ""},
 		{"both empty with override allowed", Options{AllowCSPOverride: true}, "demo.art.test", "/", 200, ""},
 	}
@@ -772,5 +773,27 @@ func TestAnnouncedBodyDoesNotHold(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !resp.Close {
 		t.Errorf("status = %d, close = %v; want 200 and Connection: close", resp.StatusCode, resp.Close)
+	}
+}
+
+// A share link to a page that is offline or gone says to ask its sender;
+// every other miss gets the instance's own page, in the theme.
+func TestShareLinkToNothing(t *testing.T) {
+	fx := newFixture(t)
+	h := fx.handler(Options{DefaultCSP: testCSP})
+	for _, host := range []string{"unpub.art.test", "nobody.art.test"} {
+		rec := do(t, h, http.MethodGet, host, gate.SharePath+"?token=x", nil)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Ask the person who sent you the link") {
+			t.Errorf("a share link on %s: status %d: %s", host, rec.Code, rec.Body)
+		}
+	}
+	rec := do(t, h, http.MethodGet, "unpub.art.test", "/", nil)
+	for _, want := range []string{"<style>", `class="door-card"`, "There is no page at this address."} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the instance's 404 lacks %q", want)
+		}
+	}
+	if strings.Contains(rec.Body.String(), "sent you the link") {
+		t.Error("the 404 of a page speaks of a link")
 	}
 }

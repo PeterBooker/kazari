@@ -25,6 +25,7 @@ type provider struct {
 	code, nonceHash string
 	live            map[string]oauth.ControlSession // token -> session
 	signedOut       []string
+	linked          string // the handle of the last LinkCode
 	err             error
 }
 
@@ -56,6 +57,14 @@ func (p *provider) SignOut(_ context.Context, _, token string) error {
 	p.signedOut = append(p.signedOut, token)
 	delete(p.live, token)
 	return nil
+}
+
+func (p *provider) LinkCode(_ context.Context, handle string) (string, error) {
+	if p.err != nil {
+		return "", p.err
+	}
+	p.linked = handle
+	return "the-link-code", nil
 }
 
 func manager(p *provider, insecure bool) *session.Manager {
@@ -426,5 +435,35 @@ func TestCallbackAndSignOut(t *testing.T) {
 	// A browser whose session ended is signed out without a token.
 	if err := m.SignOut(httptest.NewRecorder(), signOut("")); err != nil {
 		t.Errorf("signing out an ended session: %v", err)
+	}
+}
+
+// Handoff sends the browser through the sign-in host with a code that signs
+// it in there, so the sign-in it opens is the browser's one, and the code
+// comes back as any sign-in's does.
+func TestHandoff(t *testing.T) {
+	p := &provider{live: map[string]oauth.ControlSession{}}
+	m := manager(p, false)
+	b := &browser{}
+	w := httptest.NewRecorder()
+	if err := m.Handoff(t.Context(), w, b.request("POST", "https://admin.art.test/invite"), "ana", "/welcome"); err != nil {
+		t.Fatalf("Handoff = %v", err)
+	}
+	loc, err := url.Parse(w.Header().Get("Location"))
+	if err != nil || w.Code != http.StatusSeeOther || loc.Scheme+"://"+loc.Host+loc.Path != "https://mcp.art.test/oauth/signin" {
+		t.Fatalf("Handoff: status %d to %q", w.Code, w.Header().Get("Location"))
+	}
+	q := loc.Query()
+	if q.Get(oauth.ParamHandoff) != "the-link-code" || q.Get("login") != "ana" || q.Get("host") != oauth.HostAdmin ||
+		q.Get("path") != "/welcome" || len(q.Get("nonce")) != 43 || p.linked != "ana" {
+		t.Errorf("handoff query = %v, linked %q", q, p.linked)
+	}
+	set := b.take(t, w)
+	if len(set) != 1 || set[0].Name != "__Host-kazari_admin_nonce" {
+		t.Errorf("Handoff set the cookies %+v, want the nonce alone", set)
+	}
+	p.err = errors.New("store down")
+	if err := m.Handoff(t.Context(), httptest.NewRecorder(), b.request("POST", "https://admin.art.test/invite"), "ana", "/"); err == nil {
+		t.Error("Handoff with a failing provider = nil")
 	}
 }

@@ -17,6 +17,19 @@ var commonFuncs = template.FuncMap{
 	"span":    span,
 	"join":    strings.Join,
 	"dict":    dict,
+	// scopeWords says what scopes allow, in words, joined.
+	"scopeWords": scopeWords,
+}
+
+func scopeWords(scopes []string) string {
+	words := make([]string, 0, len(scopes))
+	for _, sc := range scopes {
+		if w := peopleScopeNames[sc]; w != "" {
+			sc = w
+		}
+		words = append(words, sc)
+	}
+	return strings.Join(words, "; ")
 }
 
 const (

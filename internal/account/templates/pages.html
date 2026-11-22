@@ -1,0 +1,193 @@
+{{/* A person's own page, its confirmations and its new share link. */}}
+
+{{define "visibility-help"}}<ul class="dash soft" id="visibility-help">
+<li><b>Public</b>: anyone can open it, and members see it when their agent or the command line lists pages.</li>
+<li><b>Unlisted</b>: anyone with the address can open it. It is left out of other members' lists.</li>
+<li><b>Members only</b>: members open it after signing in, and anyone else with a share link.</li>
+</ul>{{end}}
+
+{{define "own-page"}}{{template "theme/shell" (.Shell (or .Page.Name .Page.Slug) "Account" "Your account")}}
+<div class="page">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / Your pages</p>
+<div class="head-row">
+<h1 class="title">{{if .Page.Name}}{{.Page.Name}}{{else}}{{.Page.Slug}}{{end}}</h1>
+<span class="mono soft">{{.Page.Slug}}</span>
+{{if eq .State "bin"}}<span class="status tone-danger">In the bin</span>{{else if eq .State "unpublished"}}<span class="status tone-neutral">Unpublished</span>{{else if eq .State "stale"}}<span class="status tone-warn">Stale</span>{{else}}<span class="status tone-ok">Live</span>{{end}}
+</div>
+{{with .Page.Description}}<p class="lede">{{.}}</p>{{end}}
+</header>
+
+{{if eq .Flash "page-visibility"}}<p class="flash status tone-ok" role="status">Who can open the page is changed.</p>
+{{else if eq .Flash "page-hidden"}}<p class="flash status tone-ok" role="status">The page is unpublished. Its address answers 404 until you publish it again.</p>
+{{else if eq .Flash "link-revoked"}}<p class="flash status tone-ok" role="status">The share link is revoked.</p>
+{{else if eq .Flash "version-published"}}<p class="flash status tone-ok" role="status">That version is now the published one.</p>
+{{else if eq .Flash "version-published-hidden"}}<p class="flash status tone-ok" role="status">That version is now the published one. The page is still unpublished: publish it again under Address and access to show it.</p>
+{{else if eq .Flash "page-stale"}}<p class="flash status tone-ok" role="status">The page is marked stale. It keeps serving until the date under Lifecycle.</p>
+{{else if eq .Flash "page-kept"}}<p class="flash status tone-ok" role="status">The stale mark is cleared. The page stays.</p>
+{{else if eq .Flash "page-binned"}}<p class="flash status tone-ok" role="status">The page is in the bin. You can restore it until it is removed for good.</p>
+{{else if eq .Flash "page-restored"}}<p class="flash status tone-ok" role="status">The page is restored from the bin.</p>
+{{end}}
+{{if not .Changeable}}<div class="notice tone-note">
+<p class="notice-title">You can look, not change</p>
+<p>Only its owner, <span class="mono">{{.Page.OwnerHandle}}</span>, or an admin of this instance changes this page.</p>
+</div>
+{{end}}
+
+<div class="cols">
+<section class="box section" aria-labelledby="page-address">
+<h2 class="h2" id="page-address">Address and access</h2>
+<dl class="kv">
+<dt>Address</dt><dd>{{if or (eq .State "live") (eq .State "stale")}}<a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a>{{else}}<span class="mono">{{.Host}}</span> <span class="soft">answers 404 for now</span>{{end}}</dd>
+<dt>Open to</dt><dd>{{if eq (print .Page.Visibility) "public"}}Public{{else if eq (print .Page.Visibility) "unlisted"}}Unlisted{{else}}Members only{{end}}{{if not (eq .State "live" "stale")}} <span class="soft">once it is published</span>{{end}}</dd>
+{{if not .Mine}}<dt>Owner</dt><dd class="mono">{{.Page.OwnerHandle}}</dd>
+{{end}}</dl>
+{{if and .Changeable .May.share (ne .State "bin")}}<form class="form" method="post" action="/account/pages/{{.Page.Slug}}/visibility">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="field"><label for="visibility">{{if eq .State "unpublished"}}Publish it again, open to{{else}}Who can open it{{end}}</label>
+<select class="input" id="visibility" name="visibility" aria-describedby="visibility-help">
+<option value="public"{{if eq (print .Page.Visibility) "public"}} selected{{end}}>Public</option>
+<option value="unlisted"{{if eq (print .Page.Visibility) "unlisted"}} selected{{end}}>Unlisted</option>
+<option value="members"{{if eq (print .Page.Visibility) "members"}} selected{{end}}>Members only</option>
+</select>
+{{template "visibility-help"}}</div>
+<div class="actions"><button type="submit" class="btn">{{if eq .State "unpublished"}}Publish again{{else}}Change{{end}}</button></div>
+</form>
+{{end}}</section>
+
+<section class="box section" aria-labelledby="page-life">
+<h2 class="h2" id="page-life">Lifecycle</h2>
+<dl class="kv">
+<dt>Created</dt><dd>{{template "time" .Page.CreatedAt}}</dd>
+<dt>Updated</dt><dd>{{template "time" .Page.UpdatedAt}}</dd>
+{{with .Page.StaleAt}}<dt>Stale since</dt><dd>{{template "time" .}}</dd>{{end}}
+{{if and .Page.ExpiresAt (not .Page.DeletedAt)}}<dt>Moves to the bin on</dt><dd>{{template "time" .Page.ExpiresAt}}</dd>{{end}}
+{{with .Page.DeletedAt}}<dt>In the bin since</dt><dd>{{template "time" .}}</dd>{{end}}
+</dl>
+{{if .Changeable}}{{if eq .State "bin"}}<p class="soft">Nobody can open the page while it is in the bin. Restoring it puts it back as it was.</p>
+{{if .May.write}}<form method="post" action="/account/pages/{{.Page.Slug}}/restore"><input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="actions"><button type="submit" class="btn btn-primary">Restore the page</button></div></form>{{end}}
+{{else if .Page.StaleAt}}<p class="soft">The page keeps serving until the date above, then moves to the bin unless it is kept.</p>
+{{if .May.write}}<form method="post" action="/account/pages/{{.Page.Slug}}/keep"><input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="actions"><button type="submit" class="btn btn-primary">Keep the page</button></div></form>{{end}}
+{{else}}<p class="soft">Nothing is due. Mark a page stale when it is no longer needed: it keeps serving for a while, then moves to the bin by itself.</p>
+{{if .May.write}}<form class="form" method="post" action="/account/pages/{{.Page.Slug}}/stale"><input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="field"><label for="stale-days">Moves to the bin after, in days <span class="optional">(optional)</span></label>
+<input class="input" id="stale-days" name="days" type="number" inputmode="numeric" min="1" max="3650" step="1" value="{{.StaleDays}}" aria-describedby="stale-days-help{{if .Err.stale}} stale-days-err{{end}}"{{if .Err.stale}} aria-invalid="true"{{end}}>
+{{if .Err.stale}}<p class="error" id="stale-days-err">{{template "icon/alert"}}<span>Enter a whole number of days from 1 to 3650.</span></p>
+{{end}}<p class="help" id="stale-days-help">Empty means the instance's usual grace period.</p></div>
+<div class="actions"><button type="submit" class="btn">Mark stale</button></div></form>{{end}}
+{{end}}{{end}}</section>
+</div>
+
+<section class="section" aria-labelledby="page-versions">
+<h2 class="h2" id="page-versions">Versions</h2>
+<table class="table">
+<thead><tr><th>Version</th><th>Added</th><th>By</th><th>Its own address</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Versions}}<tr>
+<td data-label="Version"><span class="status tone-version">Version {{.Number}}</span>{{if .Published}} <span class="status tone-ok">Published</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Added">{{template "time" .CreatedAt}}</td>
+<td data-label="By">{{if eq .CreatedBy $.Handle}}You{{else if .CreatedBy}}<span class="mono">{{.CreatedBy}}</span>{{else}}<span class="soft">Unknown</span>{{end}}</td>
+<td data-label="Its own address"><a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a></td>
+<td class="row-actions">{{if and $.Changeable $.May.write (not .Published) (ne $.State "bin")}}<a class="link" href="/account/pages/{{$.Page.Slug}}/versions/{{.Number}}/publish">Publish this version<span class="sr-only"> {{.Number}}</span></a>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</section>
+
+{{if and .Changeable (ne .State "bin")}}<section class="section" aria-labelledby="page-links">
+<h2 class="h2" id="page-links">Share links</h2>
+<p class="soft">A share link opens a members-only page for someone who cannot sign in, such as a client, until it expires or you revoke it.</p>
+{{if .Links}}<table class="table">
+<thead><tr><th>Link</th><th>Created</th><th>State</th><th>Expires</th><th class="num">Opened</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Links}}<tr>
+<td data-label="Link"><span class="mono">{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Created">{{template "time" .CreatedAt}}</td>
+<td data-label="State">{{if eq .State "active"}}<span class="status tone-ok">Active</span>{{else if eq .State "expired"}}<span class="status tone-neutral">Expired</span>{{else}}<span class="status tone-danger">Revoked</span>{{end}}</td>
+<td data-label="Expires">{{template "time" .ExpiresAt}}</td>
+<td class="num" data-label="Opened">{{.Uses}}</td>
+<td class="row-actions">{{if and (eq .State "active") $.May.share}}<a class="link link-danger" href="/account/pages/{{$.Page.Slug}}/links/{{.Prefix}}/revoke">Revoke<span class="sr-only"> link {{.Prefix}}</span></a>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+{{end}}{{if not .May.share}}<p class="help">The key you signed in with may not share pages.</p>
+{{else if and (eq (print .Page.Visibility) "members") (ne .State "unpublished")}}<form class="filters" method="post" action="/account/pages/{{.Page.Slug}}/links">
+<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="once" value="{{.Once}}">
+<div class="field field-search"><label for="link-label">Who it is for <span class="optional">(optional)</span></label><input class="input" id="link-label" name="label" type="text" maxlength="200" value="{{.LinkLabel}}"{{if .Err.label}} aria-invalid="true" aria-describedby="link-label-err"{{end}}>
+{{if .Err.label}}<p class="error" id="link-label-err">{{template "icon/alert"}}<span>Keep the note to one line of plain text.</span></p>{{end}}</div>
+<div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .Err.days}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
+{{if .Err.days}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>Give a number of days from 1 to {{.MaxLinkDays}}.</span></p>{{end}}</div>
+<button type="submit" class="btn btn-primary">{{template "icon/link"}}Make a share link</button>
+</form>
+<p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days.</p>
+{{else}}{{template "share-members-only" .}}{{end}}
+</section>
+{{end}}
+
+{{if and .Changeable .May.delete (ne .State "bin")}}<section class="box section" aria-labelledby="page-offline">
+<h2 class="h2" id="page-offline">Take it offline</h2>
+<p class="soft">Unpublishing hides the page and keeps it, to publish again whenever you like: choose it under Who can open it. The bin hides it too, and it is removed for good after a while unless you restore it.</p>
+{{if eq .State "live" "stale"}}<form class="inline" method="post" action="/account/pages/{{.Page.Slug}}/visibility"><input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="visibility" value="unpublished">
+<button type="submit" class="btn">Unpublish</button></form>
+{{end}}<form class="inline" method="post" action="/account/pages/{{.Page.Slug}}/bin"><input type="hidden" name="form_token" value="{{.FormToken}}">
+<button type="submit" class="btn">{{template "icon/bin"}}Move to the bin</button></form>
+</section>
+{{end}}
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "share-members-only"}}<div class="notice tone-note">
+<p class="notice-title">{{if eq .State "unpublished"}}The page is unpublished{{else}}Anyone with the address can open this page{{end}}</p>
+<p>{{if eq .State "unpublished"}}A share link would open nothing while the page is unpublished.{{else}}It needs no share link. To share it with chosen people only, make it members-only first.{{end}}</p>
+<form class="inline" method="post" action="/account/pages/{{.Page.Slug}}/visibility"><input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="visibility" value="members">
+<button type="submit" class="btn">{{if eq .State "unpublished"}}Publish it, members only{{else}}Make it members only{{end}}</button></form>
+</div>{{end}}
+
+{{define "page-confirm"}}{{if eq .Kind "revoke"}}{{template "theme/shell" (.Shell "Revoke a share link" "Account" "Your account")}}{{else}}{{template "theme/shell" (.Shell "Publish a version" "Account" "Your account")}}{{end}}
+<div class="page page-narrow">
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / <a class="mono" href="/account/pages/{{.Slug}}">{{.Slug}}</a></p>
+<div class="head-row"><h1 class="title">{{if eq .Kind "revoke"}}Revoke <b>the share link</b>{{else}}Publish <b>version {{.Version}}</b>{{end}}</h1>
+{{if eq .Kind "revoke"}}<span class="mono soft">{{.Link.Prefix}}</span>{{end}}</div>
+</header>
+<section class="box section" aria-labelledby="happens">
+<h2 class="h3" id="happens">What happens</h2>
+<ul class="dash">
+{{if eq .Kind "revoke"}}<li>The link{{with .Link.Label}}, for {{.}},{{end}} stops opening the page at once. This cannot be undone.</li>
+<li>The page, its other links and everyone who signs in to open it stay as they are. You can make a new link at any time.</li>
+{{else if .Hidden}}<li>Version {{.Version}} becomes the published version.</li>
+<li>The page stays unpublished: <span class="mono">{{.Host}}</span> answers 404 until you publish it again.</li>
+{{else}}<li><span class="mono">{{.Host}}</span> shows version {{.Version}} from now on{{if .Current}}, in place of version {{.Current}}{{end}}.</li>
+<li>No version is deleted. The next publish from your agent makes a new version and goes live as usual.</li>
+{{end}}</ul>
+</section>
+<form class="form" method="post" action="/account/pages/{{.Slug}}/{{if eq .Kind "revoke"}}links/{{.Link.Prefix}}/revoke{{else}}versions/{{.Version}}/publish{{end}}">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+<div class="actions"><button type="submit" class="btn {{if eq .Kind "revoke"}}btn-danger{{else}}btn-primary{{end}}">{{if eq .Kind "revoke"}}Revoke the link{{else}}Publish version {{.Version}}{{end}}</button><a class="link" href="/account/pages/{{.Slug}}">Cancel</a></div>
+</form>
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "shared-link"}}{{template "theme/shell" (.Shell "New share link" "Account" "Your account")}}
+<div class="page page-narrow">
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / <a class="mono" href="/account/pages/{{.Slug}}">{{.Slug}}</a></p>
+<div class="head-row"><h1 class="title">Your new <b>share link</b></h1><span class="status tone-note">Shown once</span></div>
+<p class="lede">Copy it now and send it to {{with .Link.Label}}{{.}}{{else}}the person{{end}} over a channel you trust. Whoever has it opens <span class="mono">{{.Host}}</span> without signing in.</p>
+</header>
+<section class="box section" aria-labelledby="link-h">
+<h2 class="h2" id="link-h">The link, shown once</h2>
+<div class="copy"><input class="input input-mono" id="share-link" type="text" readonly value="{{.URL}}" aria-labelledby="link-h" autocomplete="off" spellcheck="false">
+<button type="button" class="btn btn-primary" data-copy-target="share-link" hidden>Copy the link</button></div>
+<ul class="dash soft">
+<li>It works until {{template "time" .Link.ExpiresAt}}, or until you revoke it on the page under Share links.</li>
+<li>Kazari keeps no copy. After you leave this page it cannot be shown again; make another if it is lost.</li>
+</ul>
+</section>
+<div class="actions"><a class="btn" href="/account/pages/{{.Slug}}">I have copied it</a></div>
+</div>
+{{template "theme/shell-close"}}{{end}}

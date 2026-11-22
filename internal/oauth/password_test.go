@@ -60,7 +60,7 @@ func TestSignInWithPassword(t *testing.T) {
 		t.Fatalf("sign-in page: status %d: %s", resp.StatusCode, body)
 	}
 	for _, want := range []string{`autocomplete="current-password"`, `autocomplete="username"`, "Use an API key instead", "with=key", "https://demo.art.test",
-		`href="/oauth/recover"`} {
+		`href="/oauth/recover?host=demo&amp;nonce=`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sign-in page lacks %q", want)
 		}
@@ -705,5 +705,129 @@ func TestPasswordSignInWhenBusy(t *testing.T) {
 	// A server too busy to check a password has not seen a wrong one.
 	if resp, _ := e.passwordSignIn("demo", "ana", password); resp.StatusCode == http.StatusTooManyRequests {
 		t.Error("attempts the server could not check were counted as failures")
+	}
+}
+
+// The recovery link carries the sign-in it leaves, and the recovery form
+// comes back to it with the name filled in.
+func TestRecoveryCarriesTheSignIn(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	nonce := nonceHash(browserNonce)
+
+	resp, _ := e.get(oauth.PathRecover + "?" + url.Values{"host": {"demo"}, "path": {"/report"}, "nonce": {nonce}}.Encode())
+	want := "https://art.test/account/recover?" + url.Values{"host": {"demo"}, "path": {"/report"}, "nonce": {nonce}}.Encode()
+	if got := resp.Header.Get("Location"); resp.StatusCode != http.StatusSeeOther || got != want {
+		t.Errorf("recover for a host: status %d to %q, want %q", resp.StatusCode, got, want)
+	}
+
+	for name, q := range map[string]url.Values{
+		"bad nonce":      {"host": {"demo"}, "path": {"/"}, "nonce": {"short"}},
+		"bad request id": {"request_id": {"x"}},
+		"nothing":        {},
+	} {
+		resp, _ := e.get(oauth.PathRecover + "?" + q.Encode())
+		if got := resp.Header.Get("Location"); got != "https://art.test/account/recover" {
+			t.Errorf("recover with %s goes to %q, want the bare form", name, got)
+		}
+	}
+
+	const redirect = "https://app.example/cb"
+	clientID := e.register(redirect)
+	e.get("/oauth/authorize?" + authorizeParams(clientID, redirect, "", newPKCE("verifier")).Encode())
+	id := e.requestCookie()
+	resp, _ = e.get(oauth.PathRecover + "?" + url.Values{"request_id": {id}}.Encode())
+	if got := resp.Header.Get("Location"); got != "https://art.test/account/recover?request_id="+id {
+		t.Errorf("recover for an authorization goes to %q", got)
+	}
+
+	_, body := e.get(oauth.PathConsent + "?" + url.Values{"login": {"ana"}, "notice": {"recovered"}}.Encode())
+	for _, want := range []string{`name="request_id" value="` + id + `"`, `name="login" value="ana"`, "Your new password is set."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sign-in form after recovery lacks %q", want)
+		}
+	}
+	_, body = e.get(signInQuery("demo", "/") + "&login=ana&notice=other")
+	if !strings.Contains(body, `name="login" value="ana"`) || strings.Contains(body, "Your new password is set.") {
+		t.Errorf("a host's sign-in form fills in the name and no unknown notice:\n%s", body)
+	}
+}
+
+// An artifact's sign-in page tells a visitor who is no member what to ask
+// for, and keeps the API key one step further away.
+func TestSignInForAPageLeadsOutsiders(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	_, body := e.get(signInQuery("demo", "/"))
+	for _, want := range []string{"Not a member?", "Ask the person who sent you this page for a share link.", "<summary>More ways to sign in</summary>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sign-in page for a page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "Kazari instance") {
+		t.Errorf("the sign-in page for a page speaks of a Kazari instance")
+	}
+}
+
+// A link code signs the browser in at the sign-in host as a password does:
+// the browser holds one sign-in, every host joins it without a form, and
+// signing out on one host ends it on all of them.
+func TestLinkCodeOneSignIn(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	ctx := context.Background()
+	e.person("ana", "", "")
+	code, err := e.svc.LinkCode(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code)
+	first, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	if err != nil {
+		t.Fatalf("Redeem after the handoff: %v", err)
+	}
+	ev := e.rec.actions(oauth.ActionSignIn)
+	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != oauth.ViaLink {
+		t.Errorf("sign-in audit = %+v, want one by ana via the link", ev)
+	}
+
+	// The next host needs no form: the browser is signed in.
+	resp, _ = e.get(signInQuery("other", "/"))
+	second, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.svc.CountSessions(ctx, "ana"); err != nil || n != 1 {
+		t.Errorf("CountSessions = %d, %v; want the one sign-in", n, err)
+	}
+
+	if err := e.svc.SignOut(ctx, "other", second.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Viewer(ctx, "demo", first.Token); !errors.Is(err, oauth.ErrNotFound) {
+		t.Errorf("Viewer on the first host after signing out on the second = %v, want ErrNotFound", err)
+	}
+
+	// The code works once; used again, the sign-in page asks for the
+	// password with the name filled in.
+	_, body := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code + "&login=ana")
+	if !strings.Contains(body, `name="password"`) || !strings.Contains(body, `name="login" value="ana"`) {
+		t.Errorf("a used code: the sign-in form with the name, got %s", body)
+	}
+	if n, _ := e.svc.CountSessions(ctx, "ana"); n != 0 {
+		t.Errorf("a used code opened a session: %d", n)
+	}
+}
+
+// A link code opens nothing on any host itself, only at the sign-in host.
+func TestLinkCodeRedeemsNowhereElse(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	ctx := context.Background()
+	e.person("ana", "", "")
+	code, err := e.svc.LinkCode(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"demo", oauth.HostAccount, oauth.HostAdmin} {
+		if _, err := e.svc.Redeem(ctx, code, host, browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+			t.Errorf("Redeem of a link code on %s = %v, want ErrNotFound", host, err)
+		}
 	}
 }

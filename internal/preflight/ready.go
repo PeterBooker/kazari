@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/disk"
 	"github.com/PeterBooker/kazari/internal/instrument"
@@ -22,8 +23,11 @@ import (
 // failing: ACME renews a month ahead.
 const (
 	CertWarnWindow = 14 * 24 * time.Hour
-	DiskWarnFree   = 0.10 // of the filesystem
-	DiskFailFree   = 0.02
+	// CertGrace is how long after start a missing certificate is still
+	// being obtained rather than a problem.
+	CertGrace    = 5 * time.Minute
+	DiskWarnFree = 0.10 // of the filesystem
+	DiskFailFree = 0.02
 )
 
 // ReadyOptions are the inputs of Ready that a running server has and a
@@ -34,6 +38,11 @@ type ReadyOptions struct {
 	// CertNotAfter is when the served certificate expires. Nil, or a zero
 	// time, means none is served here, as in proxy mode.
 	CertNotAfter func() time.Time
+	// CertError is the error of the last failed certificate order, nil
+	// when none failed since the last success; nil means none.
+	CertError func() error
+	// Started is when the server started, for CertGrace; zero means long ago.
+	Started time.Time
 	// DiskUsage reports the free bytes and the size of the filesystem
 	// holding path; nil means disk.Usage.
 	DiskUsage func(path string) (free, total uint64, err error)
@@ -66,6 +75,7 @@ func Ready(ctx context.Context, cfg config.Config, opts ReadyOptions) []Finding 
 	checkDNS(ctx, cfg, opts.Options, add)
 	checkDNSToken(ctx, cfg, opts.Options, add)
 	checkCertificate(cfg, opts, add)
+	checkOIDC(ctx, cfg, opts.Options, add)
 	checkDisk(cfg, opts, add)
 	checkSizes(cfg, add)
 	checkDashboard(cfg, add)
@@ -86,10 +96,20 @@ func checkCertificate(cfg config.Config, opts ReadyOptions, add adder) {
 		notAfter = opts.CertNotAfter()
 	}
 	if notAfter.IsZero() {
-		if cfg.Listen.ProxyMode {
+		var lastErr error
+		if opts.CertError != nil {
+			lastErr = opts.CertError()
+		}
+		since := opts.Now().Sub(opts.Started)
+		switch {
+		case cfg.Listen.ProxyMode:
 			add("certificate", Skip, "proxy mode: the proxy holds the certificate")
-		} else {
-			add("certificate", Skip, "no certificate is loaded yet")
+		case lastErr != nil:
+			add("certificate", Fail, "not obtained: %v; %s", lastErr, certs.ObtainHint(cfg.TLS.DNSProvider, lastErr))
+		case opts.Started.IsZero() || since >= CertGrace:
+			add("certificate", Warn, "no certificate yet; check the log for certificate errors (journalctl -u kazari | grep -i certificate)")
+		default:
+			add("certificate", Skip, "being obtained since the start %s ago", since.Round(time.Second))
 		}
 		return
 	}

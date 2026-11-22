@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -14,22 +16,23 @@ import (
 // AdminCmd groups the admin API commands. On the server's host they use the
 // admin socket and need no token.
 type AdminCmd struct {
-	Users      AdminUsersCmd      `cmd:"" help:"List, show, create, invite and update users, reset a password, end sessions and hand a user's artifacts over."`
-	Invites    AdminInvitesCmd    `cmd:"" help:"List and revoke the invite and reset links that have not been used."`
-	SetupLink  AdminSetupLinkCmd  `cmd:"" name:"setup-link" help:"Print a link that creates the first admin of a fresh instance."`
-	Keys       AdminKeysCmd       `cmd:"" help:"List, issue, rotate and revoke a user's API keys."`
-	Identities AdminIdentitiesCmd `cmd:"" help:"List, link and unlink the identities a user signs in with at the identity provider."`
-	Grants     AdminGrantsCmd     `cmd:"" help:"List and revoke a user's OAuth grants, the connections of MCP clients."`
-	Artifacts  AdminArtifactsCmd  `cmd:"" help:"Artifacts of every owner."`
-	Jobs       AdminJobsCmd       `cmd:"" help:"The maintenance jobs."`
-	Transfer   AdminTransferCmd   `cmd:"" help:"Give an artifact to another user."`
-	Hide       AdminHideCmd       `cmd:"" help:"Unpublish an artifact at once."`
-	Settings   AdminSettingsCmd   `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
-	Audit      AdminAuditCmd      `cmd:"" help:"Read the audit log."`
-	Views      AdminViewsCmd      `cmd:"" help:"Page views of the instance, or of one artifact with the members who opened it."`
-	Backup     AdminBackupCmd     `cmd:"" help:"Write a backup of the database and every blob into a directory."`
-	Ready      AdminReadyCmd      `cmd:"" help:"Check the running server is set up correctly: configuration, DNS, certificate, disk."`
-	Health     AdminHealthCmd     `cmd:"" help:"Check the server is up; needs no token."`
+	Users      AdminUsersCmd         `cmd:"" help:"List, show, create, invite and update users, reset a password, end sessions and hand a user's artifacts over."`
+	Invites    AdminInvitesCmd       `cmd:"" help:"List and revoke the invite and reset links that have not been used."`
+	SetupLink  AdminSetupLinkCmd     `cmd:"" name:"setup-link" help:"Print a link that creates the first admin of a fresh instance."`
+	Keys       AdminKeysCmd          `cmd:"" help:"List, issue, rotate and revoke a user's API keys."`
+	Identities AdminIdentitiesCmd    `cmd:"" help:"List, link and unlink the identities a user signs in with at the identity provider."`
+	Grants     AdminGrantsCmd        `cmd:"" help:"List and revoke a user's OAuth grants, the connections of MCP clients."`
+	Artifacts  AdminArtifactsCmd     `cmd:"" help:"Artifacts of every owner."`
+	Jobs       AdminJobsCmd          `cmd:"" help:"The maintenance jobs."`
+	Transfer   AdminTransferCmd      `cmd:"" help:"Give an artifact to another user."`
+	Hide       AdminHideCmd          `cmd:"" help:"Unpublish an artifact at once."`
+	Settings   AdminSettingsCmd      `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
+	Audit      AdminAuditCmd         `cmd:"" help:"Read the audit log."`
+	Views      AdminViewsCmd         `cmd:"" help:"Page views of the instance, or of one artifact with the members who opened it."`
+	Backup     AdminBackupCmd        `cmd:"" help:"Write a backup of the database and every blob into a directory, or as tar to standard output."`
+	Restore    AdminRestoreBackupCmd `cmd:"" name:"restore-backup" help:"Restore a backup directory into the data directory of a stopped server on this host; needs no server."`
+	Ready      AdminReadyCmd         `cmd:"" help:"Check the running server is set up correctly: configuration, DNS, certificate, disk."`
+	Health     AdminHealthCmd        `cmd:"" help:"Check the server is up; needs no token."`
 }
 
 // AdminUsersCmd manages users.
@@ -535,13 +538,42 @@ func (c *AdminSettingsCmd) Run(r *runner) error {
 	if r.g.JSON {
 		return r.printJSON(s)
 	}
+	// A server older than the sources route answers 404: the values alone.
+	sources, err := cl.SettingSources(r.ctx)
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
 	lines := map[string]string{}
 	flatten("", s, lines)
 	tw := tabwriter.NewWriter(termSafe{r.stdout}, 0, 0, 1, ' ', 0)
 	for _, k := range slices.Sorted(maps.Keys(lines)) {
+		if src := sourceOf(sources, k); src != "" {
+			fmt.Fprintf(tw, "%s\t= %s\t(%s)\n", k, lines[k], src)
+			continue
+		}
 		fmt.Fprintf(tw, "%s\t= %s\n", k, lines[k])
 	}
 	return tw.Flush()
+}
+
+// sourceOf finds where key, or the mapping holding it, was set: a header
+// in telemetry.otlp.headers is set where the mapping is.
+func sourceOf(sources map[string]string, key string) string {
+	for k := key; k != ""; {
+		if src, ok := sources[k]; ok {
+			return src
+		}
+		i := strings.LastIndexByte(k, '.')
+		if i < 0 {
+			break
+		}
+		k = k[:i]
+	}
+	return ""
 }
 
 func flatten(prefix string, v any, out map[string]string) {
@@ -611,7 +643,7 @@ func (c *AdminJobsListCmd) Run(r *runner) error {
 
 // AdminJobsRunCmd runs one job.
 type AdminJobsRunCmd struct {
-	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup, update-check, views-flush or views-prune."`
+	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup, oidc-discovery, update-check, views-flush or views-prune."`
 }
 
 func (c *AdminJobsRunCmd) Run(r *runner) error {

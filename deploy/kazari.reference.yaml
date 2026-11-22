@@ -1,25 +1,28 @@
 # Kazari configuration reference: every key with its default, except
-# base_domain, data_dir and tls.email, which have none. kazari.yaml is the
-# short file an instance starts from.
+# base_domain, which has none: replace art.example.com, which fails
+# validation as a placeholder. kazari.yaml is the short file an instance
+# starts from.
 #
 # Secrets are never written here: a value of the form ${NAME} (or
 # ${NAME:-default}) is replaced by the environment variable NAME, read from
 # the process environment or from a dotenv file (/etc/kazari/kazari.env
 # under systemd, .env beside compose.yml or in the working directory, or
 # the file named by --env-file / $KAZARI_ENV_FILE). A reference to an unset
-# variable without a default is an error.
+# variable without a default is an error, unless NAME_FILE names a file that
+# holds the value.
 #
 # Any key can also be overridden directly by an environment variable named
 # KAZARI_ plus the key's path upper-cased with dots as underscores, e.g.
 # listen.proxy_mode -> KAZARI_LISTEN_PROXY_MODE. Lists are comma-separated.
-# A dotenv file nobody named, the .env in the working directory, fills ${NAME}
+# kazari.env beside this file is read as if named with --env-file. Without
+# it, the .env in the working directory, which nobody named, fills ${NAME}
 # references only and overrides no key of this file.
 # A secret also reads KAZARI_<KEY>_FILE, the path of a file holding it.
 # Sizes take B, KiB, MiB, GiB, TiB, KB, MB, GB or TB; durations are Go
 # durations ("15m", "336h") and may start with whole days ("14d").
 
 base_domain: art.example.com         # artifacts are served at <slug>.art.example.com
-data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/, admin.sock
+data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/, admin.sock, kazari.lock
 
 # Public URL shape. kazari serve --local uses external_scheme: http and
 # external_port: 8080 (http://demo.kazari.localhost:8080/).
@@ -27,13 +30,15 @@ external_scheme: https               # https | http
 external_port: 0                     # 0 omits the port from URLs
 
 listen:
-  https: ":443"
+  https: ":443"                      # host:port; ":443" is every address
   http: ":80"                        # redirects to https; "" disables
-  proxy_mode: false                  # true: plain HTTP on listen.http, trust X-Forwarded-*
+  # true: plain HTTP on listen.http, trusting X-Forwarded-*; then bind
+  # listen.http to the proxy's side, such as "127.0.0.1:8080"
+  proxy_mode: false
 
 tls:
   mode: acme                         # acme | files | self-signed
-  email: ops@example.com             # ACME account contact
+  email: ""                          # optional ACME account contact
   ca: letsencrypt                    # letsencrypt | letsencrypt-staging | <https directory URL>
   # cloudflare | route53 | hetzner | digitalocean | gandi | ovh | namecheap | duckdns
   dns_provider: cloudflare
@@ -68,10 +73,10 @@ lifecycle:
   gc_interval: 1h
 
 serve:
-  csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
+  csp: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
   # frame-ancestors 'none' also keeps the MCP preview app to links; list an MCP host's
   # app origins there to let it embed pages (docs/mcp.md, Preview app).
-  allow_csp_override: true           # kazari.csp metadata replaces csp for that artifact
+  allow_csp_override: true           # kazari.csp metadata adds sources to csp for that artifact
   reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
   # Visibility of artifacts created without one: public | unlisted | members.
   # members pages open only for people who sign in to this instance (or hold
@@ -88,7 +93,7 @@ fetch:
 
 auth:
   write_policy: shared               # shared | owner
-  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN}
+  admin_token: ${KAZARI_AUTH_ADMIN_TOKEN:-}   # optional; on this host the admin socket needs none
   # How long credentials live. An MCP client's connection lapses when it is
   # not refreshed for refresh_ttl, so keep that above the longest pause of a
   # scheduled agent.
@@ -116,7 +121,7 @@ auth:
   #   client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
   #   allowed_domains: [example.com]  # verified email domains that may sign in
   #   auto_provision: true            # create a member on first sign-in from an allowed domain
-  #   admin_emails: []                # provisioned with the admin role; existing admins link by email only when listed
+  #   admin_emails: []                # provisioned as admins on first sign-in, whatever allowed_domains says; existing admins link by email only when listed
 
 admin:
   listen: ""                         # e.g. "127.0.0.1:9443": serve the admin host here only, not publicly

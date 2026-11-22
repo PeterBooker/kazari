@@ -216,13 +216,15 @@ func TestShareScopeOnTools(t *testing.T) {
 
 	writer := auth.Principal{Handle: "alice", Scopes: []string{auth.ScopeRead, auth.ScopeWrite, auth.ScopeDelete}, Source: auth.SourceAPIKey}
 	cs := e.connect(t, writer)
+	for _, name := range []string{"set_visibility", "create_share_link", "revoke_share_link"} {
+		if offered(t, cs, name) {
+			t.Errorf("%s is offered without the share scope", name)
+		}
+	}
 	for name, args := range map[string]map[string]any{
-		"set_visibility":    {"slug": "demo", "visibility": "members"},
-		"create_share_link": {"slug": "demo"},
-		"revoke_share_link": {"slug": "demo", "prefix": link.Prefix},
-		"create_artifact":   {"slug": "new-page", "name": "n", "description": "d", "visibility": "public", "files": file},
-		"update_artifact":   {"slug": "demo", "visibility": "unlisted"},
-		"import_page":       {"slug": "copy", "url": page.URL + "/", "visibility": "members"},
+		"create_artifact": {"slug": "new-page", "name": "n", "description": "d", "visibility": "public", "files": file},
+		"update_artifact": {"slug": "demo", "visibility": "unlisted"},
+		"import_page":     {"slug": "copy", "url": page.URL + "/", "visibility": "members"},
 	} {
 		if msg := fails(t, cs, name, args); !strings.HasPrefix(msg, `forbidden: scope "artifacts:share" required`) {
 			t.Errorf("%s without the share scope: %q", name, msg)
@@ -251,10 +253,10 @@ func TestShareScopeOnTools(t *testing.T) {
 	if res, _ := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"}); res.Visibility != "members" {
 		t.Errorf("set_visibility with the share scope = %+v", res)
 	}
-	ok[api.CreatedShareLink](t, cs, "create_share_link", map[string]any{"slug": "demo"})
+	ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "demo"})
 	ok[api.OK](t, cs, "revoke_share_link", map[string]any{"slug": "demo", "prefix": link.Prefix})
-	if msg := fails(t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "x"}); !strings.Contains(msg, `scope "artifacts:write" required`) {
-		t.Errorf("update with the share scope alone: %q", msg)
+	if offered(t, cs, "update_artifact") {
+		t.Errorf("update_artifact is offered with the share scope alone")
 	}
 }
 

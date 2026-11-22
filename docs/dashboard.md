@@ -86,9 +86,13 @@ When nothing needs attention, the section says so.
 
 ### Counts and activity
 
-Below, the page shows the people by status, the pages by status and visibility, the storage in use, the certificate's mode and expiry, each job's last and next run, and the last ten events of the [activity log](#activity).
+Below, the page shows the people by status, the pages by status and visibility, the storage in use, the certificate's mode and expiry, and the last ten events of the [activity log](#activity). The jobs are under [System](#running-a-job); a job whose last run failed is listed under Needs attention.
 
-Storage has two numbers. The first is what quotas count: every version in full. The second is what the blobs take on disk, where a file that several versions share is stored once.
+Storage has three numbers, each labelled with what it counts:
+
+- On disk: what the blobs take, where a file that several versions share is stored once.
+- Content: every version in full.
+- Counted against quotas: the content, plus 4 KiB for each file of each version. The People page shows each person's share of this number.
 
 ### Page views
 
@@ -98,7 +102,9 @@ A view is a page opened in a browser tab, counted once a minute, so a new view s
 
 ### Getting started
 
-On a new instance the Overview shows three steps in place of empty tables: invite a person, connect an agent, publish a first page. The second step has the connector address to copy, with the command that adds it to an agent and the lines that set up the `kazari` command. Each step is marked done once it is.
+Until an instance is in use, the Overview shows three steps: invite a person, connect an agent, publish a first page. The second step has the connector address to copy, with the command that adds it to an agent and the lines that set up the `kazari` command. Each step is marked done once it has happened: a second person exists, an agent or an API key has been used, and a page exists.
+
+The list stays until every step is done. **Put this list away** hides it for you, for good, and other admins still see it. Without the list, the Overview keeps the connector address in a box of its own, ready to copy.
 
 ## People
 
@@ -112,7 +118,9 @@ kazari admin users list
 
 ### Inviting a person
 
-On an instance with built-in accounts, **Invite a person** asks for a handle, a name, an optional email, a role and a quota. The quota is a size as the configuration writes them, such as `500MiB` or `2GiB`; `0` is no limit, and an empty field takes the instance's default. The next page shows the invite link, once. Copy it and send it to the person over a channel you trust: Kazari sends no email.
+On an instance with built-in accounts, **Invite a person** asks for a handle, a name, an optional email, a role and a quota. The quota is a size as the configuration writes them, such as `500MiB` or `2GiB`; `0` is no limit, and an empty field takes the instance's default. A refused form names every field that is wrong at once, and suggests a handle when the one typed cannot be used.
+
+The next page shows the invite link, once, with a message to send beside it: the link, the connector address and what to do with each, behind one copy button. Send it to the person over a channel you trust: Kazari sends no email. Choosing a password with the link signs them in on their [account page](identity.md#the-account-page), which shows them how to connect their agent.
 
 The link works once and for 7 days by default. Opening it changes nothing; setting a password uses it up. [Inviting a person](identity.md#inviting-a-person) has the rules in full. The command is:
 
@@ -185,9 +193,9 @@ A person's own page therefore has no **Disable** button for them.
 
 ## Pages
 
-The Pages page lists every page on the instance, whoever owns it: slug, name, owner, who it is open to, status, versions, size, views in the last 30 days, when it was updated and the date of its next lifecycle step. A page's status is *live*, *stale*, *unpublished* or *in the bin*.
+The Pages page lists every page on the instance, whoever owns it: address, name, owner, who it is open to, status, versions, size, views in the last 30 days, when it was updated and the date of its next lifecycle step. A page's status is *live*, *stale*, *unpublished* or *in the bin*.
 
-Search by slug or name, and filter by status, visibility and owner. The list shows 50 pages at a time. The command is:
+Search by address or name, and filter by status, visibility and owner. The list shows 50 pages at a time. The command is:
 
 ```sh
 kazari admin artifacts list --search report --visibility members
@@ -199,11 +207,15 @@ Opening a page shows its address, owner and visibility, its lifecycle in dates, 
 
 #### Changing who can open a page
 
-**Who can open it** sets the visibility: public, unlisted or members only. A page that was hidden is published again with the same control (`kazari visibility <slug> members`).
+**Who can open it** sets the visibility (`kazari visibility <slug> members`). A page that was hidden is published again with the same control. The three choices are:
+
+- Public: anyone can open it, and members see it when their agent or the command line lists pages.
+- Unlisted: anyone with the address can open it, and it is left out of other members' lists.
+- Members only: members open it after signing in, and anyone else with a share link.
 
 #### Keeping or restoring a page
 
-A page marked stale shows the date it moves to the bin, and **Keep the page** clears the mark (`kazari unstale <slug>`). A page in the bin shows the date it is removed for good, and **Restore the page** puts it back as it was (`kazari restore <slug>`).
+**Mark stale** starts a page's grace period: it keeps serving, then moves to the bin on its own unless someone keeps it. Give the number of days, or leave the field empty for the instance's usual grace (`kazari stale <slug>`). A page marked stale shows the date it moves to the bin, and **Keep the page** clears the mark (`kazari unstale <slug>`). A page in the bin shows the date it is removed for good, and **Restore the page** puts it back as it was (`kazari restore <slug>`).
 
 #### Publishing an earlier version
 
@@ -219,11 +231,22 @@ Visitors to public and unlisted pages are not signed in, so those pages count vi
 
 #### Share links
 
-The share links of a members-only page are listed with their label, creator, expiry and how often they were opened. **Create a share link** shows the new link once, and **Revoke link** ends one after a confirmation (`kazari share create`, `kazari share revoke`).
+The share links of a page are listed with their label, creator, expiry and how often they were opened. **Create a share link** shows the new link once, and **Revoke link** ends one after a confirmation (`kazari share create`, `kazari share revoke`).
+
+The form is offered on a published members-only page alone: anyone with the address opens a public or unlisted page already, and a hidden page opens for nobody. On those pages the section says why, with a button that makes the page members-only.
 
 #### Handing a page over
 
 **Hand over** gives the page to another person. Its size then counts against their quota (`kazari admin transfer <slug> <handle>`).
+
+#### Choosing how to take a page offline
+
+A page's own page offers four ways to take it offline, and says above the buttons how they differ. From the mildest:
+
+- **Hide the page** keeps everything, and the visibility control shows it again at any time.
+- **Move to the bin** keeps it for the retention period, `lifecycle.retention`, then removes it for good unless it is restored.
+- **Take down…** hides it at once and can also disable its owner ([Taking a page down](#taking-a-page-down)).
+- **Remove for good…** deletes every version now ([Removing a page for good](#removing-a-page-for-good)).
 
 ### The bin
 
@@ -254,9 +277,9 @@ The command is `kazari rm <slug> --hard`, with an admin's key.
 
 ## Activity
 
-The Activity page is the [audit log](ops.md#audit-log), newest first. Each row reads as a sentence, such as "ana published version 4 of q3-report", with the recorded action beside it, and links to the person and the page.
+The Activity page is the [audit log](ops.md#audit-log), newest first. Each row reads as a sentence, such as "ana published version 4 of q3-report", and links to the person and the page. The recorded action names are in the [CSV export](#exporting-the-log).
 
-Filter by person, page, kind of action and a range of dates. Dates are whole days in UTC, and the last day is included. The command is:
+Filter by person, page, kind of action and a range of dates. The person is chosen from a list, and the page field suggests the instance's pages as you type. Dates are whole days in UTC, and the last day is included. The command is:
 
 ```sh
 kazari admin audit --actor ana --action artifact. --since 2026-11-01T00:00:00Z

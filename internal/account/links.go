@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -18,9 +20,13 @@ type linkPageData struct {
 	For       *user.User // nil for setup
 	MinLength int
 	MaxLength int
-	// What the person typed for the first admin, kept across a refusal. A
-	// password is never kept.
+	// What the person typed for the first admin, kept across a refusal.
 	NewHandle, Name, Email string
+	// Password is kept across a refusal of another field alone, so that
+	// only what was wrong is typed again. Suggestion is a handle that
+	// would do, made from what was typed.
+	Password   string
+	Suggestion string
 	// Err names what is wrong with a field: the template has the words.
 	Err map[string]string
 }
@@ -149,8 +155,10 @@ func (s *server) renderLink(w http.ResponseWriter, r *http.Request, status int, 
 }
 
 // redeemLink uses the open link up: it sets the password, and for a setup
-// link creates the first admin. Nobody is signed in by it; the next page is
-// the sign-in form.
+// link creates the first admin. The person is then signed in, as the link
+// and the new password show who they are, through the sign-in host so that
+// every host shares the sign-in, and lands on the account page's welcome. Every field is checked before anything is used, so one
+// answer names every mistake.
 func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
@@ -169,25 +177,43 @@ func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		d := linkPageData{NewHandle: f.Get("handle"), Name: f.Get("name"), Email: f.Get("email")}
-		refuse := func(field, why string) {
-			d.Err = map[string]string{field: why}
+		d := linkPageData{NewHandle: strings.TrimSpace(f.Get("handle")), Name: strings.TrimSpace(f.Get("name")), Email: strings.TrimSpace(f.Get("email"))}
+		password := f.Get("password")
+		errs := map[string]string{}
+		if purpose == user.PurposeSetup && user.ValidateHandle(d.NewHandle) != nil {
+			errs["handle"] = "invalid"
+		}
+		if n := utf8.RuneCountInString(password); n < s.d.Users.MinPasswordLength() || n > user.MaxPasswordLength {
+			errs["password"] = "weak"
+		} else if password != f.Get("confirm") {
+			errs["confirm"] = "mismatch"
+		}
+		refuse := func(errs map[string]string) {
+			d.Err = errs
+			if errs["handle"] != "" {
+				d.Suggestion = user.SuggestHandle(d.NewHandle)
+				if d.Suggestion == "" {
+					d.Suggestion = user.SuggestHandle(d.Name)
+				}
+			}
+			if errs["password"] == "" && errs["confirm"] == "" {
+				d.Password = password
+			}
 			s.renderLink(w, r, http.StatusUnprocessableEntity, purpose, token, u, d)
 		}
-		password := f.Get("password")
-		if password != f.Get("confirm") {
-			refuse("confirm", "mismatch")
+		if len(errs) > 0 {
+			refuse(errs)
 			return
 		}
-		_, err := s.d.Users.Redeem(r.Context(), token, user.RedeemRequest{
+		redeemed, err := s.d.Users.Redeem(r.Context(), token, user.RedeemRequest{
 			Password: password, Handle: d.NewHandle, Email: d.Email, DisplayName: d.Name,
 		})
 		switch {
 		case errors.Is(err, user.ErrWeakPassword):
-			refuse("password", "weak")
+			refuse(map[string]string{"password": "weak"})
 			return
 		case errors.Is(err, user.ErrInvalidHandle):
-			refuse("handle", "invalid")
+			refuse(map[string]string{"handle": "invalid"})
 			return
 		case errors.Is(err, user.ErrBusy):
 			s.busy(w, r)
@@ -202,10 +228,12 @@ func (s *server) redeemLink(purpose user.Purpose) http.HandlerFunc {
 			return
 		}
 		s.setLinkCookie(w, "")
-		if purpose == user.PurposeSetup && s.o.AdminURL != "" {
-			http.Redirect(w, r, s.o.AdminURL+"/", http.StatusSeeOther)
-			return
+		// The password is set whatever follows: without the handoff the
+		// next page asks for it.
+		s.sess.SetFlash(w, "welcome")
+		if err := s.sess.Handoff(r.Context(), w, r, redeemed.Handle, Prefix); err != nil {
+			s.log.ErrorContext(r.Context(), "account: sign in after link", "err", err)
+			s.done(w, r, "password-set")
 		}
-		s.done(w, r, "password-set")
 	}
 }

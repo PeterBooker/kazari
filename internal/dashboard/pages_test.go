@@ -237,7 +237,7 @@ func TestPageOwnPage(t *testing.T) {
 		`href="https://live-one.art.test/"`, "live-one.art.test", `href="https://live-one--v1.art.test/"`, `href="https://live-one--v2.art.test/"`,
 		`<span class="status tone-version">Version 2</span> <span class="status tone-ok">Published</span>`,
 		`href="/pages/live-one/versions/1/publish"`, `href="/people/ana"`, `href="/people/ben"`,
-		`href="/activity?slug=live-one"`, "published version 2 of", `<span class="mono soft">artifact.update</span>`,
+		`href="/activity?slug=live-one"`, "published version 2 of", `<tr data-action="artifact.update">`,
 		`action="/pages/live-one/hide"`, `action="/pages/live-one/bin"`, `href="/pages/live-one/takedown"`, `href="/pages/live-one/remove"`,
 		`<option value="ben">ben</option>`,
 	} {
@@ -251,7 +251,7 @@ func TestPageOwnPage(t *testing.T) {
 	if strings.Contains(r.body, `<option value="ana">`) {
 		t.Error("the page can be handed to its own owner")
 	}
-	if r := b.navigate("/pages/no-such-page"); r.StatusCode != http.StatusNotFound || !strings.Contains(r.body, "There is no page with that slug.") {
+	if r := b.navigate("/pages/no-such-page"); r.StatusCode != http.StatusNotFound || !strings.Contains(r.body, "There is no page at that address.") {
 		t.Errorf("an unknown slug: status %d: %s", r.StatusCode, r.body)
 	}
 
@@ -524,7 +524,7 @@ func TestPageRemoveForGood(t *testing.T) {
 	ctx := context.Background()
 	r := b.get("/pages/live-one/remove")
 	for _, want := range []string{
-		"This cannot be undone.", "for up to 90 days", "until the clean-up job", "live-one.art.test",
+		"This cannot be undone.", "for up to 90 days", "until the next clean-up", "live-one.art.test",
 		"no new page can take for those 90 days", "restoring it for 30 days", `name="slug"`, `class="btn btn-danger"`,
 	} {
 		if !strings.Contains(r.body, want) {
@@ -533,7 +533,7 @@ func TestPageRemoveForGood(t *testing.T) {
 	}
 	for _, typed := range []string{"", "live", "LIVE-ONE", "stale-one"} {
 		r := b.post("/pages/live-one/remove", url.Values{"slug": {typed}})
-		if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "That is not the slug of this page. Nothing was removed.") {
+		if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "That is not the address of this page. Nothing was removed.") {
 			t.Errorf("typed %q: status %d", typed, r.StatusCode)
 		}
 		if _, _, err := e.artifacts.Get(ctx, boss, "live-one"); err != nil {
@@ -752,4 +752,54 @@ func TestPageShareLinkFieldErrors(t *testing.T) {
 		t.Errorf("a note of two lines: status %d: %s", r.StatusCode, r.body)
 	}
 	strictMarkup(t, "a refused share link", r.body)
+}
+
+// A share link is offered only where it opens something the address alone
+// does not: a members page that is published. Elsewhere the page says why,
+// with the change that would make one useful.
+func TestPageShareLinkOnlyForMembers(t *testing.T) {
+	e, b := pagesEnv(t)
+	for _, tt := range []struct {
+		slug, want string
+		form       bool
+	}{
+		{"members-one", "Create a share link", true},
+		{"live-one", "Make it members only", false},
+		{"hidden-one", "Publish it, members only", false},
+	} {
+		r := b.get("/pages/" + tt.slug)
+		strictMarkup(t, tt.slug, r.body)
+		if got := strings.Contains(r.body, `action="/pages/`+tt.slug+`/links"`); got != tt.form || !strings.Contains(r.body, tt.want) {
+			t.Errorf("%s: the share-link form shown = %t, want %t, with %q", tt.slug, got, tt.form, tt.want)
+		}
+	}
+	r := b.submit("/pages/live-one/visibility", url.Values{"visibility": {"members"}})
+	if !strings.Contains(r.body, `action="/pages/live-one/links"`) || e.page("live-one").Visibility != artifact.Members {
+		t.Error("making a page members only does not offer the share link")
+	}
+}
+
+// Marking a page stale from the dashboard starts its grace period.
+func TestPageMarkStale(t *testing.T) {
+	e, b := pagesEnv(t)
+	r := b.get("/pages/live-one")
+	for _, want := range []string{`action="/pages/live-one/stale"`, "Four ways to take a page offline", "restored for 30 days"} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("a live page's page lacks %q", want)
+		}
+	}
+	r = b.post("/pages/live-one/stale", url.Values{"days": {"soon"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Enter a whole number of days from 1 to 3650.") || !strings.Contains(r.body, `value="soon"`) {
+		t.Errorf("stale for soon: status %d", r.StatusCode)
+	}
+	r = b.submit("/pages/live-one/stale", url.Values{"days": {"3"}})
+	a := e.page("live-one")
+	if a.ExpiresAt == nil || !a.ExpiresAt.Equal(t0.Add(3*24*time.Hour)) || !strings.Contains(r.body, "The page is marked stale.") {
+		t.Errorf("stale for 3 days left %+v", a)
+	}
+	b.submit("/pages/live-one/keep", nil)
+	b.submit("/pages/live-one/stale", url.Values{"days": {""}})
+	if a := e.page("live-one"); a.ExpiresAt == nil || !a.ExpiresAt.Equal(t0.Add(14*24*time.Hour)) {
+		t.Errorf("stale with no days left %+v, want the default grace", a)
+	}
 }

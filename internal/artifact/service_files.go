@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"mime"
 	"net/http"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -40,6 +42,9 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 			return nil, 0, Errorf(ErrInvalidArgument, "path %q appears more than once", p)
 		}
 		seen[p] = true
+		if _, ok := result[p]; !ok && in.Delete {
+			return nil, 0, Errorf(ErrFileNotFound, "no file %q to delete", p)
+		}
 		delete(result, p) // removed, or replaced by the addition
 		if in.Delete {
 			continue
@@ -67,7 +72,7 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 	}
 	versionLeft := s.opts.MaxVersionBytes - carried
 	if versionLeft < 0 {
-		return nil, 0, Errorf(ErrTooLarge, "version exceeds %d bytes", s.opts.MaxVersionBytes)
+		return nil, 0, Errorf(ErrTooLarge, "the version is over the %s version limit", FormatBytes(s.opts.MaxVersionBytes))
 	}
 	if quotaLeft != nil {
 		*quotaLeft -= carried + int64(count)*FileChargeBytes
@@ -98,9 +103,9 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64, put *[]string) (File, error) {
 	fileLeft := s.opts.MaxFileBytes
 	var r io.Reader = &limitReader{r: in.Content, left: &fileLeft,
-		err: Errorf(ErrTooLarge, "file %q exceeds %d bytes", p, s.opts.MaxFileBytes)}
+		err: Errorf(ErrTooLarge, "file %q is over the %s file limit", p, FormatBytes(s.opts.MaxFileBytes))}
 	r = &limitReader{r: r, left: versionLeft,
-		err: Errorf(ErrTooLarge, "version exceeds %d bytes", s.opts.MaxVersionBytes)}
+		err: Errorf(ErrTooLarge, "the version is over the %s version limit", FormatBytes(s.opts.MaxVersionBytes))}
 	if quotaLeft != nil {
 		r = &limitReader{r: r, left: quotaLeft,
 			err: Errorf(ErrQuotaExceeded, "the new version would exceed the owner's quota")}
@@ -189,4 +194,21 @@ func (l *limitReader) Read(p []byte) (int, error) {
 		return 0, l.err
 	}
 	return n, err
+}
+
+// FormatBytes writes n in the largest binary unit that keeps it whole or to
+// one decimal place: 25 MiB, 1.5 GiB, 512 B.
+func FormatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	v, exp := float64(n), 0
+	for v >= unit && exp < 5 {
+		v /= unit
+		exp++
+	}
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s + " " + string("KMGTPE"[exp-1]) + "iB"
 }

@@ -16,12 +16,21 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 )
 
 const maxErrorBody = 64 << 10
+
+// A 429 or 503 is retried this many times, after the Retry-After the server
+// sent, at most maxRetryWait.
+const (
+	maxRetries     = 2
+	maxRetryWait   = 30 * time.Second
+	defaultBackoff = time.Second
+)
 
 // Client calls one API host (api.<base> or admin.<base>) and is safe for
 // concurrent use.
@@ -33,6 +42,10 @@ type Client struct {
 	// local marks a client on the admin Unix socket, which reaches a server
 	// on this host and nothing else.
 	local bool
+	// host is the first label of the host this client is meant for, api or
+	// admin, which an error suggests when the URL names another.
+	host  string
+	sleep func(context.Context, time.Duration) error
 }
 
 // NewClient returns a client for the host root baseURL, without /v1. An empty
@@ -46,11 +59,13 @@ func NewClient(baseURL, token string, hc *http.Client) *Client {
 		token:     token,
 		hc:        hc,
 		userAgent: "kazari-cli/" + buildinfo.Get().Version,
+		host:      "api",
+		sleep:     sleepContext,
 	}
 }
 
 // HTTPError is a non-2xx response. A body that is not an api.ErrorResponse
-// becomes code "http_<status>" with the body text as the message.
+// becomes code "http_<status>" with a message that says so.
 type HTTPError struct {
 	Status int
 	Err    api.Error
@@ -76,6 +91,18 @@ type request struct {
 	body        io.Reader
 	contentType string
 	header      http.Header
+	// replay gives the body again for a retry; nil when it cannot be resent.
+	replay func() io.Reader
+}
+
+// retryable is a read, or a write the server refuses rather than repeats
+// once it has happened: one that names the version it expects.
+func (r request) retryable() bool {
+	switch r.method {
+	case http.MethodGet, http.MethodHead:
+		return true
+	}
+	return r.replay != nil && r.header.Get("If-Match") != ""
 }
 
 // send returns the response only for a 2xx status, else an *HTTPError.
@@ -84,28 +111,56 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 	if len(r.query) > 0 {
 		u += "?" + r.query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, r.method, u, r.body)
-	if err != nil {
-		return nil, fmt.Errorf("build %s %s: %w", r.method, r.path, err)
-	}
-	maps.Copy(req.Header, r.header)
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/json")
-	if r.contentType != "" {
-		req.Header.Set("Content-Type", r.contentType)
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", r.method, r.path, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	for attempt := 0; ; attempt++ {
+		body := r.body
+		if attempt > 0 && r.replay != nil {
+			body = r.replay()
+		}
+		req, err := http.NewRequestWithContext(ctx, r.method, u, body)
+		if err != nil {
+			return nil, fmt.Errorf("build %s %s: %w", r.method, r.path, err)
+		}
+		maps.Copy(req.Header, r.header)
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		req.Header.Set("User-Agent", c.userAgent)
+		req.Header.Set("Accept", "application/json")
+		if r.contentType != "" {
+			req.Header.Set("Content-Type", r.contentType)
+		}
+		resp, err := c.hc.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("%s %s: %w", r.method, r.path, err)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+			return resp, nil
+		}
+		busy := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable
+		if busy && attempt < maxRetries && r.retryable() {
+			wait := retryAfter(resp.Header.Get("Retry-After"))
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
+			resp.Body.Close()
+			if err := c.sleep(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		defer resp.Body.Close()
-		return nil, decodeError(resp)
+		return nil, c.decodeError(resp)
 	}
-	return resp, nil
+}
+
+// retryAfter reads Retry-After in seconds or as a date.
+func retryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	d := defaultBackoff
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		d = time.Duration(n) * time.Second
+	} else if t, err := http.ParseTime(v); err == nil {
+		d = time.Until(t)
+	}
+	return min(max(d, 0), maxRetryWait)
 }
 
 // do decodes the JSON response into out; a nil out discards it.
@@ -133,25 +188,57 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 			return fmt.Errorf("encode %s %s body: %w", method, path, err)
 		}
 		r.body = bytes.NewReader(b)
+		r.replay = func() io.Reader { return bytes.NewReader(b) }
 		r.contentType = "application/json"
 	}
 	return c.do(ctx, r, out)
 }
 
-func decodeError(resp *http.Response) error {
+// decodeError never passes on a body that is not the API's error: a proxy's
+// or a page's HTML says nothing about what to change.
+func (c *Client) decodeError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 	var er api.ErrorResponse
 	if json.Unmarshal(body, &er) == nil && er.Error.Code != "" {
 		return &HTTPError{Status: resp.StatusCode, Err: er.Error}
 	}
-	msg := strings.TrimSpace(string(body))
-	if msg == "" {
-		msg = http.StatusText(resp.StatusCode)
+	status := strconv.Itoa(resp.StatusCode)
+	if t := http.StatusText(resp.StatusCode); t != "" {
+		status += " " + t
 	}
-	return &HTTPError{Status: resp.StatusCode, Err: api.Error{
-		Code:    "http_" + strconv.Itoa(resp.StatusCode),
-		Message: msg,
-	}}
+	text := strings.TrimSpace(string(body))
+	html := strings.Contains(resp.Header.Get("Content-Type"), "html") || strings.HasPrefix(text, "<")
+	var msg string
+	switch {
+	case c.local:
+		msg = "HTTP " + status + " from the admin socket"
+	case html || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed:
+		msg = c.notKazari(status)
+	default:
+		msg = "HTTP " + status + " from " + c.base
+		if line, _, _ := strings.Cut(text, "\n"); line != "" && len(line) <= 200 {
+			msg += ": " + line
+		}
+	}
+	return &HTTPError{Status: resp.StatusCode, Err: api.Error{Code: "http_" + strconv.Itoa(resp.StatusCode), Message: msg}}
+}
+
+// notKazari explains an answer from something other than the API, and
+// suggests the host the API usually is on.
+func (c *Client) notKazari(status string) string {
+	msg := fmt.Sprintf("%s answered HTTP %s, which is not the Kazari API; it is usually https://%s.<base>", c.base, status, c.host)
+	u, err := url.Parse(c.base)
+	if err != nil || u.Host == "" {
+		return msg
+	}
+	// Another host of the instance names the base; a page's host or the
+	// apex cannot be told apart from here.
+	first, rest, _ := strings.Cut(u.Host, ".")
+	if first == c.host || rest == "" || (first != "api" && first != "mcp" && first != "admin") {
+		return msg
+	}
+	u.Host = c.host + "." + rest
+	return msg + "; try --url " + u.String()
 }
 
 // decodeSlice accepts a bare array or an object with exactly one array field,
@@ -344,6 +431,53 @@ func (c *Client) Get(ctx context.Context, slug string, files bool) (*api.Artifac
 	return &out, nil
 }
 
+// LatestVersion asks VersionFiles for the latest version.
+const LatestVersion = -1
+
+// VersionFiles returns the artifact with version's files: the published
+// version's when version is 0, the latest's when it is LatestVersion.
+func (c *Client) VersionFiles(ctx context.Context, slug string, version int) (*api.ArtifactDetail, *api.Version, error) {
+	get := func(before int) (*api.ArtifactDetail, error) {
+		q := url.Values{"files": {"true"}}
+		if before > 0 {
+			q.Set("files_before", strconv.Itoa(before))
+		}
+		var out api.ArtifactDetail
+		if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug), q, nil, nil, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
+	}
+	before := 0
+	if version > 0 {
+		before = version + 1
+	}
+	d, err := get(before)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch {
+	case version == LatestVersion:
+		version = d.Artifact.LatestVersion
+	case version == 0:
+		version = d.Artifact.PublishedVersion
+		if d.NextFilesBefore != 0 && version < d.NextFilesBefore {
+			if d, err = get(version + 1); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for i := range d.Versions {
+		if d.Versions[i].Number == version {
+			return d, &d.Versions[i], nil
+		}
+	}
+	return nil, nil, &HTTPError{Status: http.StatusNotFound, Err: api.Error{
+		Code:    api.CodeVersionNotFound,
+		Message: fmt.Sprintf("%s has no version %d; its latest is %d", slug, version, d.Artifact.LatestVersion),
+	}}
+}
+
 // List returns one page of the artifacts the caller can see.
 func (c *Client) List(ctx context.Context, p ListParams) (*api.ArtifactList, error) {
 	var out api.ArtifactList
@@ -449,7 +583,7 @@ func (c *Client) ReadFile(ctx context.Context, slug, path string, version int, a
 // it; a positive ExpectedVersion fails with version_conflict if stale.
 func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*api.EditResult, error) {
 	var out api.EditResult
-	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, nil, req, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, ifMatch(req.ExpectedVersion), req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

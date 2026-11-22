@@ -153,17 +153,18 @@ func TestRunAdminLinkErrors(t *testing.T) {
 	})
 	for _, tt := range []struct {
 		args []string
+		code int
 		want string
 	}{
-		{[]string{"setup-link"}, "kazari: setup_done: the instance already has users"},
-		{[]string{"users", "invite", "carol"}, "kazari: forbidden: built-in accounts are off"},
-		{[]string{"invites", "revoke", "7"}, "kazari: not_found: link not found"},
-		{[]string{"users", "reset-password", "bob"}, "kazari: not_found: user not found"},
-		{[]string{"users", "sign-out", "bob"}, "kazari: not_found: user not found"},
+		{[]string{"setup-link"}, exitError, "kazari: setup_done: the instance already has users"},
+		{[]string{"users", "invite", "carol"}, exitUnauthorized, "kazari: forbidden: built-in accounts are off"},
+		{[]string{"invites", "revoke", "7"}, exitNotFound, "kazari: not_found: link not found"},
+		{[]string{"users", "reset-password", "bob"}, exitNotFound, "kazari: not_found: user not found"},
+		{[]string{"users", "sign-out", "bob"}, exitNotFound, "kazari: not_found: user not found"},
 	} {
 		r := runCLI(t, nil, append([]string{"--admin-url", srv.URL, "--admin-token", "adm", "admin"}, tt.args...)...)
-		if r.code != exitError || r.stdout != "" || !strings.Contains(r.stderr, tt.want) {
-			t.Errorf("%v: %+v, want exit 1 and %q", tt.args, r, tt.want)
+		if r.code != tt.code || r.stdout != "" || !strings.Contains(r.stderr, tt.want) {
+			t.Errorf("%v: %+v, want exit %d and %q", tt.args, r, tt.code, tt.want)
 		}
 	}
 }

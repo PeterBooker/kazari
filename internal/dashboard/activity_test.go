@@ -58,7 +58,7 @@ var activityKindActions = []string{audit.ArtifactUpdate, audit.ShareLinkCreate, 
 func rowsOf(r response, actions []string) string {
 	var out []string
 	for _, a := range actions {
-		if strings.Contains(r.body, `<span class="mono soft">`+a+`</span>`) {
+		if strings.Contains(r.body, `<tr data-action="`+a+`">`) {
 			out = append(out, a)
 		}
 	}
@@ -84,7 +84,7 @@ func TestActivityFilters(t *testing.T) {
 		`<span class="ja" lang="ja" aria-hidden="true">履歴</span>`,
 		"Nothing prunes this log", "a backup includes them",
 		`<a href="/people/ana" class="mono">ana</a> published version 4 of <a href="/pages/kind-pages" class="mono">kind-pages</a>`,
-		`<span class="mono soft">artifact.update</span>`,
+		`<tr data-action="artifact.update">`,
 		`<a href="/people/ben" class="mono">ben</a> disabled <a href="/people/ana" class="mono">ana</a>`,
 		"the scheduler took a backup", "signed in to the dashboard",
 	} {
@@ -122,7 +122,7 @@ func TestActivityFilters(t *testing.T) {
 	// The filter stays in the form and travels with the export.
 	r = b.get("/activity?person=ana&kind=apps&from=2026-11-01&to=2026-11-30&slug=kind-apps")
 	for _, want := range []string{
-		`name="person" type="text" value="ana"`, `<option value="apps" selected>`, `name="from" type="date" value="2026-11-01"`,
+		`<option value="ana" selected>ana</option>`, `list="f-slug-pages"`, `value="kind-apps"`, `<option value="apps" selected>`, `name="from" type="date" value="2026-11-01"`,
 		`name="to" type="date" value="2026-11-30"`, `<input type="hidden" name="person" value="ana">`, `<input type="hidden" name="kind" value="apps">`,
 		`<input type="hidden" name="to" value="2026-11-30">`,
 	} {
@@ -334,5 +334,25 @@ func TestActivityMarkup(t *testing.T) {
 	_, b := activityEnv(t)
 	for _, path := range []string{"/activity", "/activity?kind=pages&person=ana", "/activity?person=nobody", "/activity?from=bad"} {
 		strictMarkup(t, path, b.get(path).body)
+	}
+}
+
+// The filter offers the people and pages there are, rather than asking for
+// an exact handle or address, and the log shows no raw action names.
+func TestActivityFilterChoices(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	e.person("ana", "")
+	e.publish("ana", "notes")
+	e.record(audit.Event{Actor: "ana", Action: audit.ShareLinkCreate, Slug: "notes", Details: map[string]string{"prefix": "abcdefgh", "label": "the client"}})
+	r := e.signedIn("boss").get("/activity")
+	strictMarkup(t, "the activity", r.body)
+	for _, want := range []string{`<option value="ana">ana</option>`, `<option value="notes"></option>`, "created share link", ", for the client"} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("the activity lacks %q", want)
+		}
+	}
+	if strings.Contains(r.body, `<span class="mono soft">artifact.create</span>`) || strings.Contains(r.body, "<th>Action</th>") {
+		t.Error("the activity shows raw action names")
 	}
 }

@@ -20,10 +20,10 @@ import (
 
 func valid() Config {
 	c := Default()
-	c.BaseDomain = "art.example.com"
+	c.BaseDomain = "art.kazari.test"
 	c.DataDir = "/var/lib/kazari"
 	c.Auth.AdminToken = "admin-secret-0123456789abcdef0123"
-	c.TLS.Email = "ops@example.com"
+	c.TLS.Email = "ops@kazari.test"
 	c.TLS.DNS.APIToken = "dns-secret"
 	return c
 }
@@ -49,13 +49,15 @@ func writeYAML(t *testing.T, content string) string {
 
 func TestDefaultValid(t *testing.T) {
 	tests := map[string]func(*Config){
-		"acme":        func(*Config) {},
-		"proxy mode":  func(c *Config) { c.Listen.ProxyMode = true; c.TLS.Email = ""; c.TLS.DNS.APIToken = "" },
-		"self-signed": func(c *Config) { c.TLS.Mode = "self-signed"; c.TLS.Email = "" },
-		"route53":     func(c *Config) { c.TLS.DNSProvider = "route53"; c.TLS.DNS.APIToken = "" },
-		"ovh":         func(c *Config) { c.TLS.DNSProvider = "ovh"; c.TLS.DNS.APIToken = "a:b:c" },
-		"namecheap":   func(c *Config) { c.TLS.DNSProvider = "namecheap"; c.TLS.DNS.User = "ann" },
-		"duckdns":     func(c *Config) { c.TLS.DNSProvider = "duckdns" },
+		"acme":                  func(*Config) {},
+		"proxy mode":            func(c *Config) { c.Listen.ProxyMode = true; c.TLS.Email = ""; c.TLS.DNS.APIToken = "" },
+		"self-signed":           func(c *Config) { c.TLS.Mode = "self-signed"; c.TLS.Email = "" },
+		"acme without email":    func(c *Config) { c.TLS.Email = "" },
+		"placeholder-like name": func(c *Config) { c.BaseDomain = "art.myexample.com" },
+		"route53":               func(c *Config) { c.TLS.DNSProvider = "route53"; c.TLS.DNS.APIToken = "" },
+		"ovh":                   func(c *Config) { c.TLS.DNSProvider = "ovh"; c.TLS.DNS.APIToken = "a:b:c" },
+		"namecheap":             func(c *Config) { c.TLS.DNSProvider = "namecheap"; c.TLS.DNS.User = "ann" },
+		"duckdns":               func(c *Config) { c.TLS.DNSProvider = "duckdns" },
 		"no admin token or http listener": func(c *Config) {
 			c.Auth.AdminToken = ""
 			c.Listen.HTTP = ""
@@ -80,16 +82,17 @@ func TestDefaultNotShared(t *testing.T) {
 	}
 }
 
+// ownDomain replaces the placeholder domain the shipped files carry, which
+// fails validation by design.
+var ownDomain = map[string]string{"KAZARI_BASE_DOMAIN": "art.kazari.test"}
+
 func TestExampleFile(t *testing.T) {
 	const path = "../../deploy/kazari.reference.yaml"
-	got, err := LoadWith(path, env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok", "KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
+	got, err := LoadWith(path, env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok", "KAZARI_BASE_DOMAIN": "art.kazari.test"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
 
-	if got.BaseDomain != "art.example.com" {
-		t.Errorf("BaseDomain = %q", got.BaseDomain)
-	}
 	if got.Limits.MaxVersionBytes != 50*MiB {
 		t.Errorf("MaxVersionBytes = %v", got.Limits.MaxVersionBytes)
 	}
@@ -107,46 +110,63 @@ func TestExampleFile(t *testing.T) {
 	}
 
 	want := Default()
-	want.BaseDomain = "art.example.com"
-	want.DataDir = "/var/lib/kazari"
-	want.TLS.Email = "ops@example.com"
+	want.BaseDomain = "art.kazari.test"
 	want.TLS.DNS.APIToken = "tok"
-	want.Auth.AdminToken = testAdminToken
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("example differs from Default (-want +got):\n%s", diff)
 	}
 }
 
+func TestExampleFilesKeepPlaceholder(t *testing.T) {
+	for _, path := range []string{"../../deploy/kazari.reference.yaml", "../../deploy/kazari.yaml"} {
+		_, err := LoadWith(path, env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok"}))
+		if want := "base_domain: art.example.com is the example placeholder"; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("LoadWith(%s) = %v, want %q", path, err, want)
+		}
+	}
+}
+
 func TestExampleFileUnsetSecret(t *testing.T) {
-	_, err := LoadWith("../../deploy/kazari.reference.yaml", env(map[string]string{"KAZARI_AUTH_ADMIN_TOKEN": testAdminToken}))
-	want := "config: ../../deploy/kazari.reference.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"
-	if err == nil || err.Error() != want {
+	_, err := LoadWith("../../deploy/kazari.reference.yaml", env(ownDomain))
+	want := "${KAZARI_TLS_DNS_API_TOKEN} is not set; set KAZARI_TLS_DNS_API_TOKEN, or KAZARI_TLS_DNS_API_TOKEN_FILE to a file that holds it"
+	if err == nil || !strings.HasPrefix(err.Error(), "config: ../../deploy/kazari.reference.yaml: line ") || !strings.HasSuffix(err.Error(), want) {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
 }
 
+func TestShippedFilesTakeSecretFiles(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "dns-token")
+	if err := os.WriteFile(token, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"../../deploy/kazari.reference.yaml", "../../deploy/kazari.yaml"} {
+		c, err := LoadWith(path, env(map[string]string{"KAZARI_BASE_DOMAIN": "art.kazari.test", "KAZARI_TLS_DNS_API_TOKEN_FILE": token}))
+		if err != nil || c.TLS.DNS.APIToken != "from-file" {
+			t.Errorf("LoadWith(%s) with KAZARI_TLS_DNS_API_TOKEN_FILE = token %q, %v; want from-file", path, c.TLS.DNS.APIToken, err)
+		}
+	}
+}
+
 func TestShortFile(t *testing.T) {
-	got, err := LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok"}))
+	got, err := LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "tok", "KAZARI_BASE_DOMAIN": "art.kazari.test"}))
 	if err != nil {
 		t.Fatalf("LoadWith: %v", err)
 	}
 	want := Default()
-	want.BaseDomain = "art.example.com"
-	want.DataDir = "/var/lib/kazari"
-	want.TLS.Email = "ops@example.com"
+	want.BaseDomain = "art.kazari.test"
 	want.TLS.DNS.APIToken = "tok"
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("short file differs from Default plus the required keys (-want +got):\n%s", diff)
 	}
 	// The token the file refers to must be set, so an empty dotenv line fails clearly.
-	_, err = LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": ""}))
+	_, err = LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": "", "KAZARI_BASE_DOMAIN": "art.kazari.test"}))
 	if err == nil || !strings.Contains(err.Error(), "tls.dns.api_token: required") {
 		t.Errorf("empty token: err = %v", err)
 	}
 }
 
 func TestLocal(t *testing.T) {
-	_, err := LoadLocal(filepath.Join(t.TempDir(), "none"))
+	_, _, err := LoadLocal(filepath.Join(t.TempDir(), "none"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("LoadLocal with a named, missing dotenv file: err = %v", err)
 	}
@@ -229,7 +249,7 @@ func TestSecretFromFile(t *testing.T) {
 }
 
 func TestPeek(t *testing.T) {
-	path := writeYAML(t, "base_domain: art.example.com\ndata_dir: /srv/kazari\ntls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n")
+	path := writeYAML(t, "base_domain: art.kazari.test\ndata_dir: /srv/kazari\ntls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n")
 	c, err := Peek(path, env(nil))
 	if err != nil {
 		t.Fatalf("Peek with an unset secret: %v", err)
@@ -262,7 +282,7 @@ func TestLoadMissingFile(t *testing.T) {
 
 func TestLoadUnknownKey(t *testing.T) {
 	path := writeYAML(t, `
-base_domain: art.example.com
+base_domain: art.kazari.test
 colour: blue
 
 listen:
@@ -287,27 +307,56 @@ func TestLoadUnknownKeyMerged(t *testing.T) {
 	}
 }
 
-func TestLoadTypeError(t *testing.T) {
-	path := writeYAML(t, "\n\nbase_domain: [a, b]\n")
+func TestLoadTypeErrors(t *testing.T) {
+	path := writeYAML(t, `
+
+base_domain: [a, b]
+limits:
+  max_files: lots
+  max_version_bytes: 50 megs
+listen:
+  proxy_mode: maybe
+serve:
+  reserved_slugs: [api, {a: b}]
+auth: on
+`)
 	_, err := LoadWith(path, env(nil))
-	if err == nil || !strings.Contains(err.Error(), "cannot unmarshal !!seq into string") {
-		t.Fatalf("err = %v, want a type error", err)
+	if err == nil {
+		t.Fatal("LoadWith: want errors")
 	}
-	if strings.Contains(err.Error(), "line ") {
-		t.Errorf("err = %v, want no line number", err)
+	for _, want := range []string{
+		path + ": line 3: base_domain: want a string, got a list",
+		path + `: line 5: limits.max_files: want a whole number, got "lots"`,
+		path + `: line 6: limits.max_version_bytes: invalid size "50 megs"`,
+		path + `: line 8: listen.proxy_mode: want true or false, got "maybe"`,
+		path + ": line 10: serve.reserved_slugs: cannot unmarshal !!map into string",
+		path + `: line 11: auth: want a mapping of keys, got "on"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("LoadWith error does not contain %q:\n%v", want, err)
+		}
 	}
 }
 
-func TestLoadBadValue(t *testing.T) {
-	path := writeYAML(t, "limits:\n  max_version_bytes: lots\n")
-	if _, err := LoadWith(path, env(nil)); err == nil || !strings.Contains(err.Error(), "lots") {
-		t.Fatalf("err = %v, want invalid size error", err)
+func TestLoadUnknownKeySuggests(t *testing.T) {
+	path := writeYAML(t, "base_domian: art.kazari.test\nlisten:\n  proxy-mode: true\nzzz: 1\n")
+	_, err := LoadWith(path, env(nil))
+	for _, want := range []string{
+		"line 1: unknown key base_domian; did you mean base_domain?",
+		"line 3: unknown key listen.proxy-mode; did you mean listen.proxy_mode?",
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("LoadWith error = %v, want it to contain %q", err, want)
+		}
+	}
+	if err != nil && strings.Contains(err.Error(), "zzz; did you mean") {
+		t.Errorf("LoadWith error = %v, want no suggestion for zzz", err)
 	}
 }
 
 func TestLoadOIDCMapping(t *testing.T) {
 	base := `
-base_domain: art.example.com
+base_domain: art.kazari.test
 data_dir: /data
 tls:
   mode: self-signed
@@ -611,6 +660,8 @@ func TestParseDuration(t *testing.T) {
 		{"336h", 14 * 24 * time.Hour},
 		{"14d", 14 * 24 * time.Hour},
 		{"1d12h", 36 * time.Hour},
+		{"2w", 14 * 24 * time.Hour},
+		{"1w2d3h", 9*24*time.Hour + 3*time.Hour},
 		{"0d", 0},
 		{"1h30m", 90 * time.Minute},
 		{"500ms", 500 * time.Millisecond},
@@ -664,9 +715,9 @@ func TestValidateErrors(t *testing.T) {
 		want   string
 	}{
 		{"no base domain", func(c *Config) { c.BaseDomain = "" }, "base_domain: required"},
-		{"base domain scheme", func(c *Config) { c.BaseDomain = "https://art.example.com" }, "base_domain: must not include a scheme"},
+		{"base domain scheme", func(c *Config) { c.BaseDomain = "https://art.kazari.test" }, "base_domain: must not include a scheme"},
 		{"base domain port", func(c *Config) { c.BaseDomain = "localhost:8080" }, "base_domain: must not include a port"},
-		{"base domain dot", func(c *Config) { c.BaseDomain = "art.example.com." }, "base_domain: must not end with a dot"},
+		{"base domain dot", func(c *Config) { c.BaseDomain = "art.kazari.test." }, "base_domain: must not end with a dot"},
 		{"base domain case", func(c *Config) { c.BaseDomain = "Art.example.com" }, "base_domain: must be lower-case"},
 		{"base domain chars", func(c *Config) { c.BaseDomain = "art..example.com" }, "base_domain: must be a host name"},
 		{"no data dir", func(c *Config) { c.DataDir = "" }, "data_dir: required"},
@@ -675,7 +726,13 @@ func TestValidateErrors(t *testing.T) {
 		{"no https listener", func(c *Config) { c.Listen.HTTPS = "" }, "listen.https: required"},
 		{"proxy without http", func(c *Config) { c.Listen.ProxyMode = true; c.Listen.HTTP = "" }, "listen.http: required"},
 		{"tls mode", func(c *Config) { c.TLS.Mode = "magic" }, "tls.mode: must be one of acme, files, self-signed"},
-		{"acme email", func(c *Config) { c.TLS.Email = "" }, "tls.email: required"},
+		{"placeholder base domain", func(c *Config) { c.BaseDomain = "art.example.com" }, "base_domain: art.example.com is the example placeholder"},
+		{"placeholder apex", func(c *Config) { c.BaseDomain = "example.org" }, "base_domain: example.org is the example placeholder"},
+		{"placeholder email", func(c *Config) { c.TLS.Email = "ops@example.net" }, "tls.email: ops@example.net is the example placeholder"},
+		{"email without at", func(c *Config) { c.TLS.Email = "ops" }, "tls.email: must be an email address"},
+		{"bare port", func(c *Config) { c.Listen.HTTP = "8080" }, `listen.http: "8080" is not host:port; write 127.0.0.1:8080`},
+		{"bare https port", func(c *Config) { c.Listen.HTTPS = "443" }, `listen.https: "443" is not host:port; write 127.0.0.1:443`},
+		{"admin listen no port", func(c *Config) { c.Admin.Listen = "localhost" }, `admin.listen: "localhost" is not host:port`},
 		{"acme ca", func(c *Config) { c.TLS.CA = "http://ca.example/dir" }, "tls.ca:"},
 		{"dns provider", func(c *Config) { c.TLS.DNSProvider = "bind" }, "tls.dns_provider: must be one of"},
 		{"dns token", func(c *Config) { c.TLS.DNS.APIToken = "" }, "tls.dns.api_token: required"},
@@ -721,7 +778,7 @@ func TestValidateCollectsAll(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	for _, key := range []string{"base_domain:", "data_dir:", "tls.email:", "tls.dns.api_token:", "log.level:"} {
+	for _, key := range []string{"base_domain:", "tls.dns.api_token:", "log.level:"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error does not mention %s:\n%v", key, err)
 		}
@@ -761,7 +818,7 @@ func TestRedacted(t *testing.T) {
 		{"tls.dns.api_token", section(tls, "dns")["api_token"], "***"},
 		{"auth.oidc.client_secret", section(auth, "oidc")["client_secret"], "***"},
 		{"auth.oidc.client_id", section(auth, "oidc")["client_id"], "id"},
-		{"base_domain", m["base_domain"], "art.example.com"},
+		{"base_domain", m["base_domain"], "art.kazari.test"},
 		{"limits.max_version_bytes", section(m, "limits")["max_version_bytes"], "50MiB"},
 		{"lifecycle.default_grace", section(m, "lifecycle")["default_grace"], "336h"},
 		{"limits.max_files", section(m, "limits")["max_files"], 2000},
@@ -791,9 +848,9 @@ func TestPathsAndURLs(t *testing.T) {
 		{"BlobDir", c.BlobDir(), "/data/blobs"},
 		{"UploadDir", c.UploadDir(), "/data/uploads"},
 		{"CertStorageDir", c.CertStorageDir(), "/data/certmagic"},
-		{"Host", c.Host("demo"), "demo.art.example.com"},
-		{"Host empty", c.Host(""), "art.example.com"},
-		{"ExternalURL", c.ExternalURL("mcp"), "https://mcp.art.example.com/"},
+		{"Host", c.Host("demo"), "demo.art.kazari.test"},
+		{"Host empty", c.Host(""), "art.kazari.test"},
+		{"ExternalURL", c.ExternalURL("mcp"), "https://mcp.art.kazari.test/"},
 	}
 	dev := c
 	dev.BaseDomain = "localhost"
@@ -802,7 +859,7 @@ func TestPathsAndURLs(t *testing.T) {
 	checks = append(checks, struct{ name, got, want string }{"ExternalURL dev", dev.ExternalURL("demo"), "http://demo.localhost:8080/"})
 	std := c
 	std.ExternalPort = 443
-	checks = append(checks, struct{ name, got, want string }{"ExternalURL default port", std.ExternalURL("demo"), "https://demo.art.example.com/"})
+	checks = append(checks, struct{ name, got, want string }{"ExternalURL default port", std.ExternalURL("demo"), "https://demo.art.kazari.test/"})
 	for _, ch := range checks {
 		if ch.got != ch.want {
 			t.Errorf("%s = %q, want %q", ch.name, ch.got, ch.want)
@@ -873,13 +930,13 @@ func TestAdminTokenLength(t *testing.T) {
 		base, token string
 		ok          bool
 	}{
-		{"art.example.com", "change-me", false},
-		{"art.example.com", testAdminToken[:MinAdminTokenLen-1], false},
-		{"art.example.com", testAdminToken, true},
-		{"art.example.com", "", true},
+		{"art.kazari.test", "change-me", false},
+		{"art.kazari.test", testAdminToken[:MinAdminTokenLen-1], false},
+		{"art.kazari.test", testAdminToken, true},
+		{"art.kazari.test", "", true},
 		{"localhost", "dev-admin-token", true},
 		{"dev.localhost", "dev-admin-token", true},
-		{"localhost.example.com", "dev-admin-token", false},
+		{"localhost.kazari.test", "dev-admin-token", false},
 	}
 	for _, tt := range tests {
 		c := valid()
@@ -927,7 +984,7 @@ func TestLocalAccounts(t *testing.T) {
 }
 
 func TestLocalAccountsEnv(t *testing.T) {
-	env := map[string]string{"KAZARI_BASE_DOMAIN": "art.example.com", "KAZARI_DATA_DIR": t.TempDir(),
+	env := map[string]string{"KAZARI_BASE_DOMAIN": "art.kazari.test", "KAZARI_DATA_DIR": t.TempDir(),
 		"KAZARI_LISTEN_PROXY_MODE": "true", "KAZARI_AUTH_LOCAL_ENABLED": "false", "KAZARI_AUTH_LOCAL_INVITE_TTL": "3d"}
 	c, err := LoadWith("", EnvLookup(env))
 	if err != nil {
@@ -957,7 +1014,7 @@ func TestAdminURL(t *testing.T) {
 		name, listen, url, want string
 		dashboard               bool
 	}{
-		{name: "default", want: "https://admin.art.example.com", dashboard: true},
+		{name: "default", want: "https://admin.art.kazari.test", dashboard: true},
 		{name: "private listener without an address", listen: "127.0.0.1:9443"},
 		{name: "private listener through a tunnel", listen: "127.0.0.1:9443", url: "http://localhost:9443/", want: "http://localhost:9443", dashboard: true},
 		{name: "another name", url: "https://kazari-admin.vpn.example.com", want: "https://kazari-admin.vpn.example.com", dashboard: true},
@@ -1006,7 +1063,7 @@ func TestCheckAdminURL(t *testing.T) {
 // The dashboard's address has a name of its own: KAZARI_ADMIN_URL is the
 // command line's, and must not move the server's setting.
 func TestAdminPublicURLEnv(t *testing.T) {
-	base := map[string]string{"KAZARI_BASE_DOMAIN": "art.example.com", "KAZARI_DATA_DIR": t.TempDir(), "KAZARI_LISTEN_PROXY_MODE": "true"}
+	base := map[string]string{"KAZARI_BASE_DOMAIN": "art.kazari.test", "KAZARI_DATA_DIR": t.TempDir(), "KAZARI_LISTEN_PROXY_MODE": "true"}
 	withEnv := func(k, v string) Config {
 		t.Helper()
 		m := map[string]string{k: v}
@@ -1020,10 +1077,10 @@ func TestAdminPublicURLEnv(t *testing.T) {
 	if c := withEnv("KAZARI_ADMIN_PUBLIC_URL", "http://localhost:9443"); c.Admin.PublicURL != "http://localhost:9443" || c.AdminURL() != "http://localhost:9443" {
 		t.Errorf("KAZARI_ADMIN_PUBLIC_URL: admin.public_url = %q", c.Admin.PublicURL)
 	}
-	if c := withEnv("KAZARI_ADMIN_URL", "http://127.0.0.1:1"); c.Admin.PublicURL != "" || c.AdminURL() != "https://admin.art.example.com" {
+	if c := withEnv("KAZARI_ADMIN_URL", "http://127.0.0.1:1"); c.Admin.PublicURL != "" || c.AdminURL() != "https://admin.art.kazari.test" {
 		t.Errorf("KAZARI_ADMIN_URL moved admin.public_url to %q", c.Admin.PublicURL)
 	}
-	path := writeYAML(t, "base_domain: art.example.com\ndata_dir: /srv/k\nadmin:\n  url: http://localhost:9443\n")
+	path := writeYAML(t, "base_domain: art.kazari.test\ndata_dir: /srv/k\nadmin:\n  url: http://localhost:9443\n")
 	if _, err := LoadWith(path, env(nil)); err == nil || !strings.Contains(err.Error(), "admin.url") {
 		t.Errorf("the key admin.url: err = %v, want it refused as unknown", err)
 	}
@@ -1037,7 +1094,7 @@ func TestDashboardOffOnPlainHTTP(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if c.AdminURL() != "http://admin.art.example.com" || c.DashboardEnabled() {
+	if c.AdminURL() != "http://admin.art.kazari.test" || c.DashboardEnabled() {
 		t.Errorf("AdminURL() = %q, DashboardEnabled() = %v; want the dashboard off at a plain-http address that is not loopback",
 			c.AdminURL(), c.DashboardEnabled())
 	}

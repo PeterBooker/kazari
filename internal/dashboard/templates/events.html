@@ -1,11 +1,11 @@
-{{/* "events" renders a list of audit events ([]audit.Event) as a table: when, what happened in a
-     sentence that links its person and its page, and the raw action beside it. People, Pages and the
-     Overview all show activity with it. "event" is one event's sentence alone. */}}
+{{/* "events" renders a list of audit events ([]audit.Event) as a table: when, and what happened in a
+     sentence that links its person and its page. The raw action is left to the CSV export. People,
+     Pages and the Overview all show activity with it. "event" is one event's sentence alone. */}}
 {{define "event"}}{{range describe .}}{{if .Href}}<a href="{{.Href}}"{{if .Mono}} class="mono"{{end}}>{{.Text}}</a>{{else if .Mono}}<span class="mono">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{end}}
 
 {{define "events"}}{{if .}}<table class="table">
-<thead><tr><th>When</th><th>What happened</th><th>Action</th></tr></thead>
+<thead><tr><th>When</th><th>What happened</th></tr></thead>
 <tbody>
-{{range .}}<tr><td data-label="When" class="nowrap">{{when .At}}</td><td data-label="What happened">{{template "event" .}}</td><td data-label="Action"><span class="mono soft">{{.Action}}</span></td></tr>
+{{range .}}<tr data-action="{{.Action}}"><td data-label="When" class="nowrap">{{when .At}}</td><td data-label="What happened">{{template "event" .}}</td></tr>
 {{end}}</tbody>
 </table>{{else}}<p class="soft">Nothing has been recorded here yet.</p>{{end}}{{end}}

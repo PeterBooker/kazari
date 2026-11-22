@@ -115,6 +115,9 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		ClientState:   q.Get("state"),
 		ExpiresAt:     s.now().Add(s.opts.RequestTTL),
 	}
+	if s.idp != nil && s.idpUnavailable(w, r) {
+		return
+	}
 	var verifier string
 	if s.idp != nil {
 		verifier = oauth2.GenerateVerifier()
@@ -225,7 +228,9 @@ func (s *Service) serveConsentPage(w http.ResponseWriter, r *http.Request) {
 		case s.passwords == nil || (s.keys != nil && r.URL.Query().Get("with") == withKey):
 			s.renderConsent(w, http.StatusOK, c, req, "", req.Scopes, "")
 		default:
-			s.renderSignIn(w, http.StatusOK, s.requestForm(ctx, req), false, "")
+			page := s.requestForm(ctx, req)
+			prefill(&page, r.URL.Query())
+			s.renderSignIn(w, http.StatusOK, page, false, "")
 		}
 		return
 	}
