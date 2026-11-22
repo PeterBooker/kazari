@@ -231,16 +231,13 @@ func (c *Client) notKazari(status string) string {
 	if err != nil || u.Host == "" {
 		return msg
 	}
+	// Another host of the instance names the base; a page's host or the
+	// apex cannot be told apart from here.
 	first, rest, _ := strings.Cut(u.Host, ".")
-	switch {
-	case first == c.host:
+	if first == c.host || rest == "" || (first != "api" && first != "mcp" && first != "admin") {
 		return msg
-	case (first == "api" || first == "mcp" || first == "admin") && rest != "":
-		u.Host = c.host + "." + rest
-	default:
-		u.Host = c.host + "." + u.Host
 	}
-	u.Scheme = "https"
+	u.Host = c.host + "." + rest
 	return msg + "; try --url " + u.String()
 }
 

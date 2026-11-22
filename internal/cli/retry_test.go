@@ -157,3 +157,22 @@ func TestRunTimeout(t *testing.T) {
 		t.Errorf("http client: timeout %v, transport %T; want 90s and a 60s header timeout", hc.Timeout, hc.Transport)
 	}
 }
+
+func TestNotKazari(t *testing.T) {
+	tests := []struct {
+		base, host, want string
+	}{
+		{"https://mcp.art.test", "api", "; try --url https://api.art.test"},
+		{"http://admin.kazari.localhost:8080", "api", "; try --url http://api.kazari.localhost:8080"},
+		{"https://api.art.test", "admin", "; try --url https://admin.art.test"},
+		{"https://art.test", "api", "https://api.<base>"},
+		{"https://hello.art.test", "api", "https://api.<base>"},
+		{"https://api.art.test", "api", "https://api.<base>"},
+	}
+	for _, tt := range tests {
+		c := &Client{base: tt.base, host: tt.host}
+		if got := c.notKazari("404 Not Found"); !strings.HasSuffix(got, tt.want) {
+			t.Errorf("notKazari for %s on %s = %q, want it to end %q", tt.host, tt.base, got, tt.want)
+		}
+	}
+}

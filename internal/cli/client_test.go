@@ -487,9 +487,9 @@ func TestClientErrors(t *testing.T) {
 		{"empty", 503, "", HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "HTTP 503 Service Unavailable from {url}"}}},
 		{"json without code", 400, `{"oops":1}`, HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `HTTP 400 Bad Request from {url}: {"oops":1}`}}},
 		{"html page", 500, "<!doctype html><title>oops</title>\n<p>broken</p>", HTTPError{Status: 500, Err: api.Error{Code: "http_500",
-			Message: "{url} answered HTTP 500 Internal Server Error, which is not the Kazari API; it is usually https://api.<base>; try --url https://api.{host}"}}},
+			Message: "{url} answered HTTP 500 Internal Server Error, which is not the Kazari API; it is usually https://api.<base>"}}},
 		{"no such route", 404, "404 page not found\n", HTTPError{Status: 404, Err: api.Error{Code: "http_404",
-			Message: "{url} answered HTTP 404 Not Found, which is not the Kazari API; it is usually https://api.<base>; try --url https://api.{host}"}}},
+			Message: "{url} answered HTTP 404 Not Found, which is not the Kazari API; it is usually https://api.<base>"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

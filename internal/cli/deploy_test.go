@@ -257,8 +257,18 @@ func TestRunURLForms(t *testing.T) {
 	if diff := cmp.Diff([]string{"GET /v1/me", "GET /v1/me", "GET /v1/me"}, f.seen); diff != "" {
 		t.Errorf("requests (-want +got):\n%s", diff)
 	}
-	if got, _ := normalizeURL(host); got != "https://"+host {
-		t.Errorf("normalizeURL(%q) = %q, want https:// added", host, got)
+	if r := runCLI(t, nil, "--url", host, "--token", "t", "me"); r.code != 0 {
+		t.Errorf("--url %s, a local host without a scheme: %+v", host, r)
+	}
+	for in, want := range map[string]string{
+		"api.art.test":                    "https://api.art.test",
+		"api.art.test/v1/":                "https://api.art.test",
+		"api.kazari.localhost:8080/v1":    "http://api.kazari.localhost:8080",
+		"HTTPS://api.art.test:8443/v1/v1": "https://api.art.test:8443",
+	} {
+		if got, err := normalizeURL(in); got != want || err != nil {
+			t.Errorf("normalizeURL(%q) = %q, %v; want %q", in, got, err, want)
+		}
 	}
 }
 

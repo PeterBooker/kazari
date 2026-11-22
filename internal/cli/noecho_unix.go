@@ -9,6 +9,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// isTerminal is true for a terminal, and false for /dev/null, which is a
+// character device too.
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(f.Fd()), ioctlGetTermios)
+	return err == nil
+}
+
 // withoutEcho runs read with the terminal's echo off, and as it was when
 // r is not a terminal that allows that.
 func withoutEcho(r io.Reader, read func() error) error {

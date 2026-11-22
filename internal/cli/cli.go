@@ -195,15 +195,6 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
-}
-
 // httpClient gives up on a server that accepts no connection within 10s or
 // sends no response header within 60s; --timeout bounds the whole request,
 // upload included.
@@ -445,14 +436,19 @@ func (r *runner) settings() (settings, error) {
 }
 
 // normalizeURL takes an API URL as people write it: without a scheme, which
-// means https, and with a trailing / or /v1, which the client adds itself.
+// means https, or http for this machine, and with a trailing / or /v1, which
+// the client adds itself.
 func normalizeURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil
 	}
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		scheme := "https://"
+		if u, err := url.Parse("http://" + raw); err == nil && localHost(u.Hostname()) {
+			scheme = "http://"
+		}
+		raw = scheme + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
