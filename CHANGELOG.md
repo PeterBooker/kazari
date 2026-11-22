@@ -4,6 +4,60 @@ What changed in each release of Kazari, newest first. Each release lists what is
 
 Versions follow [semantic versioning](https://semver.org/). Until 1.0.0, a minor release can change behaviour, and the upgrade notes say how.
 
+## 0.8.0
+
+Released 2026-11-22.
+
+Pages can now be reviewed before they go live, and old versions can be deleted to free quota. Publishing says when a page will not render as intended, members manage their own pages from the account page, and the CLI gains `kazari deploy`, `kazari login` and exit codes for scripts. Running an instance gets stricter checks at start and a server that no longer waits on its identity provider.
+
+### Upgrading
+
+Most of what changes for an instance is in [Upgrading to 0.8](docs/ops.md#upgrading-to-08):
+
+- **Listener addresses are `host:port`.** A bare port such as `8080` in `listen.http`, `listen.https` or `admin.listen` fails validation; write `127.0.0.1:8080` or `:8080`.
+- **Placeholder domains stop the server.** A `base_domain` or `tls.email` under `example.com`, `example.org` or `example.net` fails validation, and `tls.email` is optional.
+- **One server per data directory.** A second server on the same `data_dir` stops with `another kazari (pid N) is using <data_dir>`.
+- **The identity provider no longer stops the start.** Sign-in answers "temporarily unavailable" until the new `oidc-discovery` job reaches it, and `admin_emails` makes its addresses admins whatever `allowed_domains` says ([provisioning policy](docs/identity.md#provisioning-policy)).
+- **A change after a rollback names its base.** While an earlier version than the latest is published, `update_artifact`, `edit_file`, `PUT /v1/artifacts/{slug}` and the edit route fail with `published_not_latest` unless they set `base_version`, and `kazari update`, `deploy` and `edit` need `--base` ([after a rollback](docs/api.md#after-a-rollback)). The same holds while a version is staged.
+- **`kazari.csp` adds sources to the instance policy** instead of replacing it, directive by directive, and refuses `*` and bare schemes such as `https:` ([per-artifact CSP](docs/configuration.md#per-artifact-csp)). Check the pages that set it.
+- **CLI exit codes tell failures apart**: `2` for usage, `3` not found, `4` conflict, `5` rate limited, `6` not signed in or not allowed, and `1` for anything else ([exit codes](docs/cli.md#exit-codes)).
+- **The first start runs four migrations.** One records the uploader of every stored file, so on an instance with many versions it takes longer than usual.
+
+### New
+
+- **Staged versions.** `stage: true` on `update_artifact`, `edit_file` and `PUT /v1/artifacts/{slug}`, or `--stage` on `kazari update`, `deploy` and `edit`, adds a version without publishing it. Its version address opens only for people signed in to the instance, never through a share link, until `publish_version` or `kazari rollback` makes it live ([staging a version](docs/api.md#staging-a-version)).
+- **Deleting versions.** `DELETE /v1/artifacts/{slug}/versions/{n}`, `POST /v1/artifacts/{slug}/versions/prune` with `keep` and `dry_run`, `kazari versions rm|prune` and **Delete this version** on the dashboard free the quota old versions take. The published and the latest version always stay, and a prune keeps staged versions newer than the published one. A page's `kazari.keep_versions` metadata has every sweep prune it ([versions](docs/cli.md#versions)). Deleting versions of another member's page, or setting the key on it, needs `artifacts:delete`.
+- **Warnings after a publish**: a missing root `index.html`, files a page or stylesheet refers to that are not in the version, and origins the page's Content-Security-Policy blocks.
+- **`kazari deploy`** makes an artifact match a directory, creating it the first time and deleting files gone from the directory after that, with `--dry-run` and a `.kazariignore`. `kazari publish` takes a single file, and bundles may be zip or tar.gz.
+- **`kazari login` and `kazari logout`** keep the API address and a key in the client configuration.
+- **Edits to several files in one version**: `update_artifact` takes `edits` per file, as `edit_file` does for one.
+- **Members manage their own pages** at `/account/pages/{slug}` on the apex: visibility, share links, versions and taking a page offline. The account page shows the address to connect an agent.
+- **`kazari admin restore-backup`** restores a backup into a stopped instance, and `kazari admin backup -` streams one as tar.
+- **Configuration sources**: `kazari admin settings`, `GET /v1/settings/sources` and `kazari check` say where each value that is not a default was set.
+- **`kazari.env` beside the configuration file** is read by `serve`, `check` and `admin`, as `/etc/kazari/kazari.env` beside `/etc/kazari/kazari.yaml`.
+- **One file through an archive URL**: `archive_path` in `POST /v1/uploads` and `begin_upload` sends a single file to `archive_url` without zipping it.
+- **Creating on the first deploy**: `PUT /v1/artifacts/{slug}?create=true` creates a missing artifact, and `mirror` deletes the files the request does not carry. `GET /v1/artifacts/{slug}` sends an `ETag` with the latest version number.
+- OAuth responses to a client's redirect URI carry `iss`, and the server metadata advertises `authorization_response_iss_parameter_supported`.
+- The changelog is published at `/docs/changelog/`, ships in the archives and packages, and is linked from the dashboard.
+
+### Changed
+
+- **A publish whose files match the latest version adds no version**, and says `unchanged`. A version added without a label gets one listing what changed, and a page created without a name takes its `<title>`.
+- **The default `serve.csp` allows stylesheets and fonts from cdnjs, jsDelivr and unpkg**, as it already allowed their scripts.
+- **The MCP tool list follows the credential's scopes**: a read-only key sees no write tools. The tool descriptions are shorter, `read_file` names the version it read, and arguments in common wrong shapes are read as meant.
+- **MCP lists, discovery and resources are cached privately**: `cacheScope` is `private`, with `ttlMs` of five minutes, and zero for an artifact's record and files.
+- **Durations accept weeks and days** (`2w`, `3d`) everywhere, including `kazari admin audit --since` and `--until`, and sizes in errors are written in units such as `25 MiB`. A file over the size limit is named with its own size when it is known up front.
+- **A change to a page in the bin** says how to restore it, to the people who could restore it.
+- **The CLI retries** after `429` and `503` as `Retry-After` says, up to twice, and `--timeout` limits a request.
+- **The systemd unit keeps restarting** through a long outage, ten seconds apart.
+- `kazari admin … --help` leaves out the flags of the user API.
+
+### Fixed
+
+- An upload given to a publishing call that fails stays open, so the call can be sent again with the same `upload_id`.
+- The restore and upgrade steps in the operations guide work as written, including a backup without certificates.
+- A forgotten password set with a recovery code returns to the sign-in that asked for it.
+
 ## 0.7.0
 
 Released 2026-11-22.
