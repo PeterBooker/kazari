@@ -305,7 +305,7 @@ Returns a URL that opens a `members` artifact without signing in. The link works
 
 The result holds the `url`, the link's `prefix`, `label` and `expires_at`, and the artifact's `slug` and `visibility`. With `version`, it adds `version_url`, the same link on that version's address. The URLs are returned only this once. `list_share_links` shows the links without their URLs.
 
-With `password`, 8 to 256 characters, the page asks for it before it opens, and the result has `password: true`. The agent tells the user to send the password apart from the link.
+With `password`, 12 to 256 characters (a passphrase of a few words is best), the page asks for it before it opens, and the result has `password: true`. The agent tells the user to send the password apart from the link.
 
 ### Results
 

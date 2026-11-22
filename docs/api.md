@@ -680,7 +680,7 @@ The body is optional. To name the link and set how long it lasts, send `label` a
 
 `expires_in` is a duration such as `72h`, `14d` or `2w`. It defaults to 7 days, and can be at most `serve.share_link_max_ttl`, which is 90 days by default. `label` follows the version label rules.
 
-To have the link ask for a password before it opens the page, add `password`, 8 to 256 characters:
+To have the link ask for a password before it opens the page, add `password`, 12 to 256 characters. A passphrase of a few words is easier to pass on and harder to guess than a short password:
 
 ```json
 { "label": "Acme review", "expires_in": "14d", "password": "correct horse battery" }
@@ -703,7 +703,7 @@ The response is the only time the link's URL, which holds its token, is returned
 
 The token is `kzs_<8-character prefix>_<52-character secret>`, and only its SHA-256 is stored. Opening the URL stores the token in a cookie on that host and redirects to `/`, so the token leaves the address bar.
 
-A link with a password opens a form on the artifact host instead. The right password sets the cookie and redirects to `/`, and a wrong one shows the form again. After a few wrong passwords, each further try for the link waits longer, up to a minute, and a try that comes too soon answers `429` with `Retry-After`.
+A link with a password moves the token into a cookie that lasts ten minutes and redirects (`303`) to `/.kazari/share` with no query, where a form asks for the password. The right password sets the view cookie and redirects to `/`, and a wrong one shows the form again. Wrong passwords make the next try from the same address wait, up to a minute, and a try that comes too soon answers `429` with `Retry-After` ([share links](identity.md#share-links) says more). A busy server answers `503` with `Retry-After`.
 
 #### List share links: `GET /artifacts/{slug}/share-links`
 

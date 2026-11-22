@@ -429,7 +429,7 @@ These describe MCP and what agents do:
 | `kazari_artifact_edits_total`            | counter   | `kazari_edit_kind` (`text`, `anchor`), `kazari_edit_match` (`exact`, `trailing_whitespace`, `indentation`, `anchor`) |
 | `kazari_artifact_edit_retries_total`     | counter   | None: edits applied again after a concurrent publish                                                     |
 | `kazari_artifact_imports_total`          | counter   | `error_type`                                                                                             |
-| `kazari_share_link_operations_total`     | counter   | `kazari_share_link_operation` (`create`, `revoke`, `open`, `unlock`), `error_type`                                 |
+| `kazari_share_link_operations_total`     | counter   | `kazari_share_link_operation` (`create`, `revoke`, `open`, `unlock`), `error_type`                       |
 | `kazari_upload_chunks_total`             | counter   | `error_type`                                                                                             |
 | `kazari_fetch_duration_seconds`          | histogram | `kazari_fetch_purpose` (`file`, `import`, `cimd`, `oidc`, `update`), `error_type` (a status code, `refused`, `timeout`, `too_large`) |
 | `kazari_blob_writes_total`               | counter   | `kazari_blob_existing` (`true`, `false`): whether the content was already stored                         |
