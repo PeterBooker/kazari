@@ -33,7 +33,7 @@ func TestTelemetryDefaults(t *testing.T) {
 }
 
 func TestTelemetryYAML(t *testing.T) {
-	path := writeYAML(t, `base_domain: art.example.com
+	path := writeYAML(t, `base_domain: art.kazari.test
 data_dir: /d
 tls:
   mode: self-signed
@@ -98,7 +98,7 @@ func TestTelemetryEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			vars := map[string]string{
-				"KAZARI_BASE_DOMAIN":                        "art.example.com",
+				"KAZARI_BASE_DOMAIN":                        "art.kazari.test",
 				"KAZARI_DATA_DIR":                           "/d",
 				"KAZARI_TLS_MODE":                           "self-signed",
 				"KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO": "0.25",

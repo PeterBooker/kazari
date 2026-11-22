@@ -4,14 +4,14 @@
 #
 # Secrets stay out of this file. ${NAME} is replaced by the environment
 # variable NAME, read from the process environment or from the dotenv file
-# (/etc/kazari/kazari.env under systemd, .env beside compose.yml). Any key
-# can also be set as KAZARI_<SECTION>_<KEY>, such as KAZARI_BASE_DOMAIN.
+# (kazari.env beside this file, .env beside compose.yml), or from the file
+# NAME_FILE names. Any key can also be set as KAZARI_<SECTION>_<KEY>, such
+# as KAZARI_BASE_DOMAIN. The data lives in /var/lib/kazari (data_dir).
 
-base_domain: art.example.com          # pages are served at <slug>.art.example.com
-data_dir: /var/lib/kazari
+base_domain: art.example.com          # pages are served at <slug>.art.example.com; replace it
 
 tls:
-  email: ops@example.com              # Let's Encrypt account contact
+  # email: you@your-domain            # optional Let's Encrypt account contact
   # cloudflare, route53, hetzner, digitalocean, gandi, ovh, namecheap or
   # duckdns; its credential goes in the dotenv file. Other providers:
   # https://kazari.io/docs/certificates/
