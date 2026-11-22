@@ -238,9 +238,13 @@ type inputRequired struct{ requests mcp.InputRequestMap }
 
 func (*inputRequired) Error() string { return "mcpserver: input required" }
 
-// register adds a tool limited to principals holding scope. Its text content is
+// register adds a tool when p holds scope: a tool the credential cannot use
+// would only cost the model tokens and a failed call. Its text content is
 // the summary line followed by the result's JSON.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
+	if !p.HasScope(scope) {
+		return
+	}
 	t.Description = b.text.tools[t.Name]
 	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out

@@ -69,8 +69,8 @@ func TestShareLinkTools(t *testing.T) {
 
 	// Creating a link is a write.
 	ro := e.connect(t, readOnly)
-	if msg := fails(t, ro, "create_share_link", map[string]any{"slug": "team"}); !strings.Contains(msg, "forbidden") {
-		t.Fatalf("read-only create: %q", msg)
+	if offered(t, ro, "create_share_link") {
+		t.Fatalf("create_share_link is offered to a reader")
 	}
 }
 

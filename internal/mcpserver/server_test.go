@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
@@ -210,6 +211,16 @@ func readBody(res *mcp.CallToolResult) string {
 		return ""
 	}
 	return tc.Text
+}
+
+// offered reports whether the server lists the tool name.
+func offered(t *testing.T, cs *mcp.ClientSession, name string) bool {
+	t.Helper()
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.ContainsFunc(res.Tools, func(tool *mcp.Tool) bool { return tool.Name == name })
 }
 
 func firstLine(res *mcp.CallToolResult) string {
@@ -473,17 +484,22 @@ func TestToolErrors(t *testing.T) {
 	}
 }
 
+// A credential is offered only the tools its scopes allow.
 func TestReadOnlyPrincipal(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, readOnly)
-	msg := fails(t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "x", "description": "x",
-		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
-	if first, next, _ := strings.Cut(msg, "\n"); first != `forbidden: scope "artifacts:write" required` ||
-		!strings.HasPrefix(next, "Next step: Retrying the same call will not help.") {
-		t.Errorf("create as reader = %q", msg)
+	res, err := cs.ListTools(e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !strings.Contains(msg, `scope "artifacts:delete" required`) {
-		t.Errorf("delete as reader = %q", msg)
+	var got []string
+	for _, tool := range res.Tools {
+		got = append(got, tool.Name)
+	}
+	slices.Sort(got)
+	want := []string{"get_artifact", "get_guide", "list_artifacts", "list_share_links", "read_file"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("tools offered to a reader (-want +got):\n%s", diff)
 	}
 	if msg := fails(t, cs, "get_artifact", map[string]any{"slug": "demo"}); !strings.HasPrefix(msg, "not_found: ") {
 		t.Errorf("get as reader = %q", msg)
@@ -755,8 +771,8 @@ func TestDiscardUpload(t *testing.T) {
 	if msg := fails(t, cs, "discard_upload", map[string]any{"upload_id": "missing"}); !strings.HasPrefix(msg, "upload_not_found: ") {
 		t.Errorf("discard of an unknown upload = %q", msg)
 	}
-	if msg := fails(t, e.connect(t, readOnly), "discard_upload", map[string]any{"upload_id": ids[1]}); !strings.Contains(msg, `scope "artifacts:write" required`) {
-		t.Errorf("discard as reader = %q", msg)
+	if offered(t, e.connect(t, readOnly), "discard_upload") {
+		t.Errorf("discard_upload is offered to a reader")
 	}
 }
 

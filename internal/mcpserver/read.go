@@ -90,6 +90,9 @@ func (b *builder) readInline(ctx context.Context, actor artifact.Actor, slug, pa
 }
 
 func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Actor) {
+	if !p.HasScope(auth.ScopeRead) {
+		return
+	}
 	t := &mcp.Tool{
 		Name:        "read_file",
 		Description: b.text.tools["read_file"],

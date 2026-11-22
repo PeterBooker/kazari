@@ -38,7 +38,7 @@ claude mcp add --transport http kazari https://mcp.art.example.com/ \
 
 An administrator issues the key with [`kazari admin keys issue`](cli.md#admin-commands) or in the [dashboard](dashboard.md#issuing-and-revoking-keys). A person issues their own on their [account page](identity.md#the-account-page), and one who holds a key issues further ones with [`kazari keys issue`](cli.md#keys). The secret is shown once.
 
-A key carries scopes, which decide the tools it can call:
+A key carries scopes, which decide the tools it can call. The server lists only those tools, so an agent never learns of one by calling it:
 
 | Scope              | Tools                                                    |
 | ------------------ | -------------------------------------------------------- |
