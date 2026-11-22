@@ -30,17 +30,18 @@ func TestMetadata(t *testing.T) {
 		want map[string]any
 	}{
 		{"/.well-known/oauth-authorization-server", map[string]any{
-			"issuer":                                e.srv.URL,
-			"authorization_endpoint":                e.srv.URL + "/oauth/authorize",
-			"token_endpoint":                        e.srv.URL + "/oauth/token",
-			"registration_endpoint":                 e.srv.URL + "/oauth/register",
-			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
-			"response_types_supported":              []any{"code"},
-			"response_modes_supported":              []any{"query"},
-			"grant_types_supported":                 []any{"authorization_code", "refresh_token"},
-			"token_endpoint_auth_methods_supported": []any{"none"},
-			"code_challenge_methods_supported":      []any{"S256"},
-			"client_id_metadata_document_supported": true,
+			"issuer":                                         e.srv.URL,
+			"authorization_endpoint":                         e.srv.URL + "/oauth/authorize",
+			"token_endpoint":                                 e.srv.URL + "/oauth/token",
+			"registration_endpoint":                          e.srv.URL + "/oauth/register",
+			"scopes_supported":                               []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
+			"response_types_supported":                       []any{"code"},
+			"response_modes_supported":                       []any{"query"},
+			"grant_types_supported":                          []any{"authorization_code", "refresh_token"},
+			"token_endpoint_auth_methods_supported":          []any{"none"},
+			"code_challenge_methods_supported":               []any{"S256"},
+			"client_id_metadata_document_supported":          true,
+			"authorization_response_iss_parameter_supported": true,
 		}},
 		{"/.well-known/oauth-protected-resource", map[string]any{
 			"resource":                 e.srv.URL + "/",
@@ -495,8 +496,8 @@ func TestDeny(t *testing.T) {
 	e.signIn(authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")))
 	resp, _ := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"deny"}})
 	q := location(t, resp).Query()
-	if q.Get("error") != "access_denied" || q.Get("state") != "client-state" || q.Get("code") != "" {
-		t.Errorf("deny redirect query = %v", q)
+	if q.Get("error") != "access_denied" || q.Get("state") != "client-state" || q.Get("code") != "" || q.Get("iss") != e.srv.URL {
+		t.Errorf("deny redirect query = %v, want access_denied, client-state and iss %s", q, e.srv.URL)
 	}
 	if len(e.rec.actions(oauth.ActionGrant)) != 0 {
 		t.Error("deny recorded a grant")

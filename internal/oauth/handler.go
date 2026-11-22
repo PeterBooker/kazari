@@ -82,6 +82,7 @@ type authServerMeta struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
 	ClientIDMetadataDocumentSupported bool     `json:"client_id_metadata_document_supported"`
+	AuthorizationResponseISSSupported bool     `json:"authorization_response_iss_parameter_supported"`
 }
 
 func (s *Service) serveAuthServerMeta(w http.ResponseWriter, _ *http.Request) {
@@ -97,6 +98,7 @@ func (s *Service) serveAuthServerMeta(w http.ResponseWriter, _ *http.Request) {
 		TokenEndpointAuthMethodsSupported: []string{"none"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		ClientIDMetadataDocumentSupported: true,
+		AuthorizationResponseISSSupported: true,
 	})
 }
 

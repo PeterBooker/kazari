@@ -298,8 +298,8 @@ func (s *Service) checkResource(param string) (string, bool) {
 
 // redirectError sends an RFC 6749 section 4.1.2.1 error to the client. Only
 // a decision made on the consent page may end here; see invalidRequest.
-func redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
-	v := url.Values{"error": {code}}
+func (s *Service) redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
+	v := url.Values{"error": {code}, "iss": {s.opts.Issuer}}
 	if desc != "" {
 		v.Set("error_description", desc)
 	}
@@ -523,7 +523,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	case "deny":
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
-		redirectError(w, r, req.RedirectURI, req.ClientState, "access_denied", "the user denied the request")
+		s.redirectError(w, r, req.RedirectURI, req.ClientState, "access_denied", "the user denied the request")
 		return
 	case "approve":
 	default:
@@ -538,7 +538,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	if len(a.scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
 		s.clearCookie(w)
-		redirectError(w, r, req.RedirectURI, req.ClientState, "invalid_scope", "none of the requested scopes is available to this account")
+		s.redirectError(w, r, req.RedirectURI, req.ClientState, "invalid_scope", "none of the requested scopes is available to this account")
 		return
 	}
 
@@ -568,7 +568,9 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		details["key_prefix"] = a.keyPrefix
 	}
 	s.record(ctx, a.handle, ActionGrant, a.handle, details)
-	v := url.Values{"code": {code}}
+	// RFC 9207: a client talking to several servers checks iss, so a response
+	// from another server cannot be passed off as this one's.
+	v := url.Values{"code": {code}, "iss": {s.opts.Issuer}}
 	if req.ClientState != "" {
 		v.Set("state", req.ClientState)
 	}

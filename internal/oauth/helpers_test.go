@@ -405,6 +405,9 @@ func (e *env) approveWith(header http.Header, extra url.Values) string {
 	if errCode := loc.Query().Get("error"); errCode != "" {
 		e.t.Fatalf("consent redirected with error %s: %s", errCode, loc.Query().Get("error_description"))
 	}
+	if iss := loc.Query().Get("iss"); iss != e.srv.URL {
+		e.t.Errorf("consent redirect iss = %q, want the issuer %q", iss, e.srv.URL)
+	}
 	return loc.Query().Get("code")
 }
 

@@ -44,7 +44,7 @@ MCP client ──1──▶ mcp.<base>/            401 + resource_metadata
 3. The browser goes to `/oauth/authorize` with PKCE (S256 only). Kazari checks the client, the redirect URI, the scopes and the `resource`, refuses a `state` over 1 KiB, and stores the request. It sets a short-lived cookie and redirects to the IdP with its own `state`, `nonce` and PKCE pair.
 4. The person signs in at the IdP, which returns to **`https://mcp.<base>/oauth/callback`**. This is the redirect URI to register at the IdP.
 5. Kazari redeems the code and verifies the ID token: signature against the IdP's keys, issuer, audience, expiry and nonce. It then maps the person to a Kazari user by the [provisioning policy](#provisioning-policy).
-6. A consent page names the client, the account and the scopes. **Approve** issues a single-use code that lasts five minutes; **Deny** returns `access_denied` to the client.
+6. A consent page names the client, the account and the scopes. **Approve** issues a single-use code that lasts five minutes; **Deny** returns `access_denied` to the client. Either redirect carries `iss`, the issuer, so a client that talks to several servers can tell which one answered (RFC 9207). The server metadata advertises `authorization_response_iss_parameter_supported: true`.
 7. The client exchanges the code at `/oauth/token` and receives an access token and a refresh token.
 
 #### The sign-in cookie
