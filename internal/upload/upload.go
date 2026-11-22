@@ -26,9 +26,9 @@ type Upload struct {
 // exactly SHA256 and Bytes, so a leaked URL stages nothing but bytes the
 // owner already has.
 type Archive struct {
-	TokenHash  string // hex SHA-256 of the token
-	SHA256     string // hex, lower case
-	Bytes      int64
+	TokenHash string // hex SHA-256 of the token
+	SHA256    string // hex, lower case
+	Bytes     int64
 	// Path, when set, is where the body is staged as one file, whatever it
 	// holds; otherwise the body is a zip or a gzip-compressed tar.
 	Path       string
