@@ -346,12 +346,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (WriteResult, string, error) {
-			// Before the upload is opened, which a refused call would consume.
 			if err := present.RequireShare(p, in.Visibility); err != nil {
 				return WriteResult{}, "", err
 			}
-			files, cleanup, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
-			defer cleanup()
+			files, done, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -364,6 +362,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Label:       in.Label,
 				Files:       files,
 			})
+			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -378,14 +377,12 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
-			// Before the upload is opened, which a refused call would consume.
 			if in.Visibility != nil {
 				if err := present.RequireShare(p, *in.Visibility); err != nil {
 					return WriteResult{}, "", err
 				}
 			}
-			files, cleanup, err := b.files(ctx, p, in.UploadID, in.Files)
-			defer cleanup()
+			files, done, err := b.files(ctx, p, in.UploadID, in.Files)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -407,6 +404,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				req.Visibility = &v
 			}
 			a, v, err := arts.Update(ctx, actor, req)
+			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -737,33 +735,35 @@ func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string,
 }
 
 // files merges the inline files with uploadID's staged ones, inline winning on a
-// path clash. The cleanup removes the upload; it is never nil and must be called
-// even on error, so a failed call still consumes the upload.
-func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(), error) {
-	cleanup := func() {}
+// path clash. Call done once the publish has succeeded or failed: it removes
+// the downloads, and the upload only when consumed, so a refused call can be
+// corrected and sent again with the same upload_id.
+func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(consumed bool), error) {
+	release := func(bool) error { return nil }
 	var staged []artifact.FileInput
 	if uploadID != "" {
-		files, done, err := b.d.Uploads.Files(ctx, p.Handle, uploadID)
+		files, r, err := b.d.Uploads.Files(ctx, p.Handle, uploadID)
 		if err != nil {
-			return nil, cleanup, err
+			return nil, nil, err
 		}
-		staged = files
-		cleanup = func() {
-			if err := done(); err != nil {
-				b.log.ErrorContext(ctx, "mcp upload cleanup failed", "upload", uploadID, "err", err)
-			}
-		}
+		staged, release = files, r
 	}
 	inline, closeDownloads, err := b.inlineFiles(ctx, raw)
 	if err != nil {
-		return nil, cleanup, err
+		b.release(ctx, uploadID, release, false)
+		return nil, nil, err
 	}
-	done := cleanup
-	cleanup = func() {
+	done := func(consumed bool) {
 		closeDownloads()
-		done()
+		b.release(ctx, uploadID, release, consumed)
 	}
-	return artifact.MergeFiles(inline, staged), cleanup, nil
+	return artifact.MergeFiles(inline, staged), done, nil
+}
+
+func (b *builder) release(ctx context.Context, uploadID string, release func(bool) error, consumed bool) {
+	if err := release(consumed); err != nil {
+		b.log.ErrorContext(ctx, "mcp upload cleanup failed", "upload", uploadID, "err", err)
+	}
 }
 
 func createFiles(in []FileInput) []UpdateFileInput {

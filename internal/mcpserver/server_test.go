@@ -544,26 +544,43 @@ func TestChunkedPublish(t *testing.T) {
 	}
 }
 
-func TestUploadCleanedUpOnFailure(t *testing.T) {
+// A refused publish keeps the upload, so the corrected call needs no new
+// staging; only a publish that succeeds consumes it.
+func TestUploadKeptOnRefusal(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "taken", "name": "x", "description": "x",
+		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "x"})
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "admin", "name": "x", "description": "x", "upload_id": up.UploadID}); !strings.HasPrefix(msg, "invalid_slug: ") {
-		t.Fatalf("create = %q", msg)
+	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "staged"})
+	refusals := []struct {
+		name string
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"invalid slug", "create_artifact", map[string]any{"slug": "Bad Slug"}, "invalid_slug: "},
+		{"slug taken", "create_artifact", map[string]any{"slug": "taken"}, "slug_taken: "},
+		{"bad metadata", "create_artifact", map[string]any{"slug": "fine", "metadata": map[string]any{"kazari.nope": "1"}}, "invalid_metadata: "},
+		{"bad inline file", "create_artifact", map[string]any{"slug": "fine",
+			"files": []map[string]any{{"path": "a.bin", "content": "!!", "encoding": "base64"}}}, "invalid_argument: "},
+		{"version conflict", "update_artifact", map[string]any{"slug": "taken", "expected_version": 7}, "version_conflict: "},
 	}
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x", "upload_id": up.UploadID}); !strings.HasPrefix(msg, "upload_not_found: ") {
-		t.Errorf("reuse after failure = %q", msg)
+	for _, r := range refusals {
+		args := map[string]any{"name": "x", "description": "x", "upload_id": up.UploadID}
+		for k, v := range r.args {
+			args[k] = v
+		}
+		if msg := fails(t, cs, r.tool, args); !strings.HasPrefix(msg, r.want) {
+			t.Errorf("%s: %s = %q, want prefix %q", r.name, r.tool, msg, r.want)
+		}
 	}
-
-	up, _ = ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "x"})
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x", "upload_id": up.UploadID,
-		"files": []map[string]any{{"path": "a.bin", "content": "!!", "encoding": "base64"}}}); !strings.HasPrefix(msg, "invalid_argument: ") {
-		t.Fatalf("create with bad inline file = %q", msg)
+	if _, res := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x",
+		"upload_id": up.UploadID}); !strings.HasPrefix(firstLine(res), "Published https://fine.art.test/") {
+		t.Errorf("create after the refusals = %q", firstLine(res))
 	}
-	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 1, "content": "y"}); !strings.HasPrefix(msg, "upload_not_found: ") {
-		t.Errorf("chunk after failed create = %q", msg)
+	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 6, "content": "y"}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("chunk after a publish = %q", msg)
 	}
 }
 

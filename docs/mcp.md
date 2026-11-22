@@ -376,7 +376,7 @@ Inline content is fine up to the inline guidance, which is 2 MiB by default for 
 2. Call `upload_chunk` for each chunk of each file, with `upload_id`, `path`, `offset`, `content` and `encoding` (`base64` for binary, `utf8` for text). The first chunk of a path has `offset: 0`, and each next one uses the `bytes_received` of the previous result.
 3. Call `create_artifact` or `update_artifact` with `upload_id`. Inline `files[]` in the same call are merged with the staged files and win on a path clash.
 
-The staging area is removed after the publishing call, whether it succeeded or failed. `discard_upload` removes an upload you no longer need, and unused uploads expire after their TTL. Each user may hold `limits.max_open_uploads` uploads open, 5 by default; beyond that `begin_upload` fails with `too_many_uploads`.
+Only a publishing call that succeeds removes the staging area. After an error, correct the call and send it again with the same `upload_id`. `discard_upload` removes an upload you no longer need, and unused uploads expire after their TTL. Each user may hold `limits.max_open_uploads` uploads open, 5 by default; beyond that `begin_upload` fails with `too_many_uploads`.
 
 ### Retrying a chunk
 
@@ -491,7 +491,7 @@ The codes are:
 | `too_large`, `too_many_files`, `quota_exceeded` | A file, imported page, version, chunk, upload or quota limit was hit. |
 | `upload_offset_mismatch` | Wrong chunk offset; the text carries `current=<n>`. |
 | `upload_digest_mismatch` | The body sent to `archive_url` is not the archive `begin_upload` was told about; the text counts the attempts left. |
-| `upload_not_found` | Unknown, expired, foreign or already consumed upload. |
+| `upload_not_found` | Unknown, expired, foreign, discarded or already published upload. |
 | `share_link_not_found` | The artifact has no share link with that prefix. |
 | `too_many_uploads` | Too many open uploads for this user; `discard_upload` frees one. |
 | `fetch_failed` | The server could not fetch a URL: the message names the address and what happened (a status, a non-public address, a timeout, a size over the limit). |

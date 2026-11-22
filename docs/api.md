@@ -659,7 +659,7 @@ The offset rules make retries safe:
 
 Pass `"upload_id"` to `POST /artifacts` or `PUT /artifacts/{slug}`. The same body can also carry inline `files`, for small files and `delete` entries.
 
-The staging area is deleted after the publish call **whether it succeeds or fails**, so after a failed publish, start a new upload.
+The staging area is deleted when the publish call succeeds. A refused call, such as `409 slug_taken` or `412 version_conflict`, keeps the upload, so correct the request and send it again with the same `upload_id`.
 
 #### Upload limits
 

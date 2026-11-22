@@ -102,7 +102,8 @@ func (t texts) skillText(o Options) string {
 			"(`wc -c < site.zip`), and send it with `curl --fail-with-body -T site.zip '<archive_url>'`: the URL needs no "+
 			"credential, accepts only that digest and is spent by the first body that matches; the archive may be at most "+
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
-			"call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you no longer need.",
+			"upload is consumed only when that call succeeds: after an error, correct the call and send it again with the same "+
+			"`upload_id`. `discard_upload` drops an upload you no longer need.",
 			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
 			"inline, `anchors: true` for anchor edits, `start_line` and `end_line` for only the lines you need of any text " +
@@ -343,7 +344,7 @@ func (t texts) nextSteps(o Options) map[string]string {
 			"Content above %s that is within them goes through begin_upload and upload_chunk.", size(o.InlineGuidanceBytes)),
 		api.CodeTooManyFiles:   "Bundle fewer files, for example by inlining small CSS and JavaScript into the HTML.",
 		api.CodeQuotaExceeded:  "The owner's storage quota is full. Tell the user: deleting old artifacts or a larger quota from an admin frees space.",
-		api.CodeUploadNotFound: "The upload expired or was used by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
+		api.CodeUploadNotFound: "The upload expired, was discarded or was published by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
 		api.CodeDigestMismatch: "The body sent to archive_url is not the archive begin_upload was told about: check its size " +
 			"(wc -c) and sha256sum, then send that file; once the attempts are used up, begin a new upload.",

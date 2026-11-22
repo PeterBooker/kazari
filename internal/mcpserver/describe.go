@@ -80,7 +80,8 @@ func newTexts(links present.Links, o Options) texts {
 		"\"utf8\" (default, for text) or \"base64\" (for binary). When any single file or all files together exceed %s, "+
 		"do not inline them: call begin_upload, stage the content (upload_chunk, or an archive sent to archive_url), "+
 		"then pass upload_id here. Inline files[] given in the same call are merged with the staged files and win on a "+
-		"path clash. The upload is consumed by this call whether it succeeds or fails.",
+		"path clash. Only a call that succeeds consumes the upload: after an error, fix the call and send it again with "+
+		"the same upload_id.",
 		size(o.InlineGuidanceBytes))
 
 	t.archive = fmt.Sprintf("With a shell: 1) From inside the page's directory, zip -r ../site.zip . (or tar czf "+
@@ -238,14 +239,14 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"bytes_received of the previous chunk, until the whole file is sent. 3) Call create_artifact or " +
 				"update_artifact with upload_id (plus any small inline files or delete entries).",
 			t.archive,
-			"The publishing call consumes the upload whether it succeeds or fails; begin a new upload to retry. " +
-				"discard_upload drops an upload you no longer need; unused ones expire at expires_at.",
+			"Only a publishing call that succeeds consumes the upload; after an error, correct the call and send it " +
+				"again with the same upload_id. discard_upload drops an upload you no longer need; unused ones expire at expires_at.",
 			t.chunks,
 		}, "\n\n"),
 
 		"discard_upload": "Discard an upload started with begin_upload that you no longer need, removing its staged " +
 			"files. Use it after changing your mind, or when begin_upload fails with too_many_uploads. An upload is " +
-			"also removed by the create_artifact or update_artifact call that consumes it, and expires at its " +
+			"also removed by the create_artifact or update_artifact call that publishes it, and expires at its " +
 			"expires_at on its own.",
 
 		"upload_chunk": strings.Join([]string{

@@ -259,8 +259,7 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 	if err != nil {
 		return err
 	}
-	defer done()
-	return h.create(w, r, p, artifact.CreateRequest{
+	err = h.create(w, r, p, artifact.CreateRequest{
 		Slug:        req.Slug,
 		Name:        req.Name,
 		Description: req.Description,
@@ -269,6 +268,8 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 		Label:       req.Label,
 		Files:       files,
 	})
+	done(err == nil)
+	return err
 }
 
 func (h *userAPI) createMultipart(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
@@ -388,8 +389,9 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	if err != nil {
 		return err
 	}
-	defer done()
-	return h.update(w, r, p, req, files)
+	err = h.update(w, r, p, req, files)
+	done(err == nil)
+	return err
 }
 
 func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
