@@ -568,7 +568,7 @@ func TestPersonKeyRules(t *testing.T) {
 		"admin for a member":   {url.Values{"scopes": {auth.ScopeAdmin}}, `<p class="error" id="key-scopes-err">`},
 		"no scope":             {url.Values{"label": {"empty"}}, "Tick at least one thing"},
 		"a pattern of its own": {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, `aria-describedby="key-slugs-help key-slugs-err" aria-invalid="true"`},
-		"the pattern's words":  {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, "Write each pattern as a slug, or a slug prefix ending in *"},
+		"the pattern's words":  {url.Values{"scopes": {auth.ScopeRead}, "slugs": {"Not A Slug!"}}, "Write each as the first part of a page"},
 		"days of words":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"soon"}}, `aria-describedby="key-days-help key-days-err" aria-invalid="true"`},
 		"too many days":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"3651"}}, "Enter a number of days from 1 to 3650"},
 	} {

@@ -251,7 +251,7 @@ func TestPageOwnPage(t *testing.T) {
 	if strings.Contains(r.body, `<option value="ana">`) {
 		t.Error("the page can be handed to its own owner")
 	}
-	if r := b.navigate("/pages/no-such-page"); r.StatusCode != http.StatusNotFound || !strings.Contains(r.body, "There is no page with that slug.") {
+	if r := b.navigate("/pages/no-such-page"); r.StatusCode != http.StatusNotFound || !strings.Contains(r.body, "There is no page at that address.") {
 		t.Errorf("an unknown slug: status %d: %s", r.StatusCode, r.body)
 	}
 
@@ -524,7 +524,7 @@ func TestPageRemoveForGood(t *testing.T) {
 	ctx := context.Background()
 	r := b.get("/pages/live-one/remove")
 	for _, want := range []string{
-		"This cannot be undone.", "for up to 90 days", "until the clean-up job", "live-one.art.test",
+		"This cannot be undone.", "for up to 90 days", "until the next clean-up", "live-one.art.test",
 		"no new page can take for those 90 days", "restoring it for 30 days", `name="slug"`, `class="btn btn-danger"`,
 	} {
 		if !strings.Contains(r.body, want) {
@@ -533,7 +533,7 @@ func TestPageRemoveForGood(t *testing.T) {
 	}
 	for _, typed := range []string{"", "live", "LIVE-ONE", "stale-one"} {
 		r := b.post("/pages/live-one/remove", url.Values{"slug": {typed}})
-		if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "That is not the slug of this page. Nothing was removed.") {
+		if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "That is not the address of this page. Nothing was removed.") {
 			t.Errorf("typed %q: status %d", typed, r.StatusCode)
 		}
 		if _, _, err := e.artifacts.Get(ctx, boss, "live-one"); err != nil {

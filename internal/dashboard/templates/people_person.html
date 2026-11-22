@@ -5,7 +5,7 @@
 <tbody>
 {{$handle := .Handle}}{{range .Keys}}<tr>
 <td data-label="Key"><span class="mono nowrap">{{.Name}}</span>{{with .Label}}<br><span class="soft">{{.}}</span>{{end}}</td>
-<td data-label="May"><span class="mono">{{join .Scopes " "}}</span><br>{{if .Slugs}}<span class="soft">on pages matching</span> <span class="mono">{{join .Slugs " "}}</span>{{else}}<span class="soft">on any page of theirs</span>{{end}}</td>
+<td data-label="May">{{scopeWords .Scopes}}<br>{{if .Slugs}}<span class="soft">on pages matching</span> <span class="mono">{{join .Slugs " "}}</span>{{else}}<span class="soft">on any page of theirs</span>{{end}}</td>
 <td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">a sign-in or an admin</span>{{end}}</td>
 <td data-label="Created">{{when .CreatedAt}}</td>
 <td data-label="Last used">{{if .LastUsedAt}}{{when .LastUsedAt}}{{else}}<span class="soft">never</span>{{end}}</td>
@@ -105,10 +105,10 @@
 <div class="field"><label for="key-label">Label <span class="optional">(optional)</span></label><input class="input" id="key-label" name="label" type="text" value="{{.Data.KeyForm.Label}}" autocomplete="off" aria-describedby="key-label-help">
 <p class="help" id="key-label-help">What the key is for, such as the name of the machine or the agent that holds it.</p></div>
 <fieldset class="fieldset"{{if $ke.scopes}} aria-describedby="key-scopes-err"{{end}}><legend>What the key may do</legend>
-{{range .Data.KeyForm.Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}{{if $ke.scopes}} aria-invalid="true"{{end}}><span>{{.Description}} <span class="mono soft">{{.Name}}</span></span></label>
+{{range .Data.KeyForm.Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}{{if $ke.scopes}} aria-invalid="true"{{end}}><span>{{.Description}}</span></label>
 {{end}}{{with $ke.scopes}}<p class="error" id="key-scopes-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</fieldset>
-<div class="field"><label for="key-slugs">Slug patterns <span class="optional">(optional)</span></label><input class="input input-mono" id="key-slugs" name="slugs" type="text" value="{{.Data.KeyForm.Slugs}}" autocomplete="off" spellcheck="false" aria-describedby="key-slugs-help{{if $ke.slugs}} key-slugs-err{{end}}"{{if $ke.slugs}} aria-invalid="true"{{end}}>
-{{with $ke.slugs}}<p class="error" id="key-slugs-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}<p class="help" id="key-slugs-help">Restricts the key to pages whose slug matches: an exact slug, or a prefix ending in *, such as docs-*. Several are separated by spaces. Empty is every page they may touch.</p></div>
+<div class="field"><label for="key-slugs">Page addresses <span class="optional">(optional)</span></label><input class="input input-mono" id="key-slugs" name="slugs" type="text" value="{{.Data.KeyForm.Slugs}}" autocomplete="off" spellcheck="false" aria-describedby="key-slugs-help{{if $ke.slugs}} key-slugs-err{{end}}"{{if $ke.slugs}} aria-invalid="true"{{end}}>
+{{with $ke.slugs}}<p class="error" id="key-slugs-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}<p class="help" id="key-slugs-help">Restricts the key to pages whose address starts so: the first part of an address, such as q3-report, or its start followed by *, such as docs-*. Several are separated by spaces. Empty is every page they may touch.</p></div>
 <div class="field"><label for="key-days">Days until it expires <span class="optional">(optional)</span></label><input class="input" id="key-days" name="days" type="number" min="1"{{if .Data.MaxKeyDays}} max="{{.Data.MaxKeyDays}}"{{end}} value="{{.Data.KeyForm.Days}}" autocomplete="off" aria-describedby="key-days-help{{if $ke.days}} key-days-err{{end}}"{{if $ke.days}} aria-invalid="true"{{end}}>
 {{with $ke.days}}<p class="error" id="key-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}<p class="help" id="key-days-help">{{if .Data.MaxKeyDays}}At most {{.Data.MaxKeyDays}} on this instance; empty gets that.{{else}}Empty is a key that works until it is revoked.{{end}}</p></div>
 <div class="actions"><button type="submit" class="btn">Issue the key</button></div>
@@ -122,7 +122,7 @@
 <tbody>
 {{range .Data.Apps}}<tr>
 <td data-label="App">{{.Client}}</td>
-<td data-label="May"><span class="mono">{{join .Scopes " "}}</span></td>
+<td data-label="May">{{scopeWords .Scopes}}</td>
 <td data-label="Last refreshed">{{when .Refreshed}}</td>
 <td data-label="Lapses unless refreshed by">{{when .Lapses}}</td>
 <td data-label="Approved with">{{if .KeyPrefix}}<span class="mono">kzk_{{.KeyPrefix}}</span>{{else}}<span class="soft">their sign-in</span>{{end}}</td>

@@ -114,7 +114,7 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 		f.Errors["scopes"] = "Tick at least one thing the key may do."
 	}
 	if artifact.ValidateSlugPatterns(req.Slugs) != nil {
-		f.Errors["slugs"] = "Write each pattern as a slug, or a slug prefix ending in *, such as docs-*."
+		f.Errors["slugs"] = "Write each as the first part of a page's address, or its start followed by *, such as docs-*."
 	} else if len(req.Slugs) > 0 && slices.Contains(req.Scopes, auth.ScopeAdmin) {
 		f.Errors["slugs"] = "A key that administers the instance cannot be restricted to certain pages. Untick that, or leave this empty."
 	}
@@ -143,7 +143,7 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 		case errors.Is(err, user.ErrInvalidScope):
 			f.Errors["scopes"] = "Their role does not allow that combination. Tick only what is offered."
 		case errors.Is(err, user.ErrInvalidKey):
-			f.Errors["slugs"] = "Those patterns were not accepted. Write each as a slug, or a slug prefix ending in *."
+			f.Errors["slugs"] = "Those were not accepted. Write each as the first part of a page's address, or its start followed by *."
 		case err != nil:
 			return err
 		}
@@ -162,9 +162,9 @@ func (s *server) peopleKeyIssue(w http.ResponseWriter, r *http.Request, c *reque
 func (s *server) peopleShowKey(w http.ResponseWriter, r *http.Request, c *request, u *user.User, k *user.APIKey, secret, title string, notes []string) error {
 	notes = append(notes,
 		"Kazari keeps only a hash of it. After you leave this page it cannot be shown again, only rotated or revoked.",
-		"It is named "+user.KeyPrefix+k.Prefix+" in lists and in the activity log, and holds "+strings.Join(k.Scopes, ", ")+".")
+		"It is named "+user.KeyPrefix+k.Prefix+" in lists and in the activity log. It may: "+strings.ToLower(scopeWords(k.Scopes))+".")
 	if len(k.Slugs) > 0 {
-		notes = append(notes, "It reaches only pages whose slug matches "+strings.Join(k.Slugs, ", ")+".")
+		notes = append(notes, "It reaches only pages whose address matches "+strings.Join(k.Slugs, ", ")+".")
 	}
 	if k.ExpiresAt != nil {
 		notes = append(notes, "It stops working on "+k.ExpiresAt.UTC().Format(timeLayout)+".")

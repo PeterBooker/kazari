@@ -86,9 +86,9 @@ func stateOf(a *artifact.Artifact) pageState {
 // visibilities are who can open a published page, in the order of the
 // selects.
 var visibilities = []struct{ Key, Label, Help string }{
-	{string(artifact.Public), "Public", "Anyone can open it, and it is listed for members."},
-	{string(artifact.Unlisted), "Unlisted", "Anyone with the address can open it."},
-	{string(artifact.Members), "Members only", "People sign in to open it, or use a share link."},
+	{string(artifact.Public), "Public", "Anyone can open it, and members see it when their agent or the command line lists pages."},
+	{string(artifact.Unlisted), "Unlisted", "Anyone with the address can open it. It is left out of other members' lists."},
+	{string(artifact.Members), "Members only", "Members open it after signing in, and anyone else with a share link."},
 }
 
 func visibilityLabel(v artifact.Visibility) string {
@@ -259,14 +259,14 @@ func pageErr(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, artifact.ErrNotFound):
-		return notFound("There is no page with that slug.")
+		return notFound("There is no page at that address.")
 	case errors.Is(err, artifact.ErrVersionNotFound):
 		return notFound("The page has no such version.")
 	case errors.Is(err, artifact.ErrLinkNotFound):
 		return notFound("The page has no such share link.")
 	case errors.Is(err, artifact.ErrGone):
 		return &problem{status: http.StatusGone, title: "Removed for good",
-			message: "That page was removed for good. Its slug stays taken until the copies browsers hold have expired."}
+			message: "That page was removed for good. Its address stays taken until the copies browsers hold have expired."}
 	}
 	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		status, _ := present.Error(err)
@@ -563,7 +563,7 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 			hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in.",
 		Value: s.d.Links.ShareURL(slug, token), Button: "Copy the link",
 		Notes: []string{
-			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked from the page's own page.",
+			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked under Share links on the page.",
 			"Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.",
 		},
 		Back: "Back to the page",
@@ -726,7 +726,7 @@ func (s *server) pagesRemove(w http.ResponseWriter, r *http.Request, c *request)
 		return err
 	}
 	if d.Typed = strings.TrimSpace(r.PostForm.Get("slug")); d.Typed != d.Page.Slug {
-		d.Error = "That is not the slug of this page. Nothing was removed."
+		d.Error = "That is not the address of this page. Nothing was removed."
 		return s.render(w, r, c, http.StatusUnprocessableEntity, "pages_remove", page{Title: "Remove " + d.Page.Slug + " for good", Nav: "pages"}, d)
 	}
 	if err := s.d.Artifacts.Delete(ctx, c.actor, slug, true); err != nil {

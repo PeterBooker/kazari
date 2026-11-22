@@ -20,14 +20,14 @@
 <dt>Versions</dt><dd class="soft">Each version also has an address of its own, listed below.</dd>
 <dt>Owner</dt><dd><a class="mono" href="/people/{{.Page.OwnerHandle}}">{{.Page.OwnerHandle}}</a></dd>
 {{if eq .Page.State.Key "bin"}}<dt>Open to</dt><dd>{{.Page.Open}} <span class="soft">once it is restored</span></dd>
-{{end}}<dt>Size</dt><dd>{{bytes .Page.SizeBytes}} over {{.Page.LatestVersion}} {{if eq .Page.LatestVersion 1}}version{{else}}versions{{end}}</dd>
+{{end}}<dt>Size</dt><dd>{{bytes .Page.SizeBytes}} of content over {{.Page.LatestVersion}} {{if eq .Page.LatestVersion 1}}version{{else}}versions{{end}}, every version in full</dd>
 </dl>
 {{if ne .Page.State.Key "bin"}}
 <form class="form" method="post" action="/pages/{{.Page.Slug}}/visibility">
 {{template "token" $}}
 <div class="field"><label for="visibility">{{if eq .Page.State.Key "unpublished"}}Publish it again, open to{{else}}Who can open it{{end}}</label>
 <select class="input" id="visibility" name="visibility" aria-describedby="visibility-help">{{range .Visibilities}}<option value="{{.Key}}"{{if eq .Key (print $.Data.Page.Artifact.Visibility)}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-<p class="help" id="visibility-help">Public pages are listed for members. Unlisted ones open for anyone with the address. Members-only pages ask for a sign-in or a share link.</p></div>
+<ul class="dash soft" id="visibility-help">{{range .Visibilities}}<li><b>{{.Label}}</b>: {{.Help}}</li>{{end}}</ul></div>
 <div class="actions"><button type="submit" class="btn">{{if eq .Page.State.Key "unpublished"}}Publish again{{else}}Change{{end}}</button></div>
 </form>
 {{end}}
@@ -61,13 +61,13 @@
 <section class="section" aria-labelledby="page-versions">
 <h2 class="h2" id="page-versions">Versions</h2>
 <table class="table">
-<thead><tr><th>Version</th><th>Added</th><th>By</th><th class="num">Size</th><th>Its own address</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<thead><tr><th>Version</th><th>Added</th><th>By</th><th class="num">Content</th><th>Its own address</th><th><span class="sr-only">Actions</span></th></tr></thead>
 <tbody>
 {{range .Versions}}<tr>
 <td data-label="Version"><span class="status tone-version">Version {{.Number}}</span>{{if .Published}} <span class="status tone-ok">Published</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="Added" class="nowrap">{{when .CreatedAt}}</td>
 <td data-label="By">{{if .CreatedBy}}<a class="mono" href="/people/{{.CreatedBy}}">{{.CreatedBy}}</a>{{else}}<span class="soft">unknown</span>{{end}}</td>
-<td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
+<td class="num" data-label="Content">{{bytes .SizeBytes}}</td>
 <td data-label="Its own address"><a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a></td>
 <td class="row-actions">{{if and (not .Published) (not $.Data.Page.DeletedAt)}}<a class="link" href="/pages/{{$.Data.Page.Slug}}/versions/{{.Number}}/publish">Publish this version</a>{{end}}</td>
 </tr>
@@ -169,14 +169,14 @@
 <div class="box section"><h2 class="h3">What stays for a while</h2>
 <ul class="dash">
 <li>Copies that browsers and CDNs already hold, for up to {{span .Tombstone}}</li>
-<li>The slug <span class="mono">{{.Page.Slug}}</span>, which no new page can take for those {{span .Tombstone}}</li>
-<li>Its files on the server's disk, until the clean-up job <span class="mono">gc</span> next runs</li>
+<li>The address <span class="mono">{{.Page.Slug}}</span>, which no new page can take for those {{span .Tombstone}}</li>
+<li>Its files on the server's disk, until the next clean-up</li>
 <li>The lines about it under Activity</li>
 </ul></div>
 </div>
 <form class="form" method="post" action="/pages/{{.Page.Slug}}/remove">
 {{template "token" $}}
-<div class="field"><label for="slug">Type the slug, <span class="mono">{{.Page.Slug}}</span>, to confirm</label>
+<div class="field"><label for="slug">Type the page's address, <span class="mono">{{.Page.Slug}}</span>, to confirm</label>
 <input class="input input-mono" id="slug" name="slug" type="text" value="{{.Typed}}" autocomplete="off" autocapitalize="none" spellcheck="false" required{{if .Error}} aria-invalid="true" aria-describedby="slug-err"{{end}}>
 {{with .Error}}<p class="error" id="slug-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
 <div class="actions"><button type="submit" class="btn btn-danger">Remove for good</button><a class="link" href="/pages/{{.Page.Slug}}">Cancel</a></div>

@@ -12,7 +12,7 @@
 <h2 class="h2 sr-only" id="activity-list">Events</h2>
 <form class="filters" method="get" action="/activity">
 <div class="field"><label for="f-person">Person</label><input class="input input-mono" id="f-person" name="person" type="text" value="{{.Filter.Actor}}" autocapitalize="none" spellcheck="false" placeholder="A handle"></div>
-<div class="field"><label for="f-slug">Page</label><input class="input input-mono" id="f-slug" name="slug" type="text" value="{{.Filter.Slug}}" autocapitalize="none" spellcheck="false" placeholder="A slug"></div>
+<div class="field"><label for="f-slug">Page</label><input class="input input-mono" id="f-slug" name="slug" type="text" value="{{.Filter.Slug}}" autocapitalize="none" spellcheck="false" placeholder="A page address"></div>
 <div class="field"><label for="f-kind">Kind</label><select class="input" id="f-kind" name="kind"><option value="">Any</option>{{range .Kinds}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Kind}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
 <div class="field"><label for="f-from">From</label><input class="input" id="f-from" name="from" type="date" value="{{.Filter.From}}"{{if .Filter.FromError}} aria-invalid="true" aria-describedby="f-from-err"{{end}}>
 {{with .Filter.FromError}}<p class="error" id="f-from-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>

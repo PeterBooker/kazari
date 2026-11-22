@@ -12,7 +12,7 @@
 <section class="section" aria-labelledby="pages-list">
 <h2 class="h2 sr-only" id="pages-list">All pages</h2>
 <form class="filters" method="get" action="/pages">
-<div class="field field-search"><label for="f-q">Search</label><input class="input" id="f-q" name="q" type="search" value="{{.Filter.Q}}" placeholder="Slug or name"></div>
+<div class="field field-search"><label for="f-q">Search</label><input class="input" id="f-q" name="q" type="search" value="{{.Filter.Q}}" placeholder="Page address or name"></div>
 <div class="field"><label for="f-status">Status</label><select class="input" id="f-status" name="status"><option value="">Any</option>{{range .States}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Status}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
 <div class="field"><label for="f-visibility">Open to</label><select class="input" id="f-visibility" name="visibility"><option value="">Any</option>{{range .Visibilities}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Visibility}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
 <div class="field"><label for="f-owner">Owner</label><select class="input" id="f-owner" name="owner"><option value="">Anyone</option>{{range .Owners}}<option value="{{.Handle}}"{{if eq .Handle $.Data.Filter.Owner}} selected{{end}}>{{.Handle}}</option>{{end}}</select></div>
