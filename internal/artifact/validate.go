@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"fmt"
 	"mime"
 	"path"
 	"regexp"
@@ -44,25 +45,61 @@ var (
 )
 
 // ValidateSlug allows lower-case letters, digits and single hyphens ("--"
-// marks version hosts), 3 to 63 characters, and no reserved slug.
+// marks version hosts), 3 to 63 characters, and no reserved slug. The error
+// suggests a slug made from the one given, when one can be.
 func ValidateSlug(slug string, reserved []string) error {
+	var msg string
 	switch {
 	case len(slug) < SlugMinLen:
-		return Errorf(ErrInvalidSlug, "slug %q is shorter than %d characters", slug, SlugMinLen)
+		msg = fmt.Sprintf("slug %q is shorter than %d characters", slug, SlugMinLen)
 	case len(slug) > SlugMaxLen:
-		return Errorf(ErrInvalidSlug, "slug %q is longer than %d characters", slug, SlugMaxLen)
+		msg = fmt.Sprintf("slug %q is longer than %d characters", slug, SlugMaxLen)
 	case !slugRe.MatchString(slug):
-		return Errorf(ErrInvalidSlug, "slug %q must match %s", slug, slugRe.String())
+		msg = fmt.Sprintf("slug %q must be lower-case letters a-z, digits and hyphens, starting and ending "+
+			"with a letter or digit", slug)
 	case strings.Contains(slug, "--"):
-		return Errorf(ErrInvalidSlug, "slug %q may not contain \"--\"", slug)
+		msg = fmt.Sprintf("slug %q may not contain \"--\"", slug)
 	case slices.Contains(reserved, slug):
 		return Errorf(ErrInvalidSlug, "slug %q is reserved", slug)
+	default:
+		return nil
 	}
-	return nil
+	if s := SuggestSlug(slug); s != "" && !slices.Contains(reserved, s) {
+		msg += fmt.Sprintf("; %q would do", s)
+	}
+	return Errorf(ErrInvalidSlug, "%s", msg)
+}
+
+// SuggestSlug makes a valid slug from s: lower case, with runs of other
+// characters as single hyphens, cut to SlugMaxLen. It is "" when nothing
+// valid remains, and never s itself.
+func SuggestSlug(s string) string {
+	var b strings.Builder
+	hyphen := false
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			if hyphen && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			hyphen = false
+			continue
+		}
+		hyphen = true
+	}
+	out := b.String()
+	if len(out) > SlugMaxLen {
+		out = strings.TrimRight(out[:SlugMaxLen], "-")
+	}
+	if out == s || len(out) < SlugMinLen {
+		return ""
+	}
+	return out
 }
 
 // ValidatePath returns p cleaned, rejecting anything that could escape or
-// confuse the serving path, and paths under ReservedDir.
+// confuse the serving path, and paths under ReservedDir. Leading slashes are
+// dropped: "/index.html" is the file at the root, as a browser reads it.
 func ValidatePath(p string) (string, error) {
 	if p == "" {
 		return "", Errorf(ErrInvalidPath, "empty path")
@@ -70,8 +107,9 @@ func ValidatePath(p string) (string, error) {
 	if len(p) > PathMaxBytes {
 		return "", Errorf(ErrInvalidPath, "path longer than %d bytes", PathMaxBytes)
 	}
-	if strings.HasPrefix(p, "/") {
-		return "", Errorf(ErrInvalidPath, "path %q is absolute", p)
+	orig := p
+	if p = strings.TrimLeft(p, "/"); p == "" {
+		return "", Errorf(ErrInvalidPath, "path %q names the root directory, not a file", orig)
 	}
 	if strings.HasSuffix(p, "/") {
 		return "", Errorf(ErrInvalidPath, "path %q names a directory", p)
@@ -164,7 +202,18 @@ func ParseVisibility(s string) (Visibility, error) {
 	case Unlisted, Members:
 		return Visibility(s), nil
 	}
-	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
+	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q%s", Public, Unlisted, Members, VisibilityHint(s))
+}
+
+// VisibilityHint points a word that means "not for everyone" at Members,
+// the visibility that does that; "" for any other word.
+func VisibilityHint(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "private", "hidden", "internal", "secret", "restricted", "protected", "team":
+		return fmt.Sprintf("; %q is not one: did you mean %q? It serves the page only to people who sign in to this "+
+			"instance and to holders of a share link", s, Members)
+	}
+	return ""
 }
 
 // ValidateName allows one line of valid UTF-8, at most NameMaxBytes, with no

@@ -149,7 +149,7 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 	switch v {
 	case string(Public), string(Unlisted), string(Members), Unpublished:
 	default:
-		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q, %q or %q", Public, Unlisted, Members, Unpublished)
+		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q, %q or %q%s", Public, Unlisted, Members, Unpublished, VisibilityHint(v))
 	}
 	return s.modify(ctx, actor, slug, false, audit.ArtifactVisibility, func(a *Artifact) (map[string]string, error) {
 		if v == Unpublished {

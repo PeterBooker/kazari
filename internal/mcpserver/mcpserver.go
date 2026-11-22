@@ -70,7 +70,9 @@ type Options struct {
 	MaxChunkBytes       int64
 	MaxTotalBytes       int64
 	CSP                 string
-	ReservedSlugs       []string
+	// AllowCSPOverride says the instance adds an artifact's kazari.csp to CSP.
+	AllowCSPOverride bool
+	ReservedSlugs    []string
 	// MaxInlineReadBytes is the largest text file read_file returns inline and the
 	// largest file of any kind the file resource returns.
 	MaxInlineReadBytes int64
@@ -139,9 +141,12 @@ type builder struct {
 	text       texts
 	schema     *mcp.SchemaCache
 	editSchema *jsonschema.Schema
-	preview    string
-	previewUI  map[string]any
-	obs        *observer
+	// updateSchema leaves out the descriptions of the edit fields, which
+	// edit_file's schema states already.
+	updateSchema *jsonschema.Schema
+	preview      string
+	previewUI    map[string]any
+	obs          *observer
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -153,16 +158,17 @@ func newBuilder(d Deps, o Options) *builder {
 	text := newTexts(d.Links, o)
 	preview, ui := newPreview(text, o.CSP)
 	return &builder{
-		d:          d,
-		o:          o,
-		log:        log,
-		sdkLog:     slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
-		text:       text,
-		schema:     mcp.NewSchemaCache(),
-		editSchema: editFileSchema(),
-		preview:    preview,
-		previewUI:  ui,
-		obs:        newObserver(o.Telemetry, toolNames(text, o)),
+		d:            d,
+		o:            o,
+		log:          log,
+		sdkLog:       slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
+		text:         text,
+		schema:       mcp.NewSchemaCache(),
+		editSchema:   editFileSchema(),
+		updateSchema: updateSchema(),
+		preview:      preview,
+		previewUI:    ui,
+		obs:          newObserver(o.Telemetry, toolNames(text, o)),
 	}
 }
 
@@ -204,6 +210,8 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 			SchemaCache:  b.schema,
 		},
 	)
+	// Added first, so the observer outside it records the code it gives.
+	s.AddReceivingMiddleware(b.argsMiddleware())
 	if b.obs.enabled {
 		s.AddReceivingMiddleware(b.obs.middleware(p))
 	}

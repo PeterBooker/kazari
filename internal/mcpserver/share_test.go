@@ -18,7 +18,7 @@ func TestShareLinkTools(t *testing.T) {
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>team</h1>"}},
 	})
 
-	created, res := ok[api.CreatedShareLink](t, cs, "create_share_link", map[string]any{
+	created, res := ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{
 		"slug": "team", "label": "Acme review", "expires_in": "14d",
 	})
 	u, err := url.Parse(created.URL)
@@ -28,20 +28,20 @@ func TestShareLinkTools(t *testing.T) {
 	if u.Host != "team.art.test" || u.Path != "/.kazari/share" || !artifact.IsLinkToken(u.Query().Get("token")) {
 		t.Fatalf("url = %q", created.URL)
 	}
-	if line := firstLine(res); !strings.Contains(line, created.URL) || !strings.Contains(line, created.ShareLink.Prefix) ||
+	if line := firstLine(res); !strings.Contains(line, created.URL) || !strings.Contains(line, created.Prefix) ||
 		strings.Contains(line, "Note:") {
 		t.Fatalf("summary = %q", line)
 	}
-	if created.ShareLink.Label != "Acme review" || !created.ShareLink.Active {
-		t.Fatalf("share link = %+v", created.ShareLink)
+	if created.Label != "Acme review" || created.Slug != "team" || created.VersionURL != "" {
+		t.Fatalf("share link = %+v", created)
 	}
 
 	list, res := ok[api.ShareLinkList](t, cs, "list_share_links", map[string]any{"slug": "team"})
-	if len(list.Items) != 1 || list.Items[0].Prefix != created.ShareLink.Prefix || strings.Contains(text(res), u.Query().Get("token")) {
+	if len(list.Items) != 1 || list.Items[0].Prefix != created.Prefix || strings.Contains(text(res), u.Query().Get("token")) {
 		t.Fatalf("list = %+v", list)
 	}
 
-	if done, _ := ok[api.OK](t, cs, "revoke_share_link", map[string]any{"slug": "team", "prefix": created.ShareLink.Prefix}); !done.OK {
+	if done, _ := ok[api.OK](t, cs, "revoke_share_link", map[string]any{"slug": "team", "prefix": created.Prefix}); !done.OK {
 		t.Fatal("revoke returned ok false")
 	}
 	list, res = ok[api.ShareLinkList](t, cs, "list_share_links", map[string]any{"slug": "team"})
@@ -62,15 +62,24 @@ func TestShareLinkTools(t *testing.T) {
 		"slug": "open", "name": "Open", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>open</h1>"}},
 	})
-	_, res = ok[api.CreatedShareLink](t, cs, "create_share_link", map[string]any{"slug": "open"})
+	_, res = ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "open"})
 	if line := firstLine(res); !strings.Contains(line, "open is public") {
 		t.Fatalf("public summary = %q", line)
 	}
 
 	// Creating a link is a write.
 	ro := e.connect(t, readOnly)
-	if msg := fails(t, ro, "create_share_link", map[string]any{"slug": "team"}); !strings.Contains(msg, "forbidden") {
-		t.Fatalf("read-only create: %q", msg)
+	if offered(t, ro, "create_share_link") {
+		t.Fatalf("create_share_link is offered to a reader")
+	}
+
+	pinned, res := ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "team", "version": 1})
+	if v, err := url.Parse(pinned.VersionURL); err != nil || v.Host != "team--v1.art.test" || v.Path != "/.kazari/share" ||
+		v.RawQuery != strings.SplitN(pinned.URL, "?", 2)[1] || !strings.Contains(firstLine(res), pinned.VersionURL) {
+		t.Fatalf("pinned share link = %+v, %q", pinned, firstLine(res))
+	}
+	if msg := fails(t, cs, "create_share_link", map[string]any{"slug": "team", "version": 9}); !strings.HasPrefix(msg, "version_not_found: ") {
+		t.Errorf("share link to a missing version = %q", msg)
 	}
 }
 

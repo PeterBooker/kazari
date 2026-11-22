@@ -53,9 +53,9 @@ func TestEditFile(t *testing.T) {
 		"files": []map[string]any{{"path": "index.html", "content": editPage}, {"path": "app.js", "content": "run()"}}})
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "anchors": true})
-	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || firstLine(res) != artifact.AnchorLines(editPage) ||
-		rf.Content != firstLine(res) {
-		t.Fatalf("read_file anchors = %+v %q", rf, firstLine(res))
+	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || readBody(res) != artifact.AnchorLines(editPage) ||
+		rf.Content != readBody(res) || firstLine(res) != "index.html, version 1 (the latest), 6 lines" {
+		t.Fatalf("read_file anchors = %+v %q", rf, text(res))
 	}
 
 	out, res := ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
@@ -86,13 +86,14 @@ func TestEditFile(t *testing.T) {
 		t.Errorf("anchor edit = %+v", out)
 	}
 	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
-	if want := "<html>\n  <body>\n    <h1>Q4</h1>\n    <p>Up 4%.</p>\n  </body>\n</html>\n"; firstLine(res) != want || rf.Anchored {
-		t.Errorf("index.html = %q", firstLine(res))
+	if want := "<html>\n  <body>\n    <h1>Q4</h1>\n    <p>Up 4%.</p>\n  </body>\n</html>\n"; readBody(res) != want || rf.Anchored {
+		t.Errorf("index.html = %q", readBody(res))
 	}
 
 	msg := fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{{"old_text": "Q4", "new_text": "Q1"}}})
-	if !strings.HasPrefix(msg, "version_conflict: latest version is 4, expected 1\nNext step: Someone published since you read it") {
+	if !strings.HasPrefix(msg, "version_conflict: latest version is 4, expected 1; every edit still applies to version 4 as sent: "+
+		"resend the same edits with expected_version 4\nNext step: If the message says every edit still applies") {
 		t.Errorf("stale edit = %q", msg)
 	}
 	msg = fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
@@ -101,7 +102,8 @@ func TestEditFile(t *testing.T) {
 		t.Errorf("stale anchor = %q", msg)
 	}
 	if msg := fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
-		"edits": []map[string]any{{"old_text": "Q4", "start": start, "new_text": "x"}}}); !strings.Contains(msg, "oneOf") {
+		"edits": []map[string]any{{"old_text": "Q4", "start": start, "new_text": "x"}}}); !strings.HasPrefix(msg, "invalid_argument: ") ||
+		!strings.Contains(msg, "each edit needs one of old_text, start, after or before") {
 		t.Errorf("edit with both kinds = %q", msg)
 	}
 
@@ -176,7 +178,7 @@ func TestSkill(t *testing.T) {
 	}
 	for _, s := range []string{"---\nname: kazari\ndescription: \"Publish, edit and retire", "\n---\n\n# Kazari\n", "art.test", "edit_file",
 		"anchors: true", "https://cdn.jsdelivr.net", "25 MiB", "claude mcp add --transport http kazari https://mcp.art.test/",
-		"| `version_conflict` | Someone published"} {
+		"| `version_conflict` | If the message says every edit still applies"} {
 		if !strings.Contains(md, s) {
 			t.Errorf("skill lacks %q", s)
 		}
@@ -382,13 +384,13 @@ func TestReadFileWindowEdges(t *testing.T) {
 		note       string
 		fails      string
 	}{
-		{name: "no final break", content: "a\nb", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
-		{name: "final break", content: "a\nb\n", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
-		{name: "blank last line", content: "a\n\n", args: map[string]any{"start_line": 2}, want: "", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
-		{name: "only a break", content: "\n", args: map[string]any{"start_line": 1}, want: "", first: 1, end: 1, total: 1, note: "Lines 1-1 of 1"},
-		{name: "end_line only", content: "a\nb\nc", args: map[string]any{"end_line": 2}, want: "a\nb", first: 1, end: 2, total: 3, note: "Lines 1-2 of 3"},
-		{name: "end_line past the end", content: "a\nb", args: map[string]any{"start_line": 2, "end_line": 9}, want: "b", first: 2, end: 2, total: 2, note: "Lines 2-2 of 2"},
-		{name: "long line after the window", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 1, "end_line": 1}, want: "a", first: 1, end: 1, total: 3, note: "Lines 1-1 of 3"},
+		{name: "no final break", content: "a\nb", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "lines 2-2 of 2"},
+		{name: "final break", content: "a\nb\n", args: map[string]any{"start_line": 2}, want: "b", first: 2, end: 2, total: 2, note: "lines 2-2 of 2"},
+		{name: "blank last line", content: "a\n\n", args: map[string]any{"start_line": 2}, want: "", first: 2, end: 2, total: 2, note: "lines 2-2 of 2"},
+		{name: "only a break", content: "\n", args: map[string]any{"start_line": 1}, want: "", first: 1, end: 1, total: 1, note: "lines 1-1 of 1"},
+		{name: "end_line only", content: "a\nb\nc", args: map[string]any{"end_line": 2}, want: "a\nb", first: 1, end: 2, total: 3, note: "lines 1-2 of 3"},
+		{name: "end_line past the end", content: "a\nb", args: map[string]any{"start_line": 2, "end_line": 9}, want: "b", first: 2, end: 2, total: 2, note: "lines 2-2 of 2"},
+		{name: "long line after the window", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 1, "end_line": 1}, want: "a", first: 1, end: 1, total: 3, note: "lines 1-1 of 3"},
 		{name: "long line cuts the window", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 1}, want: "a", first: 1, end: 1, total: 3, note: "continue from start_line 2"},
 		{name: "line fits, anchor does not", content: strings.Repeat("x", limit-2) + "\n", args: map[string]any{"start_line": 1, "anchors": true}, fails: fmt.Sprintf("too_large: line 1 of index.html is %d bytes", limit-2)},
 		{name: "long first line", content: "a\n" + long + "\nb\n", args: map[string]any{"start_line": 2}, fails: fmt.Sprintf("too_large: line 2 of index.html is %d bytes", len(long))},
@@ -465,7 +467,7 @@ func TestReadFileWindow(t *testing.T) {
 	want := artifact.Anchor(2000, lines[1999]) + "|" + lines[1999] + "\n" + artifact.Anchor(2001, lines[2000]) + "|" + lines[2000] + "\n" +
 		artifact.Anchor(2002, lines[2001]) + "|" + lines[2001]
 	if rf.Encoding != "utf8" || !rf.Anchored || rf.StartLine != 2000 || rf.EndLine != 2002 || rf.TotalLines != 3000 ||
-		rf.Content != want || firstLine(res) != want || !strings.Contains(text(res), "Lines 2000-2002 of 3000") {
+		rf.Content != want || readBody(res) != want || firstLine(res) != "index.html, version 1 (the latest), lines 2000-2002 of 3000" {
 		t.Fatalf("window = %+v\n%q", rf, text(res))
 	}
 

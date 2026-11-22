@@ -273,7 +273,7 @@ func TestAppendChunk(t *testing.T) {
 			name: "invalid paths",
 			steps: []step{
 				{path: "../escape", data: "x", wantErr: artifact.ErrInvalidPath},
-				{path: "/abs", data: "x", wantErr: artifact.ErrInvalidPath},
+				{path: "/", data: "x", wantErr: artifact.ErrInvalidPath},
 				{path: "dir/", data: "x", wantErr: artifact.ErrInvalidPath},
 				{path: "", data: "x", wantErr: artifact.ErrInvalidPath},
 			},
@@ -386,7 +386,7 @@ func TestAppendChunk(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer cleanup()
+			defer cleanup(true)
 			if diff := cmp.Diff(tt.wantFiles, readFiles(t, files)); diff != "" {
 				t.Errorf("staged content (-want +got):\n%s", diff)
 			}
@@ -449,7 +449,7 @@ func TestFiles(t *testing.T) {
 		t.Errorf("content (-want +got):\n%s", diff)
 	}
 
-	if err := cleanup(); err != nil {
+	if err := cleanup(true); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 	if exists(t, filepath.Join(e.dir, u.ID)) {
@@ -458,8 +458,37 @@ func TestFiles(t *testing.T) {
 	if _, err := e.store.Get(ctx, u.ID); !errors.Is(err, artifact.ErrUploadNotFound) {
 		t.Errorf("store Get after cleanup: err = %v, want ErrUploadNotFound", err)
 	}
-	if err := cleanup(); err != nil {
+	if err := cleanup(true); err != nil {
 		t.Errorf("second cleanup: %v", err)
+	}
+}
+
+// A publish that was refused leaves the upload as it was, for the corrected
+// call to use.
+func TestFilesKeptWhenNotConsumed(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, upload.Options{})
+	u := e.begin(t, "alice")
+	e.appendChunk(t, u.ID, "index.html", 0, "<h1>hi</h1>")
+	_, done, err := e.svc.Files(ctx, "alice", u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := done(false); err != nil {
+		t.Fatalf("done(false): %v", err)
+	}
+	files, done, err := e.svc.Files(ctx, "alice", u.ID)
+	if err != nil {
+		t.Fatalf("Files after a refused publish: %v", err)
+	}
+	if diff := cmp.Diff(map[string]string{"index.html": "<h1>hi</h1>"}, readFiles(t, files)); diff != "" {
+		t.Errorf("content after a refused publish (-want +got):\n%s", diff)
+	}
+	if err := done(true); err != nil {
+		t.Fatalf("done(true): %v", err)
+	}
+	if _, _, err := e.svc.Files(ctx, "alice", u.ID); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("Files after a publish: err = %v, want ErrUploadNotFound", err)
 	}
 }
 
@@ -474,7 +503,7 @@ func TestFilesCapAtRecordedSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer cleanup(true)
 	e.appendChunk(t, u.ID, "a", 3, "def")
 	if diff := cmp.Diff(map[string]string{"a": "abc"}, readFiles(t, files)); diff != "" {
 		t.Errorf("content (-want +got):\n%s", diff)
@@ -596,7 +625,7 @@ func TestAppendChunkConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer cleanup(true)
 	if diff := cmp.Diff(map[string]string{"a": "abc"}, readFiles(t, files)); diff != "" {
 		t.Errorf("content (-want +got):\n%s", diff)
 	}

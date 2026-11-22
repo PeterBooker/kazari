@@ -1,0 +1,21 @@
+begin_upload           1390    293
+create_artifact        4329   1545
+create_share_link       728    432
+delete_artifact         509    234
+discard_upload          312    160
+edit_file              2746   1771
+get_artifact            523    365
+get_guide               349     46
+import_page            1927   1044
+list_artifacts          552    635
+list_share_links        229    157
+mark_stale              313    255
+publish_version         353    241
+read_file              1169    680
+revoke_share_link       247    261
+set_visibility          753    252
+unmark_stale            132    141
+update_artifact        1810   2364
+upload_chunk            854    631
+instructions           1963
+total                 32695

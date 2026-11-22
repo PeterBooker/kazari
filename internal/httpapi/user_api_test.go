@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -513,8 +514,16 @@ func TestChunkedUpload(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: e.alice, contentType: "application/json",
 		body: bytes.NewReader(mustJSON(t, api.CreateArtifactRequest{Slug: "chunked", UploadID: up2.UploadID}))}),
 		409, api.CodeSlugTaken)
-	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); err == nil {
-		t.Error("upload survived a failed publish")
+	e.apiErr(e.send(req{method: http.MethodPut, url: e.u("/v1/artifacts/chunked"), token: e.alice, contentType: "application/json",
+		body: bytes.NewReader(mustJSON(t, api.UpdateArtifactRequest{UploadID: up2.UploadID, ExpectedVersion: 9}))}),
+		412, api.CodeVersionConflict)
+	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); err != nil {
+		t.Errorf("upload after refused publishes: %v", err)
+	}
+	e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "chunked-2", UploadID: up2.UploadID},
+		http.StatusCreated, nil)
+	if _, err := e.uploads.Get(e.ctx, "alice", up2.UploadID); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("upload after a publish: err = %v, want ErrUploadNotFound", err)
 	}
 
 	var up3 api.Upload

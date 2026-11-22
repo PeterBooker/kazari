@@ -83,33 +83,42 @@ func (t texts) skillText(o Options) string {
 	b.WriteString("## Workflow\n\n")
 	steps := []string{
 		"**Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the " +
-			"`url` from the result to the user.",
+			"`url` from the result to the user. When the result has `warnings` (no `index.html`, a file the page links " +
+			"to that is missing, an origin the policy blocks), the page will not render as written: fix them.",
 		"**Change a page:** `edit_file` with text edits and `expected_version` set to the `latest_version` you last " +
 			"saw, from the create, edit or read result. Read first only when you have not seen the current text, and " +
 			"once you know where the change is, read just that window with `start_line` and `end_line`; ask for " +
-			"`anchors` only for anchor edits. `update_artifact` adds or replaces whole files and removes them with " +
-			"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version " +
-			"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send " +
-			"a delete entry for each path not in the set. A change that spans several files is atomic only as one " +
-			"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.",
-		"**On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. " +
-			"Never resend a failed edit unchanged.",
-		fmt.Sprintf("**Large content** (any file, or all files together, above %s): `begin_upload`, stage the files, then "+
-			"`create_artifact` or `update_artifact` with `upload_id`. Without a shell, stage with `upload_chunk` for each "+
+			"`anchors` only for anchor edits. Send every edit to one file in one call, and never call `edit_file` in " +
+			"parallel on one artifact: each call makes a version, and the next fails with `version_conflict`. " +
+			"`update_artifact` changes several files in one version: `{path, edits}` edits a text file as `edit_file` " +
+			"does, `{path, content}` adds or replaces one, and `{path, delete: true}` removes one; every file not " +
+			"mentioned carries over. To make a version hold exactly a set of files, list the latest version's paths with " +
+			"`get_artifact` and `include_files` and send a delete entry for each path not in the set. A call whose files " +
+			"match the latest version adds none and says `unchanged`.",
+		"**On `version_conflict`:** the error says whether every edit still applies to the newer version. If it does, " +
+			"resend the same call with the `expected_version` it gives; otherwise read the file again and redo the edit " +
+			"against the new text. **On `anchor_mismatch`:** read again and redo the edit. Never resend a failed edit unchanged.",
+		fmt.Sprintf("**Files on disk and large content:** inline `files` are for text you write yourself. Files already "+
+			"on disk, whatever their size, and content above %s (any file, or all files together) go through `begin_upload`: "+
+			"stage the files, then `create_artifact` or `update_artifact` with `upload_id`. Binary files sent inline need "+
+			"`encoding: \"base64\"`; a `data:` URL prefix is stripped. Without a shell, stage with `upload_chunk` for each "+
 			"file, `offset: 0` first and the `bytes_received` of the previous chunk after that. With a shell, archive the "+
 			"files from inside the page's directory (`zip -r ../site.zip .` or `tar czf ../site.tar.gz .`, so paths start "+
-			"at the page root), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
+			"at the page root; a single file goes the same way), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
 			"(`wc -c < site.zip`), and send it with `curl --fail-with-body -T site.zip '<archive_url>'`: the URL needs no "+
 			"credential, accepts only that digest and is spent by the first body that matches; the archive may be at most "+
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
-			"call consumes the upload whether it succeeds or fails. `discard_upload` drops an upload you no longer need.",
+			"upload is consumed only when that call succeeds: after an error, correct the call and send it again with the same "+
+			"`upload_id`. `discard_upload` drops an upload you no longer need.",
 			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
 			"inline, `anchors: true` for anchor edits, `start_line` and `end_line` for only the lines you need of any text " +
 			"file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
 			"`deleted`, `cursor`).",
-		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.",
+		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again. While an earlier " +
+			"version than the latest is published, `edit_file` and `update_artifact` need `base_version`: the published " +
+			"version to fix the page people see, or the latest to carry on from it. Ask the user which, unless they said.",
 		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
 			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
 			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",
@@ -152,9 +161,9 @@ func (t texts) skillText(o Options) string {
 		"without `|` and content (`9:395c`): you have their text, and the anchor is all an anchor edit needs. Edits "+
 		"whose excerpts would overlap share one, and `excerpt_of` names the edit that holds it. Lines longer than 160 "+
 		"bytes are clipped in excerpts (\"…[+N bytes]\"): read the file before rewriting such a line whole.\n"+
-		"- `edit_file` edits the latest version. `read_file` reads the published version unless given `version`; when "+
-		"its `latest_version` differs from its `version` (after a rollback), read `version: latest_version` before "+
-		"editing.\n"+
+		"- `edit_file` edits the latest version, or `base_version`. `read_file` reads the published version unless given "+
+		"`version`, and its first line names the version read and, when it is not the one an edit changes by default, "+
+		"the `base_version` an edit of that text needs.\n"+
 		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
 		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
 		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, artifact.ExcerptContext,
@@ -316,8 +325,10 @@ var nextStepOrder = []string{
 // nextSteps is the model's next step per error code, shown after tool errors and in the skill.
 func (t texts) nextSteps(o Options) map[string]string {
 	return map[string]string{
-		api.CodeVersionConflict: "Someone published since you read it: read the artifact again (get_artifact, or read_file " +
-			"for the file), redo your change on the new content and retry with expected_version set to the new latest_version.",
+		api.CodeVersionConflict: "If the message says every edit still applies, resend the same call with expected_version " +
+			"set to the number it gives. Otherwise someone published since you read it: read the artifact again (get_artifact, " +
+			"or read_file for the file), redo your change on the new content and retry with expected_version set to the new " +
+			"latest_version.",
 		api.CodePublishedNotLatest: "An earlier version was published again, usually a rollback. Ask the user which version " +
 			"to change unless they already said: set base_version to the published version to fix the page people see, or " +
 			"to the latest to carry on from it, then call again.",
@@ -329,13 +340,14 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeSlugTaken: "Pick another slug and call create_artifact again. To change the existing artifact, use edit_file " +
 			"or update_artifact on it instead.",
 		api.CodeInvalidSlug:     "Choose a slug that follows the slug rules in the create_artifact description.",
-		api.CodeInvalidPath:     "Use a relative path without \"..\", a leading \"/\" or a trailing \"/\", such as assets/app.js.",
+		api.CodeInvalidPath:     "Use a file path inside the artifact without \"..\" or a trailing \"/\", such as assets/app.js.",
 		api.CodeInvalidMetadata: "Fix the key or value the message names; the metadata rules are in the create_artifact description.",
 		api.CodeInvalidArgument: "Fix the argument the message names, then call again.",
 		api.CodeNotFound: "Check the slug: list_artifacts with mine \"any\" lists the artifacts you created or updated, and " +
 			"deleted \"include\" adds soft-deleted ones. If get_artifact shows deleted_at, the artifact is soft-deleted: " +
 			"update_artifact with restore: true brings it back.",
-		api.CodeFileNotFound:    "Call get_artifact with include_files: it lists the paths in each version.",
+		api.CodeFileNotFound: "Check the path: get_artifact with include_files lists the paths in each version. To add a " +
+			"file that does not exist yet, send it whole in files[] of update_artifact.",
 		api.CodeVersionNotFound: "Call get_artifact: it lists the versions that exist.",
 		api.CodeGone: "The artifact was purged and cannot be restored. Publish the content again under a new slug; the old " +
 			"one stays blocked for a while.",
@@ -343,7 +355,7 @@ func (t texts) nextSteps(o Options) map[string]string {
 			"Content above %s that is within them goes through begin_upload and upload_chunk.", size(o.InlineGuidanceBytes)),
 		api.CodeTooManyFiles:   "Bundle fewer files, for example by inlining small CSS and JavaScript into the HTML.",
 		api.CodeQuotaExceeded:  "The owner's storage quota is full. Tell the user: deleting old artifacts or a larger quota from an admin frees space.",
-		api.CodeUploadNotFound: "The upload expired or was used by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
+		api.CodeUploadNotFound: "The upload expired, was discarded or was published by an earlier create_artifact or update_artifact call. Start again with begin_upload.",
 		api.CodeOffsetMismatch: "Resend that path from the offset given as current.",
 		api.CodeDigestMismatch: "The body sent to archive_url is not the archive begin_upload was told about: check its size " +
 			"(wc -c) and sha256sum, then send that file; once the attempts are used up, begin a new upload.",

@@ -9,6 +9,25 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
+func TestSuggestSlug(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Q3_Report", "q3-report"},
+		{"my demo page", "my-demo-page"},
+		{"--weekly--notes--", "weekly-notes"},
+		{"demo", ""},
+		{"A", ""},
+		{"Café menu", "caf-menu"},
+	} {
+		if got := artifact.SuggestSlug(c.in); got != c.want {
+			t.Errorf("SuggestSlug(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	err := artifact.ValidateSlug("Q3_Report", nil)
+	if err == nil || !strings.HasSuffix(err.Error(), `; "q3-report" would do`) {
+		t.Errorf("ValidateSlug(%q) = %v, want a suggestion", "Q3_Report", err)
+	}
+}
+
 func TestValidateSlug(t *testing.T) {
 	reserved := []string{"api", "admin", "www"}
 	tests := []struct {
@@ -68,7 +87,10 @@ func TestValidatePath(t *testing.T) {
 		{"traversal", "../x", ""},
 		{"deep traversal", "a/../../b", ""},
 		{"collapses to nothing", "a/..", ""},
-		{"absolute", "/etc/passwd", ""},
+		{"leading slash", "/index.html", "index.html"},
+		{"leading slashes", "//a/b.css", "a/b.css"},
+		{"root", "/", ""},
+		{"leading slash traversal", "/../x", ""},
 		{"trailing slash", "dir/", ""},
 		{"NUL", "a\x00b", ""},
 		{"newline", "a\nb", ""},
@@ -235,6 +257,14 @@ func TestParseVisibility(t *testing.T) {
 		if err != nil || got != tt.want {
 			t.Errorf("ParseVisibility(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
+	}
+	for _, in := range []string{"private", "Hidden", "internal"} {
+		if _, err := artifact.ParseVisibility(in); err == nil || !strings.Contains(err.Error(), `did you mean "members"?`) {
+			t.Errorf("ParseVisibility(%q) = %v, want a hint at members", in, err)
+		}
+	}
+	if _, err := artifact.ParseVisibility("everyone"); err == nil || strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("ParseVisibility(%q) = %v, want no hint", "everyone", err)
 	}
 }
 

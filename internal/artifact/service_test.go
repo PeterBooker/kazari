@@ -1223,7 +1223,7 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestResolveDerivesFlags(t *testing.T) {
-	e := newEnv(t, artifact.Options{})
+	e := newEnv(t, artifact.Options{AllowCSPOverride: true})
 	alice := e.user(t, "alice")
 	_, v, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "spa",

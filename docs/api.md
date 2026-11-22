@@ -132,13 +132,13 @@ Every artifact follows these rules, whichever way it was published.
 
 #### Slugs
 
-A slug matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is 3 to 63 characters long. It cannot contain `--`, which is reserved for version hosts, or be one of `serve.reserved_slugs`. A slug is fixed when the artifact is created.
+A slug matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is 3 to 63 characters long. It cannot contain `--`, which is reserved for version hosts, or be one of `serve.reserved_slugs`. A slug is fixed when the artifact is created. The `invalid_slug` message suggests a slug made from the one given when it can, such as `q3-report` for `Q3_Report`.
 
 #### File paths
 
-A file path is relative and slash-separated, and Kazari cleans it with `path.Clean`. A path cannot have:
+A file path is relative and slash-separated, and Kazari cleans it with `path.Clean`. A leading `/` is dropped, so `/index.html` is the file at the root. A path cannot have:
 
-- a leading or trailing `/`;
+- a trailing `/`, or nothing but slashes;
 - a `..` that escapes the bundle;
 - control characters or backslashes;
 - a segment longer than 255 bytes, or more than 1024 bytes in all;
@@ -659,7 +659,7 @@ The offset rules make retries safe:
 
 Pass `"upload_id"` to `POST /artifacts` or `PUT /artifacts/{slug}`. The same body can also carry inline `files`, for small files and `delete` entries.
 
-The staging area is deleted after the publish call **whether it succeeds or fails**, so after a failed publish, start a new upload.
+The staging area is deleted when the publish call succeeds. A refused call, such as `409 slug_taken` or `412 version_conflict`, keeps the upload, so correct the request and send it again with the same `upload_id`.
 
 #### Upload limits
 

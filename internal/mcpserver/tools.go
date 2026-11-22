@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	pathpkg "path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -21,23 +22,25 @@ import (
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 )
 
-// FileInput is an inline file of create_artifact.
+// FileInput is an inline file of create_artifact. Content is a pointer so an
+// entry that leaves it out is told apart from an empty file.
 type FileInput struct {
-	Path        string `json:"path" jsonschema:"path inside the artifact, relative, e.g. index.html or assets/app.js"`
-	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
+	Path        string  `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
+	Content     *string `json:"content,omitempty" jsonschema:"UTF-8 text, or base64 with encoding base64; \"\" for an empty file"`
+	Encoding    string  `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
+	ContentType string  `json:"content_type,omitempty" jsonschema:"MIME type; default from the extension"`
+	URL         string  `json:"url,omitempty" jsonschema:"address the server downloads as the content"`
 }
 
-// UpdateFileInput is an inline file or a deletion of update_artifact.
+// UpdateFileInput is an inline file, an edit or a deletion of update_artifact.
 type UpdateFileInput struct {
-	Path        string `json:"path" jsonschema:"path inside the artifact, relative, e.g. index.html or assets/app.js"`
-	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
-	Delete      bool   `json:"delete,omitempty" jsonschema:"true removes this path from the new version; content is ignored"`
+	Path        string      `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
+	Content     *string     `json:"content,omitempty" jsonschema:"UTF-8 text, or base64 with encoding base64; \"\" for an empty file"`
+	Encoding    string      `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
+	ContentType string      `json:"content_type,omitempty" jsonschema:"MIME type; default from the extension"`
+	URL         string      `json:"url,omitempty" jsonschema:"address the server downloads as the content"`
+	Edits       []EditInput `json:"edits,omitempty" jsonschema:"edits to this text file, as in edit_file, instead of content"`
+	Delete      bool        `json:"delete,omitempty" jsonschema:"true removes this path from the new version"`
 }
 
 // CreateInput is the input of create_artifact.
@@ -60,30 +63,32 @@ type UpdateInput struct {
 	Name            *string            `json:"name,omitempty" jsonschema:"new title"`
 	Description     *string            `json:"description,omitempty" jsonschema:"new description"`
 	Metadata        map[string]*string `json:"metadata,omitempty" jsonschema:"keys to set; a null value deletes the key"`
-	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members"`
+	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public, unlisted, members or unpublished (offline)"`
 	Label           string             `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	ExpectedVersion int                `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
+	BaseVersion     int                `json:"base_version,omitempty" jsonschema:"version the new one builds on; default the latest, required while an earlier version is published"`
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 	Restore         bool               `json:"restore,omitempty" jsonschema:"bring back a soft-deleted artifact (get_artifact shows deleted_at) before applying the other changes"`
 }
 
 // EditInput is one edit of edit_file: a text edit or an anchor edit.
 type EditInput struct {
-	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: the exact text to replace, copied from the file; it must match once unless replace_all"`
-	NewText    string `json:"new_text" jsonschema:"the replacement; empty deletes the text or lines"`
-	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"text edit: replace every match of old_text"`
-	Start      string `json:"start,omitempty" jsonschema:"anchor edit: anchor of the first line to replace, e.g. 12:3fa0, from read_file with anchors: true"`
-	End        string `json:"end,omitempty" jsonschema:"anchor edit: anchor of the last line to replace, inclusive; default start"`
-	After      string `json:"after,omitempty" jsonschema:"insert: anchor of the line new_text goes after, as new lines"`
-	Before     string `json:"before,omitempty" jsonschema:"insert: anchor of the line new_text goes before, as new lines"`
+	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: exact text to replace, copied from the file"`
+	NewText    string `json:"new_text,omitempty" jsonschema:"replacement; omitted or empty deletes"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every match of old_text"`
+	Start      string `json:"start,omitempty" jsonschema:"anchor edit: first line to replace, e.g. 12:3fa0"`
+	End        string `json:"end,omitempty" jsonschema:"anchor edit: last line to replace; default start"`
+	After      string `json:"after,omitempty" jsonschema:"insert new_text after this anchored line"`
+	Before     string `json:"before,omitempty" jsonschema:"insert new_text before this anchored line"`
 }
 
 // EditFileInput is the input of edit_file.
 type EditFileInput struct {
 	Slug            string      `json:"slug" jsonschema:"artifact to change"`
 	Path            string      `json:"path" jsonschema:"text file to edit, e.g. index.html"`
-	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits (start, after, before), not both, applied to the latest version"`
+	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits, not both"`
 	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
+	BaseVersion     int         `json:"base_version,omitempty" jsonschema:"version whose file to edit; default the latest, required while an earlier version is published"`
 	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
@@ -105,6 +110,17 @@ func editFileSchema() *jsonschema.Schema {
 	return s
 }
 
+func updateSchema() *jsonschema.Schema {
+	s, err := jsonschema.For[UpdateInput](nil)
+	if err != nil {
+		panic(err) // a fixed struct always infers
+	}
+	for _, p := range s.Properties["files"].Items.Properties["edits"].Items.Properties {
+		p.Description = ""
+	}
+	return s
+}
+
 // BeginUploadInput is the input of begin_upload. Without the archive fields
 // the upload takes chunks; with both it also takes one archive at archive_url.
 type BeginUploadInput struct {
@@ -118,7 +134,7 @@ type ChunkInput struct {
 	Path        string `json:"path" jsonschema:"path of the file in the artifact"`
 	Offset      int64  `json:"offset" jsonschema:"0 for the first chunk of a path, then the bytes_received of the previous chunk"`
 	Content     string `json:"content" jsonschema:"chunk content in the given encoding"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
+	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
 	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type of the file, read from the first chunk"`
 }
 
@@ -182,7 +198,8 @@ type VisibilityInput struct {
 type ShareLinkInput struct {
 	Slug      string `json:"slug" jsonschema:"artifact to share"`
 	Label     string `json:"label,omitempty" jsonschema:"note on who the link is for, e.g. Acme review"`
-	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h or 14d; default 7d"`
+	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h, 14d or 2w; default 7d"`
+	Version   int    `json:"version,omitempty" jsonschema:"also return version_url, the link opening this version"`
 }
 
 // ListShareLinksInput is the input of list_share_links.
@@ -233,9 +250,13 @@ type inputRequired struct{ requests mcp.InputRequestMap }
 
 func (*inputRequired) Error() string { return "mcpserver: input required" }
 
-// register adds a tool limited to principals holding scope. Its text content is
+// register adds a tool when p holds scope: a tool the credential cannot use
+// would only cost the model tokens and a failed call. Its text content is
 // the summary line followed by the result's JSON.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
+	if !p.HasScope(scope) {
+		return
+	}
 	t.Description = b.text.tools[t.Name]
 	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		var zero Out
@@ -254,7 +275,12 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 			return &mcp.CallToolResult{InputRequests: ir.requests}, zero, nil
 		}
 		if err != nil {
-			return nil, zero, b.toolError(ctx, t.Name, err)
+			return nil, zero, b.toolError(ctx, t.Name, b.notFound(ctx, present.Actor(p), req, err))
+		}
+		if w, ok := any(out).(warned); ok {
+			for _, line := range w.warningLines() {
+				summary += "\nWarning: " + line
+			}
 		}
 		// Unescaped, "<" costs one byte of the model's context instead of six.
 		var js strings.Builder
@@ -346,12 +372,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (WriteResult, string, error) {
-			// Before the upload is opened, which a refused call would consume.
 			if err := present.RequireShare(p, in.Visibility); err != nil {
 				return WriteResult{}, "", err
 			}
-			files, cleanup, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
-			defer cleanup()
+			files, done, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -364,6 +388,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Label:       in.Label,
 				Files:       files,
 			})
+			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
@@ -375,62 +400,74 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		b.addImport(s, p, actor)
 	}
 
-	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
+	register(b, s, p, &mcp.Tool{Name: "update_artifact", InputSchema: b.updateSchema, Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
-			// Before the upload is opened, which a refused call would consume.
+			// Models fill optional fields with "": that leaves the
+			// visibility alone rather than changing it.
+			vis := ""
 			if in.Visibility != nil {
-				if err := present.RequireShare(p, *in.Visibility); err != nil {
+				vis = *in.Visibility
+			}
+			if err := present.RequireShare(p, vis); err != nil {
+				return WriteResult{}, "", err
+			}
+			if vis != "" {
+				if err := checkVisibility(vis); err != nil {
 					return WriteResult{}, "", err
 				}
 			}
-			files, cleanup, err := b.files(ctx, p, in.UploadID, in.Files)
-			defer cleanup()
+			files, done, err := b.files(ctx, p, in.UploadID, in.Files)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			req := artifact.UpdateRequest{
+			a, v, err := b.update(ctx, actor, artifact.UpdateRequest{
 				Slug:            in.Slug,
 				Name:            in.Name,
 				Description:     in.Description,
 				Metadata:        in.Metadata,
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
+				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
 				Restore:         in.Restore,
 				Files:           files,
-			}
-			// Models fill optional fields with "": that leaves the
-			// visibility alone rather than changing it.
-			if in.Visibility != nil && *in.Visibility != "" {
-				v := artifact.Visibility(*in.Visibility)
-				req.Visibility = &v
-			}
-			a, v, err := arts.Update(ctx, actor, req)
+			}, vis)
+			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
 			if v == nil {
 				res := writeResult(links.Result(a, 0))
-				return res, "Updated fields, no new version. " + publishedLine(res), nil
+				line := "Updated fields, no new version. " + publishedLine(res)
+				if vis != "" {
+					line = visibilityLine(res)
+				}
+				return res, line, nil
 			}
 			res := writeResult(links.Published(a, v))
-			return res, publishedLine(res), nil
+			res.Edited = editedFiles(v.Edited)
+			line := publishedLine(res)
+			if len(res.Edited) > 0 {
+				parts := make([]string, len(res.Edited))
+				for i, f := range res.Edited {
+					parts[i] = f.Path + " (" + editParts(f.Edits) + ")"
+				}
+				line += "; edited " + strings.Join(parts, ", ")
+			}
+			return res, line, nil
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "edit_file", InputSchema: b.editSchema,
 		Annotations: annotations("Edit file", false, false, false), Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in EditFileInput) (EditFileResult, string, error) {
-			edits := make([]artifact.Edit, len(in.Edits))
-			for i, e := range in.Edits {
-				edits[i] = artifact.Edit(e)
-			}
 			a, v, outs, err := arts.Edit(ctx, actor, artifact.EditRequest{
 				Slug:            in.Slug,
 				Path:            in.Path,
-				Edits:           edits,
+				Edits:           edits(in.Edits),
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
+				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
 			})
 			if err != nil {
@@ -560,27 +597,37 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				return WriteResult{}, "", err
 			}
 			res := writeResult(links.Result(a, 0))
-			return res, publishedLine(res), nil
+			return res, visibilityLine(res), nil
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "create_share_link", Annotations: annotations("Create share link", false, false, false)},
-		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (api.CreatedShareLink, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (ShareLinkResult, string, error) {
 			ttl, err := present.ParseDuration("expires_in", in.ExpiresIn)
 			if err != nil {
-				return api.CreatedShareLink{}, "", err
-			}
-			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
-			if err != nil {
-				return api.CreatedShareLink{}, "", err
+				return ShareLinkResult{}, "", err
 			}
 			a, _, err := arts.Get(ctx, actor, in.Slug)
 			if err != nil {
-				return api.CreatedShareLink{}, "", err
+				return ShareLinkResult{}, "", err
 			}
-			out := links.CreatedShareLink(a, l, token, b.o.Now())
+			if in.Version < 0 || in.Version > a.LatestVersion {
+				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d; its latest is %d",
+					a.Slug, in.Version, a.LatestVersion)
+			}
+			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
+			if err != nil {
+				return ShareLinkResult{}, "", err
+			}
+			out := ShareLinkResult{URL: links.ShareURL(a.Slug, token), Slug: a.Slug, Visibility: string(a.Visibility),
+				Prefix: l.Prefix, Label: l.Label, ExpiresAt: l.ExpiresAt}
 			line := fmt.Sprintf("Share link for %s: %s (until %s). Anyone with this URL can open the page until then; "+
 				"give it to the user, and revoke it with revoke_share_link prefix %q.",
 				a.Slug, out.URL, l.ExpiresAt.Format(time.RFC3339), l.Prefix)
+			if in.Version > 0 {
+				latest := strings.TrimSuffix(links.ArtifactURL(a.Slug), "/")
+				out.VersionURL = strings.TrimSuffix(links.VersionURL(a.Slug, in.Version), "/") + strings.TrimPrefix(out.URL, latest)
+				line += fmt.Sprintf(" Version %d: %s.", in.Version, out.VersionURL)
+			}
 			if !a.Visibility.Gated() {
 				line += fmt.Sprintf(" Note: %s is %s, so anyone can open it without the link; set_visibility \"members\" "+
 					"limits it to members and link holders.", a.Slug, a.Visibility)
@@ -680,8 +727,12 @@ func confirmed(answer mcp.InputResponse) bool {
 
 // editLine names each edit's match so a fuzzy match is never silent.
 func editLine(r EditFileResult) string {
-	parts := make([]string, len(r.Edits))
-	for i, e := range r.Edits {
+	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, editParts(r.Edits))
+}
+
+func editParts(edits []api.EditOutcome) string {
+	parts := make([]string, len(edits))
+	for i, e := range edits {
 		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
 		if e.EndLine < e.StartLine {
 			where = fmt.Sprintf("removed at line %d", e.StartLine)
@@ -692,10 +743,30 @@ func editLine(r EditFileResult) string {
 		}
 		parts[i] += ")"
 	}
-	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, strings.Join(parts, "; "))
+	return strings.Join(parts, "; ")
+}
+
+// visibilityLine says who can open the page now.
+func visibilityLine(r WriteResult) string {
+	if r.UnpublishedAt != nil || r.DeletedAt != nil {
+		return publishedLine(r)
+	}
+	who := map[string]string{
+		string(artifact.Public):   "public: anyone can open it, and it is listed",
+		string(artifact.Unlisted): "unlisted: anyone with the URL can open it, and it is not listed",
+		string(artifact.Members):  "members-only: people who sign in to this instance, or who hold a share link, can open it",
+	}[r.Visibility]
+	if who == "" {
+		who = r.Visibility
+	}
+	return fmt.Sprintf("%s is now %s at %s (version %d).", r.Slug, who, r.URL, r.Version)
 }
 
 func publishedLine(r WriteResult) string {
+	if r.Unchanged {
+		return fmt.Sprintf("No change: the files match version %d; no version was added. %s serves version %d.",
+			r.Version, r.URL, r.PublishedVersion)
+	}
 	line := fmt.Sprintf("Published %s (version %d)", r.URL, r.Version)
 	switch {
 	case r.DeletedAt != nil:
@@ -737,33 +808,77 @@ func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string,
 }
 
 // files merges the inline files with uploadID's staged ones, inline winning on a
-// path clash. The cleanup removes the upload; it is never nil and must be called
-// even on error, so a failed call still consumes the upload.
-func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(), error) {
-	cleanup := func() {}
+// path clash. Call done once the publish has succeeded or failed: it removes
+// the downloads, and the upload only when consumed, so a refused call can be
+// corrected and sent again with the same upload_id.
+func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(consumed bool), error) {
+	release := func(bool) error { return nil }
 	var staged []artifact.FileInput
 	if uploadID != "" {
-		files, done, err := b.d.Uploads.Files(ctx, p.Handle, uploadID)
+		files, r, err := b.d.Uploads.Files(ctx, p.Handle, uploadID)
 		if err != nil {
-			return nil, cleanup, err
+			return nil, nil, err
 		}
-		staged = files
-		cleanup = func() {
-			if err := done(); err != nil {
-				b.log.ErrorContext(ctx, "mcp upload cleanup failed", "upload", uploadID, "err", err)
-			}
-		}
+		staged, release = files, r
 	}
 	inline, closeDownloads, err := b.inlineFiles(ctx, raw)
 	if err != nil {
-		return nil, cleanup, err
+		b.release(ctx, uploadID, release, false)
+		return nil, nil, err
 	}
-	done := cleanup
-	cleanup = func() {
+	done := func(consumed bool) {
 		closeDownloads()
-		done()
+		b.release(ctx, uploadID, release, consumed)
 	}
-	return artifact.MergeFiles(inline, staged), cleanup, nil
+	return artifact.MergeFiles(inline, staged), done, nil
+}
+
+func (b *builder) release(ctx context.Context, uploadID string, release func(bool) error, consumed bool) {
+	if err := release(consumed); err != nil {
+		b.log.ErrorContext(ctx, "mcp upload cleanup failed", "upload", uploadID, "err", err)
+	}
+}
+
+func edits(in []EditInput) []artifact.Edit {
+	out := make([]artifact.Edit, len(in))
+	for i, e := range in {
+		out[i] = artifact.Edit(e)
+	}
+	return out
+}
+
+// checkVisibility refuses a visibility before any upload or download is
+// opened for the call.
+func checkVisibility(v string) error {
+	if v == artifact.Unpublished {
+		return nil
+	}
+	_, err := artifact.ParseVisibility(v)
+	return err
+}
+
+// update applies req, then a visibility through SetVisibility, so
+// "unpublished" works as in set_visibility; a call that only sets the
+// visibility changes nothing else.
+func (b *builder) update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest, vis string) (*artifact.Artifact, *artifact.Version, error) {
+	only := vis != "" && len(req.Files) == 0 && req.Name == nil && req.Description == nil && len(req.Metadata) == 0 &&
+		!req.Restore && req.ExpectedVersion == 0
+	var (
+		a   *artifact.Artifact
+		v   *artifact.Version
+		err error
+	)
+	if !only {
+		if a, v, err = b.d.Artifacts.Update(ctx, actor, req); err != nil {
+			return nil, nil, err
+		}
+	}
+	if vis != "" {
+		if a, err = b.d.Artifacts.SetVisibility(ctx, actor, req.Slug, vis); err != nil {
+			return nil, nil, err
+		}
+	}
+	return a, v, nil
 }
 
 func createFiles(in []FileInput) []UpdateFileInput {
@@ -787,13 +902,20 @@ func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]arti
 		switch {
 		case f.Delete:
 			fi = artifact.FileInput{Path: f.Path, Delete: true}
-		case f.URL != "" && f.Content != "":
+		case len(f.Edits) > 0 && (f.URL != "" || f.Content != nil):
+			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has edits and also content or url; give one", f.Path)
+		case len(f.Edits) > 0:
+			fi = artifact.FileInput{Path: f.Path, Edits: edits(f.Edits), ContentType: f.ContentType}
+		case f.URL != "" && f.Content != nil:
 			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
 		case f.URL != "":
 			fi, err = dl.Add(f.Path, f.URL, f.ContentType)
+		case f.Content == nil:
+			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has no content: give content (\"\" for an empty "+
+				"file), url, edits or delete: true", f.Path)
 		default:
 			var data string
-			if data, err = decode(f.Path, f.Content, f.Encoding); err == nil {
+			if data, err = decode(f.Path, *f.Content, f.Encoding); err == nil {
 				fi = artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType}
 			}
 		}
@@ -806,12 +928,28 @@ func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]arti
 	return out, dl.Close, nil
 }
 
-// decode returns raw bytes in a string; base64 may be unpadded and contain line breaks.
+// binaryExts are the extensions whose content is never text, so base64
+// sent without encoding is a slip, not the file.
+var binaryExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".avif": true,
+	".ico": true, ".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".pdf": true, ".zip": true, ".mp4": true,
+	".webm": true, ".mp3": true}
+
+// decode returns raw bytes in a string; base64 may be unpadded, contain line
+// breaks and start with a data: URL's "data:<type>;base64,".
 func decode(path, content, encoding string) (string, error) {
 	switch strings.ToLower(encoding) {
 	case "", "utf8", "utf-8", "text":
+		if encoding == "" && binaryExts[strings.ToLower(pathpkg.Ext(path))] && looksBase64(content) {
+			return "", artifact.Errorf(artifact.ErrInvalidArgument, "content of %q looks like base64, but encoding is "+
+				"not set, so it would be stored as text: add encoding: \"base64\"", path)
+		}
 		return content, nil
 	case "base64":
+		if rest, ok := strings.CutPrefix(content, "data:"); ok {
+			if _, data, ok := strings.Cut(rest, ";base64,"); ok {
+				content = data
+			}
+		}
 		s := strings.Map(func(r rune) rune {
 			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
 				return -1
@@ -828,6 +966,20 @@ func decode(path, content, encoding string) (string, error) {
 		return string(data), nil
 	}
 	return "", artifact.Errorf(artifact.ErrInvalidArgument, "encoding of %q must be utf8 or base64, not %q", path, encoding)
+}
+
+// looksBase64 reports whether s is base64 or a base64 data: URL.
+func looksBase64(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "data:"); ok {
+		_, _, ok = strings.Cut(rest, ";base64,")
+		return ok
+	}
+	s = strings.TrimRight(strings.NewReplacer("\r", "", "\n", "").Replace(s), "=")
+	if len(s) < 8 {
+		return false
+	}
+	_, err := base64.RawStdEncoding.DecodeString(s)
+	return err == nil
 }
 
 // parseGrace returns 0, the instance default, for "".

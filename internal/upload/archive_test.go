@@ -147,7 +147,7 @@ func TestReceiveArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer cleanup(true)
 	want := map[string]string{"assets/app.js": "js", "index.html": "<h1>hi</h1>", "notes.txt": "chunked first", "more.txt": "x"}
 	if diff := cmp.Diff(want, readFiles(t, files)); diff != "" {
 		t.Errorf("Files (-want +got):\n%s", diff)
@@ -271,7 +271,7 @@ func TestReceiveArchiveOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer cleanup(true)
 	if diff := cmp.Diff(map[string]string{"index.html": "x"}, readFiles(t, files)); diff != "" {
 		t.Errorf("Files (-want +got):\n%s", diff)
 	}

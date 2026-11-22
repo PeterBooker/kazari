@@ -74,20 +74,21 @@ func inlineFile(f api.FileInput) (artifact.FileInput, error) {
 }
 
 // withUpload merges upload id's staged files under inline. The caller must
-// call done once the publish has succeeded or failed.
-func (h *userAPI) withUpload(ctx context.Context, owner, id string, inline []artifact.FileInput) ([]artifact.FileInput, func(), error) {
+// call done once the publish has succeeded or failed; only a success
+// consumes the upload.
+func (h *userAPI) withUpload(ctx context.Context, owner, id string, inline []artifact.FileInput) ([]artifact.FileInput, func(consumed bool), error) {
 	if id == "" {
-		return inline, func() {}, nil
+		return inline, func(bool) {}, nil
 	}
 	if h.d.Uploads == nil {
 		return nil, nil, invalid("chunked uploads are not enabled")
 	}
-	staged, cleanup, err := h.d.Uploads.Files(ctx, owner, id)
+	staged, release, err := h.d.Uploads.Files(ctx, owner, id)
 	if err != nil {
 		return nil, nil, err
 	}
-	done := func() {
-		if err := cleanup(); err != nil {
+	done := func(consumed bool) {
+		if err := release(consumed); err != nil {
 			h.log.ErrorContext(ctx, "httpapi: upload cleanup failed", "upload", id, "err", err)
 		}
 	}

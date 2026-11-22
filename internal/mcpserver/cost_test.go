@@ -174,6 +174,52 @@ func TestSessionCost(t *testing.T) {
 	}
 }
 
+const toolsCostPath = "testdata/tools-list.txt"
+
+// TestToolsListCost measures what tools/list sends a model at the start of
+// every session, for a member on an instance with the default settings: each
+// tool's description and input schema, and the instructions. A change shows
+// as a diff of the golden file; refresh it with
+// go test ./internal/mcpserver -run TestToolsListCost -update.
+func TestToolsListCost(t *testing.T) {
+	e := newEnv(t)
+	e.opts = exampleOptions()
+	cs := e.connect(t, member)
+	res, err := cs.ListTools(e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	total := 0
+	for _, tool := range res.Tools {
+		schema, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := len(tool.Description) + len(schema)
+		total += n
+		fmt.Fprintf(&b, "%-20s %6d %6d\n", tool.Name, len(tool.Description), len(schema))
+	}
+	instructions := len(cs.InitializeResult().Instructions)
+	fmt.Fprintf(&b, "%-20s %6d\n%-20s %6d\n", "instructions", instructions, "total", total+instructions)
+
+	path := filepath.FromSlash(toolsCostPath)
+	if *updateExample {
+		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.String() != string(want) {
+		t.Errorf("tools/list changed size; if that is intended, run go test ./internal/mcpserver -run TestToolsListCost -update\ngot:\n%swant:\n%s",
+			b.String(), want)
+	}
+}
+
 func costPage(slug string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Team %s</title>\n", slug)

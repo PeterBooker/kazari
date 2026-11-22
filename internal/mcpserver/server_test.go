@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
@@ -200,6 +201,28 @@ func fails(t *testing.T, cs *mcp.ClientSession, name string, args any) string {
 	return text(res)
 }
 
+// readBody is a read_file result's text after its header line.
+func readBody(res *mcp.CallToolResult) string {
+	if len(res.Content) < 2 {
+		return ""
+	}
+	tc, _ := res.Content[1].(*mcp.TextContent)
+	if tc == nil {
+		return ""
+	}
+	return tc.Text
+}
+
+// offered reports whether the server lists the tool name.
+func offered(t *testing.T, cs *mcp.ClientSession, name string) bool {
+	t.Helper()
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.ContainsFunc(res.Tools, func(tool *mcp.Tool) bool { return tool.Name == name })
+}
+
 func firstLine(res *mcp.CallToolResult) string {
 	if len(res.Content) == 0 {
 		return ""
@@ -317,16 +340,19 @@ func TestToolsRoundTrip(t *testing.T) {
 	}
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
-	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || text(res) != html || rf.Content != html {
+	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || readBody(res) != html || rf.Content != html {
 		t.Errorf("read_file index.html = %+v, %q", rf, text(res))
 	}
 	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "assets/logo.png", "version": 1})
 	if rf.Encoding != "base64" || rf.ContentType != "image/png" || rf.Content != "" {
 		t.Errorf("read_file logo = %+v", rf)
 	}
-	er, isRes := res.Content[0].(*mcp.EmbeddedResource)
+	if got := firstLine(res); got != "assets/logo.png, version 1 (the latest), 18 B image/png" {
+		t.Errorf("read_file logo header = %q", got)
+	}
+	er, isRes := res.Content[1].(*mcp.EmbeddedResource)
 	if !isRes || !bytes.Equal(er.Resource.Blob, pngBytes) || er.Resource.URI != "kazari://artifacts/demo/files/assets/logo.png" {
-		t.Errorf("read_file logo content = %#v", res.Content[0])
+		t.Errorf("read_file logo content = %#v", res.Content[1])
 	}
 
 	list, _ := ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{"mine": "created"})
@@ -458,17 +484,22 @@ func TestToolErrors(t *testing.T) {
 	}
 }
 
+// A credential is offered only the tools its scopes allow.
 func TestReadOnlyPrincipal(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, readOnly)
-	msg := fails(t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "x", "description": "x",
-		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
-	if first, next, _ := strings.Cut(msg, "\n"); first != `forbidden: scope "artifacts:write" required` ||
-		!strings.HasPrefix(next, "Next step: Retrying the same call will not help.") {
-		t.Errorf("create as reader = %q", msg)
+	res, err := cs.ListTools(e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if msg := fails(t, cs, "delete_artifact", map[string]any{"slug": "demo"}); !strings.Contains(msg, `scope "artifacts:delete" required`) {
-		t.Errorf("delete as reader = %q", msg)
+	var got []string
+	for _, tool := range res.Tools {
+		got = append(got, tool.Name)
+	}
+	slices.Sort(got)
+	want := []string{"get_artifact", "get_guide", "list_artifacts", "list_share_links", "read_file"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("tools offered to a reader (-want +got):\n%s", diff)
 	}
 	if msg := fails(t, cs, "get_artifact", map[string]any{"slug": "demo"}); !strings.HasPrefix(msg, "not_found: ") {
 		t.Errorf("get as reader = %q", msg)
@@ -535,8 +566,8 @@ func TestChunkedPublish(t *testing.T) {
 	if !strings.Contains(text(res), rf.URL) {
 		t.Errorf("read_file text = %q", text(res))
 	}
-	if _, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "bundle", "path": "index.html"}); text(res) != "inline wins" {
-		t.Errorf("index.html = %q", text(res))
+	if _, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "bundle", "path": "index.html"}); readBody(res) != "inline wins" {
+		t.Errorf("index.html = %q", readBody(res))
 	}
 
 	if msg := fails(t, cs, "upload_chunk", chunk(0, data[:10])); !strings.HasPrefix(msg, "upload_not_found: ") {
@@ -544,26 +575,43 @@ func TestChunkedPublish(t *testing.T) {
 	}
 }
 
-func TestUploadCleanedUpOnFailure(t *testing.T) {
+// A refused publish keeps the upload, so the corrected call needs no new
+// staging; only a publish that succeeds consumes it.
+func TestUploadKeptOnRefusal(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "taken", "name": "x", "description": "x",
+		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "x"})
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "admin", "name": "x", "description": "x", "upload_id": up.UploadID}); !strings.HasPrefix(msg, "invalid_slug: ") {
-		t.Fatalf("create = %q", msg)
+	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "staged"})
+	refusals := []struct {
+		name string
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"invalid slug", "create_artifact", map[string]any{"slug": "Bad Slug"}, "invalid_slug: "},
+		{"slug taken", "create_artifact", map[string]any{"slug": "taken"}, "slug_taken: "},
+		{"bad metadata", "create_artifact", map[string]any{"slug": "fine", "metadata": map[string]any{"kazari.nope": "1"}}, "invalid_metadata: "},
+		{"bad inline file", "create_artifact", map[string]any{"slug": "fine",
+			"files": []map[string]any{{"path": "a.bin", "content": "!!", "encoding": "base64"}}}, "invalid_argument: "},
+		{"version conflict", "update_artifact", map[string]any{"slug": "taken", "expected_version": 7}, "version_conflict: "},
 	}
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x", "upload_id": up.UploadID}); !strings.HasPrefix(msg, "upload_not_found: ") {
-		t.Errorf("reuse after failure = %q", msg)
+	for _, r := range refusals {
+		args := map[string]any{"name": "x", "description": "x", "upload_id": up.UploadID}
+		for k, v := range r.args {
+			args[k] = v
+		}
+		if msg := fails(t, cs, r.tool, args); !strings.HasPrefix(msg, r.want) {
+			t.Errorf("%s: %s = %q, want prefix %q", r.name, r.tool, msg, r.want)
+		}
 	}
-
-	up, _ = ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	ok[api.ChunkResult](t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 0, "content": "x"})
-	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x", "upload_id": up.UploadID,
-		"files": []map[string]any{{"path": "a.bin", "content": "!!", "encoding": "base64"}}}); !strings.HasPrefix(msg, "invalid_argument: ") {
-		t.Fatalf("create with bad inline file = %q", msg)
+	if _, res := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "fine", "name": "x", "description": "x",
+		"upload_id": up.UploadID}); !strings.HasPrefix(firstLine(res), "Published https://fine.art.test/") {
+		t.Errorf("create after the refusals = %q", firstLine(res))
 	}
-	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 1, "content": "y"}); !strings.HasPrefix(msg, "upload_not_found: ") {
-		t.Errorf("chunk after failed create = %q", msg)
+	if msg := fails(t, cs, "upload_chunk", map[string]any{"upload_id": up.UploadID, "path": "index.html", "offset": 6, "content": "y"}); !strings.HasPrefix(msg, "upload_not_found: ") {
+		t.Errorf("chunk after a publish = %q", msg)
 	}
 }
 
@@ -723,8 +771,8 @@ func TestDiscardUpload(t *testing.T) {
 	if msg := fails(t, cs, "discard_upload", map[string]any{"upload_id": "missing"}); !strings.HasPrefix(msg, "upload_not_found: ") {
 		t.Errorf("discard of an unknown upload = %q", msg)
 	}
-	if msg := fails(t, e.connect(t, readOnly), "discard_upload", map[string]any{"upload_id": ids[1]}); !strings.Contains(msg, `scope "artifacts:write" required`) {
-		t.Errorf("discard as reader = %q", msg)
+	if offered(t, e.connect(t, readOnly), "discard_upload") {
+		t.Errorf("discard_upload is offered to a reader")
 	}
 }
 

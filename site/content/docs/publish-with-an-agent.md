@@ -96,12 +96,14 @@ Some requests, and what the agent does with each:
 
 The agent replies with the address, for example `Published https://signup-flow.art.example.com/ (version 1)`. Apps that support MCP Apps also show a card with links to the page and the version.
 
+When the page will not render as written, the result carries warnings, such as a missing `index.html`, an image the page links to that is not there, or a stylesheet from a blocked address. The agent fixes them in a new version.
+
 ## What works in a page
 
 Kazari serves static files: HTML, CSS, JavaScript, images, fonts and data files. Your agent learns these rules from the tool descriptions, but they help when you ask for something ambitious:
 
 - **One `index.html` is enough.** It is served at the root address. Extra files such as styles, scripts, images and JSON data are fine. Link between them with relative paths, `about.html` rather than `/about.html`, so the links also work on version addresses.
-- **Libraries from the common CDNs work.** By default, scripts can load from cdnjs, jsDelivr and unpkg, styles from Google Fonts, and images from any `https` address. The browser blocks other sources.
+- **Libraries from the common CDNs work.** By default, scripts, styles and fonts can load from cdnjs, jsDelivr and unpkg, styles and fonts also from Google Fonts, and images from any `https` address. The browser blocks other sources, including embedded frames such as YouTube or maps, and the agent is told so in the result when a page uses one. To allow one, ask your agent to add it with the page's `kazari.csp` metadata, or to ship the file with the page.
 - **Data travels with the page.** A page can `fetch` its own files, such as `data.json`, but not other websites or APIs. Put the data in the page or next to it.
 - **No server-side code.** There is nowhere to run PHP, an API route or a database, and forms cannot save anything on the server. For a prototype, fake the behaviour in JavaScript.
 - **Payments go through a provider.** A donation or payment form links or posts to a checkout the provider hosts, such as a Stripe Payment Link or a PayPal Donate button, which needs no script. A provider's own script or embedded checkout needs its addresses allowed in the page's policy; ask your agent, or your administrator if the instance keeps one policy for every page.
@@ -120,6 +122,8 @@ Every publish creates a new version, and old versions are never changed or throw
 - `https://signup-flow--v2.art.example.com/` shows **version 2**, always.
 
 Share the main address with people who should see the latest work. Put a version address in feedback, sign-off or a ticket when it matters exactly what someone looked at.
+
+To roll back, ask your agent to publish an earlier version. While an earlier version is published, a change has to say which version it builds on, so it does not quietly bring back the version you rolled away from: the agent asks you whether to fix the published version or carry on from the newest.
 
 ## Sharing safely
 
@@ -164,14 +168,15 @@ Your agent reports a problem as a short code or message. Find it here:
 | Message | What it means |
 | ------- | ------------- |
 | `slug_taken` | Another page, or one deleted recently, has that name. Pick another. |
-| `invalid_slug` | Slugs are 3 to 63 lower-case letters, digits and single hyphens. Some names, such as `api`, `mcp`, `admin` and `www`, are reserved. |
+| `invalid_slug` | Slugs are 3 to 63 lower-case letters, digits and single hyphens. Some names, such as `api`, `mcp`, `admin` and `www`, are reserved. The message suggests a slug that would do. |
 | `forbidden` | Your key or sign-in lacks the permission for that action, is limited to other pages, or the instance lets only owners change their pages. The message says which. Ask your administrator. |
 | `quota_exceeded` | You have used your storage allowance. Retire old pages or ask for more. |
-| `version_conflict` | Someone else published in between. The agent fetches the latest version and tries again. |
+| `version_conflict` | Someone else published in between. When the agent's edits still apply, it sends them again; otherwise it reads the latest version and redoes them. |
+| `published_not_latest` | An earlier version is published, usually after a rollback. Tell the agent whether to change the published version or the newest. |
 | `anchor_mismatch`, `edit_not_found` | The page changed since the agent read it, or the text to change was not found. The agent reads the page again and redoes the edit. |
 | `rate_limited` | Too many changes in a minute: 60 by default, counted across MCP and the API. Wait for the time the message names. |
 | The page says "not found" | It is unpublished or deleted, or the address has a typo. |
-| A library or font does not load | Its source is not on the allowed list. Ask your agent to inline it or use one of the CDNs above. |
+| A library, font or embed does not load | Its source is not on the allowed list. Ask your agent to ship it with the page, use one of the CDNs above, or allow its address with `kazari.csp`. |
 | `fetch_failed` | The page or file could not be fetched: it is behind a login or bot protection, too large, or not on a public address. Save it from your browser and ask the agent to publish the files. |
 | "No access" when signing in | Your account is not allowed on this instance yet. Ask your administrator. |
 

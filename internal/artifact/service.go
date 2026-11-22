@@ -225,12 +225,20 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 	if err := ValidateMetadata(req.Metadata, s.opts.MaxMetadataPairs); err != nil {
 		return nil, nil, err
 	}
+	if _, set := req.Metadata[MetaCSP]; set {
+		if err := s.checkCSPOverride(); err != nil {
+			return nil, nil, err
+		}
+	}
 	if len(req.Files) == 0 {
 		return nil, nil, Errorf(ErrInvalidArgument, "at least one file is required")
 	}
 	for _, in := range req.Files {
 		if in.Delete {
 			return nil, nil, Errorf(ErrInvalidArgument, "cannot delete %q from a new artifact", in.Path)
+		}
+		if len(in.Edits) > 0 {
+			return nil, nil, Errorf(ErrInvalidArgument, "cannot edit %q in a new artifact; send its content", in.Path)
 		}
 	}
 	// Fail before streaming when the slug is taken; the store's unique
@@ -448,9 +456,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			return nil, nil, err
 		}
 	}
-	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	inputs, edited, err := s.applyFileEdits(ctx, base, baseNumber, req.Files)
+	if err != nil {
+		return nil, nil, err
+	}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
-		files, size, err := s.buildFiles(ctx, base, req.Files, quota, put)
+		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
 			return err
 		}
@@ -475,7 +487,11 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		})
 	})
 	if errors.Is(err, errNoChange) {
-		return s.unchanged(ctx, actor, req)
+		got, uv, err := s.unchanged(ctx, actor, req)
+		if uv != nil {
+			uv.Edited = edited
+		}
+		return got, uv, err
 	}
 	if err != nil {
 		return nil, nil, err
@@ -665,6 +681,11 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 				delete(m, k)
 				continue
 			}
+			if k == MetaCSP {
+				if err := s.checkCSPOverride(); err != nil {
+					return err
+				}
+			}
 			m[k] = *v
 		}
 		if err := ValidateMetadata(m, s.opts.MaxMetadataPairs); err != nil {
@@ -673,6 +694,16 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 		a.Metadata = m
 	}
 	return nil
+}
+
+// checkCSPOverride refuses kazari.csp where the instance ignores it, so a
+// caller is not told it worked.
+func (s *Service) checkCSPOverride() error {
+	if s.opts.AllowCSPOverride {
+		return nil
+	}
+	return Errorf(ErrInvalidMetadata, "this instance does not allow %s, so it would be ignored; ship the "+
+		"resources as files of the artifact instead", MetaCSP)
 }
 
 // checkWritable applies, in order, the lifecycle, the visibility and the
