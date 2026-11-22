@@ -75,7 +75,7 @@
 <td data-label="By">{{if .CreatedBy}}<a class="mono" href="/people/{{.CreatedBy}}">{{.CreatedBy}}</a>{{else}}<span class="soft">unknown</span>{{end}}</td>
 <td class="num" data-label="Content">{{bytes .SizeBytes}}</td>
 <td data-label="Its own address"><a class="mono" href="{{.URL}}" rel="noreferrer">{{.Host}}</a></td>
-<td class="row-actions">{{if and (not .Published) (not $.Data.Page.DeletedAt)}}<a class="link" href="/pages/{{$.Data.Page.Slug}}/versions/{{.Number}}/publish">Publish this version</a>{{end}}</td>
+<td class="row-actions">{{if not $.Data.Page.DeletedAt}}{{if not .Published}}<a class="link" href="/pages/{{$.Data.Page.Slug}}/versions/{{.Number}}/publish">Publish this version</a>{{end}}{{if not (or .Published .Latest)}} <a class="link" href="/pages/{{$.Data.Page.Slug}}/versions/{{.Number}}/delete">Delete this version</a>{{end}}{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>

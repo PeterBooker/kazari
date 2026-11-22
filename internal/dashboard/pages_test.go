@@ -349,6 +349,37 @@ func TestPagePublishVersion(t *testing.T) {
 	}
 }
 
+func TestPageDeleteVersion(t *testing.T) {
+	e, b := pagesEnv(t)
+	e.addVersion("ana", "live-one", "<h1>two</h1>")
+	e.addVersion("ana", "live-one", "<h1>three</h1>")
+	if r := b.get("/pages/live-one"); !strings.Contains(r.body, `href="/pages/live-one/versions/1/delete"`) ||
+		strings.Contains(r.body, `href="/pages/live-one/versions/3/delete"`) {
+		t.Errorf("the version list should offer to delete version 1 and not the published and newest version 3")
+	}
+	r := b.get("/pages/live-one/versions/1/delete")
+	for _, want := range []string{"Version 1 is gone for good", "live-one--v1.art.test", `action="/pages/live-one/versions/1/delete"`} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("the confirmation lacks %q", want)
+		}
+	}
+	r = b.submit("/pages/live-one/versions/1/delete", nil)
+	if !strings.Contains(r.body, "That version is deleted.") || strings.Contains(r.body, "live-one--v1.art.test") {
+		t.Errorf("after deleting version 1 the page should say so and list it no more:\n%s", r.body)
+	}
+	if ev := e.events(audit.ArtifactVersionDelete); len(ev) != 1 || ev[0].Actor != "boss" || ev[0].Details["versions"] != "1" {
+		t.Errorf("version delete audit = %+v", ev)
+	}
+	for path, want := range map[string]int{
+		"/pages/live-one/versions/3/delete": http.StatusUnprocessableEntity, // published and the newest
+		"/pages/live-one/versions/1/delete": http.StatusNotFound,            // deleted
+	} {
+		if r := b.navigate(path); r.StatusCode != want {
+			t.Errorf("GET %s: status %d, want %d", path, r.StatusCode, want)
+		}
+	}
+}
+
 var shareToken = regexp.MustCompile(`kzs_[a-z2-7]{8}_[a-z2-7]{52}`)
 
 func TestPageShareLink(t *testing.T) {
