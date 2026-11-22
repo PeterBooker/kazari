@@ -98,7 +98,7 @@ func TestObserveToolCalls(t *testing.T) {
 	e := newEnv(t)
 	reader, rec := observe(t, e)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>secret-body</h1>"}}})
 	if res := call(t, cs, "get_artifact", map[string]any{"slug": "missing"}); !res.IsError {
 		t.Fatal("get_artifact of a missing slug succeeded")
@@ -186,7 +186,7 @@ func TestObserveInputRequired(t *testing.T) {
 			return &mcp.ElicitResult{Action: "decline"}, nil
 		},
 	})
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
 	ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "demo", "hard": true})
 

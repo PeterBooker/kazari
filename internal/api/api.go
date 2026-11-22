@@ -207,13 +207,16 @@ type EditRequest struct {
 	KeepStale       bool   `json:"keep_stale,omitempty"`
 }
 
-// Edit replaces old_text, or the lines from anchor start to end, with new_text.
+// Edit replaces old_text, or the lines from anchor start to end, with
+// new_text, or inserts new_text as lines after or before an anchored line.
 type Edit struct {
 	OldText    string `json:"old_text,omitempty"`
 	NewText    string `json:"new_text"`
 	ReplaceAll bool   `json:"replace_all,omitempty"`
 	Start      string `json:"start,omitempty"`
 	End        string `json:"end,omitempty"`
+	After      string `json:"after,omitempty"`
+	Before     string `json:"before,omitempty"`
 }
 
 // EditResult is the response of an edit.
@@ -227,12 +230,14 @@ type EditResult struct {
 
 // EditOutcome reports one edit: Match is exact, trailing_whitespace, indentation
 // or anchor; StartLine and EndLine are where the new text sits in the new version.
+// ExcerptOf names the edit whose excerpt also shows this one's lines.
 type EditOutcome struct {
 	Match        string `json:"match"`
 	Replacements int    `json:"replacements"`
 	StartLine    int    `json:"start_line"`
 	EndLine      int    `json:"end_line"`
 	Excerpt      string `json:"excerpt"`
+	ExcerptOf    int    `json:"excerpt_of,omitempty"`
 }
 
 // CreateManifest is the manifest part of a multipart create.

@@ -655,6 +655,8 @@ type EditCmd struct {
 	All       bool    `help:"Replace every match of --old."`
 	Start     string  `help:"Anchor of the first line to replace, from files cat --anchors." placeholder:"ANCHOR"`
 	End       string  `help:"Anchor of the last line to replace (default: --start)." placeholder:"ANCHOR"`
+	After     string  `help:"Insert --new as lines after the line with this anchor." placeholder:"ANCHOR"`
+	Before    string  `help:"Insert --new as lines before the line with this anchor." placeholder:"ANCHOR"`
 	Edits     string  `help:"Read a JSON array of edits from FILE (- for stdin) instead of the flags above." placeholder:"FILE"`
 	Label     string  `help:"Version label." placeholder:"LABEL"`
 	Expected  int     `help:"Fail unless the latest version is N." placeholder:"N"`
@@ -664,20 +666,21 @@ type EditCmd struct {
 func (c *EditCmd) Run(r *runner) error {
 	var edits []api.Edit
 	var err error
-	single := c.Old != "" || c.New != nil || c.Start != "" || c.End != "" || c.All
+	single := c.Old != "" || c.New != nil || c.Start != "" || c.End != "" || c.After != "" || c.Before != "" || c.All
 	switch {
 	case c.Edits != "" && single:
-		return usagef("edit: --edits replaces --old, --new, --all, --start and --end")
+		return usagef("edit: --edits replaces --old, --new, --all, --start, --end, --after and --before")
 	case c.Edits != "":
 		if edits, err = r.readEdits(c.Edits); err != nil {
 			return err
 		}
-	case c.Old == "" && c.Start == "":
-		return usagef("edit: give --old or --start, with --new, or --edits FILE")
+	case c.Old == "" && c.Start == "" && c.After == "" && c.Before == "":
+		return usagef("edit: give --old, --start, --after or --before, with --new, or --edits FILE")
 	case c.New == nil:
 		return usagef("edit: --new is required; --new \"\" deletes")
 	default:
-		edits = []api.Edit{{OldText: c.Old, NewText: *c.New, ReplaceAll: c.All, Start: c.Start, End: c.End}}
+		edits = []api.Edit{{OldText: c.Old, NewText: *c.New, ReplaceAll: c.All, Start: c.Start, End: c.End,
+			After: c.After, Before: c.Before}}
 	}
 	cl, err := r.userClient()
 	if err != nil {

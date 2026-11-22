@@ -178,9 +178,9 @@ func TestConversions(t *testing.T) {
 		{
 			name: "Edit",
 			got: links.Edit(a, 3, "index.html", []artifact.EditOutcome{
-				{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>"}}),
+				{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>", ExcerptOf: 2}}),
 			want: api.EditResult{URL: "https://demo.art.test/", Version: 3, Path: "index.html", Artifact: wantArtifact,
-				Edits: []api.EditOutcome{{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>"}}},
+				Edits: []api.EditOutcome{{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>", ExcerptOf: 2}}},
 		},
 		{name: "Stale", got: links.Stale(a), want: api.StaleResult{StaleAt: day(3), ExpiresAt: day(4), Artifact: wantArtifact}},
 		{

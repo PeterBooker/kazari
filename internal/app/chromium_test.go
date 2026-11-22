@@ -231,6 +231,10 @@ func heading(text string) string {
 
 const chromiumTimeout = 20 * time.Second
 
+// chromiumStart bounds the first reply: a browser that has not run on the
+// machine before, as on a CI runner, can take most of a minute to start.
+const chromiumStart = 2 * time.Minute
+
 // chromium is one page of a headless Chromium, driven over the DevTools
 // pipe: JSON messages that end with a zero byte.
 type chromium struct {
@@ -325,7 +329,11 @@ func startChromium(t *testing.T, command []string) *chromium {
 			Type string `json:"type"`
 		} `json:"targetInfos"`
 	}
-	c.must("Target.getTargets", nil, &targets)
+	began := time.Now()
+	if err := c.callWithin(chromiumStart, "Target.getTargets", nil, &targets); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Chromium answered %v after it was started", time.Since(began).Round(time.Millisecond))
 	var attached struct {
 		Session string `json:"sessionId"`
 	}
@@ -393,6 +401,10 @@ func (c *chromium) problems() []string {
 }
 
 func (c *chromium) call(method string, params, out any) error {
+	return c.callWithin(chromiumTimeout, method, params, out)
+}
+
+func (c *chromium) callWithin(timeout time.Duration, method string, params, out any) error {
 	reply := make(chan cdpMessage, 1)
 	c.mu.Lock()
 	c.next++
@@ -424,8 +436,8 @@ func (c *chromium) call(method string, params, out any) error {
 		return json.Unmarshal(m.Result, out)
 	case <-c.closed:
 		return fmt.Errorf("%s: Chromium closed the pipe", method)
-	case <-time.After(chromiumTimeout):
-		return fmt.Errorf("%s: no reply within %v", method, chromiumTimeout)
+	case <-time.After(timeout):
+		return fmt.Errorf("%s: no reply within %v", method, timeout)
 	}
 }
 

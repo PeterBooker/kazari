@@ -190,11 +190,11 @@ func TestHTTPClient(t *testing.T) {
 	if len(tools.Tools) != 19 {
 		t.Errorf("%d tools, want 19", len(tools.Tools))
 	}
-	pub, _ := ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	pub, _ := ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "over-http", "name": "x", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "hi"}},
 	})
-	if pub.Artifact.Owner != "alice" || pub.URL != "https://over-http.art.test/" {
+	if pub.Slug != "over-http" || pub.URL != "https://over-http.art.test/" {
 		t.Errorf("create over HTTP = %+v", pub)
 	}
 }
@@ -229,7 +229,7 @@ func TestHTTPHardDeleteConfirmation(t *testing.T) {
 	}{{"2026-07-28", 1}, {"2025-11-25", 0}} {
 		var asked int
 		cs := connect(c.version, &asked)
-		ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "purge-me", "name": "x", "description": "x",
+		ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "purge-me", "name": "x", "description": "x",
 			"files": []map[string]any{{"path": "index.html", "content": "hi"}}})
 		out, res := ok[api.OK](t, cs, "delete_artifact", map[string]any{"slug": "purge-me", "hard": true})
 		if !out.OK || firstLine(res) != "Purged purge-me permanently." || asked != c.asks {

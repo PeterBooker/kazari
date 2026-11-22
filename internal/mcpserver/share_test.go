@@ -7,12 +7,13 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/mcpserver"
 )
 
 func TestShareLinkTools(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "team", "name": "Team", "description": "x", "visibility": "members",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>team</h1>"}},
 	})
@@ -57,7 +58,7 @@ func TestShareLinkTools(t *testing.T) {
 	}
 
 	// A link on a public page works, and the summary says it is not needed.
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "open", "name": "Open", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "<h1>open</h1>"}},
 	})
@@ -76,19 +77,19 @@ func TestShareLinkTools(t *testing.T) {
 func TestSetVisibilityMembers(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
-	ok[api.PublishResult](t, cs, "create_artifact", map[string]any{
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
 		"slug": "demo", "name": "Demo", "description": "x",
 		"files": []map[string]any{{"path": "index.html", "content": "x"}},
 	})
-	out, _ := ok[api.PublishResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"})
-	if out.Artifact.Visibility != "members" {
-		t.Fatalf("visibility = %q", out.Artifact.Visibility)
+	out, _ := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"})
+	if out.Visibility != "members" {
+		t.Fatalf("visibility = %q", out.Visibility)
 	}
 	// An empty visibility, as models send for optional fields, changes
 	// nothing.
-	upd, _ := ok[api.PublishResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo 2", "visibility": ""})
-	if upd.Artifact.Visibility != "members" || upd.Artifact.Name != "Demo 2" {
-		t.Fatalf("update with an empty visibility: %+v", upd.Artifact)
+	upd, _ := ok[mcpserver.WriteResult](t, cs, "update_artifact", map[string]any{"slug": "demo", "name": "Demo 2", "visibility": ""})
+	if upd.Visibility != "members" || upd.Name != "Demo 2" {
+		t.Fatalf("update with an empty visibility: %+v", upd)
 	}
 	got, res := ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo"})
 	if got.Artifact.Visibility != "members" || !strings.Contains(firstLine(res), "(members)") {

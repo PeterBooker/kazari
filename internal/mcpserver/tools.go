@@ -74,19 +74,21 @@ type EditInput struct {
 	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"text edit: replace every match of old_text"`
 	Start      string `json:"start,omitempty" jsonschema:"anchor edit: anchor of the first line to replace, e.g. 12:3fa0, from read_file with anchors: true"`
 	End        string `json:"end,omitempty" jsonschema:"anchor edit: anchor of the last line to replace, inclusive; default start"`
+	After      string `json:"after,omitempty" jsonschema:"insert: anchor of the line new_text goes after, as new lines"`
+	Before     string `json:"before,omitempty" jsonschema:"insert: anchor of the line new_text goes before, as new lines"`
 }
 
 // EditFileInput is the input of edit_file.
 type EditFileInput struct {
 	Slug            string      `json:"slug" jsonschema:"artifact to change"`
 	Path            string      `json:"path" jsonschema:"text file to edit, e.g. index.html"`
-	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits, not both, applied to the latest version"`
-	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you read; a newer one fails with version_conflict"`
+	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits (start, after, before), not both, applied to the latest version"`
+	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
 	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
 
-// editFileSchema constrains each edit to exactly one of a non-empty old_text and start.
+// editFileSchema constrains each edit to exactly one of a non-empty old_text, start, after and before.
 func editFileSchema() *jsonschema.Schema {
 	s, err := jsonschema.For[EditFileInput](nil)
 	if err != nil {
@@ -99,7 +101,7 @@ func editFileSchema() *jsonschema.Schema {
 			Properties: map[string]*jsonschema.Schema{field: {Type: "string", MinLength: &one}},
 		}
 	}
-	s.Properties["edits"].Items.OneOf = []*jsonschema.Schema{kind("old_text"), kind("start")}
+	s.Properties["edits"].Items.OneOf = []*jsonschema.Schema{kind("old_text"), kind("start"), kind("after"), kind("before")}
 	return s
 }
 
@@ -254,14 +256,21 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 		if err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, err)
 		}
-		js, err := json.Marshal(out)
-		if err != nil {
+		// Unescaped, "<" costs one byte of the model's context instead of six.
+		var js strings.Builder
+		enc := json.NewEncoder(&js)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(out); err != nil {
 			return nil, zero, fmt.Errorf("mcpserver: %s: encode result: %w", t.Name, err)
 		}
-		return &mcp.CallToolResult{Content: []mcp.Content{
+		res = &mcp.CallToolResult{Content: []mcp.Content{
 			&mcp.TextContent{Text: summary},
-			&mcp.TextContent{Text: string(js)},
-		}}, out, nil
+			&mcp.TextContent{Text: strings.TrimSuffix(js.String(), "\n")},
+		}}
+		if m, ok := any(out).(resultMeta); ok {
+			res.Meta = m.meta()
+		}
+		return res, out, nil
 	})
 }
 
@@ -336,15 +345,15 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "create_artifact", Annotations: annotations("Create artifact", false, false, false),
 		Meta: previewToolMeta()},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (WriteResult, string, error) {
 			// Before the upload is opened, which a refused call would consume.
 			if err := present.RequireShare(p, in.Visibility); err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
 			files, cleanup, err := b.files(ctx, p, in.UploadID, createFiles(in.Files))
 			defer cleanup()
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
 			a, v, err := arts.Create(ctx, actor, artifact.CreateRequest{
 				Slug:        in.Slug,
@@ -356,9 +365,9 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Files:       files,
 			})
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
-			res := links.Result(a, v.Number)
+			res := writeResult(links.Result(a, v.Number))
 			return res, publishedLine(res), nil
 		})
 
@@ -368,17 +377,17 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
 			// Before the upload is opened, which a refused call would consume.
 			if in.Visibility != nil {
 				if err := present.RequireShare(p, *in.Visibility); err != nil {
-					return api.PublishResult{}, "", err
+					return WriteResult{}, "", err
 				}
 			}
 			files, cleanup, err := b.files(ctx, p, in.UploadID, in.Files)
 			defer cleanup()
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
 			req := artifact.UpdateRequest{
 				Slug:            in.Slug,
@@ -399,13 +408,13 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			}
 			a, v, err := arts.Update(ctx, actor, req)
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
 			n := 0
 			if v != nil {
 				n = v.Number
 			}
-			res := links.Result(a, n)
+			res := writeResult(links.Result(a, n))
 			if v == nil {
 				return res, "Updated fields, no new version. " + publishedLine(res), nil
 			}
@@ -414,7 +423,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "edit_file", InputSchema: b.editSchema,
 		Annotations: annotations("Edit file", false, false, false), Meta: previewToolMeta()},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in EditFileInput) (api.EditResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in EditFileInput) (EditFileResult, string, error) {
 			edits := make([]artifact.Edit, len(in.Edits))
 			for i, e := range in.Edits {
 				edits[i] = artifact.Edit(e)
@@ -428,10 +437,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				KeepStale:       in.KeepStale,
 			})
 			if err != nil {
-				return api.EditResult{}, "", err
+				return EditFileResult{}, "", err
 			}
 			clean, _ := artifact.ValidatePath(in.Path) // valid: Edit accepted it
-			res := links.Edit(a, v.Number, clean, outs)
+			res := editFileResult(links.Edit(a, v.Number, clean, outs))
 			return res, editLine(res), nil
 		})
 
@@ -513,12 +522,12 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "publish_version", Annotations: annotations("Publish version", false, false, true),
 		Meta: previewToolMeta()},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in PublishInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in PublishInput) (WriteResult, string, error) {
 			a, err := arts.Publish(ctx, actor, in.Slug, in.Version)
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
-			res := links.Result(a, in.Version)
+			res := writeResult(links.Result(a, in.Version))
 			return res, publishedLine(res), nil
 		})
 
@@ -538,22 +547,22 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "unmark_stale", Annotations: annotations("Unmark stale", false, false, true)},
-		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in SlugInput) (api.PublishResult, string, error) {
+		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in SlugInput) (WriteResult, string, error) {
 			a, err := arts.UnmarkStale(ctx, actor, in.Slug)
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
-			res := links.Result(a, 0)
+			res := writeResult(links.Result(a, 0))
 			return res, "No longer stale. " + publishedLine(res), nil
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "set_visibility", Annotations: annotations("Set visibility", false, false, true)},
-		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in VisibilityInput) (api.PublishResult, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in VisibilityInput) (WriteResult, string, error) {
 			a, err := arts.SetVisibility(ctx, actor, in.Slug, in.Visibility)
 			if err != nil {
-				return api.PublishResult{}, "", err
+				return WriteResult{}, "", err
 			}
-			res := links.Result(a, 0)
+			res := writeResult(links.Result(a, 0))
 			return res, publishedLine(res), nil
 		})
 
@@ -673,7 +682,7 @@ func confirmed(answer mcp.InputResponse) bool {
 }
 
 // editLine names each edit's match so a fuzzy match is never silent.
-func editLine(r api.EditResult) string {
+func editLine(r EditFileResult) string {
 	parts := make([]string, len(r.Edits))
 	for i, e := range r.Edits {
 		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
@@ -689,12 +698,12 @@ func editLine(r api.EditResult) string {
 	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, strings.Join(parts, "; "))
 }
 
-func publishedLine(r api.PublishResult) string {
+func publishedLine(r WriteResult) string {
 	line := fmt.Sprintf("Published %s (version %d)", r.URL, r.Version)
 	switch {
-	case r.Artifact.DeletedAt != nil:
+	case r.DeletedAt != nil:
 		line += "; the artifact is deleted, so the URL is offline"
-	case r.Artifact.UnpublishedAt != nil:
+	case r.UnpublishedAt != nil:
 		line = fmt.Sprintf("Unpublished %s: offline until set_visibility public, unlisted or members (version %d kept)", r.URL, r.Version)
 	}
 	return line
