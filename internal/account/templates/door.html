@@ -27,6 +27,14 @@
 <h1 class="title">Request <b>not accepted</b></h1>
 <p>This form was not sent from your account page, or the page had been open since before you last signed in. Nothing was changed.</p>
 <div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "form-used"}}{{template "theme/door" (.Door "Form already sent")}}
+<h1 class="title">Form <b>already sent</b></h1>
+<p>Nothing new was made. The key this form made the first time was shown once, on the page that answered it. To make another, open your account and use the form there.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "form-expired"}}{{template "theme/door" (.Door "Form expired")}}
+<h1 class="title">Form <b>expired</b></h1>
+<p>The page was opened too long ago or before the server restarted. Nothing was changed. Open your account and use the form there.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
 {{- else if eq .Kind "link-forbidden"}}{{template "theme/door" (.Door "Request not accepted")}}
 <h1 class="title">Request <b>not accepted</b></h1>
 <p>This form was not sent from the page your link opened. Nothing was changed. Open the link again and fill in the form there.</p>

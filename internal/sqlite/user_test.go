@@ -386,7 +386,8 @@ func TestStoreErrorsQuoteIdentities(t *testing.T) {
 			t.Errorf("err = %v, want %s", err, quoted)
 		}
 	}
-	for _, err := range []error{o.RevokeGrant(ctx, 4242, userT0), o.RevokeFamily(ctx, 4242, userT0)} {
+	_, revokeErr := o.RevokeGrant(ctx, 4242, userT0)
+	for _, err := range []error{revokeErr, o.RevokeFamily(ctx, 4242, userT0)} {
 		if err == nil || strings.Contains(err.Error(), "4242") {
 			t.Errorf("err = %v, want one without the id", err)
 		}

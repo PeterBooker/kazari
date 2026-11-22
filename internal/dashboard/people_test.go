@@ -349,6 +349,7 @@ func TestInviteReplaceKillsOldLink(t *testing.T) {
 		t.Errorf("the new link: %v", err)
 	}
 	// Someone with a password gets a reset link, not an invite.
+	b.get("/people/ana")
 	if r = b.post("/people/ana/invite", nil); r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Create a reset link instead") {
 		t.Errorf("an invite for a person with a password: status %d: %s", r.StatusCode, r.body)
 	}
@@ -376,6 +377,7 @@ func TestPeopleResetLink(t *testing.T) {
 	}
 
 	for _, revokeAll := range []bool{false, true} {
+		b.get("/people/ana/reset")
 		form := url.Values{}
 		if revokeAll {
 			form.Set("revoke_all", "1")
@@ -526,6 +528,7 @@ func TestPersonKeys(t *testing.T) {
 		if r := b.navigate(path); r.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s: status %d, want 404", path, r.StatusCode)
 		}
+		b.get("/people/ana")
 		if r := b.post(path, nil); r.StatusCode != http.StatusNotFound {
 			t.Errorf("POST %s: status %d, want 404", path, r.StatusCode)
 		}
@@ -564,6 +567,7 @@ func TestPersonKeyRules(t *testing.T) {
 		"days of words":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"soon"}}, `aria-describedby="key-days-help key-days-err" aria-invalid="true"`},
 		"too many days":        {url.Values{"scopes": {auth.ScopeRead}, "days": {"3651"}}, "Enter a number of days from 1 to 3650"},
 	} {
+		b.get("/people/ana")
 		r := b.post("/people/ana/keys", tt.form)
 		if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, tt.want) || peopleKeyRE.MatchString(r.body) ||
 			!strings.Contains(r.body, "No key was issued") || strings.Contains(r.body, "user:") || strings.Contains(r.body, "artifact:") {
@@ -1047,6 +1051,7 @@ func TestPeopleWithoutLocalAccounts(t *testing.T) {
 		if r := b.navigate(path); r.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s: status %d, want 404", path, r.StatusCode)
 		}
+		b.get("/people/ana")
 		if r := b.post(path, nil); r.StatusCode != http.StatusNotFound {
 			t.Errorf("POST %s: status %d, want 404", path, r.StatusCode)
 		}
@@ -1376,5 +1381,50 @@ func TestWithoutAnActivityLog(t *testing.T) {
 	}
 	if r := b.post("/activity/export", nil); r.StatusCode != http.StatusOK {
 		t.Errorf("exporting no activity: status %d: %s", r.StatusCode, r.body)
+	}
+}
+
+// A reload of the page that showed a new key or link sends its form again;
+// that makes nothing new.
+func TestShownOnceFormSentTwice(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	e.person("ana", "")
+	b := e.signedIn("boss")
+	ctx := context.Background()
+
+	for _, tt := range []struct{ form, path string }{
+		{"/people/ana", "/people/ana/keys"},
+		{"/people/ana/reset", "/people/ana/reset"},
+	} {
+		b.get(tt.form)
+		form := url.Values{"scopes": {auth.ScopeRead}, "once": {b.once}}
+		if r := b.post(tt.path, form); r.StatusCode != http.StatusOK {
+			t.Fatalf("POST %s: status %d: %s", tt.path, r.StatusCode, r.body)
+		}
+		r := b.post(tt.path, form)
+		if r.StatusCode != http.StatusConflict || !strings.Contains(r.body, "This form was already sent") ||
+			peopleKeyRE.MatchString(r.body) || peopleLinkRE.MatchString(r.body) {
+			t.Errorf("POST %s again: status %d: %s", tt.path, r.StatusCode, r.body)
+		}
+	}
+	if keys, _ := e.users.ListKeys(ctx, "ana"); len(keys) != 1 {
+		t.Errorf("keys = %d, want 1", len(keys))
+	}
+	if links, _ := e.users.Links(ctx); len(links) != 1 {
+		t.Errorf("links = %d, want 1", len(links))
+	}
+
+	// A value the form did not get from this session is refused too.
+	b.get("/people/ana")
+	for name, bad := range map[string]string{"none": "", "made up": "AAAA", "the form token": b.token} {
+		if r := b.post("/people/ana/keys", url.Values{"scopes": {auth.ScopeRead}, "once": {bad}}); r.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: status %d, want 403", name, r.StatusCode)
+		}
+	}
+	other := e.signedIn("boss")
+	other.get("/people/ana")
+	if r := b.post("/people/ana/keys", url.Values{"scopes": {auth.ScopeRead}, "once": {other.once}}); r.StatusCode != http.StatusForbidden {
+		t.Errorf("another session's value: status %d, want 403", r.StatusCode)
 	}
 }

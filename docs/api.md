@@ -814,7 +814,7 @@ These are its routes, with the body or query parameters each takes and its respo
 | `GET`    | `/settings`                         |                                                           | `200` effective config                  |
 | `GET`    | `/jobs`                             |                                                           | `200` job statuses                      |
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
-| `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
+| `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `subject`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
 | `POST`   | `/backup`                           | `certs`                                                   | `200` tar archive                       |
 | `GET`    | `/ready`                            | `fresh`                                                   | `200` `{ready, checked_at, checks, update?}` |
 | `GET`    | `/health` (also `/v1/health`)       |                                                           | `200` `{"status":"ok","version":"..."}` |
@@ -943,7 +943,7 @@ A job status has `name`, `every`, `last_run`, `last_error`, `next_run` and `runn
 
 ### Audit log
 
-`GET /audit` returns one page of events, newest first, each with `at`, `actor`, `action`, `slug` and `details`. For example, this reads what `ana` did to keys and pages since the start of October:
+`GET /audit` returns one page of events, newest first, each with `at`, `actor`, `action`, `slug`, `subject` and `details`. `subject` is the handle of the person whose account the event is about, whoever acted, and is absent on events about no account. For example, this reads what `ana` did to keys and pages since the start of October:
 
 ```sh
 curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" \
@@ -958,6 +958,7 @@ The query takes these parameters:
 | `until`   | An RFC 3339 time; events before it                                     | No filter  |
 | `slug`    | An exact slug                                                          | No filter  |
 | `actor`   | A handle, `admin` or `scheduler`                                       | No filter  |
+| `subject` | A handle; events about that person's account, whoever acted            | No filter  |
 | `action`  | An exact action, or a prefix ending in a dot such as `artifact.`; repeat for several, up to 32 | No filter |
 | `cursor`  | `next_cursor` of the previous page                                     | First page |
 | `limit`   | 1 to 1000                                                              | 100        |

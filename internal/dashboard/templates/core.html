@@ -5,7 +5,7 @@
 {{define "flash"}}{{with .Flash}}<p class="flash status tone-ok" role="status">{{.}}</p>
 {{end}}{{end}}
 
-{{define "token"}}<input type="hidden" name="form_token" value="{{.Token}}">{{end}}
+{{define "token"}}<input type="hidden" name="form_token" value="{{.Token}}"><input type="hidden" name="once" value="{{.Once}}">{{end}}
 
 {{define "problem"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
 <header class="head"><div class="head-row"><h1 class="title">{{.Data.Title}}</h1></div></header>

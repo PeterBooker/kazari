@@ -348,7 +348,12 @@ func TestAccountOnApex(t *testing.T) {
 	if token == nil {
 		t.Fatalf("no form token on the account page: %s", truncate(page.body))
 	}
-	issued := b.send(http.MethodPost, "http://localhost/account/keys", url.Values{"form_token": {token[1]}, "label": {"laptop"}}, origin("http://localhost"))
+	once := regexp.MustCompile(`name="once" value="([^"]+)"`).FindStringSubmatch(page.body)
+	if once == nil {
+		t.Fatalf("no single-use value on the account page: %s", truncate(page.body))
+	}
+	issued := b.send(http.MethodPost, "http://localhost/account/keys",
+		url.Values{"form_token": {token[1]}, "once": {once[1]}, "label": {"laptop"}}, origin("http://localhost"))
 	wantStatus(t, issued, http.StatusOK, "issuing a key")
 	key := regexp.MustCompile(`kzk_[a-z2-7]{8}_[a-z2-7]{52}`).FindString(issued.body)
 	if key == "" {

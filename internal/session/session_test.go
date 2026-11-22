@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -125,17 +126,17 @@ func TestSignInAndRedeem(t *testing.T) {
 
 	// The code opens nothing in a browser without the nonce cookie.
 	w = httptest.NewRecorder()
-	if _, err := m.Redeem(w, (&browser{}).request("GET", "https://admin.art.test/session/callback?code=the-code")); !errors.Is(err, session.ErrSignIn) {
-		t.Fatalf("Redeem in another browser: err = %v, want ErrSignIn", err)
+	if _, _, err := m.Open(w, (&browser{}).request("GET", "https://admin.art.test/session/callback?code=the-code")); !errors.Is(err, session.ErrSignIn) {
+		t.Fatalf("Open in another browser: err = %v, want ErrSignIn", err)
 	}
 	if len(w.Result().Cookies()) != 0 {
 		t.Error("a refused sign-in set a cookie")
 	}
 
 	w = httptest.NewRecorder()
-	path, err := m.Redeem(w, b.request("GET", "https://admin.art.test/session/callback?code=the-code"))
+	_, path, err := m.Open(w, b.request("GET", "https://admin.art.test/session/callback?code=the-code"))
 	if err != nil || path != "/people?role=admin" {
-		t.Fatalf("Redeem = %q, %v", path, err)
+		t.Fatalf("Open = %q, %v", path, err)
 	}
 	for _, c := range b.take(t, w) {
 		if c.Name != "__Host-kazari_admin" || c.Value != "view-token" || !c.HttpOnly || !c.Secure || c.Path != "/" || c.Domain != "" ||
@@ -147,7 +148,7 @@ func TestSignInAndRedeem(t *testing.T) {
 	if err != nil || s == nil || s.Handle != "boss" || s.SessionID != 7 {
 		t.Fatalf("Get = %+v, %v", s, err)
 	}
-	if _, err := m.Redeem(httptest.NewRecorder(), b.request("GET", "https://admin.art.test/session/callback?code=the-code")); !errors.Is(err, session.ErrSignIn) {
+	if _, _, err := m.Open(httptest.NewRecorder(), b.request("GET", "https://admin.art.test/session/callback?code=the-code")); !errors.Is(err, session.ErrSignIn) {
 		t.Errorf("a code used twice: err = %v, want ErrSignIn", err)
 	}
 }
@@ -299,5 +300,131 @@ func TestNavigation(t *testing.T) {
 		if got := session.Navigation(r); got != tt.want {
 			t.Errorf("%s: Navigation = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestOnce(t *testing.T) {
+	p := &provider{live: map[string]oauth.ControlSession{"one": {Handle: "boss"}, "two": {Handle: "boss"}}}
+	now := t0
+	m := session.New(p, session.Options{Host: oauth.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
+	get := func(m *session.Manager, token string) *session.Session {
+		s, err := m.Get((&browser{cookies: map[string]string{"__Host-kazari_admin": token}}).request("GET", "https://admin.art.test/"))
+		if err != nil || s == nil {
+			t.Fatalf("Get(%q) = %+v, %v", token, s, err)
+		}
+		return s
+	}
+	one := get(m, "one")
+	v := one.Once()
+	if v == one.Once() {
+		t.Fatal("two forms got the same value")
+	}
+	if err := one.Claim(v); err != nil {
+		t.Fatalf("the first claim: %v", err)
+	}
+	if err := get(m, "one").Claim(v); !errors.Is(err, session.ErrFormUsed) {
+		t.Errorf("the second claim: %v, want ErrFormUsed", err)
+	}
+
+	restarted := session.New(p, session.Options{Host: oauth.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
+	for name, tt := range map[string]struct {
+		s *session.Session
+		v string
+	}{
+		"empty":               {one, ""},
+		"not base64":          {one, "not base64!"},
+		"truncated":           {one, one.Once()[:20]},
+		"another session's":   {get(m, "two"), one.Once()},
+		"made before restart": {get(restarted, "one"), one.Once()},
+		"the form token":      {one, one.FormToken()},
+	} {
+		if err := tt.s.Claim(tt.v); !errors.Is(err, session.ErrFormExpired) {
+			t.Errorf("%s: %v, want ErrFormExpired", name, err)
+		}
+	}
+
+	old := one.Once()
+	now = now.Add(13 * time.Hour)
+	if err := one.Claim(old); !errors.Is(err, session.ErrFormExpired) {
+		t.Errorf("a value older than a form may stay open: %v, want ErrFormExpired", err)
+	}
+}
+
+func TestRequire(t *testing.T) {
+	p := &provider{live: map[string]oauth.ControlSession{"view-token": {Handle: "boss"}}}
+	m := manager(p, false)
+	signedIn := &browser{cookies: map[string]string{"__Host-kazari_admin": "view-token"}}
+
+	w := httptest.NewRecorder()
+	page := (&browser{}).request("GET", "https://admin.art.test/people")
+	page.Header.Set("Sec-Fetch-Mode", "navigate")
+	page.Header.Set("Sec-Fetch-Dest", "document")
+	if _, err := m.Require(w, page); !errors.Is(err, session.ErrSignInStarted) || w.Code != http.StatusFound {
+		t.Errorf("a page load without a session: %v, status %d", err, w.Code)
+	}
+	w = httptest.NewRecorder()
+	if _, err := m.Require(w, (&browser{}).request("POST", "https://admin.art.test/people")); !errors.Is(err, session.ErrSignedOut) || len(w.Header()) != 0 {
+		t.Errorf("a form without a session: %v, headers %v", err, w.Header())
+	}
+	s, err := m.Require(httptest.NewRecorder(), signedIn.request("GET", "https://admin.art.test/"))
+	if err != nil || s == nil || s.Handle != "boss" {
+		t.Fatalf("Require = %+v, %v", s, err)
+	}
+
+	post := func(body string) *http.Request {
+		r := httptest.NewRequest("POST", "https://admin.art.test/people", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(&http.Cookie{Name: "__Host-kazari_admin", Value: "view-token"})
+		return r
+	}
+	if err := s.CheckForm(httptest.NewRecorder(), post(url.Values{session.FormField: {s.FormToken()}}.Encode())); err != nil {
+		t.Errorf("a form with its token: %v", err)
+	}
+	if err := s.CheckForm(httptest.NewRecorder(), post("form_token=nope")); !errors.Is(err, session.ErrFormToken) {
+		t.Errorf("a form with another token: %v, want ErrFormToken", err)
+	}
+	if err := s.CheckForm(httptest.NewRecorder(), post("form_token="+strings.Repeat("a", 70<<10))); !errors.Is(err, session.ErrBadForm) {
+		t.Errorf("a form too large to read: %v, want ErrBadForm", err)
+	}
+}
+
+func TestCallbackAndSignOut(t *testing.T) {
+	p := &provider{code: "the-code", live: map[string]oauth.ControlSession{}}
+	m := manager(p, false)
+	b := &browser{}
+	w := httptest.NewRecorder()
+	m.SignIn(w, b.request("GET", "https://admin.art.test/"), "/people?role=admin")
+	b.take(t, w)
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	p.nonceHash = loc.Query().Get("nonce")
+
+	w = httptest.NewRecorder()
+	s, err := m.Callback(w, b.request("GET", "https://admin.art.test/session/callback?code=the-code"))
+	if err != nil || s == nil || s.Handle != "boss" || w.Code != http.StatusFound || w.Header().Get("Location") != "/people?role=admin" {
+		t.Fatalf("Callback = %+v, %v; status %d to %q", s, err, w.Code, w.Header().Get("Location"))
+	}
+	b.take(t, w)
+	w = httptest.NewRecorder()
+	if _, err := m.Callback(w, b.request("GET", "https://admin.art.test/session/callback?code=the-code")); !errors.Is(err, session.ErrSignIn) || w.Header().Get("Location") != "" {
+		t.Errorf("a used code: %v, Location %q", err, w.Header().Get("Location"))
+	}
+
+	signOut := func(token string) *http.Request {
+		r := b.request("POST", "https://admin.art.test/session/signout")
+		r.Body = io.NopCloser(strings.NewReader(url.Values{session.FormField: {token}}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return r
+	}
+	if err := m.SignOut(httptest.NewRecorder(), signOut("nope")); !errors.Is(err, session.ErrFormToken) || len(p.signedOut) != 0 {
+		t.Errorf("a sign-out without the form token: %v, signed out %v", err, p.signedOut)
+	}
+	w = httptest.NewRecorder()
+	if err := m.SignOut(w, signOut(s.FormToken())); err != nil || len(p.signedOut) != 1 {
+		t.Fatalf("SignOut: %v, signed out %v", err, p.signedOut)
+	}
+	b.take(t, w)
+	// A browser whose session ended is signed out without a token.
+	if err := m.SignOut(httptest.NewRecorder(), signOut("")); err != nil {
+		t.Errorf("signing out an ended session: %v", err)
 	}
 }

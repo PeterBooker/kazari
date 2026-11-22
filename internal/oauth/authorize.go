@@ -563,7 +563,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	if a.keyPrefix != "" {
 		details["key_prefix"] = a.keyPrefix
 	}
-	s.record(ctx, a.handle, ActionGrant, details)
+	s.record(ctx, a.handle, ActionGrant, a.handle, details)
 	v := url.Values{"code": {code}}
 	if req.ClientState != "" {
 		v.Set("state", req.ClientState)

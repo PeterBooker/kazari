@@ -222,7 +222,7 @@ func TestChangePassword(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
 		t.Fatalf("the change: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if page := here.page(); !strings.Contains(page, "Your password is changed.") || !strings.Contains(page, "Changed the password") {
+	if page := here.page(); !strings.Contains(page, "Your password is changed.") || !strings.Contains(page, "Password changed") {
 		t.Errorf("the page after the change: %s", page)
 	}
 	if there.signedIn() {
@@ -286,6 +286,72 @@ func TestEndOtherSessions(t *testing.T) {
 	}
 	if _, err := e.oauth.Authenticate(context.Background(), access); err != nil {
 		t.Errorf("the connected app was disconnected: %v", err)
+	}
+}
+
+// What an admin did to an account shows on it, by name; what the admin did
+// to someone else's does not show on theirs.
+func TestEventsAboutTheAccount(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", user.RoleAdmin)
+	e.person("ben", "")
+	asAna := auth.ContextWithPrincipal(context.Background(), auth.Principal{Handle: "ana", Admin: true})
+	if _, _, err := e.users.IssueLink(asAna, "ben", user.PurposeReset, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.users.IssueKey(asAna, user.IssueKeyRequest{Handle: "ben", Label: "from-ana"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.oauth.EndSessions(asAna, "ben", 0); err != nil {
+		t.Fatal(err)
+	}
+	bens, anas := e.browser(), e.browser()
+	bens.signIn("ben", password)
+	anas.signIn("ana", password)
+
+	page := bens.page()
+	for _, want := range []string{"Password reset link made", "(from-ana) issued", `<span class="mono">ana</span>`, ">You<"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("ben's page lacks %q", want)
+		}
+	}
+	if page := anas.page(); strings.Contains(page, "from-ana") || strings.Contains(page, "reset link made") {
+		t.Errorf("ana's page lists what she did to ben's account: %s", page)
+	}
+}
+
+var newKey = regexp.MustCompile(`kzk_[a-z2-7]{8}_[a-z2-7]{52}`)
+
+// A reload of the page that showed a new key sends its form again; that
+// makes no second key.
+func TestKeyFormSentTwice(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", "")
+	b := e.browser()
+	b.signIn("ana", password)
+	form := url.Values{"form_token": {b.token()}, "once": {b.once}, "label": {"ci"}}
+	if resp, body := b.post("/account/keys", form); resp.StatusCode != http.StatusOK || !newKey.MatchString(body) {
+		t.Fatalf("the first time: status %d", resp.StatusCode)
+	}
+	resp, body := b.post("/account/keys", form)
+	if resp.StatusCode != http.StatusConflict || newKey.MatchString(body) || !strings.Contains(body, "Form <b>already sent</b>") {
+		t.Errorf("the second time: status %d: %s", resp.StatusCode, body)
+	}
+	keys, err := e.users.ListKeys(context.Background(), "ana")
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("keys = %+v, %v; want one", keys, err)
+	}
+
+	rotate := url.Values{"form_token": {b.token()}, "once": {b.once}, "overlap": {"hour"}}
+	path := "/account/keys/" + keys[0].Prefix + "/rotate"
+	if resp, _ := b.post(path, rotate); resp.StatusCode != http.StatusOK {
+		t.Fatalf("rotating: status %d", resp.StatusCode)
+	}
+	if resp, _ := b.post(path, rotate); resp.StatusCode != http.StatusConflict {
+		t.Errorf("rotating again: status %d, want 409", resp.StatusCode)
+	}
+	if resp, _ := b.post("/account/keys", url.Values{"form_token": {b.token()}, "once": {"made-up"}}); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a made-up value: status %d, want 403", resp.StatusCode)
 	}
 }
 
@@ -605,7 +671,7 @@ func TestConnectedApps(t *testing.T) {
 
 	page := a.page()
 	if !strings.Contains(page, "Notebook") || strings.Contains(page, "Bens agent") || !strings.Contains(page, `href="/account/apps/`+mine+`/revoke"`) ||
-		!strings.Contains(page, "Connected the app") {
+		!strings.Contains(page, "</span> connected") {
 		t.Errorf("ana's page: %s", page)
 	}
 	// Only one's own app is there to disconnect.

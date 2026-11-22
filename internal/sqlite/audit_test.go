@@ -208,3 +208,28 @@ func TestAuditStoreListLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditStoreListSubject(t *testing.T) {
+	ctx := context.Background()
+	s := auditTestStore(t)
+	t0 := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	events := []audit.Event{
+		{At: t0, Actor: "bob", Action: audit.KeyIssue, Subject: "bob"},
+		{At: t0.Add(time.Minute), Actor: "alice", Action: audit.InviteCreate, Subject: "bob"},
+		{At: t0.Add(2 * time.Minute), Actor: "bob", Action: audit.KeyIssue, Subject: "carol"},
+		{At: t0.Add(3 * time.Minute), Actor: "bob", Action: audit.ArtifactCreate, Slug: "demo"},
+	}
+	for _, e := range events {
+		if err := s.Record(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.List(ctx, audit.Query{Subject: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []audit.Event{events[1], events[0]}
+	if diff := cmp.Diff(want, page.Events, cmpopts.IgnoreFields(audit.Event{}, "ID")); diff != "" {
+		t.Errorf("List by subject (-want +got):\n%s", diff)
+	}
+}

@@ -393,7 +393,7 @@ func Job(s scheduler.JobStatus) api.JobStatus {
 
 // AuditEvent converts an audit row.
 func AuditEvent(e audit.Event) api.AuditEvent {
-	return api.AuditEvent{At: e.At, Actor: e.Actor, Action: e.Action, Slug: e.Slug, Details: e.Details}
+	return api.AuditEvent{At: e.At, Actor: e.Actor, Action: e.Action, Slug: e.Slug, Subject: e.Subject, Details: e.Details}
 }
 
 // Error maps a domain error to an HTTP status and wire error. Unknown

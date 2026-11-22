@@ -3,14 +3,18 @@
 {{define "event"}}
 {{- $d := .Details -}}
 {{- if eq .Action "oauth.signin"}}Signed in {{if eq (index $d "via") "password"}}with the password{{else if eq (index $d "via") "api_key"}}with the API key <span class="mono">{{index $d "key_prefix"}}</span>{{else}}at the identity provider{{end}}
-{{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Changed the password{{else if eq (index $d "via") "reset"}}Set a new password through a reset link{{else}}Set the first password{{end}}
-{{- else if eq .Action "invite.use"}}Used {{if eq (index $d "purpose") "reset"}}a reset link{{else if eq (index $d "purpose") "setup"}}the setup link{{else}}an invite link{{end}}
-{{- else if eq .Action "key.issue"}}Issued the API key <span class="mono">{{index $d "prefix"}}</span>{{with index $d "label"}} ({{.}}){{end}}
-{{- else if eq .Action "key.rotate"}}Rotated the API key <span class="mono">{{index $d "prefix"}}</span> into <span class="mono">{{index $d "new_prefix"}}</span>
-{{- else if eq .Action "key.revoke"}}Revoked the API key <span class="mono">{{index $d "prefix"}}</span>
-{{- else if eq .Action "oauth.grant"}}Connected the app <span class="mono">{{index $d "client_id"}}</span>
-{{- else if eq .Action "oauth.revoke"}}{{if index $d "grant"}}Disconnected an app{{else}}Disconnected every app{{end}}
-{{- else if eq .Action "session.revoke"}}Signed out of {{if eq (index $d "sessions") "1"}}one other session{{else}}{{index $d "sessions"}} other sessions{{end}}
+{{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Password changed{{else if eq (index $d "via") "reset"}}New password set through a reset link{{else}}First password set{{end}}
+{{- else if eq .Action "invite.use"}}{{if eq (index $d "purpose") "reset"}}Reset link used{{else if eq (index $d "purpose") "setup"}}Setup link used{{else}}Invite link used{{end}}
+{{- else if eq .Action "invite.create"}}{{if eq (index $d "purpose") "reset"}}Password reset link made{{if index $d "revoke_all"}}; using it also ends every key and app{{end}}{{else}}Invite link made{{end}}
+{{- else if eq .Action "invite.revoke"}}{{if eq (index $d "purpose") "reset"}}Password reset link revoked{{else}}Invite link revoked{{end}}
+{{- else if eq .Action "user.create"}}Account created{{if eq (index $d "via") "identity"}} at the first sign-in{{else if eq (index $d "via") "setup"}} with the setup link{{end}}
+{{- else if eq .Action "user.update"}}{{if eq (index $d "identity") "link"}}Sign-in method linked{{else if eq (index $d "identity") "unlink"}}Sign-in method unlinked{{else if eq (index $d "disabled") "true"}}Account disabled{{else if eq (index $d "disabled") "false"}}Account enabled{{else if eq (index $d "role") "admin"}}Made an admin{{else if eq (index $d "role") "member"}}Made a member{{else}}Profile changed{{end}}
+{{- else if eq .Action "key.issue"}}API key <span class="mono">{{index $d "prefix"}}</span>{{with index $d "label"}} ({{.}}){{end}} issued
+{{- else if eq .Action "key.rotate"}}API key <span class="mono">{{index $d "prefix"}}</span> rotated into <span class="mono">{{index $d "new_prefix"}}</span>
+{{- else if eq .Action "key.revoke"}}API key <span class="mono">{{index $d "prefix"}}</span> revoked{{with index $d "issued_by"}} with <span class="mono">{{.}}</span>, the key it was issued with{{end}}
+{{- else if eq .Action "oauth.grant"}}App <span class="mono">{{index $d "client_id"}}</span> connected
+{{- else if eq .Action "oauth.revoke"}}{{if eq (index $d "reason") "refresh_replay"}}App <span class="mono">{{index $d "client_id"}}</span> disconnected: one of its tokens was used twice{{else if index $d "grant"}}App disconnected{{else}}Every app disconnected{{end}}
+{{- else if eq .Action "session.revoke"}}{{if eq (index $d "sessions") "1"}}One browser session ended{{else}}{{index $d "sessions"}} browser sessions ended{{end}}
 {{- else}}<span class="mono">{{.Action}}</span>
 {{- end}}{{end}}
 
@@ -148,7 +152,7 @@
 </div>
 {{end}}
 <form class="form-grid" method="post" action="/account/keys">
-<input type="hidden" name="form_token" value="{{.FormToken}}">
+<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="once" value="{{.Once}}">
 <div class="field span-2"><label for="label">Label <span class="optional">(optional)</span></label>
 <input class="input" id="label" name="label" type="text" value="{{.Key.Label}}" maxlength="100" autocomplete="off" aria-describedby="label-help">
 <p class="help" id="label-help">What it is for, such as weekly-report. It shows in this list and in the activity log.</p></div>
@@ -190,9 +194,9 @@
 {{if .Events}}<section class="section" aria-labelledby="events">
 <h2 class="h2" id="events">Recent security events</h2>
 <table class="table">
-<thead><tr><th>When</th><th>What you did</th></tr></thead>
+<thead><tr><th>When</th><th>What happened</th><th>By</th></tr></thead>
 <tbody>
-{{range .Events}}<tr><td data-label="When">{{template "time" .At}}</td><td data-label="What you did">{{template "event" .}}</td></tr>
+{{range .Events}}<tr><td data-label="When">{{template "time" .At}}</td><td data-label="What happened">{{template "event" .}}</td><td data-label="By">{{if eq .Actor $.Handle}}You{{else if eq .Actor "admin"}}The operator{{else}}<span class="mono">{{.Actor}}</span>{{end}}</td></tr>
 {{end}}</tbody>
 </table>
 </section>
@@ -292,7 +296,7 @@ kazari me</code></pre>
 {{end}}
 
 <form class="form" method="post" action="/account/keys/{{.Key.Prefix}}/rotate">
-<input type="hidden" name="form_token" value="{{.FormToken}}">
+<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="once" value="{{.Once}}">
 <fieldset class="fieldset"><legend>The old key stops working</legend>
 <label class="check"><input type="radio" name="overlap" value="now"><span>At once</span></label>
 <label class="check"><input type="radio" name="overlap" value="hour"><span>In an hour</span></label>

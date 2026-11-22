@@ -320,8 +320,8 @@ func TestOAuthStoreTokens(t *testing.T) {
 		t.Errorf("ListGrants after expiry = %v, want none", got)
 	}
 
-	if err := s.RevokeGrant(ctx, r2.FamilyID, t1); err != nil {
-		t.Fatal(err)
+	if owner, err := s.RevokeGrant(ctx, r2.FamilyID, t1); err != nil || owner != "alice" {
+		t.Fatalf("RevokeGrant = %q, %v; want alice", owner, err)
 	}
 	for _, h := range []string{a1.Hash, a2.Hash, r2.Hash} {
 		tok, err := s.GetToken(ctx, h)
@@ -335,7 +335,7 @@ func TestOAuthStoreTokens(t *testing.T) {
 	if diff := cmp.Diff([]int64{r4.ID}, grantIDs("alice", t1)); diff != "" {
 		t.Errorf("ListGrants after revoke (-want +got):\n%s", diff)
 	}
-	if err := s.RevokeGrant(ctx, a4.ID, t1); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.RevokeGrant(ctx, a4.ID, t1); !errors.Is(err, oauth.ErrNotFound) {
 		t.Errorf("RevokeGrant(access token) err = %v, want ErrNotFound", err)
 	}
 

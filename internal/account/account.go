@@ -53,7 +53,7 @@ const (
 	linkCookieTTL = 15 * time.Minute
 	maxFormBytes  = 64 << 10
 	// formTokenField is the hidden field every form of these pages carries.
-	formTokenField = "form_token"
+	formTokenField = session.FormField
 )
 
 // How wrong link tokens and wrong current passwords slow the next attempt:
@@ -133,7 +133,6 @@ type server struct {
 	// linkDelay counts wrong link tokens per client address; the other two
 	// count wrong current passwords per account and per address.
 	linkDelay, passwordDelay, addressDelay *ratelimit.Backoff
-	auth                                   auth.Sessions
 }
 
 //go:embed templates/*.html
@@ -156,11 +155,11 @@ func New(d Deps, o Options) http.Handler {
 		d: d, o: o, now: o.Now, log: log,
 		sess: session.New(d.Sessions, session.Options{
 			Host: oauth.HostAccount, Cookie: sessionCookie, SignInURL: o.SignInURL, InsecureCookies: o.InsecureCookies, Now: o.Now,
+			Telemetry: o.Telemetry,
 		}),
 		tmpl:      template.Must(theme.Templates().Funcs(funcs).ParseFS(templateFS, "templates/*.html")),
 		assets:    theme.URLs(assetPrefix),
 		linkDelay: backoff(ratelimit.ScopeIP), passwordDelay: backoff(ratelimit.ScopeAccount), addressDelay: backoff(ratelimit.ScopeIP),
-		auth: auth.NewSessions(o.Telemetry),
 	}
 	if u, err := url.Parse(o.URL); err == nil {
 		s.host = u.Host
@@ -187,9 +186,9 @@ func New(d Deps, o Options) http.Handler {
 	})
 	handle("GET "+Prefix+"{$}", s.signedIn(s.accountPage))
 	handle("POST "+Prefix+"signout", s.signOut)
-	handle("POST "+Prefix+"keys", s.signedIn(s.issueKey))
+	handle("POST "+Prefix+"keys", s.signedIn(s.once(s.issueKey)))
 	handle("GET "+Prefix+"keys/{prefix}/rotate", s.signedIn(s.rotatePage))
-	handle("POST "+Prefix+"keys/{prefix}/rotate", s.signedIn(s.rotateKey))
+	handle("POST "+Prefix+"keys/{prefix}/rotate", s.signedIn(s.once(s.rotateKey)))
 	handle("GET "+Prefix+"keys/{prefix}/revoke", s.signedIn(s.revokeKeyPage))
 	handle("POST "+Prefix+"keys/{prefix}/revoke", s.signedIn(s.revokeKey))
 	handle("GET "+Prefix+"apps/{id}/revoke", s.signedIn(s.revokeAppPage))
@@ -223,48 +222,53 @@ type visit struct {
 func (s *server) signedIn(fn func(http.ResponseWriter, *http.Request, visit)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		sess, err := s.sess.Get(r)
-		if err != nil {
-			s.fail(w, r, "load session", err)
-			return
-		}
+		sess, err := s.sess.Require(w, r)
 		var u *user.User
-		if sess != nil {
-			if u, err = s.d.Users.GetUser(ctx, sess.Handle); err != nil && !errors.Is(err, user.ErrNotFound) {
-				s.fail(w, r, "load user", err)
-				return
+		if err == nil {
+			u, err = s.d.Users.GetUser(ctx, sess.Handle)
+			if errors.Is(err, user.ErrNotFound) {
+				err = s.sess.SignedOut(w, r)
 			}
 		}
-		if u == nil {
-			result := auth.ResultMissing
-			if s.sess.Presented(r) {
-				result = auth.ResultInvalid
-			}
-			s.auth.Record(ctx, result, nil)
-			if session.Navigation(r) {
-				s.sess.SignIn(w, r, r.URL.RequestURI())
-				return
-			}
+		if err == nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			err = sess.CheckForm(w, r)
+		}
+		switch {
+		case errors.Is(err, session.ErrSignInStarted):
+			return
+		case errors.Is(err, session.ErrSignedOut):
 			s.message(w, r, http.StatusUnauthorized, "unauthorized")
 			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-			if err := r.ParseForm(); err != nil {
-				s.message(w, r, http.StatusBadRequest, "bad-form")
-				return
-			}
-			if !sess.ValidForm(r.PostForm.Get(formTokenField)) {
-				s.auth.Record(ctx, auth.ResultForbidden, nil)
-				s.message(w, r, http.StatusForbidden, "forbidden")
-				return
-			}
+		case errors.Is(err, session.ErrBadForm):
+			s.message(w, r, http.StatusBadRequest, "bad-form")
+			return
+		case errors.Is(err, session.ErrFormToken):
+			s.message(w, r, http.StatusForbidden, "forbidden")
+			return
+		case err != nil:
+			s.fail(w, r, "load session", err)
+			return
 		}
 		// Member scopes at most, whatever the role: nothing on this page
 		// acts as an admin.
 		p := auth.Principal{Handle: u.Handle, Scopes: auth.MemberScopes, Source: auth.SourceSession, KeyID: sess.KeyPrefix}
-		s.auth.Record(ctx, auth.ResultOK, &p)
+		s.sess.Admit(ctx, p)
 		fn(w, r.WithContext(auth.ContextWithPrincipal(ctx, p)), visit{sess: sess, user: u})
+	}
+}
+
+// once runs fn, which makes a key shown once, only for a form sent for the
+// first time: a reload of the page that showed the key sends it again.
+func (s *server) once(fn func(http.ResponseWriter, *http.Request, visit)) func(http.ResponseWriter, *http.Request, visit) {
+	return func(w http.ResponseWriter, r *http.Request, v visit) {
+		switch err := v.sess.Claim(r.PostForm.Get(session.OnceField)); {
+		case errors.Is(err, session.ErrFormUsed):
+			s.message(w, r, http.StatusConflict, "form-used")
+		case err != nil:
+			s.message(w, r, http.StatusForbidden, "form-expired")
+		default:
+			fn(w, r, v)
+		}
 	}
 }
 
@@ -273,6 +277,7 @@ type base struct {
 	Assets    theme.Assets
 	Host      string
 	FormToken string
+	Once      string // the single-use value of a form that makes a key
 	Person    string // the signed-in person's name
 	Handle    string
 	Role      string
@@ -306,6 +311,7 @@ func (s *server) base() base {
 func (s *server) baseFor(v visit) base {
 	b := s.base()
 	b.FormToken = v.sess.FormToken()
+	b.Once = v.sess.Once()
 	b.Handle, b.Role = v.user.Handle, string(v.user.Role)
 	b.Person = v.user.DisplayName
 	if b.Person == "" {
@@ -368,43 +374,27 @@ func (s *server) done(w http.ResponseWriter, r *http.Request, flash string) {
 
 // callback ends a sign-in for the apex.
 func (s *server) callback(w http.ResponseWriter, r *http.Request) {
-	path, err := s.sess.Redeem(w, r)
+	_, err := s.sess.Callback(w, r)
 	if errors.Is(err, session.ErrSignIn) {
 		s.message(w, r, http.StatusBadRequest, "signin-failed")
 		return
 	}
 	if err != nil {
 		s.fail(w, r, "redeem sign-in", err)
-		return
 	}
-	// Location is set as is: http.Redirect would clean the path, and
-	// cleaning can turn a path on this host into one a browser reads as
-	// another host's.
-	w.Header().Set("Location", path)
-	w.WriteHeader(http.StatusFound)
 }
 
 // signOut ends the sign-in on every host. A browser whose session already
 // ended is signed out all the same.
 func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.sess.Get(r)
-	if err != nil {
-		s.fail(w, r, "load session", err)
-		return
-	}
-	if sess != nil {
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-		if err := r.ParseForm(); err != nil || !sess.ValidForm(r.PostForm.Get(formTokenField)) {
-			s.auth.Record(r.Context(), auth.ResultForbidden, nil)
-			s.message(w, r, http.StatusForbidden, "forbidden")
-			return
-		}
-	}
-	if err := s.sess.End(w, r); err != nil {
+	switch err := s.sess.SignOut(w, r); {
+	case errors.Is(err, session.ErrBadForm), errors.Is(err, session.ErrFormToken):
+		s.message(w, r, http.StatusForbidden, "forbidden")
+	case err != nil:
 		s.fail(w, r, "sign out", err)
-		return
+	default:
+		s.message(w, r, http.StatusOK, "signed-out")
 	}
-	s.message(w, r, http.StatusOK, "signed-out")
 }
 
 // safeOrigin matches an origin that can be put in a CSP source list as is.

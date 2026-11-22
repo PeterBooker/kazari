@@ -220,7 +220,7 @@ func (s *Service) newUser(req CreateUserRequest) (*User, error) {
 }
 
 func (s *Service) recordCreated(ctx context.Context, u *User) {
-	s.record(ctx, actorFrom(ctx, "admin"), audit.UserCreate, map[string]string{
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserCreate, u.Handle, map[string]string{
 		"handle": u.Handle, "email": u.Email, "role": string(u.Role),
 		"quota_bytes": strconv.FormatInt(u.QuotaBytes, 10),
 	})
@@ -334,7 +334,7 @@ func (s *Service) UpdateUser(ctx context.Context, handle string, req UpdateUserR
 			}
 		}
 	}
-	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, details)
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, u.Handle, details)
 	return u, nil
 }
 
@@ -454,7 +454,7 @@ func (s *Service) IssueKey(ctx context.Context, req IssueKeyRequest) (_ *APIKey,
 	if err := s.store.CreateKey(ctx, k, s.opts.MaxKeys); err != nil {
 		return nil, "", err
 	}
-	s.record(ctx, actorFrom(ctx, req.Handle), audit.KeyIssue, keyDetails(k))
+	s.record(ctx, actorFrom(ctx, req.Handle), audit.KeyIssue, k.UserHandle, keyDetails(k))
 	return k, key, nil
 }
 
@@ -632,9 +632,9 @@ func (s *Service) RevokeKey(ctx context.Context, ref KeyRef) (err error) {
 		return err
 	}
 	actor := actorFrom(ctx, ref.Handle)
-	s.record(ctx, actor, audit.KeyRevoke, map[string]string{"handle": ref.Handle, "prefix": ref.Prefix})
+	s.record(ctx, actor, audit.KeyRevoke, ref.Handle, map[string]string{"handle": ref.Handle, "prefix": ref.Prefix})
 	for _, p := range issued {
-		s.record(ctx, actor, audit.KeyRevoke, map[string]string{"handle": ref.Handle, "prefix": p, "issued_by": ref.Prefix})
+		s.record(ctx, actor, audit.KeyRevoke, ref.Handle, map[string]string{"handle": ref.Handle, "prefix": p, "issued_by": ref.Prefix})
 	}
 	return nil
 }
@@ -713,7 +713,7 @@ func (s *Service) RotateKey(ctx context.Context, ref KeyRef, overlap time.Durati
 	details := keyDetails(k)
 	details["prefix"], details["new_prefix"] = old.Prefix, k.Prefix
 	details["old_expires_at"] = old.ExpiresAt.UTC().Format(time.RFC3339)
-	s.record(ctx, actorFrom(ctx, ref.Handle), audit.KeyRotate, details)
+	s.record(ctx, actorFrom(ctx, ref.Handle), audit.KeyRotate, k.UserHandle, details)
 	return k, key, old, nil
 }
 
@@ -914,7 +914,7 @@ func (s *Service) LinkIdentity(ctx context.Context, handle, issuer, subject, ema
 	if err != nil {
 		return err
 	}
-	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, map[string]string{
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, handle, map[string]string{
 		"handle": handle, "identity": "link", "issuer": issuer, "subject": subject,
 	})
 	return nil
@@ -930,7 +930,7 @@ func (s *Service) UnlinkIdentity(ctx context.Context, handle, issuer, subject st
 	if err := s.store.UnlinkIdentity(ctx, handle, issuer, subject); err != nil {
 		return err
 	}
-	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, map[string]string{
+	s.record(ctx, actorFrom(ctx, "admin"), audit.UserUpdate, handle, map[string]string{
 		"handle": handle, "identity": "unlink", "issuer": issuer, "subject": subject,
 	})
 	return nil
@@ -959,7 +959,7 @@ func (s *Service) provision(ctx context.Context, email, name string, role Role) 
 		if err != nil {
 			return nil, err
 		}
-		s.record(ctx, u.Handle, audit.UserCreate, map[string]string{
+		s.record(ctx, u.Handle, audit.UserCreate, u.Handle, map[string]string{
 			"handle": u.Handle, "email": u.Email, "role": string(u.Role),
 			"quota_bytes": strconv.FormatInt(u.QuotaBytes, 10), "via": "identity",
 		})
@@ -1011,7 +1011,8 @@ func actorFrom(ctx context.Context, fallback string) string {
 	return fallback
 }
 
-func (s *Service) record(ctx context.Context, actor, action string, details map[string]string) {
+// record appends an event about the account of subject.
+func (s *Service) record(ctx context.Context, actor, action, subject string, details map[string]string) {
 	// Best-effort: see Service.
-	_ = s.audit.Record(ctx, audit.Event{At: s.now(), Actor: actor, Action: action, Details: details})
+	_ = s.audit.Record(ctx, audit.Event{At: s.now(), Actor: actor, Action: action, Subject: subject, Details: details})
 }

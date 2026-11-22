@@ -143,7 +143,7 @@ An instance that used API keys before built-in accounts existed keeps working af
 Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows:
 
 - their profile: handle, name, email and role, which only an admin changes;
-- their recent sign-ins and the recent security events of the account, such as a changed password or a new key, since nobody is told of these by email;
+- their recent sign-ins and the recent security events of the account, such as a changed password, a new key or a reset link an admin made for them, each with who acted, since nobody is told of these by email;
 - the password form, on an instance with built-in accounts;
 - their API keys, with issue, rotate and revoke;
 - their connected apps, each of which they can disconnect;
@@ -165,6 +165,8 @@ A person issues, rotates and revokes their own API keys on the account page, wit
 - After signing in with an API key, a new key is bounded by that key, as on [`/me/keys`](api.md#your-own-keys-mekeys): no scope it lacks, a restriction inside its own, and an expiry no later.
 
 The page revokes any of the person's keys. It rotates any but one that holds `admin`, which is rotated in the dashboard or on the admin API.
+
+A new or rotated key is shown once, on the page that answers the form. Reloading that page offers to send the form again, and doing so makes no second key: the page says **Form already sent**.
 
 A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count. A key can still be rotated at the limit, because the key it replaces does not count against it.
 
@@ -511,6 +513,12 @@ Each entry is named for what the person or the server shows.
 An invite, reset or setup link was already used, was replaced by a newer one, was revoked or has expired. A link also stops working when its person sets or changes their password another way, or is disabled. The page looks the same for each. Make a new link: `kazari admin users invite <handle> --replace` for a person who never set a password, `kazari admin users reset-password <handle>` for one who did, or `kazari admin setup-link` on a fresh instance.
 
 A setup link also stops working, with `404`, as soon as the instance has any user. After a link is opened, the page waits 15 minutes for the password; later than that, open the link again.
+
+### "Form already sent"
+
+The form that makes a key on the account page was sent a second time, usually by reloading the page that showed the key. Nothing new was made, and the key from the first time keeps working. To make another key, open the account page and use the form there.
+
+**Form expired** means the page was opened more than 12 hours earlier or before the server restarted. Open the account page again and send the form from there.
 
 ### "That name or password was not accepted."
 

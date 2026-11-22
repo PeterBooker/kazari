@@ -749,15 +749,15 @@ func TestRunAdmin(t *testing.T) {
 			"gc    1h0m0s  false    2026-10-01T14:00:00+02:00  -         disk full\n"},
 		{args: []string{"jobs", "run", "gc"}, wantOut: "triggered gc\n"},
 		{args: []string{"audit", "--since", "2026-10-01T00:00:00+02:00", "--slug", "demo", "--limit", "5"},
-			wantOut: "AT                         ACTOR  ACTION           SLUG  DETAILS\n" +
-				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  a=b, version=1\n",
+			wantOut: "AT                         ACTOR  ACTION           SLUG  SUBJECT  DETAILS\n" +
+				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  -        a=b, version=1\n",
 			wantStderr: "more results: --cursor c2\n",
 			wantQuery:  "limit=5&since=2026-10-01T00%3A00%3A00%2B02%3A00&slug=demo"},
-		{args: []string{"audit", "--until", "2026-10-02T00:00:00Z", "--actor", "ann", "--action", "artifact.", "--action", "key.issue", "--cursor", "c1"},
-			wantOut: "AT                         ACTOR  ACTION           SLUG  DETAILS\n" +
-				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  a=b, version=1\n",
+		{args: []string{"audit", "--until", "2026-10-02T00:00:00Z", "--actor", "ann", "--subject", "bob", "--action", "artifact.", "--action", "key.issue", "--cursor", "c1"},
+			wantOut: "AT                         ACTOR  ACTION           SLUG  SUBJECT  DETAILS\n" +
+				"2026-10-01T14:00:00+02:00  ann    artifact.create  demo  -        a=b, version=1\n",
 			wantStderr: "more results: --cursor c2\n",
-			wantQuery:  "action=artifact.&action=key.issue&actor=ann&cursor=c1&until=2026-10-02T00%3A00%3A00Z"},
+			wantQuery:  "action=artifact.&action=key.issue&actor=ann&cursor=c1&subject=bob&until=2026-10-02T00%3A00%3A00Z"},
 		{args: []string{"users", "transfer", "ann", "bob"}, wantOut: "2 artifacts of ann now belong to bob\ndemo\nnotes\n",
 			wantBody: `{"owner":"bob"}`},
 		// An identity linked by hand that has not signed in yet has no

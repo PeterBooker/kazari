@@ -209,6 +209,7 @@ type browser struct {
 	e      *env
 	client *http.Client
 	token  string // the form token of the last page that carried one
+	once   string // and its single-use value
 }
 
 func (e *env) browser() *browser {
@@ -236,10 +237,16 @@ func (b *browser) do(req *http.Request) response {
 	if m := tokenRE.FindStringSubmatch(string(body)); m != nil {
 		b.token = m[1]
 	}
+	if m := onceRE.FindStringSubmatch(string(body)); m != nil {
+		b.once = m[1]
+	}
 	return response{resp, string(body)}
 }
 
-var tokenRE = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+var (
+	tokenRE = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+	onceRE  = regexp.MustCompile(`name="once" value="([^"]+)"`)
+)
 
 // navigate is a GET as a browser tab makes it. A path is on the dashboard;
 // a full URL goes where it says.
@@ -279,8 +286,8 @@ func (b *browser) get(path string) response {
 	return r
 }
 
-// post submits a form of the dashboard, with the form token of the last
-// page loaded unless the form names its own.
+// post submits a form of the dashboard, with the form token and the
+// single-use value of the last page loaded unless the form names its own.
 func (b *browser) post(path string, form url.Values) response {
 	b.e.t.Helper()
 	if form == nil {
@@ -288,6 +295,9 @@ func (b *browser) post(path string, form url.Values) response {
 	}
 	if _, ok := form["form_token"]; !ok {
 		form.Set("form_token", b.token)
+	}
+	if _, ok := form["once"]; !ok {
+		form.Set("once", b.once)
 	}
 	return b.postRaw(path, form, b.e.admin.URL)
 }

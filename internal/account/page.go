@@ -16,10 +16,12 @@ import (
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-// securityActions are the events of a person's own account that the page
-// lists: nobody is told of them by email, so here is where they show.
+// securityActions are the events about a person's account that the page
+// lists, theirs and an admin's alike: nobody is told of them by email, so
+// here is where they show.
 var securityActions = []string{
-	oauth.ActionSignIn, audit.PasswordSet, "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke, audit.InviteUse,
+	oauth.ActionSignIn, audit.PasswordSet, "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
+	"invite.", audit.UserCreate, audit.UserUpdate,
 }
 
 const (
@@ -114,12 +116,12 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 		return
 	}
 	if s.d.Audit != nil {
-		signIns, err := s.d.Audit.List(ctx, audit.Query{Actor: v.user.Handle, Actions: []string{oauth.ActionSignIn}, Limit: 2})
+		signIns, err := s.d.Audit.List(ctx, audit.Query{Subject: v.user.Handle, Actions: []string{oauth.ActionSignIn}, Limit: 2})
 		if err != nil {
 			s.fail(w, r, "list sign-ins", err)
 			return
 		}
-		events, err := s.d.Audit.List(ctx, audit.Query{Actor: v.user.Handle, Actions: securityActions, Limit: securityEvents})
+		events, err := s.d.Audit.List(ctx, audit.Query{Subject: v.user.Handle, Actions: securityActions, Limit: securityEvents})
 		if err != nil {
 			s.fail(w, r, "list events", err)
 			return

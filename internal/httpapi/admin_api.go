@@ -485,7 +485,7 @@ func (h *adminAPI) listAudit(w http.ResponseWriter, r *http.Request, _ auth.Prin
 	if err != nil {
 		return err
 	}
-	aq := audit.Query{Slug: q.Get("slug"), Actor: q.Get("actor"), Actions: q["action"], Cursor: q.Get("cursor"), Limit: limit}
+	aq := audit.Query{Slug: q.Get("slug"), Actor: q.Get("actor"), Subject: q.Get("subject"), Actions: q["action"], Cursor: q.Get("cursor"), Limit: limit}
 	for _, bound := range []struct {
 		name string
 		dst  *time.Time

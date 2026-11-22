@@ -544,7 +544,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | `admin settings`                                                        | Effective server configuration, secrets redacted            |
 | `admin jobs list`                                                       | Scheduler jobs: interval, last and next run, last error     |
 | `admin jobs run <name>`                                                 | Run a job now and wait for it                               |
-| `admin audit [--since T] [--until T] [--slug S] [--actor H] [--action A ...] [--limit N] [--cursor C]` | Audit log, newest first                |
+| `admin audit [--since T] [--until T] [--slug S] [--actor H] [--subject H] [--action A ...] [--limit N] [--cursor C]` | Audit log, newest first                |
 | `admin backup <dir> [--no-certs]`                                       | Write a backup of the database and every blob into a directory |
 | `admin ready [--fresh]`                                                 | Check the running server is set up correctly; exits 1 when a check fails. Also says when a newer release is known |
 | `admin health`                                                          | Server status and version                                   |

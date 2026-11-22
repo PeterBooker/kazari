@@ -322,6 +322,12 @@ sudo kazari admin users update ana --role admin
 
 The form was sent from a page that is not the dashboard's own, or from a page loaded before your last sign-in. With `admin.listen`, it also appears when the dashboard is open at another address than `admin.public_url`. Go back, reload the page and send the form again.
 
+A form that makes a key or a link also expires 12 hours after its page was loaded, and when the server restarts. Reload the page and send it again.
+
+### "This form was already sent"
+
+A form that makes a key, an invite, a reset link or a share link was sent a second time, usually by reloading the page that showed what it made. Nothing new was made, and the key or link from the first time still works. To make another, open the form again.
+
 ### The only admin cannot sign in
 
 The admin socket on the server is the way back in: it needs no credential. For a lost password, make a reset link there and open it:

@@ -223,9 +223,10 @@ type Store interface {
 	// ListGrants returns the newest live refresh token of each of the
 	// user's families, newest first. Its FamilyID names the grant.
 	ListGrants(ctx context.Context, handle string, now time.Time) ([]Token, error)
-	// RevokeGrant revokes every token of the family. ErrNotFound for a
+	// RevokeGrant revokes every token of the family and returns the handle
+	// of the person it belongs to. ErrNotFound for a
 	// family that never held a refresh token.
-	RevokeGrant(ctx context.Context, familyID int64, at time.Time) error
+	RevokeGrant(ctx context.Context, familyID int64, at time.Time) (handle string, err error)
 	// RevokeAllForUser also deletes the user's sessions.
 	RevokeAllForUser(ctx context.Context, handle string, at time.Time) error
 	// DeleteExpired returns the number of requests, codes, tokens, sign-ins
@@ -573,10 +574,11 @@ func (s *Service) ListGrants(ctx context.Context, handle string) ([]Token, error
 
 // RevokeGrant revokes every token of the grant with that id. ErrNotFound.
 func (s *Service) RevokeGrant(ctx context.Context, id int64) error {
-	if err := s.store.RevokeGrant(ctx, id, s.now()); err != nil {
+	handle, err := s.store.RevokeGrant(ctx, id, s.now())
+	if err != nil {
 		return err
 	}
-	s.record(ctx, actorFrom(ctx, "admin"), ActionRevoke, map[string]string{"grant": fmt.Sprint(id)})
+	s.record(ctx, actorFrom(ctx, "admin"), ActionRevoke, handle, map[string]string{"grant": fmt.Sprint(id)})
 	return nil
 }
 
@@ -586,7 +588,7 @@ func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 	if err := s.store.RevokeAllForUser(ctx, handle, s.now()); err != nil {
 		return err
 	}
-	s.record(ctx, actorFrom(ctx, "admin"), ActionRevoke, map[string]string{"user": handle})
+	s.record(ctx, actorFrom(ctx, "admin"), ActionRevoke, handle, map[string]string{"user": handle})
 	return nil
 }
 
@@ -602,7 +604,7 @@ func (s *Service) EndSessions(ctx context.Context, handle string, keep int64) (e
 		return err
 	}
 	if n > 0 {
-		s.record(ctx, actorFrom(ctx, handle), audit.SessionRevoke, map[string]string{"user": handle, "sessions": strconv.Itoa(n)})
+		s.record(ctx, actorFrom(ctx, handle), audit.SessionRevoke, handle, map[string]string{"user": handle, "sessions": strconv.Itoa(n)})
 	}
 	return nil
 }
@@ -626,9 +628,10 @@ func (s *Service) Cleanup(ctx context.Context) (n int, err error) {
 	return n + clients, err
 }
 
-func (s *Service) record(ctx context.Context, actor, action string, details map[string]string) {
+// record appends an event about the account of subject.
+func (s *Service) record(ctx context.Context, actor, action, subject string, details map[string]string) {
 	// A lost audit row must not fail the request.
-	if err := s.audit.Record(ctx, audit.Event{At: s.now(), Actor: actor, Action: action, Details: details}); err != nil {
+	if err := s.audit.Record(ctx, audit.Event{At: s.now(), Actor: actor, Action: action, Subject: subject, Details: details}); err != nil {
 		s.log.WarnContext(ctx, "oauth: audit", "action", action, "err", err)
 	}
 }

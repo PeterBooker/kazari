@@ -3,10 +3,13 @@
 // single-use code; the host redeems it for a cookie only it receives, as an
 // artifact host does. Here that cookie means a person at one of Kazari's
 // own pages, never an artifact's script, so the host may also end the whole
-// sign-in, and every form carries a token bound to the session.
+// sign-in, and every form carries a token bound to the session. A form that
+// makes a secret shown once also carries a single-use value, so that the
+// resubmission a reload offers makes nothing new.
 //
 // What the person may do on the host is the host's to decide, on every
-// request: this package says who they are and how they signed in.
+// request: this package says who they are and how they signed in, and
+// leaves every page it refuses to the host to write.
 package session
 
 import (
@@ -22,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/oauth"
 )
 
@@ -54,12 +59,16 @@ type Options struct {
 	InsecureCookies bool
 	// Now is the clock (default time.Now); cookie lifetimes count from it.
 	Now func() time.Time
+	// Telemetry counts the session authentications.
+	Telemetry instrument.Providers
 }
 
 // Manager keeps the session cookie of one control host.
 type Manager struct {
 	p    Provider
 	opts Options
+	auth auth.Sessions
+	once *once
 }
 
 // New returns a Manager.
@@ -67,7 +76,7 @@ func New(p Provider, opts Options) *Manager {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Manager{p: p, opts: opts}
+	return &Manager{p: p, opts: opts, auth: auth.NewSessions(opts.Telemetry), once: newOnce()}
 }
 
 // Session is a person signed in on the host.
@@ -75,6 +84,7 @@ type Session struct {
 	oauth.ControlSession
 	token string
 	host  string
+	m     *Manager
 }
 
 const (
@@ -101,7 +111,7 @@ func (m *Manager) Get(r *http.Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ControlSession: cs, token: ck.Value, host: m.opts.Host}, nil
+	return &Session{ControlSession: cs, token: ck.Value, host: m.opts.Host, m: m}, nil
 }
 
 // Presented reports whether the request carries a session cookie at all,
@@ -135,18 +145,11 @@ func (m *Manager) SignIn(w http.ResponseWriter, r *http.Request, returnTo string
 	http.Redirect(w, r, m.opts.SignInURL+"?"+q.Encode(), http.StatusFound)
 }
 
-// Redeem ends a sign-in: it exchanges the code in the request's query for a
-// session, sets the cookie and returns the path the person wanted, which
-// the caller redirects to. ErrSignIn when the code does not open a session
-// in this browser. The nonce cookie stays until it expires: another tab's
-// sign-in may still be on its way back with it.
-func (m *Manager) Redeem(w http.ResponseWriter, r *http.Request) (path string, err error) {
-	_, path, err = m.Open(w, r)
-	return path, err
-}
-
-// Open is Redeem that also returns the session it opened, for a host that
-// records who signed in.
+// Open ends a sign-in: it exchanges the code in the request's query for a
+// session, sets the cookie and returns the session with the path the
+// person wanted, which the caller redirects to. ErrSignIn when the code
+// does not open a session in this browser. The nonce cookie stays until it
+// expires: another tab's sign-in may still be on its way back with it.
 func (m *Manager) Open(w http.ResponseWriter, r *http.Request) (*Session, string, error) {
 	nonce := ""
 	if ck, err := r.Cookie(m.name("_nonce")); err == nil {
@@ -168,7 +171,7 @@ func (m *Manager) Open(w http.ResponseWriter, r *http.Request) (*Session, string
 		return nil, "", err
 	}
 	m.setCookie(w, "", v.Token, v.ExpiresAt.Sub(m.opts.Now()))
-	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host}, oauth.ReturnPath(v.Path), nil
+	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host, m: m}, oauth.ReturnPath(v.Path), nil
 }
 
 // End signs the browser out: the sign-in behind its cookie ends on every

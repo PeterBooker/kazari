@@ -240,7 +240,7 @@ func (s *Service) replayed(w http.ResponseWriter, r *http.Request, old *Token, n
 		s.serverError(w, r, "revoke family", err)
 		return
 	}
-	s.record(ctx, old.UserHandle, ActionRevoke, map[string]string{
+	s.record(ctx, old.UserHandle, ActionRevoke, old.UserHandle, map[string]string{
 		"grant": fmt.Sprint(old.FamilyID), "client_id": old.ClientID, "reason": ReasonRefreshReplay,
 	})
 	writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the refresh token has already been used")

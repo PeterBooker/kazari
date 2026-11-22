@@ -550,6 +550,7 @@ type AuditEvent struct {
 	Actor   string            `json:"actor"`
 	Action  string            `json:"action"`
 	Slug    string            `json:"slug,omitempty"`
+	Subject string            `json:"subject,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
 }
 

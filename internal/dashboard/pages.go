@@ -45,7 +45,7 @@ func (s *server) pagesRoutes(mux *http.ServeMux) {
 	s.action(mux, "POST /pages/{slug}/owner", s.pagesHandOver)
 	s.view(mux, "GET /pages/{slug}/versions/{n}/publish", s.pagesPublishConfirm)
 	s.action(mux, "POST /pages/{slug}/versions/{n}/publish", s.pagesPublish)
-	s.action(mux, "POST /pages/{slug}/links", s.pagesLinkCreate)
+	s.issue(mux, "POST /pages/{slug}/links", s.pagesLinkCreate)
 	s.view(mux, "GET /pages/{slug}/links/{prefix}/revoke", s.pagesLinkRevokeConfirm)
 	s.action(mux, "POST /pages/{slug}/links/{prefix}/revoke", s.pagesLinkRevoke)
 	s.view(mux, "GET /pages/{slug}/takedown", s.pagesTakeDownConfirm)

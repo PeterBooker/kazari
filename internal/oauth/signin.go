@@ -505,7 +505,7 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, bindi
 	if keyPrefix != "" {
 		details["key_prefix"] = keyPrefix
 	}
-	s.record(ctx, handle, ActionSignIn, details)
+	s.record(ctx, handle, ActionSignIn, handle, details)
 	return sess, nil
 }
 

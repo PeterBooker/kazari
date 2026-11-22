@@ -43,7 +43,7 @@ func (s *server) peopleRoutes(mux *http.ServeMux) {
 	// Under /invites and not /people: "invite" and "links" are handles a
 	// person may hold, and their page must not be shadowed.
 	s.view(mux, "GET /invites/new", s.peopleInviteForm)
-	s.action(mux, "POST /invites/new", s.peopleInvite)
+	s.issue(mux, "POST /invites/new", s.peopleInvite)
 	s.view(mux, "GET /invites/{id}/revoke", s.peopleLinkRevokeConfirm)
 	s.action(mux, "POST /invites/{id}/revoke", s.peopleLinkRevoke)
 
@@ -60,13 +60,13 @@ func (s *server) peopleRoutes(mux *http.ServeMux) {
 	s.action(mux, "POST /people/{handle}/identities/unlink", s.peopleIdentityUnlink)
 
 	s.view(mux, "GET /people/{handle}/invite", s.peopleReplaceConfirm)
-	s.action(mux, "POST /people/{handle}/invite", s.peopleReplace)
+	s.issue(mux, "POST /people/{handle}/invite", s.peopleReplace)
 	s.view(mux, "GET /people/{handle}/reset", s.peopleResetConfirm)
-	s.action(mux, "POST /people/{handle}/reset", s.peopleReset)
+	s.issue(mux, "POST /people/{handle}/reset", s.peopleReset)
 
-	s.action(mux, "POST /people/{handle}/keys", s.peopleKeyIssue)
+	s.issue(mux, "POST /people/{handle}/keys", s.peopleKeyIssue)
 	s.view(mux, "GET /people/{handle}/keys/{prefix}/rotate", s.peopleKeyRotateConfirm)
-	s.action(mux, "POST /people/{handle}/keys/{prefix}/rotate", s.peopleKeyRotate)
+	s.issue(mux, "POST /people/{handle}/keys/{prefix}/rotate", s.peopleKeyRotate)
 	s.view(mux, "GET /people/{handle}/keys/{prefix}/revoke", s.peopleKeyRevokeConfirm)
 	s.action(mux, "POST /people/{handle}/keys/{prefix}/revoke", s.peopleKeyRevoke)
 	s.view(mux, "GET /people/{handle}/apps/{id}/revoke", s.peopleAppRevokeConfirm)

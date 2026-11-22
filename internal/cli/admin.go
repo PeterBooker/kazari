@@ -232,6 +232,7 @@ type AuditParams struct {
 	Since, Until string // RFC 3339; Since is inclusive, Until is not
 	Slug         string
 	Actor        string
+	Subject      string
 	// Actions keeps the events with one of these actions; one ending in "."
 	// is a prefix, such as "artifact.".
 	Actions []string
@@ -250,6 +251,7 @@ func (p AuditParams) values() url.Values {
 	set("until", p.Until)
 	set("slug", p.Slug)
 	set("actor", p.Actor)
+	set("subject", p.Subject)
 	for _, a := range p.Actions {
 		q.Add("action", a)
 	}

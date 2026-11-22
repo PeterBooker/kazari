@@ -7,8 +7,9 @@
 // it afresh: the person exists, is enabled and is an admin now, and a
 // session opened with an API key holds that key's admin scope. Every change
 // is a POST from the dashboard's own origin that carries the session's form
-// token. The session cookie opens these pages and nothing else: the JSON
-// API beside them takes bearer credentials only.
+// token, and one that makes a key or a link shown once takes the form's
+// single-use value as well. The session cookie opens these pages and
+// nothing else: the JSON API beside them takes bearer credentials only.
 package dashboard
 
 import (
@@ -142,9 +143,6 @@ const (
 	// CallbackPath is where a sign-in for the dashboard ends, relative to
 	// Options.URL; internal/app gives it to the sign-in host.
 	CallbackPath = callbackPath
-
-	// maxFormBytes bounds a posted form; none carries a file.
-	maxFormBytes = 64 << 10
 )
 
 type server struct {
@@ -155,7 +153,6 @@ type server struct {
 	sess   *session.Manager
 	tmpl   *template.Template
 	assets theme.Assets
-	auth   auth.Sessions
 }
 
 // New returns the dashboard's handler, to be mounted at the root of the
@@ -175,10 +172,10 @@ func New(d Deps, o Options) http.Handler {
 	}
 	o.URL = strings.TrimSuffix(o.URL, "/")
 	s := &server{
-		d: d, o: o, log: d.Logger, now: o.Now, assets: theme.URLs(assetPrefix), auth: auth.NewSessions(o.Telemetry),
+		d: d, o: o, log: d.Logger, now: o.Now, assets: theme.URLs(assetPrefix),
 		sess: session.New(d.Sessions, session.Options{
 			Host: oauth.HostAdmin, Cookie: "kazari_admin", SignInURL: o.SignInURL,
-			InsecureCookies: o.InsecureCookies, Now: o.Now,
+			InsecureCookies: o.InsecureCookies, Now: o.Now, Telemetry: o.Telemetry,
 		}),
 	}
 	funcs := template.FuncMap{}
@@ -241,30 +238,40 @@ func (s *server) action(mux *http.ServeMux, pattern string, fn handler) {
 	mux.Handle(pattern, s.admin(fn, true))
 }
 
+// issue registers an action that makes something shown once, a key or a
+// link. Its form also carries a single-use value, so that sending it again,
+// as a reload of the page that showed the secret does, makes nothing new.
+func (s *server) issue(mux *http.ServeMux, pattern string, fn handler) {
+	s.action(mux, pattern, func(w http.ResponseWriter, r *http.Request, c *request) error {
+		switch err := c.sess.Claim(r.PostForm.Get(session.OnceField)); {
+		case errors.Is(err, session.ErrFormUsed):
+			return &problem{status: http.StatusConflict, title: "This form was already sent",
+				message: "Nothing new was made. What the form made the first time was shown once, on the page that answered it. To make another, open the form again."}
+		case err != nil:
+			return &problem{status: http.StatusForbidden, title: "This form has expired",
+				message: "It is from an earlier page load or from before the server restarted. Go back, reload the page and try again."}
+		}
+		return fn(w, r, c)
+	})
+}
+
 // admin admits a request only for an admin who is one now.
 func (s *server) admin(fn handler, change bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The assets alone may be cached.
 		w.Header().Set("Cache-Control", "no-store")
 		ctx := r.Context()
-		sess, err := s.sess.Get(r)
-		if err != nil {
-			s.log.ErrorContext(ctx, "dashboard: load session", "err", err)
-			s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
+		sess, err := s.sess.Require(w, r)
+		switch {
+		case errors.Is(err, session.ErrSignInStarted):
 			return
-		}
-		if sess == nil {
-			result := auth.ResultMissing
-			if s.sess.Presented(r) {
-				result = auth.ResultInvalid
-			}
-			s.auth.Record(ctx, result, nil)
-			if session.Navigation(r) {
-				s.sess.SignIn(w, r, r.URL.RequestURI())
-				return
-			}
+		case errors.Is(err, session.ErrSignedOut):
 			s.door(w, r, http.StatusUnauthorized, doorPage{Title: "Signed out",
 				Message: "Your sign-in has ended. Open the dashboard again to sign in.", Link: "/", LinkText: "Open the dashboard"})
+			return
+		case err != nil:
+			s.log.ErrorContext(ctx, "dashboard: load session", "err", err)
+			s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
 			return
 		}
 		c, err := s.admit(ctx, sess)
@@ -274,18 +281,16 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 			return
 		}
 		if c == nil {
-			s.auth.Record(ctx, auth.ResultForbidden, nil)
+			s.sess.Refuse(ctx)
 			s.door(w, r, http.StatusForbidden, s.notAdmin(sess))
 			return
 		}
 		if change {
-			r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-			if err := r.ParseForm(); err != nil {
+			switch err := sess.CheckForm(w, r); {
+			case errors.Is(err, session.ErrBadForm):
 				s.fail(w, r, c, &problem{status: http.StatusBadRequest, title: "The form could not be read", message: "Go back and try again."})
 				return
-			}
-			if !sess.ValidForm(r.PostForm.Get(tokenField)) {
-				s.auth.Record(ctx, auth.ResultForbidden, nil)
+			case err != nil:
 				s.fail(w, r, c, &problem{status: http.StatusForbidden, title: "This form has expired",
 					message: "It was not sent from a page of this dashboard, or the page is from an earlier sign-in. Go back, reload the page and try again."})
 				return
@@ -295,7 +300,7 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 			Handle: c.me.Handle, Admin: true, Scopes: auth.AllScopes, Source: auth.SourceSession,
 			KeyID: sess.KeyPrefix, QuotaBytes: c.me.QuotaBytes,
 		}
-		s.auth.Record(ctx, auth.ResultOK, &p)
+		s.sess.Admit(ctx, p)
 		r = r.WithContext(auth.ContextWithPrincipal(ctx, p))
 		if err := fn(w, r, c); err != nil {
 			s.fail(w, r, c, err)
@@ -361,7 +366,7 @@ func (s *server) notAdmin(sess *session.Session) doorPage {
 func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
-	sess, path, err := s.sess.Open(w, r)
+	sess, err := s.sess.Callback(w, r)
 	if errors.Is(err, session.ErrSignIn) {
 		s.door(w, r, http.StatusBadRequest, doorPage{Title: "Sign-in failed",
 			Message: "This sign-in has expired, was already used or was started in another browser.",
@@ -375,15 +380,10 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if c, err := s.admit(ctx, sess); err == nil && c != nil {
 		details := map[string]string{"credential": credential(sess)}
-		if err := s.d.Recorder.Record(ctx, audit.Event{At: s.now(), Actor: sess.Handle, Action: audit.DashboardSignIn, Details: details}); err != nil {
+		if err := s.d.Recorder.Record(ctx, audit.Event{At: s.now(), Actor: sess.Handle, Action: audit.DashboardSignIn, Subject: sess.Handle, Details: details}); err != nil {
 			s.log.WarnContext(ctx, "dashboard: audit", "err", err)
 		}
 	}
-	// Location is set as is: http.Redirect would clean the path, and
-	// cleaning can turn a path on this host into one a browser reads as
-	// another host's.
-	w.Header().Set("Location", path)
-	w.WriteHeader(http.StatusFound)
 }
 
 // signOut ends the whole sign-in, on every host. It asks for a session
@@ -391,27 +391,18 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 // member included, can sign out here.
 func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	ctx := r.Context()
-	signedOut := doorPage{Title: "Signed out",
-		Message: "You are signed out of this Kazari instance in this browser.", Link: "/", LinkText: "Sign in again"}
-	sess, err := s.sess.Get(r)
-	if err == nil && sess != nil {
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-		if perr := r.ParseForm(); perr != nil || !sess.ValidForm(r.PostForm.Get(tokenField)) {
-			s.auth.Record(ctx, auth.ResultForbidden, nil)
-			s.door(w, r, http.StatusForbidden, doorPage{Title: "This form has expired",
-				Message: "It was not sent from a page of this dashboard. Open the dashboard and sign out from there.",
-				Link:    "/", LinkText: "Open the dashboard"})
-			return
-		}
-		err = s.sess.End(w, r)
-	}
-	if err != nil {
-		s.log.ErrorContext(ctx, "dashboard: sign out", "err", err)
+	switch err := s.sess.SignOut(w, r); {
+	case errors.Is(err, session.ErrBadForm), errors.Is(err, session.ErrFormToken):
+		s.door(w, r, http.StatusForbidden, doorPage{Title: "This form has expired",
+			Message: "It was not sent from a page of this dashboard. Open the dashboard and sign out from there.",
+			Link:    "/", LinkText: "Open the dashboard"})
+	case err != nil:
+		s.log.ErrorContext(r.Context(), "dashboard: sign out", "err", err)
 		s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
-		return
+	default:
+		s.door(w, r, http.StatusOK, doorPage{Title: "Signed out",
+			Message: "You are signed out of this Kazari instance in this browser.", Link: "/", LinkText: "Sign in again"})
 	}
-	s.door(w, r, http.StatusOK, signedOut)
 }
 
 // problem is an error page a handler chose: a wrong address, a refused
@@ -495,7 +486,7 @@ type page struct {
 }
 
 // tokenField is the name of the form field that carries the form token.
-const tokenField = "form_token"
+const tokenField = session.FormField
 
 // view is what every page template reads: the shell around it, the form
 // token for its forms, the one-line confirmation of what was just done,
@@ -503,6 +494,9 @@ const tokenField = "form_token"
 type viewData struct {
 	Shell theme.Shell
 	Token string
+	// Once is the single-use value every form carries; the actions
+	// registered with issue take it.
+	Once  string
 	Flash string
 	Me    *user.User
 	Now   time.Time
@@ -535,6 +529,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, c *request, stat
 			SignOut: theme.Form{Action: signOutPath, Hidden: map[string]string{tokenField: c.sess.FormToken()}},
 		},
 		Token: c.sess.FormToken(),
+		Once:  c.sess.Once(),
 		Flash: flashes[s.sess.Flash(w, r)],
 		Me:    c.me,
 		Now:   s.now(),

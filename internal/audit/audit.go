@@ -42,11 +42,14 @@ const (
 
 // Event is one audit row.
 type Event struct {
-	ID      int64
-	At      time.Time
-	Actor   string // handle, or "scheduler" / "admin"
-	Action  string
-	Slug    string
+	ID     int64
+	At     time.Time
+	Actor  string // handle, or "scheduler" / "admin"
+	Action string
+	Slug   string
+	// Subject is the handle of the person whose account the event changed
+	// or signed in to, whoever acted; "" for an event about no account.
+	Subject string
 	Details map[string]string
 }
 
@@ -58,10 +61,11 @@ type Recorder interface {
 
 // Query filters a listing. Every set field must match.
 type Query struct {
-	Since time.Time // inclusive
-	Until time.Time // exclusive
-	Slug  string
-	Actor string
+	Since   time.Time // inclusive
+	Until   time.Time // exclusive
+	Slug    string
+	Actor   string
+	Subject string
 	// Actions keeps the events whose action is one of these. An entry
 	// ending in "." is a prefix: "artifact." matches every artifact action.
 	Actions []string

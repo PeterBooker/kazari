@@ -165,7 +165,7 @@ func (s *Service) buildLink(ctx context.Context, handle string, purpose Purpose,
 
 func (s *Service) linkCreated(ctx context.Context, l *Link) {
 	s.link(ctx, linkCreate, l.Purpose)
-	s.record(ctx, l.CreatedBy, audit.InviteCreate, linkDetails(l))
+	s.record(ctx, l.CreatedBy, audit.InviteCreate, l.UserHandle, linkDetails(l))
 }
 
 func (s *Service) linkTTL(p Purpose) time.Duration {
@@ -207,7 +207,7 @@ func (s *Service) RevokeLink(ctx context.Context, id int64) (err error) {
 		return err
 	}
 	s.link(ctx, linkRevoke, l.Purpose)
-	s.record(ctx, actorFrom(ctx, "admin"), audit.InviteRevoke, linkDetails(l))
+	s.record(ctx, actorFrom(ctx, "admin"), audit.InviteRevoke, l.UserHandle, linkDetails(l))
 	return nil
 }
 
@@ -292,14 +292,14 @@ func (s *Service) Redeem(ctx context.Context, token string, req RedeemRequest) (
 	}
 
 	if first != nil {
-		s.record(ctx, u.Handle, audit.UserCreate, map[string]string{
+		s.record(ctx, u.Handle, audit.UserCreate, u.Handle, map[string]string{
 			"handle": u.Handle, "email": u.Email, "role": string(u.Role),
 			"quota_bytes": strconv.FormatInt(u.QuotaBytes, 10), "via": "setup",
 		})
 	}
 	s.link(ctx, linkUse, l.Purpose)
-	s.record(ctx, u.Handle, audit.InviteUse, linkDetails(l))
-	s.record(ctx, u.Handle, audit.PasswordSet, map[string]string{"handle": u.Handle, "via": string(l.Purpose)})
+	s.record(ctx, u.Handle, audit.InviteUse, u.Handle, linkDetails(l))
+	s.record(ctx, u.Handle, audit.PasswordSet, u.Handle, map[string]string{"handle": u.Handle, "via": string(l.Purpose)})
 	if l.Purpose != PurposeReset {
 		return u, nil
 	}
@@ -448,7 +448,7 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 	if err := s.store.SetPassword(ctx, u.Handle, hash, s.now()); err != nil {
 		return err
 	}
-	s.record(ctx, u.Handle, audit.PasswordSet, map[string]string{"handle": u.Handle, "via": "change"})
+	s.record(ctx, u.Handle, audit.PasswordSet, u.Handle, map[string]string{"handle": u.Handle, "via": "change"})
 	// A reset link made before the change would undo it.
 	if err := s.store.RevokeUserLinks(ctx, u.Handle, s.now()); err != nil {
 		return fmt.Errorf("user: change password of %q: %w", u.Handle, err)

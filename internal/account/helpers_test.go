@@ -190,8 +190,9 @@ func (e *env) person(handle string, role user.Role) {
 // browser is one person's browser: its own cookies, and no redirect
 // followed unseen.
 type browser struct {
-	e *env
-	c *http.Client
+	e    *env
+	c    *http.Client
+	once string // the single-use value of the last page that carried one
 }
 
 func (e *env) browser() *browser {
@@ -216,6 +217,9 @@ func (b *browser) do(req *http.Request) (*http.Response, string) {
 	if strings.HasPrefix(resp.Request.URL.String(), b.e.apex.URL) {
 		checkPage(b.e, resp, string(body))
 	}
+	if m := onceValue.FindStringSubmatch(string(body)); m != nil {
+		b.once = m[1]
+	}
 	return resp, string(body)
 }
 
@@ -237,9 +241,13 @@ func (b *browser) getURL(target string) (*http.Response, string) {
 
 // post sends a form of the apex from one of its own pages. A link's form
 // is sent as the page that link opened wrote it, with the value that ties
-// it to the link, unless the test names its own.
+// it to the link, unless the test names its own; a form that makes a key,
+// with the single-use value of the last page loaded.
 func (b *browser) post(path string, form url.Values) (*http.Response, string) {
 	b.e.t.Helper()
+	if _, named := form["once"]; !named && b.once != "" {
+		form.Set("once", b.once)
+	}
 	if _, named := form["form_token"]; !named && linkPath.MatchString(path) {
 		if token := b.linkCookie(); token != "" {
 			form.Set("form_token", account.LinkFormToken(token))
@@ -314,7 +322,10 @@ func (b *browser) page() string {
 	return body
 }
 
-var formToken = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+var (
+	formToken = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+	onceValue = regexp.MustCompile(`name="once" value="([^"]+)"`)
+)
 
 // token returns the form token of the browser's session.
 func (b *browser) token() string {

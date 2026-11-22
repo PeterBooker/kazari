@@ -40,8 +40,8 @@ func (s *AuditStore) Record(ctx context.Context, e audit.Event) (err error) {
 			return fmt.Errorf("sqlite: record audit %s: %w", e.Action, err)
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_event (at, actor, action, slug, details)
-		VALUES (?, ?, ?, ?, ?)`, toNanos(e.At), e.Actor, e.Action, e.Slug, string(details))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_event (at, actor, action, slug, subject, details)
+		VALUES (?, ?, ?, ?, ?, ?)`, toNanos(e.At), e.Actor, e.Action, e.Slug, e.Subject, string(details))
 	if err != nil {
 		return fmt.Errorf("sqlite: record audit %s: %w", e.Action, err)
 	}
@@ -75,7 +75,7 @@ func decodeAuditCursor(s string) (auditCursor, error) {
 	return c, nil
 }
 
-// List matches Slug and Actor exactly and pages by (at, id), so events
+// List matches Slug, Actor and Subject exactly and pages by (at, id), so events
 // recorded in the same nanosecond are neither repeated nor skipped.
 func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ audit.Page, err error) {
 	ctx, end := s.db.op(ctx, "AuditStore.List")
@@ -102,6 +102,10 @@ func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ audit.Page, err
 	if q.Actor != "" {
 		where = append(where, "actor = ?")
 		args = append(args, q.Actor)
+	}
+	if q.Subject != "" {
+		where = append(where, "subject = ?")
+		args = append(args, q.Subject)
 	}
 	if len(q.Actions) > 0 {
 		conds := make([]string, 0, len(q.Actions))
@@ -133,7 +137,7 @@ func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ audit.Page, err
 	case limit > maxAuditLimit:
 		limit = maxAuditLimit
 	}
-	query := `SELECT id, at, actor, action, slug, details FROM audit_event`
+	query := `SELECT id, at, actor, action, slug, subject, details FROM audit_event`
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -152,7 +156,7 @@ func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ audit.Page, err
 			at      int64
 			details string
 		)
-		if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.Slug, &details); err != nil {
+		if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.Slug, &e.Subject, &details); err != nil {
 			return audit.Page{}, fmt.Errorf("sqlite: list audit: %w", err)
 		}
 		e.At = fromNanos(at)

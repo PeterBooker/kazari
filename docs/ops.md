@@ -774,6 +774,8 @@ Blobs written in the last hour survive one more `gc` run.
 
 Kazari records every change with its time, actor, action, slug and details. The actor is a handle, `admin` for the admin token and the admin socket, or `scheduler` for jobs; no user can have either of those handles.
 
+Events about a person's account also carry a subject: the handle of that person, whoever acted. A reset link an admin made for `ana` has the admin as actor and `ana` as subject, and so does a key the admin issued her. Sign-ins, keys, passwords, links, grants, sessions and user changes have one; artifact events do not. Older events got theirs from their details at the upgrade that added it, except a grant revoked by id whose tokens were already gone.
+
 Artifact events also carry `credential`, the credential that acted: `api_key:<prefix>`, `oauth:<grant>`, `admin_token`, or `local` for the admin socket. An `oauth:` credential has one id per grant, the same across refreshes.
 
 The actions, with the details each records:
@@ -814,12 +816,13 @@ An event is written just after the change it describes, outside its transaction,
 
 ### Reading the log
 
-To read the log, filter it by time, slug, actor or action:
+To read the log, filter it by time, slug, actor, subject or action:
 
 ```sh
 kazari admin audit --since 24h
 kazari admin audit --slug q3-report --limit 50
 kazari admin audit --actor ana --action key. --since 168h
+kazari admin audit --subject ana --since 720h
 curl -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "https://admin.art.example.com/v1/audit?actor=ana&since=2026-10-01T00:00:00Z"
 ```
 

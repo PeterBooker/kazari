@@ -624,13 +624,14 @@ func (c *AdminJobsRunCmd) Run(r *runner) error {
 
 // AdminAuditCmd reads the audit log.
 type AdminAuditCmd struct {
-	Since  string   `help:"Only events from this RFC 3339 time on, or from this Go duration ago (such as 24h)." placeholder:"WHEN"`
-	Until  string   `help:"Only events before this RFC 3339 time, or before this Go duration ago." placeholder:"WHEN"`
-	Slug   string   `help:"Only events for this artifact." placeholder:"SLUG"`
-	Actor  string   `help:"Only events by this handle, or by admin or scheduler." placeholder:"HANDLE"`
-	Action []string `help:"Only events with this action, such as key.issue, or this prefix, such as artifact. (repeatable)." sep:"none" placeholder:"ACTION"`
-	Cursor string   `help:"Page cursor from a previous audit." placeholder:"CURSOR"`
-	Limit  int      `help:"Maximum events." placeholder:"N"`
+	Since   string   `help:"Only events from this RFC 3339 time on, or from this Go duration ago (such as 24h)." placeholder:"WHEN"`
+	Until   string   `help:"Only events before this RFC 3339 time, or before this Go duration ago." placeholder:"WHEN"`
+	Slug    string   `help:"Only events for this artifact." placeholder:"SLUG"`
+	Actor   string   `help:"Only events by this handle, or by admin or scheduler." placeholder:"HANDLE"`
+	Subject string   `help:"Only events about the account of this handle, whoever acted." placeholder:"HANDLE"`
+	Action  []string `help:"Only events with this action, such as key.issue, or this prefix, such as artifact. (repeatable)." sep:"none" placeholder:"ACTION"`
+	Cursor  string   `help:"Page cursor from a previous audit." placeholder:"CURSOR"`
+	Limit   int      `help:"Maximum events." placeholder:"N"`
 }
 
 // when reads an RFC 3339 time, or a duration counted back from now.
@@ -660,7 +661,7 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	l, err := cl.Audit(r.ctx, AuditParams{Since: since, Until: until, Slug: c.Slug, Actor: c.Actor,
+	l, err := cl.Audit(r.ctx, AuditParams{Since: since, Until: until, Slug: c.Slug, Actor: c.Actor, Subject: c.Subject,
 		Actions: c.Action, Cursor: c.Cursor, Limit: c.Limit})
 	if err != nil {
 		return err
@@ -669,9 +670,9 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 		return r.printJSON(l)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "AT\tACTOR\tACTION\tSLUG\tDETAILS")
+	fmt.Fprintln(tw, "AT\tACTOR\tACTION\tSLUG\tSUBJECT\tDETAILS")
 	for _, e := range l.Events {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(oneLine(fmtMap(e.Details))))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(e.Subject), dash(oneLine(fmtMap(e.Details))))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
