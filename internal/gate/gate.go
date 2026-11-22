@@ -204,7 +204,7 @@ func (g *Gate) decided(ctx context.Context, result string) {
 func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (string, error) {
 	ck, err := r.Cookie(g.name(viewCookie))
 	if err != nil || ck.Value == "" {
-		return "", nil
+		return "", nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie opens nothing
 	}
 	via, notFound := resultMember, oauth.ErrNotFound
 	if artifact.IsLinkToken(ck.Value) {
@@ -238,7 +238,7 @@ func navigation(r *http.Request) bool {
 // toSignIn sets the nonce cookie, reusing the browser's current one so
 // that several tabs can sign in at once, and redirects to the sign-in host.
 func (g *Gate) toSignIn(w http.ResponseWriter, r *http.Request, host string) {
-	nonce := ""
+	var nonce string
 	if ck, err := r.Cookie(g.name(nonceCookie)); err == nil && len(ck.Value) == nonceLen {
 		nonce = ck.Value
 	} else {

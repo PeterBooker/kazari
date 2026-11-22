@@ -1,0 +1,54 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errorlint
+    - forcetypeassert
+    - nilerr
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - thelper
+    - usetesting
+    - wastedassign
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    thelper:
+      tb:
+        name: false
+    staticcheck:
+      # What staticcheck reports on its own: no quick-fix suggestions.
+      checks:
+        - all
+        - -QF*
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -ST1023
+  exclusions:
+    rules:
+      # Tests read response bodies through helpers, assert types they made
+      # themselves and build requests with httptest.
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - forcetypeassert
+          - noctx
+      # The functions of a conformance suite are the tests: t.Helper would
+      # report a failure at the line that calls them.
+      - path: internal/(artifact/storetest|blob/blobtest)/
+        linters:
+          - thelper
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

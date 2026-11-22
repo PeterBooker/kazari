@@ -1,0 +1,4 @@
+go test fuzz v1
+string("<a href=\"java\tscript:alert(1)\">x</a><form action=\"\x01javascript:go()\"></form>")
+string("")
+bool(false)

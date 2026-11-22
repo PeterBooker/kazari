@@ -272,6 +272,7 @@ func (e *env) apiErr(resp *http.Response, status int, code string) api.Error {
 
 // with reports to t, for use inside subtests.
 func (e *env) with(t *testing.T) *env {
+	t.Helper()
 	c := *e
 	c.t = t
 	return &c

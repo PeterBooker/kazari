@@ -1,6 +1,6 @@
 ---
 name: maintenance
-description: Update Kazari's dependencies - the Go toolchain, Go modules, Docker base images, GitHub Actions, goreleaser, the tools CI runs (staticcheck, govulncheck, zizmor, actionlint) and Hugo. Use when asked to update, upgrade or bump any of them, to check what is out of date, or to fix a govulncheck finding.
+description: Update Kazari's dependencies - the Go toolchain, Go modules, Docker base images, GitHub Actions, goreleaser, the tools CI runs (golangci-lint, govulncheck, zizmor, actionlint) and Hugo. Use when asked to update, upgrade or bump any of them, to check what is out of date, or to fix a govulncheck finding.
 ---
 
 # Maintenance: updating dependencies

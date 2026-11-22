@@ -3,6 +3,7 @@ package artifact_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"strings"
@@ -227,7 +228,7 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 		landing func(e *env, alice artifact.Actor) error // the concurrent request
 		update  artifact.UpdateRequest
 		wantErr error
-		check   func(t *testing.T, a *artifact.Artifact)
+		check   func(a *artifact.Artifact) error
 	}{
 		{
 			name: "rename keeps a transfer",
@@ -236,10 +237,11 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 				return err
 			},
 			update: artifact.UpdateRequest{Slug: "demo", Name: new("renamed")},
-			check: func(t *testing.T, a *artifact.Artifact) {
+			check: func(a *artifact.Artifact) error {
 				if a.OwnerHandle != "bob" || a.Name != "renamed" {
-					t.Errorf("owner %q name %q, want bob and renamed", a.OwnerHandle, a.Name)
+					return fmt.Errorf("owner %q name %q, want bob and renamed", a.OwnerHandle, a.Name)
 				}
+				return nil
 			},
 		},
 		{
@@ -249,10 +251,11 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 				return err
 			},
 			update: artifact.UpdateRequest{Slug: "demo", Files: files("v2.txt", "two")},
-			check: func(t *testing.T, a *artifact.Artifact) {
+			check: func(a *artifact.Artifact) error {
 				if a.OwnerHandle != "bob" || a.LatestVersion != 2 {
-					t.Errorf("owner %q latest %d, want bob and 2", a.OwnerHandle, a.LatestVersion)
+					return fmt.Errorf("owner %q latest %d, want bob and 2", a.OwnerHandle, a.LatestVersion)
 				}
+				return nil
 			},
 		},
 		{
@@ -260,10 +263,11 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 			landing: func(e *env, alice artifact.Actor) error { return e.svc.Delete(e.ctx, alice, "demo", false) },
 			update:  artifact.UpdateRequest{Slug: "demo", Name: new("renamed")},
 			wantErr: artifact.ErrNotFound,
-			check: func(t *testing.T, a *artifact.Artifact) {
+			check: func(a *artifact.Artifact) error {
 				if a.DeletedAt == nil || a.Name != "" {
-					t.Errorf("deleted %v name %q, want still deleted and unnamed", a.DeletedAt, a.Name)
+					return fmt.Errorf("deleted %v name %q, want still deleted and unnamed", a.DeletedAt, a.Name)
 				}
+				return nil
 			},
 		},
 		{
@@ -273,10 +277,11 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 				return err
 			},
 			update: artifact.UpdateRequest{Slug: "demo", Files: files("v2.txt", "two")},
-			check: func(t *testing.T, a *artifact.Artifact) {
+			check: func(a *artifact.Artifact) error {
 				if a.UnpublishedAt == nil || a.LatestVersion != 2 {
-					t.Errorf("unpublished %v latest %d, want still unpublished and 2", a.UnpublishedAt, a.LatestVersion)
+					return fmt.Errorf("unpublished %v latest %d, want still unpublished and 2", a.UnpublishedAt, a.LatestVersion)
 				}
+				return nil
 			},
 		},
 	}
@@ -304,7 +309,9 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tt.check(t, a)
+			if err := tt.check(a); err != nil {
+				t.Error(err)
+			}
 		})
 	}
 }

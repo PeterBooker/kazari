@@ -154,7 +154,7 @@ func (s *Service) resolveClient(ctx context.Context, id string) (*Client, error)
 	}
 	if err != nil {
 		s.log.WarnContext(ctx, "oauth: client metadata fetch failed", "client_id", id, "err", err)
-		return nil, fmt.Errorf("%w: %v", errInvalidClient, err)
+		return nil, fmt.Errorf("%w: %w", errInvalidClient, err)
 	}
 	if c != nil {
 		fetched.CreatedAt = c.CreatedAt

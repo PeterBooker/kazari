@@ -23,6 +23,7 @@ func openArtifactTestDB(t *testing.T) *sqlite.DB {
 
 func TestArtifactStoreConformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) (artifact.Store, func(string)) {
+		t.Helper()
 		db := openArtifactTestDB(t)
 		mkUser := func(handle string) {
 			t.Helper()

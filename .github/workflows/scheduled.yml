@@ -43,6 +43,50 @@ jobs:
           cache: true
       - run: go test -race -count=5 -shuffle=on -timeout=20m ./...
 
+  fuzz:
+    name: Fuzz targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: .github/scripts/fuzz.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: fuzz-failures
+          path: internal/**/testdata/fuzz/
+          if-no-files-found: ignore
+
+  browser:
+    name: Sign-in pages in a browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAZARI_TEST_CHROMIUM: google-chrome
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: |
+          mkdir -p "$RUNNER_TEMP/browser"
+          go test -count=1 -v -run '^TestChromiumSignIn$' -artifacts -outputdir="$RUNNER_TEMP/browser" ./internal/app
+      - if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: browser-screenshots
+          path: ${{ runner.temp }}/browser/_artifacts/
+          if-no-files-found: ignore
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

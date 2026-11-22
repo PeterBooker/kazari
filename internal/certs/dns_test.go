@@ -28,69 +28,56 @@ func TestNewDNSProvider(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     DNSConfig
-		check   func(t *testing.T, p any)
+		ok      func(p any) bool
 		wantErr string
 	}{
-		{name: "cloudflare", cfg: DNSConfig{Provider: "cloudflare", APIToken: "cf-token"}, check: func(t *testing.T, p any) {
-			if c, ok := p.(*cloudflare.Provider); !ok || c.APIToken != "cf-token" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "cloudflare", cfg: DNSConfig{Provider: "cloudflare", APIToken: "cf-token"}, ok: func(p any) bool {
+			c, ok := p.(*cloudflare.Provider)
+			return ok && c.APIToken == "cf-token"
 		}},
-		{name: "case insensitive", cfg: DNSConfig{Provider: " Cloudflare ", APIToken: "x"}, check: func(t *testing.T, p any) {
-			if _, ok := p.(*cloudflare.Provider); !ok {
-				t.Errorf("got %T", p)
-			}
+		{name: "case insensitive", cfg: DNSConfig{Provider: " Cloudflare ", APIToken: "x"}, ok: func(p any) bool {
+			_, ok := p.(*cloudflare.Provider)
+			return ok
 		}},
-		{name: "hetzner", cfg: DNSConfig{Provider: "hetzner", APIToken: "hz-token"}, check: func(t *testing.T, p any) {
-			if h, ok := p.(*hetzner.Provider); !ok || h.AuthAPIToken != "hz-token" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "hetzner", cfg: DNSConfig{Provider: "hetzner", APIToken: "hz-token"}, ok: func(p any) bool {
+			h, ok := p.(*hetzner.Provider)
+			return ok && h.AuthAPIToken == "hz-token"
 		}},
-		{name: "route53 default chain", cfg: DNSConfig{Provider: "route53"}, check: func(t *testing.T, p any) {
-			if r, ok := p.(*route53.Provider); !ok || r.AccessKeyId != "" || r.SecretAccessKey != "" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "route53 default chain", cfg: DNSConfig{Provider: "route53"}, ok: func(p any) bool {
+			r, ok := p.(*route53.Provider)
+			return ok && r.AccessKeyId == "" && r.SecretAccessKey == ""
 		}},
-		{name: "route53 static keys", cfg: DNSConfig{Provider: "route53", APIToken: "AKID:secret"}, check: func(t *testing.T, p any) {
-			if r, ok := p.(*route53.Provider); !ok || r.AccessKeyId != "AKID" || r.SecretAccessKey != "secret" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "route53 static keys", cfg: DNSConfig{Provider: "route53", APIToken: "AKID:secret"}, ok: func(p any) bool {
+			r, ok := p.(*route53.Provider)
+			return ok && r.AccessKeyId == "AKID" && r.SecretAccessKey == "secret"
 		}},
-		{name: "digitalocean", cfg: DNSConfig{Provider: "digitalocean", APIToken: "do-token"}, check: func(t *testing.T, p any) {
-			if d, ok := p.(*digitalocean.Provider); !ok || d.APIToken != "do-token" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "digitalocean", cfg: DNSConfig{Provider: "digitalocean", APIToken: "do-token"}, ok: func(p any) bool {
+			d, ok := p.(*digitalocean.Provider)
+			return ok && d.APIToken == "do-token"
 		}},
-		{name: "gandi", cfg: DNSConfig{Provider: "gandi", APIToken: "pat"}, check: func(t *testing.T, p any) {
-			if g, ok := p.(*gandi.Provider); !ok || g.BearerToken != "pat" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "gandi", cfg: DNSConfig{Provider: "gandi", APIToken: "pat"}, ok: func(p any) bool {
+			g, ok := p.(*gandi.Provider)
+			return ok && g.BearerToken == "pat"
 		}},
-		{name: "ovh default endpoint", cfg: DNSConfig{Provider: "ovh", APIToken: "ak:as:ck"}, check: func(t *testing.T, p any) {
+		{name: "ovh default endpoint", cfg: DNSConfig{Provider: "ovh", APIToken: "ak:as:ck"}, ok: func(p any) bool {
 			o, ok := p.(*ovh.Provider)
-			if !ok || o.Endpoint != "ovh-eu" || o.ApplicationKey != "ak" || o.ApplicationSecret != "as" || o.ConsumerKey != "ck" {
-				t.Errorf("got %#v", p)
-			}
+			return ok && o.Endpoint == "ovh-eu" && o.ApplicationKey == "ak" && o.ApplicationSecret == "as" && o.ConsumerKey == "ck"
 		}},
-		{name: "ovh endpoint", cfg: DNSConfig{Provider: "ovh", APIToken: "ak:as:ck", Endpoint: "ovh-ca"}, check: func(t *testing.T, p any) {
-			if o, ok := p.(*ovh.Provider); !ok || o.Endpoint != "ovh-ca" {
-				t.Errorf("got %#v", p)
-			}
+		{name: "ovh endpoint", cfg: DNSConfig{Provider: "ovh", APIToken: "ak:as:ck", Endpoint: "ovh-ca"}, ok: func(p any) bool {
+			o, ok := p.(*ovh.Provider)
+			return ok && o.Endpoint == "ovh-ca"
 		}},
-		{name: "namecheap", cfg: DNSConfig{Provider: "namecheap", APIToken: "key", User: "ann", ClientIP: "203.0.113.5"}, check: func(t *testing.T, p any) {
+		{name: "namecheap", cfg: DNSConfig{Provider: "namecheap", APIToken: "key", User: "ann", ClientIP: "203.0.113.5"}, ok: func(p any) bool {
 			n, ok := p.(*namecheap.Provider)
-			if !ok || n.APIKey != "key" || n.User != "ann" || n.ClientIP != "203.0.113.5" {
-				t.Errorf("got %#v", p)
-			}
+			return ok && n.APIKey == "key" && n.User == "ann" && n.ClientIP == "203.0.113.5"
 		}},
-		{name: "duckdns", cfg: DNSConfig{Provider: "duckdns", APIToken: "duck"}, check: func(t *testing.T, p any) {
+		{name: "duckdns", cfg: DNSConfig{Provider: "duckdns", APIToken: "duck"}, ok: func(p any) bool {
 			r, ok := p.(redactErrors)
 			if !ok {
-				t.Fatalf("got %T", p)
+				return false
 			}
-			if d, ok := r.DNSProvider.(*duckdns.Provider); !ok || d.APIToken != "duck" || r.secret != "duck" {
-				t.Errorf("got %#v", p)
-			}
+			d, ok := r.DNSProvider.(*duckdns.Provider)
+			return ok && d.APIToken == "duck" && r.secret == "duck"
 		}},
 		{name: "route53 bad token", cfg: DNSConfig{Provider: "route53", APIToken: "nocolon"}, wantErr: "ACCESS_KEY_ID:SECRET_ACCESS_KEY"},
 		{name: "ovh bad token", cfg: DNSConfig{Provider: "ovh", APIToken: "ak:as"}, wantErr: "APPLICATION_KEY:APPLICATION_SECRET:CONSUMER_KEY"},
@@ -112,7 +99,9 @@ func TestNewDNSProvider(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tt.check(t, p)
+			if !tt.ok(p) {
+				t.Errorf("NewDNSProvider(%+v) = %#v", tt.cfg, p)
+			}
 		})
 	}
 }

@@ -52,7 +52,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		}
 	}()
 
-	servers, err := a.listen()
+	servers, err := a.listen(ctx)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (a *App) firstRunHint(ctx context.Context) {
 }
 
 // listen closes whatever it bound if it fails.
-func (a *App) listen() (servers []server, err error) {
+func (a *App) listen(ctx context.Context) (servers []server, err error) {
 	defer func() {
 		if err != nil {
 			for _, s := range servers {
@@ -181,7 +181,7 @@ func (a *App) listen() (servers []server, err error) {
 		}
 	}()
 	bind := func(name, addr string, h http.Handler, tlsConfig *tls.Config) (string, error) {
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			return "", fmt.Errorf("app: listen %s on %s: %w", name, addr, err)
 		}
@@ -214,7 +214,7 @@ func (a *App) listen() (servers []server, err error) {
 		}
 	}
 	if path := a.cfg.AdminSocketPath(); path != "" {
-		if addrs.Socket, err = a.bindSocket(path, &servers); err != nil {
+		if addrs.Socket, err = a.bindSocket(ctx, path, &servers); err != nil {
 			return servers, err
 		}
 	}
@@ -229,11 +229,11 @@ func (a *App) listen() (servers []server, err error) {
 // path, readable and writable by the service user alone. A socket file a
 // previous run left behind is replaced; the listener removes its own on
 // close.
-func (a *App) bindSocket(path string, servers *[]server) (string, error) {
+func (a *App) bindSocket(ctx context.Context, path string, servers *[]server) (string, error) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("app: remove stale admin socket %s: %w", path, err)
 	}
-	ln, err := net.Listen("unix", path)
+	ln, err := new(net.ListenConfig).Listen(ctx, "unix", path)
 	if err != nil {
 		return "", fmt.Errorf("app: listen admin socket on %s: %w", path, err)
 	}

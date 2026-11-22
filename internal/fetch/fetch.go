@@ -283,7 +283,7 @@ func failed(u string, err error) error {
 	}
 	var dns *net.DNSError
 	var op *net.OpError
-	ne, isNet := err.(net.Error)
+	ne, isNet := errors.AsType[net.Error](err)
 	switch {
 	case errors.Is(err, errNonPublic):
 		err = errNonPublic
@@ -318,7 +318,7 @@ func Transport() *http.Transport {
 			return nil
 		},
 	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // nothing in Kazari replaces the default transport
 	tr.DialContext = dialer.DialContext
 	tr.Proxy = nil
 	return tr

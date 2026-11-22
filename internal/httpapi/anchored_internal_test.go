@@ -88,7 +88,7 @@ func TestAnchoredReadHoldsNoFileForStalledClient(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer func() {
-					if v := recover(); v != nil && v != http.ErrAbortHandler {
+					if v := recover(); v != nil && !isAbort(v) {
 						panic(v)
 					}
 				}()
@@ -127,7 +127,7 @@ func (f *brokenFile) Seek(offset int64, whence int) (int64, error) {
 // all of it.
 func TestAnchoredReadAbortsOnFailedRead(t *testing.T) {
 	defer func() {
-		if v := recover(); v != http.ErrAbortHandler {
+		if v := recover(); !isAbort(v) {
 			t.Errorf("recovered %v, want http.ErrAbortHandler", v)
 		}
 	}()
@@ -140,4 +140,9 @@ func TestAnchoredReadRefusesBinary(t *testing.T) {
 	if !errors.Is(err, artifact.ErrInvalidArgument) || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
 		t.Errorf("err = %v, body %d bytes, headers %v", err, rec.Body.Len(), rec.Header())
 	}
+}
+
+func isAbort(v any) bool {
+	err, ok := v.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
 }

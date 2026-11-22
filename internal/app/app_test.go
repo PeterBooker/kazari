@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -609,8 +610,8 @@ func TestListenError(t *testing.T) {
 	go func() { done <- a.Run(context.Background()) }()
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "listen") {
-			t.Errorf("Run = %v, want a listen error", err)
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			t.Errorf("Run = %v, want EADDRINUSE", err)
 		}
 	case <-a.Started():
 		t.Fatal("Started closed although the port is taken")

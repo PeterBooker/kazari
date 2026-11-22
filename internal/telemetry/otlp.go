@@ -179,7 +179,7 @@ func newEndpoint(o OTLP, signal, path string, log *slog.Logger) (*endpoint, erro
 		}
 		return e, nil
 	}
-	base := http.DefaultTransport.(*http.Transport).Clone()
+	base := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // nothing in Kazari replaces the default transport
 	base.TLSClientConfig = e.tls
 	e.http = &http.Client{
 		Transport: recordStatus{next: base},

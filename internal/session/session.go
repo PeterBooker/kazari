@@ -102,7 +102,7 @@ const (
 func (m *Manager) Get(r *http.Request) (*Session, error) {
 	ck, err := r.Cookie(m.name(""))
 	if err != nil || ck.Value == "" {
-		return nil, nil
+		return nil, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie is no session
 	}
 	cs, err := m.p.ControlSession(r.Context(), m.opts.Host, ck.Value)
 	if errors.Is(err, oauth.ErrNotFound) {
@@ -127,7 +127,7 @@ func (m *Manager) Presented(r *http.Request) bool {
 // reusing the browser's current one so that several tabs can sign in at
 // once.
 func (m *Manager) SignIn(w http.ResponseWriter, r *http.Request, returnTo string) {
-	nonce := ""
+	var nonce string
 	if ck, err := r.Cookie(m.name("_nonce")); err == nil && len(ck.Value) == nonceLen {
 		nonce = ck.Value
 	} else {

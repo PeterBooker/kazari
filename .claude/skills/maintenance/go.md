@@ -24,7 +24,8 @@ A minor release (1.27 to 1.28) also:
 
 - changes `golang:1.27-alpine` to `golang:1.28-alpine` in `deploy/Dockerfile` and "Go (1.27 or later)" in `site/content/docs/quickstart.md`;
 - needs the release notes read (<https://go.dev/doc/devel/release>). Raising the `go` line switches `GODEBUG` defaults (listed in the notes' compatibility section), which can change `net/http`, `crypto/tls` and `crypto/x509`. Look at what affects the TLS listener and CertMagic, the `ServeMux` host patterns, the OAuth and OIDC HTTP clients and `archive/tar`;
-- can bring new `go vet` findings: fix them rather than silencing them.
+- can bring new `go vet` findings: fix them rather than silencing them;
+- can need a newer golangci-lint (`actions.md`). CI builds it with the toolchain of `go.mod`, so it always runs, but a release older than the Go release may not know the new syntax.
 
 ## Verify
 

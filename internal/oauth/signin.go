@@ -578,7 +578,7 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, bindi
 func (s *Service) liveSession(ctx context.Context, r *http.Request) (*Session, error) {
 	ck, err := r.Cookie(s.named(sessionCookie))
 	if err != nil || len(ck.Value) != tokenLen {
-		return nil, nil
+		return nil, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie is no session
 	}
 	sess, err := s.store.GetSession(ctx, hashSecret(ck.Value))
 	if errors.Is(err, ErrNotFound) {

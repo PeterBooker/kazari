@@ -657,6 +657,7 @@ func TestTokenErrors(t *testing.T) {
 	const redirect = "https://app.example/cb"
 	p := newPKCE("verifier")
 	setup := func(t *testing.T) (*env, string, string) {
+		t.Helper()
 		e := newEnv(t, envOptions{})
 		clientID := e.register(redirect)
 		e.signIn(authorizeParams(clientID, redirect, "", p))

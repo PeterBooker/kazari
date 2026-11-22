@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
@@ -164,88 +165,131 @@ func TestNilRun(t *testing.T) {
 	}
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
+// bubbleOptions is for a synctest bubble, whose clock is the fake one: with
+// no jitter a job runs at once and then at every interval exactly.
+func bubbleOptions() Options {
+	return Options{Logger: slog.New(slog.DiscardHandler), Jitter: -1}
 }
 
 func TestRunTicksAndStops(t *testing.T) {
-	var ticked, manual atomic.Int64
-	s := New(testOptions(),
-		Job{Name: "fast", Every: time.Millisecond, Run: counter(&ticked)},
-		Job{Name: "manual", Run: counter(&manual)},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		var ticked, manual atomic.Int64
+		s := New(bubbleOptions(),
+			Job{Name: "fast", Every: time.Minute, Run: counter(&ticked)},
+			Job{Name: "manual", Run: counter(&manual)},
+		)
+		began := time.Now()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx) }()
 
-	waitFor(t, "three scheduled runs", func() bool { return ticked.Load() >= 3 })
+		synctest.Wait()
+		if got := ticked.Load(); got != 1 {
+			t.Errorf("fast ran %d times at the start, want 1", got)
+		}
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		if got := ticked.Load(); got != 3 {
+			t.Errorf("fast ran %d times in two minutes, want 3", got)
+		}
 
-	if err := s.Trigger(t.Context(), "manual"); err != nil {
-		t.Fatalf("Trigger(manual) while Run active: %v", err)
-	}
-	if got := manual.Load(); got != 1 {
-		t.Errorf("manual ran %d times, want 1 (Every 0 is never scheduled)", got)
-	}
-	st := s.Status()
-	if st[0].Name != "fast" || st[0].NextRun == nil {
-		t.Errorf("fast status while running = %+v, want NextRun set", st[0])
-	}
-	if st[1].NextRun != nil {
-		t.Errorf("manual NextRun = %v, want nil", st[1].NextRun)
-	}
+		if err := s.Trigger(t.Context(), "manual"); err != nil {
+			t.Fatalf("Trigger(manual) while Run active: %v", err)
+		}
+		if got := manual.Load(); got != 1 {
+			t.Errorf("manual ran %d times, want 1 (Every 0 is never scheduled)", got)
+		}
+		st := s.Status()
+		if want := began.Add(3 * time.Minute); st[0].Name != "fast" || st[0].NextRun == nil || !st[0].NextRun.Equal(want) {
+			t.Errorf("fast status while running = %+v, want NextRun %v", st[0], want)
+		}
+		if want := began.Add(2 * time.Minute); st[0].LastRun == nil || !st[0].LastRun.Equal(want) {
+			t.Errorf("fast LastRun = %v, want %v", st[0].LastRun, want)
+		}
+		if st[1].NextRun != nil {
+			t.Errorf("manual NextRun = %v, want nil", st[1].NextRun)
+		}
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
+		cancel()
+		if err := <-done; err != nil {
 			t.Fatalf("Run = %v, want nil", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
-	if next := s.Status()[0].NextRun; next != nil {
-		t.Errorf("NextRun after stop = %v, want nil", next)
-	}
+		if next := s.Status()[0].NextRun; next != nil {
+			t.Errorf("NextRun after stop = %v, want nil", next)
+		}
+		if got := ticked.Load(); got != 3 {
+			t.Errorf("fast ran %d times, want 3: no run after the stop", got)
+		}
+	})
+}
+
+func TestRunSkipsWhileTriggered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var runs atomic.Int64
+		release := make(chan struct{})
+		s := New(bubbleOptions(), Job{Name: "slow", Every: time.Minute, Run: func(context.Context) error {
+			if runs.Add(1) == 2 {
+				<-release
+			}
+			return nil
+		}})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx) }()
+		synctest.Wait()
+
+		triggered := make(chan error, 1)
+		go func() { triggered <- s.Trigger(t.Context(), "slow") }()
+		time.Sleep(150 * time.Second)
+		synctest.Wait()
+		if got := runs.Load(); got != 2 {
+			t.Errorf("slow ran %d times while a Trigger held it, want 2: the first and the Trigger", got)
+		}
+
+		close(release)
+		if err := <-triggered; err != nil {
+			t.Errorf("Trigger = %v, want nil", err)
+		}
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if got := runs.Load(); got != 3 {
+			t.Errorf("slow ran %d times, want 3: the schedule goes on after a skipped run", got)
+		}
+
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run = %v, want nil", err)
+		}
+	})
 }
 
 func TestRunCancelsJobContext(t *testing.T) {
-	started := make(chan struct{})
-	var sawCancel atomic.Bool
-	s := New(testOptions(), Job{Name: "block", Every: time.Millisecond, Run: func(ctx context.Context) error {
-		select {
-		case started <- struct{}{}:
-		default:
+	synctest.Test(t, func(t *testing.T) {
+		var sawCancel atomic.Bool
+		s := New(bubbleOptions(), Job{Name: "block", Every: time.Minute, Run: func(ctx context.Context) error {
+			<-ctx.Done()
+			sawCancel.Store(true)
+			return ctx.Err()
+		}})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx) }()
+		synctest.Wait()
+		if !s.Status()[0].Running {
+			t.Fatal("the job did not start")
 		}
-		<-ctx.Done()
-		sawCancel.Store(true)
-		return ctx.Err()
-	}})
+		cancel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	<-started
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
+		if err := <-done; err != nil {
 			t.Fatalf("Run = %v, want nil", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
-	if !sawCancel.Load() {
-		t.Error("job context was not cancelled before Run returned")
-	}
+		if !sawCancel.Load() {
+			t.Error("job context was not cancelled before Run returned")
+		}
+	})
 }
 
 func TestJitterBounds(t *testing.T) {

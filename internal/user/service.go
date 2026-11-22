@@ -538,7 +538,7 @@ func cleanPatterns(in []string) ([]string, error) {
 		if ae, ok := errors.AsType[*artifact.Error](err); ok {
 			return nil, fmt.Errorf("%w: slugs: %s", ErrInvalidKey, ae.Message)
 		}
-		return nil, fmt.Errorf("%w: slugs: %v", ErrInvalidKey, err)
+		return nil, fmt.Errorf("%w: slugs: %w", ErrInvalidKey, err)
 	}
 	return out, nil
 }

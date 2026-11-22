@@ -1,0 +1,6 @@
+go test fuzz v1
+string("<ul>\n <li>a</li>")
+string("<ul>\n<li>a</li>")
+string("\n")
+bool(false)
+uint16(0)

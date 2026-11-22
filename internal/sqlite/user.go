@@ -428,10 +428,10 @@ func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at tim
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		for rows.Next() {
 			var p string
 			if err := rows.Scan(&p); err != nil {
-				rows.Close()
 				return err
 			}
 			issued = append(issued, p)

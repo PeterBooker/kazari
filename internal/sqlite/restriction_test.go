@@ -87,19 +87,10 @@ func TestMigrationShareScopeKeepsRights(t *testing.T) {
 		t.Fatal(err)
 	}
 	for table, key := range map[string]string{"api_key": "prefix", "oauth_request": "id", "oauth_code": "code_hash", "oauth_token": "token_hash"} {
-		rows, err := raw.QueryContext(ctx, `SELECT scopes FROM `+table+` ORDER BY `+key)
+		after, err := queryStrings(ctx, raw, `SELECT scopes FROM `+table+` ORDER BY `+key)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var after []string
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err != nil {
-				t.Fatal(err)
-			}
-			after = append(after, s)
-		}
-		rows.Close()
 		if len(after) != len(before) {
 			t.Fatalf("%s: %d rows, want %d", table, len(after), len(before))
 		}
@@ -411,4 +402,21 @@ func TestOAuthStoreReissue(t *testing.T) {
 			t.Errorf("%d of %d concurrent Reissues succeeded, want 1", ok, n)
 		}
 	})
+}
+
+func queryStrings(ctx context.Context, db *sql.DB, query string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }

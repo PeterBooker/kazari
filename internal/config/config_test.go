@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func valid() Config {
@@ -110,8 +112,8 @@ func TestExampleFile(t *testing.T) {
 	want.TLS.Email = "ops@example.com"
 	want.TLS.DNS.APIToken = "tok"
 	want.Auth.AdminToken = testAdminToken
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("example differs from Default:\n got %+v\nwant %+v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("example differs from Default (-want +got):\n%s", diff)
 	}
 }
 
@@ -133,8 +135,8 @@ func TestShortFile(t *testing.T) {
 	want.DataDir = "/var/lib/kazari"
 	want.TLS.Email = "ops@example.com"
 	want.TLS.DNS.APIToken = "tok"
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("short file differs from Default plus the required keys:\n got %+v\nwant %+v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("short file differs from Default plus the required keys (-want +got):\n%s", diff)
 	}
 	// The token the file refers to must be set, so an empty dotenv line fails clearly.
 	_, err = LoadWith("../../deploy/kazari.yaml", env(map[string]string{"KAZARI_TLS_DNS_API_TOKEN": ""}))
@@ -144,11 +146,11 @@ func TestShortFile(t *testing.T) {
 }
 
 func TestLocal(t *testing.T) {
-	got, err := LoadLocal(filepath.Join(t.TempDir(), "none"))
+	_, err := LoadLocal(filepath.Join(t.TempDir(), "none"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("LoadLocal with a named, missing dotenv file: err = %v", err)
 	}
-	got, err = LoadWithBase(Local(), "", env(nil))
+	got, err := LoadWithBase(Local(), "", env(nil))
 	if err != nil {
 		t.Fatalf("Local does not validate: %v", err)
 	}
@@ -168,8 +170,8 @@ func TestLocal(t *testing.T) {
 		{"log.level", got.Log.Level, "debug"},
 	}
 	for _, ch := range checks {
-		if !reflect.DeepEqual(ch.got, ch.want) {
-			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		if diff := cmp.Diff(ch.want, ch.got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", ch.name, diff)
 		}
 	}
 
@@ -392,8 +394,8 @@ serve:
 		{"limits.max_version_bytes default", c.Limits.MaxVersionBytes, 50 * MiB},
 	}
 	for _, ch := range checks {
-		if !reflect.DeepEqual(ch.got, ch.want) {
-			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		if diff := cmp.Diff(ch.want, ch.got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", ch.name, diff)
 		}
 	}
 }
@@ -463,16 +465,16 @@ func TestEnvOverrides(t *testing.T) {
 			MaxKeyTTL: Duration(365 * 24 * time.Hour)}},
 	}
 	for _, ch := range checks {
-		if !reflect.DeepEqual(ch.got, ch.want) {
-			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		if diff := cmp.Diff(ch.want, ch.got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", ch.name, diff)
 		}
 	}
 	if c.Auth.OIDC == nil {
 		t.Fatal("OIDC not materialised")
 	}
 	want := OIDC{Issuer: "https://accounts.google.com", ClientID: "cid", ClientSecret: "csecret", AutoProvision: true}
-	if !reflect.DeepEqual(*c.Auth.OIDC, want) {
-		t.Errorf("OIDC = %+v, want %+v", *c.Auth.OIDC, want)
+	if diff := cmp.Diff(want, *c.Auth.OIDC); diff != "" {
+		t.Errorf("OIDC mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -765,8 +767,8 @@ func TestRedacted(t *testing.T) {
 		{"listen.proxy_mode", section(m, "listen")["proxy_mode"], false},
 	}
 	for _, ch := range checks {
-		if !reflect.DeepEqual(ch.got, ch.want) {
-			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		if diff := cmp.Diff(ch.want, ch.got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", ch.name, diff)
 		}
 	}
 

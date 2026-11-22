@@ -192,6 +192,7 @@ func archive(t *testing.T, files map[string]string) []byte {
 }
 
 func backupRoute(t *testing.T, query *string) http.HandlerFunc {
+	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		*query = r.URL.RawQuery
 		files := map[string]string{"kazari.db": "the database", "blobs/ab/abcdef": "a blob"}
@@ -259,8 +260,7 @@ func TestRunAdminBackupOverSocket(t *testing.T) {
 		query = r.URL.RawQuery
 		w.Write(archive(t, map[string]string{"kazari.db": "the database"}))
 	}}}
-	// A short path: a Unix socket's is bounded at about a hundred bytes.
-	sockDir, err := os.MkdirTemp("", "kz")
+	sockDir, err := os.MkdirTemp("", "kz") //nolint:usetesting // a Unix socket's path is bounded at about a hundred bytes, and t.TempDir's holds the test's name
 	if err != nil {
 		t.Fatal(err)
 	}

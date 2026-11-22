@@ -15,6 +15,7 @@ import (
 
 func TestFSConformance(t *testing.T) {
 	blobtest.Run(t, func(t *testing.T) blob.Store {
+		t.Helper()
 		fs, err := blob.NewFS(filepath.Join(t.TempDir(), "blobs"), blob.Options{})
 		if err != nil {
 			t.Fatal(err)
