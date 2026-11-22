@@ -1,4 +1,4 @@
-{{define "key-scope"}}<span class="mono">{{range $i, $s := .Scopes}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{end}}
+{{define "key-scope"}}{{range $i, $s := .Scopes}}{{if $i}}; {{end}}{{scopeWords $s}}{{end}}{{end}}
 
 {{define "event"}}
 {{- $d := .Details -}}
@@ -40,14 +40,15 @@
 
 <header class="head">
 <div class="head-row">
-<h1 class="title">Account <b>of {{.Person}}</b></h1>
+<h1 class="title">{{if eq .Flash "welcome"}}Welcome, <b>{{.Person}}</b>{{else}}Account <b>of {{.Person}}</b>{{end}}</h1>
 <span class="ja" lang="ja" aria-hidden="true">アカウント</span>
 <span class="mono soft">{{.User.Handle}}</span>
 </div>
-<p class="lede">How you sign in to this Kazari instance, and what acts in your name: your API keys and the apps you connected.</p>
+<p class="lede">{{if eq .Flash "welcome"}}You are signed in. Next, connect your AI agent: it publishes pages for you here.{{else}}Your pages, the agent that publishes them, and how you sign in to this instance.{{end}}</p>
 </header>
 
 {{if eq .Flash "password-set"}}<p class="flash status tone-ok" role="status">Your password is set.</p>
+{{else if eq .Flash "welcome"}}<p class="flash status tone-ok" role="status">Your password is set and you are signed in.</p>
 {{else if eq .Flash "password-recovered"}}<p class="flash status tone-ok" role="status">Your new password is set, and the recovery code is used up. Every other browser was signed out.</p>
 {{else if eq .Flash "password-changed"}}<p class="flash status tone-ok" role="status">Your password is changed. Every other browser was signed out.</p>
 {{else if eq .Flash "passkey-added"}}<p class="flash status tone-ok" role="status">The passkey is added. Use it the next time you sign in.</p>
@@ -57,11 +58,56 @@
 {{else if eq .Flash "app-revoked"}}<p class="flash status tone-ok" role="status">The app is disconnected.</p>
 {{end}}
 
-{{if .KeySession}}<div class="notice tone-note">
+{{if and (eq .Flash "welcome") (eq .Role "admin") .AdminURL}}<div class="notice tone-note">
+<p class="notice-title">You are an admin</p>
+<p>Invite people and look after the instance from <a href="{{.AdminURL}}/">the dashboard</a>.</p>
+</div>
+{{end}}{{if .KeySession}}<div class="notice tone-note">
 <p class="notice-title">Signed in with the API key <span class="mono">{{.KeyPrefix}}</span></p>
-<p>A key issued from this session gets no scope, slug or lifetime that key lacks, and ends when it is revoked.</p>
+<p>A key issued from this session gets nothing that key lacks, and ends when it is revoked.</p>
 </div>
 {{end}}
+{{template "connect" .}}
+
+<section class="section" aria-labelledby="pages">
+<h2 class="h2" id="pages">Your pages</h2>
+{{if .Pages}}<table class="table">
+<thead><tr><th>Page</th><th>Open to</th><th>Updated</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Pages}}<tr>
+<td data-label="Page"><a href="{{.URL}}" rel="noreferrer">{{if .Name}}{{.Name}}{{else}}{{.Slug}}{{end}}</a> <span class="mono soft">{{.Slug}}</span></td>
+<td data-label="Open to">{{template "open-to" .}}</td>
+<td data-label="Updated">{{template "time" .UpdatedAt}}</td>
+<td class="row-actions"><a class="link" href="/account/pages/{{.Slug}}">Manage<span class="sr-only"> {{.Slug}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+<p>You own no page yet. Once your agent is connected, ask it for a page and tell it to publish with Kazari.</p>
+</div>
+{{end}}</section>
+
+<section class="section" aria-labelledby="apps">
+<h2 class="h2" id="apps">Connected apps</h2>
+{{if .Apps}}<table class="table">
+<thead><tr><th>App</th><th>May</th><th>Approved with</th><th>Last refresh</th><th>Lapses</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Apps}}<tr>
+<td data-label="App">{{if .Client}}{{.Client}}{{else}}<span class="mono">{{.ClientID}}</span>{{end}}</td>
+<td data-label="May">{{template "key-scope" .}}</td>
+<td data-label="Approved with">{{if .KeyPrefix}}<span class="mono nowrap">kzk_{{.KeyPrefix}}</span>{{else}}<span class="soft">A sign-in</span>{{end}}</td>
+<td data-label="Last refresh">{{template "time" .Refreshed}}</td>
+<td data-label="Lapses">{{template "time" .Lapses}}</td>
+<td class="row-actions"><a class="link link-danger" href="/account/apps/{{.ID}}/revoke">Disconnect<span class="sr-only"> {{if .Client}}{{.Client}}{{else}}{{.ClientID}}{{end}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+<p class="help">An app that goes unused lapses by itself, at the time in the last column; each use moves that time on.</p>
+{{else}}<div class="empty">
+<p>No app is connected yet. An AI agent shows here once you add this instance to it as a connector, above, and approve it.</p>
+</div>
+{{end}}</section>
+
 
 <div class="cols">
 <section class="box section" aria-labelledby="profile">
@@ -185,12 +231,12 @@
 </div>
 <p class="soft">A key lets a script or an agent act as you without a browser. Its secret is shown once, when the key is made.</p>
 {{if .Keys}}<table class="table">
-<thead><tr><th>Key</th><th>May</th><th>Slugs</th><th>Issued with</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<thead><tr><th>Key</th><th>May</th><th>Pages</th><th>Issued with</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead>
 <tbody>
 {{range .Keys}}<tr>
 <td data-label="Key"><span class="mono nowrap">kzk_{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="May">{{template "key-scope" .}}</td>
-<td data-label="Slugs">{{if .Slugs}}<span class="mono">{{range $i, $s := .Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any</span>{{end}}</td>
+<td data-label="Pages">{{if .Slugs}}<span class="mono">{{range $i, $s := .Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any of yours</span>{{end}}</td>
 <td data-label="Issued with">{{if .IssuedBy}}<span class="mono nowrap">kzk_{{.IssuedBy}}</span>{{else}}<span class="soft">A sign-in or an admin</span>{{end}}</td>
 <td data-label="Created">{{template "time" .CreatedAt}}</td>
 <td data-label="Last used">{{with .LastUsedAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</td>
@@ -222,7 +268,7 @@
 <h3 class="h3" id="new-key">Make a key</h3>
 {{if eq .Err.key "too-wide"}}<div class="notice tone-danger" role="alert">
 <p class="notice-title">{{template "icon/alert"}}That key cannot be made from this session</p>
-<p>You signed in with an API key, and a key made here gets no scope, slug or lifetime that key lacks. Leave the slugs and the expiry empty to take them from it, or sign in with your password.</p>
+<p>You signed in with an API key, and a key made here gets nothing that key lacks: no more it may do, no other pages and no longer life. Leave the page addresses and the expiry empty to take them from it, or sign in with your password.</p>
 </div>
 {{else if eq .Err.key "too-many"}}<div class="notice tone-danger" role="alert">
 <p class="notice-title">{{template "icon/alert"}}You hold as many live keys as a person may</p>
@@ -238,40 +284,24 @@
 <div class="field span-2"><label for="label">Label <span class="optional">(optional)</span></label>
 <input class="input" id="label" name="label" type="text" value="{{.Key.Label}}" maxlength="100" autocomplete="off" aria-describedby="label-help">
 <p class="help" id="label-help">What it is for, such as weekly-report. It shows in this list and in the activity log.</p></div>
-<div class="field"><label for="slugs">Slugs <span class="optional">(optional)</span></label>
+<input type="hidden" name="scopes_offered" value="1">
+<fieldset class="fieldset span-2"{{if .Err.scopes}} aria-describedby="scopes-err"{{end}}><legend>What the key may do</legend>
+{{range .Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{.Name}}"{{if .Checked}} checked{{end}}{{if $.Err.scopes}} aria-invalid="true"{{end}}><span>{{.Words}}</span></label>
+{{end}}{{if .Err.scopes}}<p class="error" id="scopes-err">{{template "icon/alert"}}<span>Tick at least one thing the key may do.</span></p>
+{{end}}</fieldset>
+<div class="field"><label for="slugs">Page addresses <span class="optional">(optional)</span></label>
 <input class="input input-mono" id="slugs" name="slugs" type="text" value="{{.Key.Slugs}}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="slugs-help{{if .Err.slugs}} slugs-err{{end}}"{{if .Err.slugs}} aria-invalid="true"{{end}}>
-{{if .Err.slugs}}<p class="error" id="slugs-err">{{template "icon/alert"}}<span>A pattern is a slug, such as q3-report, or the start of one followed by *, such as weekly-*. Separate several with spaces.</span></p>
-{{end}}<p class="help" id="slugs-help">Limits the key to pages whose slug matches, such as <span class="mono">weekly-*</span>. Empty means every page you may touch.</p></div>
+{{if .Err.slugs}}<p class="error" id="slugs-err">{{template "icon/alert"}}<span>Give the first part of a page's address, such as q3-report, or the start of one followed by *, such as weekly-*. Separate several with spaces.</span></p>
+{{end}}<p class="help" id="slugs-help">Limits the key to pages whose address starts so, such as <span class="mono">weekly-*</span> for weekly-1 and weekly-2. Empty means every page you may touch.</p></div>
 <div class="field"><label for="days">Expires after, in days <span class="optional">(optional)</span></label>
 <input class="input" id="days" name="days" type="number" inputmode="numeric" min="1"{{if .MaxKeyDays}} max="{{.MaxKeyDays}}"{{end}} step="1" value="{{.Key.Days}}" aria-describedby="days-help{{if .Err.days}} days-err{{end}}"{{if .Err.days}} aria-invalid="true"{{end}}>
 {{if .Err.days}}<p class="error" id="days-err">{{template "icon/alert"}}<span>Enter a whole number of days{{if .MaxKeyDays}}, {{.MaxKeyDays}} at most{{end}}.</span></p>
 {{end}}<p class="help" id="days-help">{{if .MaxKeyDays}}Empty means {{.MaxKeyDays}} days, the longest a key lives on this instance.{{else}}Empty means the key does not expire.{{end}}</p></div>
 <div class="actions"><button type="submit" class="btn btn-primary">{{template "icon/key"}}Make the key</button></div>
 </form>
-<p class="help">The key can read, write, share and delete your pages{{if .KeySession}}, as far as the key you signed in with can{{end}}. A key that administers the instance comes from the dashboard.</p>
+<p class="help">The key does what you tick{{if .KeySession}}, as far as the key you signed in with can{{end}}. A key that administers the instance comes from the dashboard.</p>
 </section>
 </section>
-
-<section class="section" aria-labelledby="apps">
-<h2 class="h2" id="apps">Connected apps</h2>
-{{if .Apps}}<table class="table">
-<thead><tr><th>App</th><th>May</th><th>Approved with</th><th>Last refresh</th><th>Lapses</th><th><span class="sr-only">Actions</span></th></tr></thead>
-<tbody>
-{{range .Apps}}<tr>
-<td data-label="App">{{if .Client}}{{.Client}}{{else}}<span class="mono">{{.ClientID}}</span>{{end}}</td>
-<td data-label="May">{{template "key-scope" .}}</td>
-<td data-label="Approved with">{{if .KeyPrefix}}<span class="mono nowrap">kzk_{{.KeyPrefix}}</span>{{else}}<span class="soft">A sign-in</span>{{end}}</td>
-<td data-label="Last refresh">{{template "time" .Refreshed}}</td>
-<td data-label="Lapses">{{template "time" .Lapses}}</td>
-<td class="row-actions"><a class="link link-danger" href="/account/apps/{{.ID}}/revoke">Disconnect<span class="sr-only"> {{if .Client}}{{.Client}}{{else}}{{.ClientID}}{{end}}</span></a></td>
-</tr>
-{{end}}</tbody>
-</table>
-<p class="help">An app that goes unused lapses by itself, at the time in the last column; each use moves that time on.</p>
-{{else}}<div class="empty">
-<p>No app is connected. An AI agent connects when you add this instance to it as a connector and approve it after signing in.</p>
-</div>
-{{end}}</section>
 
 {{if .Events}}<section class="section" aria-labelledby="events">
 <h2 class="h2" id="events">Recent security events</h2>
@@ -284,25 +314,28 @@
 </section>
 {{end}}
 
-<section class="section" aria-labelledby="pages">
-<h2 class="h2" id="pages">Your pages</h2>
-{{if .Pages}}<table class="table">
-<thead><tr><th>Page</th><th>Open to</th><th>Updated</th></tr></thead>
-<tbody>
-{{range .Pages}}<tr>
-<td data-label="Page"><a href="{{.URL}}">{{if .Name}}{{.Name}}{{else}}{{.Slug}}{{end}}</a> <span class="mono soft">{{.Slug}}</span></td>
-<td data-label="Open to">{{if eq .Visibility "public"}}Anyone{{else if eq .Visibility "unlisted"}}Anyone with the address{{else if eq .Visibility "members"}}Members{{else}}<span class="status tone-neutral">Unpublished</span>{{end}}</td>
-<td data-label="Updated">{{template "time" .UpdatedAt}}</td>
-</tr>
-{{end}}</tbody>
-</table>
-{{else}}<div class="empty">
-<p>You own no page yet. Ask a connected agent to publish one with Kazari.</p>
-</div>
-{{end}}</section>
-
 </div>
 {{template "theme/shell-close"}}{{end}}
+
+{{define "open-to"}}{{if eq .Visibility "unpublished"}}<span class="status tone-neutral">Unpublished</span>{{else if eq .Visibility "public"}}Public{{else if eq .Visibility "unlisted"}}Unlisted{{else}}Members only{{end}}{{end}}
+
+{{define "connect"}}<section class="box section" aria-labelledby="connect-h">
+<h2 class="h2" id="connect-h">Connect your AI agent</h2>
+<p>Add this address to your AI agent as a connector. It then publishes pages here as you, once you sign in and approve it.</p>
+<div class="copy"><label class="sr-only" for="connector">Connector address</label><input class="input input-mono" id="connector" type="text" readonly value="{{.MCPURL}}" autocomplete="off" spellcheck="false">
+<button type="button" class="btn" data-copy-target="connector" hidden>Copy the address</button></div>
+<ol class="steps">
+<li><strong>claude.ai</strong>
+<span class="soft">Open Settings, then Connectors, and choose Add custom connector. Paste the address, add it and choose Connect. Sign in here when it asks, and approve.</span></li>
+<li><strong>The Claude desktop app</strong>
+<span class="soft">The same steps: Settings, then Connectors, then Add custom connector. A connector added on claude.ai is there already.</span></li>
+<li><strong>Claude Code</strong>
+<span class="soft">Run this command, then type /mcp in Claude Code to sign in:</span>
+<div class="snippet"><pre><code id="connector-cli">claude mcp add --transport http kazari {{.MCPURL}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="connector-cli" hidden>Copy the command</button></div></li>
+</ol>
+<p class="help">Any other agent that takes a remote MCP server connects with the same address.</p>
+</section>{{end}}
 
 {{define "key"}}{{template "theme/shell" (.Shell "New API key" "Account" "Your account")}}
 <div class="page page-narrow">
@@ -323,7 +356,7 @@
 <dl class="kv">
 {{with .Key.Label}}<dt>Label</dt><dd>{{.}}</dd>
 {{end}}<dt>May</dt><dd>{{template "key-scope" .Key}}</dd>
-<dt>Slugs</dt><dd>{{if .Key.Slugs}}<span class="mono">{{range $i, $s := .Key.Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any page you may touch</span>{{end}}</dd>
+<dt>Pages</dt><dd>{{if .Key.Slugs}}<span class="mono">{{range $i, $s := .Key.Slugs}}{{if $i}} {{end}}{{$s}}{{end}}</span>{{else}}<span class="soft">Any page you may touch</span>{{end}}</dd>
 <dt>Expires</dt><dd>{{with .Key.ExpiresAt}}{{template "time" .}}{{else}}<span class="soft">Never</span>{{end}}</dd>
 {{with .Old}}<dt>The old key</dt><dd><span class="mono">kzk_{{.Prefix}}</span> {{if $.OldLive}}works until {{template "time" .ExpiresAt}}{{else}}has stopped working{{end}}</dd>
 {{end}}</dl>

@@ -20,6 +20,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/account"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
@@ -56,20 +57,6 @@ const (
 	sibling = "https://demo.art.test"
 )
 
-// pages stands in for artifact.Service: the account page lists what it
-// returns.
-type pages struct{ items []artifact.Artifact }
-
-func (p *pages) List(_ context.Context, actor artifact.Actor, q artifact.ListQuery) (artifact.ListPage, error) {
-	var out artifact.ListPage
-	for _, a := range p.items {
-		if a.OwnerHandle == q.Owner && q.Owner == actor.Handle {
-			out.Items = append(out.Items, a)
-		}
-	}
-	return out, nil
-}
-
 type envOptions struct {
 	noLocal   bool          // people sign in with API keys only
 	noAdmin   bool          // the dashboard is off
@@ -79,6 +66,8 @@ type envOptions struct {
 	// grants, when set, stands between the pages and the sign-in host's
 	// service.
 	grants func(account.Grants) account.Grants
+	// shared is the shared write policy: any member may change any page.
+	shared bool
 }
 
 // env is an instance without an identity provider: the apex with the
@@ -89,7 +78,7 @@ type env struct {
 	users *user.Service
 	oauth *oauth.Service
 	audit *sqlite.AuditStore
-	pages *pages
+	arts  *artifact.Service
 	apex  *httptest.Server
 	mcp   *httptest.Server
 }
@@ -103,7 +92,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	e := &env{t: t, clock: &clock{now: t0}, audit: sqlite.NewAuditStore(db), pages: &pages{}}
+	e := &env{t: t, clock: &clock{now: t0}, audit: sqlite.NewAuditStore(db)}
 	e.apex = httptest.NewUnstartedServer(nil)
 	e.mcp = httptest.NewUnstartedServer(nil)
 	apexURL := "http://" + e.apex.Listener.Addr().String()
@@ -122,6 +111,18 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		MaxKeyTTL:     eo.maxKeyTTL,
 		// The real parameters cost 64 MiB a hash.
 		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1},
+	})
+	blobs, err := blob.NewFS(filepath.Join(t.TempDir(), "blobs"), blob.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := artifact.WriteOwner
+	if eo.shared {
+		policy = artifact.WriteShared
+	}
+	e.arts = artifact.New(sqlite.NewArtifactStore(db), blobs, e.audit, artifact.Options{
+		Quotas: e.users, Now: e.clock.Now, WritePolicy: policy, DefaultGrace: 14 * 24 * time.Hour,
+		Retention: 30 * 24 * time.Hour, MaxShareLinkTTL: 30 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
 	var (
 		passwords oauth.Passwords
@@ -154,6 +155,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		APIURL:          "https://api.art.test/v1",
 		LocalAccounts:   !eo.noLocal,
 		MaxKeyTTL:       eo.maxKeyTTL,
+		MaxShareLinkTTL: 30 * 24 * time.Hour,
 		InsecureCookies: true,
 		Now:             e.clock.Now,
 		Telemetry:       eo.telemetry,
@@ -166,8 +168,13 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		grants = eo.grants(grants)
 	}
 	deps := account.Deps{
-		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.pages, Audit: e.audit,
-		Links: present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
+		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.arts, Audit: e.audit,
+		Links: present.Links{URL: func(sub string) string {
+			if sub == "" {
+				return "https://art.test/"
+			}
+			return "https://" + sub + ".art.test/"
+		}},
 	}
 	if keys != nil {
 		deps.Passkeys = keys
@@ -199,6 +206,18 @@ func (e *env) invite(handle string, role user.Role) string {
 		e.t.Fatal(err)
 	}
 	return token
+}
+
+// page publishes a page of one file for owner.
+func (e *env) page(owner, slug, name string, v artifact.Visibility) {
+	e.t.Helper()
+	_, _, err := e.arts.Create(context.Background(), artifact.Actor{Handle: owner}, artifact.CreateRequest{
+		Slug: slug, Name: name, Visibility: v,
+		Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader("<p>" + slug + "</p>")}},
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 // person invites handle and sets their password.

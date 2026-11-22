@@ -126,10 +126,16 @@ func TestSetupToDashboard(t *testing.T) {
 	}
 	b := newBrowser(t, addr)
 	done := b.setPassword(link, url.Values{"handle": {"peter"}, "name": {"Peter"}, "email": {"peter@example.com"}})
-	if done.status != http.StatusSeeOther || !strings.HasPrefix(done.header.Get("Location"), "http://admin.localhost") {
+	if done.status != http.StatusSeeOther || done.header.Get("Location") != "/account/" {
 		t.Fatalf("setup: status %d to %q: %s", done.status, done.header.Get("Location"), truncate(done.body))
 	}
-	// Setting a password signs nobody in, and the link is used up.
+	// Setting the password signs the first admin in on the apex alone, and
+	// the link is used up.
+	welcome := b.get("http://localhost/account/")
+	wantStatus(t, welcome, http.StatusOK, "the account page after setup")
+	if !strings.Contains(welcome.body, "Welcome, <b>Peter</b>") || !strings.Contains(welcome.body, "http://mcp.localhost/") {
+		t.Errorf("the welcome after setup = %q", truncate(welcome.body))
+	}
 	signIn := b.follow(b.get("http://admin.localhost/"), "the dashboard after setup")
 	other := newBrowser(t, addr)
 	other.send(http.MethodGet, link, nil, nil)
@@ -351,15 +357,7 @@ func TestAccountOnApex(t *testing.T) {
 	if done.status != http.StatusSeeOther || done.header.Get("Location") != "/account/" {
 		t.Fatalf("invite: status %d to %q", done.status, done.header.Get("Location"))
 	}
-	signIn := b.follow(b.get("http://localhost/account/"), "the account page without a session")
-	u, _ := url.Parse(signIn)
-	if u.Host != "mcp.localhost" || u.Query().Get("host") != "@account" {
-		t.Fatalf("sign-in URL = %s", signIn)
-	}
-	cb := b.signIn(signIn, "ana", testPassword)
-	if cb.status != http.StatusFound || cb.header.Get("Location") != "/account/" {
-		t.Fatalf("callback: status %d to %q: %s", cb.status, cb.header.Get("Location"), truncate(cb.body))
-	}
+	// The invite signed her in: the account page opens without a sign-in.
 	page := b.get("http://localhost/account/")
 	wantStatus(t, page, http.StatusOK, "the account page")
 	token := formTokenRE.FindStringSubmatch(page.body)
@@ -381,10 +379,12 @@ func TestAccountOnApex(t *testing.T) {
 	if err != nil || me.Handle != "ana" {
 		t.Fatalf("the key from the account page: %+v, %v", me, err)
 	}
-	// The dashboard is not theirs: the sign-in host lets the signed-in
-	// browser through, and the dashboard refuses the member.
+	// The dashboard is not theirs: she signs in at the sign-in host, and
+	// the dashboard refuses the member.
 	toSignIn := b.follow(b.get("http://admin.localhost/"), "the dashboard as a member")
-	b.get(b.follow(b.get(toSignIn), "a signed-in browser at the sign-in host"))
+	if cb := b.signIn(toSignIn, "ana", testPassword); cb.status != http.StatusFound {
+		t.Fatalf("sign-in for the dashboard: status %d: %s", cb.status, truncate(cb.body))
+	}
 	wantStatus(t, b.get("http://admin.localhost/"), http.StatusForbidden, "the dashboard as a member")
 }
 

@@ -591,6 +591,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		APIURL:          apiBase,
 		LocalAccounts:   cfg.LocalAccounts(),
 		MaxKeyTTL:       cfg.Auth.Tokens.MaxKeyTTL.Std(),
+		MaxShareLinkTTL: cfg.Serve.ShareLinkMaxTTL.Std(),
 		InsecureCookies: cfg.ExternalScheme == "http",
 		Now:             now,
 		Telemetry:       tel,

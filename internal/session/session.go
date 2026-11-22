@@ -41,6 +41,9 @@ type Provider interface {
 	Redeem(ctx context.Context, code, host, nonce string) (oauth.View, error)
 	ControlSession(ctx context.Context, host, token string) (oauth.ControlSession, error)
 	SignOut(ctx context.Context, host, token string) error
+	// StartControl opens a session on the control host for a person the
+	// host itself has just identified.
+	StartControl(ctx context.Context, host, handle string) (oauth.View, error)
 }
 
 // Options configures a Manager.
@@ -172,6 +175,18 @@ func (m *Manager) Open(w http.ResponseWriter, r *http.Request) (*Session, string
 	}
 	m.setCookie(w, "", v.Token, v.ExpiresAt.Sub(m.opts.Now()))
 	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host, m: m}, oauth.ReturnPath(v.Path), nil
+}
+
+// Start signs the browser in as handle on this host alone, without the
+// sign-in host: for a person the host has just identified itself, such as
+// by a link they redeemed.
+func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, handle string) error {
+	v, err := m.p.StartControl(ctx, m.opts.Host, handle)
+	if err != nil {
+		return err
+	}
+	m.setCookie(w, "", v.Token, v.ExpiresAt.Sub(m.opts.Now()))
+	return nil
 }
 
 // End signs the browser out: the sign-in behind its cookie ends on every

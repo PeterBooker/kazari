@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/account"
+	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -93,16 +95,23 @@ func TestInviteLink(t *testing.T) {
 	if _, _, err := e.users.Link(ctx, token); !errors.Is(err, user.ErrLinkNotFound) {
 		t.Errorf("the link after use: err = %v, want ErrLinkNotFound", err)
 	}
-	// Setting a password signs nobody in: the next page is the sign-in form.
-	if b.signedIn() {
-		t.Fatal("setting a password signed the browser in")
+	// The link and the new password show who it is: the browser is signed
+	// in, and the account page welcomes them with the next step.
+	page := b.page()
+	for _, want := range []string{"Welcome, <b>Ana Sousa</b>", "Your password is set and you are signed in.", "Connect your AI agent", e.mcp.URL + "/"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("account page after the invite lacks %q", want)
+		}
 	}
-	b.signIn("ana", password)
-	if page := b.page(); !strings.Contains(page, "Your password is set.") || !strings.Contains(page, "Ana Sousa") {
-		t.Errorf("account page after the first sign-in: %s", page)
+	if strings.Index(page, "Your pages") > strings.Index(page, "Recovery codes") {
+		t.Error("the account page puts the security sections before the pages")
 	}
-	if page := b.page(); strings.Contains(page, "Your password is set.") {
-		t.Error("the confirmation was shown twice")
+	if page := b.page(); strings.Contains(page, "Welcome,") {
+		t.Error("the welcome was shown twice")
+	}
+	ev, err := e.audit.List(ctx, audit.Query{Actions: []string{oauth.ActionSignIn}})
+	if err != nil || len(ev.Events) != 1 || ev.Events[0].Actor != "ana" || ev.Events[0].Details["via"] != oauth.ViaLink {
+		t.Errorf("sign-in events = %+v, %v; want one of ana, via the link", ev.Events, err)
 	}
 
 	// The used link opens nothing, here or in another browser.
@@ -135,14 +144,16 @@ func TestResetLink(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
 		t.Fatalf("reset: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	// A used reset link ends every session.
+	// A used reset link ends every other session, and signs in this one.
 	if here.signedIn() || there.signedIn() {
 		t.Error("a session outlived the reset")
 	}
 	if _, err := e.users.CheckPassword(context.Background(), "ana", password); !errors.Is(err, user.ErrBadPassword) {
 		t.Errorf("the old password after the reset: %v", err)
 	}
-	fresh.signIn("ana", next)
+	if !fresh.signedIn() {
+		t.Error("the browser that used the reset link is not signed in")
+	}
 }
 
 func TestSetupLink(t *testing.T) {
@@ -162,25 +173,38 @@ func TestSetupLink(t *testing.T) {
 			t.Errorf("the setup form lacks %q", want)
 		}
 	}
-	form := url.Values{"handle": {"Not Valid"}, "name": {"Peter B"}, "email": {"peter@example.org"}, "password": {password}, "confirm": {password}}
+	// Every mistake is named at once, and what was right is kept.
+	form := url.Values{"handle": {"Peter B"}, "name": {"Peter B"}, "email": {"peter@example.org"}, "password": {password}, "confirm": {password + "x"}}
 	resp, body = b.post("/account/setup", form)
-	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "That handle cannot be used") ||
-		!strings.Contains(body, `value="Peter B"`) || !strings.Contains(body, `value="peter@example.org"`) || strings.Contains(body, password) {
-		t.Fatalf("an invalid handle: status %d: %s", resp.StatusCode, body)
+	for _, want := range []string{"That handle cannot be used", `<span class="mono">peter-b</span> would do`, "The two passwords are not the same",
+		`value="Peter B"`, `value="peter@example.org"`, "Correct the marked fields"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("an invalid handle and a mismatch: the form lacks %q", want)
+		}
+	}
+	if resp.StatusCode != http.StatusUnprocessableEntity || strings.Contains(body, password) {
+		t.Fatalf("an invalid handle and a mismatch: status %d, a password shown back: %t", resp.StatusCode, strings.Contains(body, password))
+	}
+	form.Set("confirm", password)
+	resp, body = b.post("/account/setup", form)
+	if resp.StatusCode != http.StatusUnprocessableEntity || strings.Count(body, `value="`+password+`"`) != 2 {
+		t.Fatalf("an invalid handle alone keeps both passwords: status %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `pattern="[a-z0-9][a-z0-9_\-]*"`) {
+		t.Error("the handle field has no pattern")
 	}
 	form.Set("handle", "peter")
 	resp, body = b.post("/account/setup", form)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != adminURL+"/" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account/" {
 		t.Fatalf("setup: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
 	u, err := e.users.GetUser(ctx, "peter")
 	if err != nil || u.Role != user.RoleAdmin || u.DisplayName != "Peter B" || u.Email != "peter@example.org" {
 		t.Fatalf("the first user = %+v, %v", u, err)
 	}
-	if b.signedIn() {
-		t.Error("setup signed the browser in")
+	if page := b.page(); !strings.Contains(page, `<a href="`+adminURL+`/">the dashboard</a>`) {
+		t.Errorf("the first admin's welcome does not lead to the dashboard: %s", page)
 	}
-	b.signIn("peter", password)
 
 	// Once any user exists the page is gone, whatever the link.
 	for _, other := range []*browser{b, e.browser()} {

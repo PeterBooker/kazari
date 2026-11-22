@@ -23,10 +23,9 @@ import (
 func TestAccountPage(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	e.person("ana", "")
-	e.pages.items = []artifact.Artifact{
-		{Slug: "q3-report", Name: "Q3 report", OwnerHandle: "ana", Visibility: artifact.Members, UpdatedAt: t0},
-		{Slug: "bens-page", Name: "Not hers", OwnerHandle: "ben", Visibility: artifact.Public, UpdatedAt: t0},
-	}
+	e.person("ben", "")
+	e.page("ana", "q3-report", "Q3 report", artifact.Members)
+	e.page("ben", "bens-page", "Not hers", artifact.Public)
 	b := e.browser()
 	b.signIn("ana", password)
 	page := b.page()
@@ -34,7 +33,7 @@ func TestAccountPage(t *testing.T) {
 		`<span class="ja" lang="ja" aria-hidden="true">アカウント</span>`, `<title>Account · Kazari</title>`,
 		"Only an admin of this instance changes these", `action="/account/password"`, "Sign out of my other sessions",
 		"Signed in with the password", "You hold no live key", "No app is connected",
-		`<a href="https://q3-report.art.test/">Q3 report</a>`, `action="/account/signout"`, "ana · member",
+		`<a href="https://q3-report.art.test/" rel="noreferrer">Q3 report</a>`, `href="/account/pages/q3-report"`, "Members only", `action="/account/signout"`, "ana · member",
 		`<link rel="stylesheet" href="/account/assets/theme.`,
 	} {
 		if !strings.Contains(page, want) {
@@ -437,8 +436,8 @@ func TestKeysFromPasswordSession(t *testing.T) {
 	}{
 		"days over the limit": {url.Values{"days": {"91"}}, "Enter a whole number of days, 90 at most"},
 		"days not a number":   {url.Values{"days": {"soon"}}, "Enter a whole number of days"},
-		"a bad slug pattern":  {url.Values{"slugs": {"Not A Slug"}, "label": {"kept"}}, "A pattern is a slug"},
-		"a pattern for all":   {url.Values{"slugs": {"*"}}, "A pattern is a slug"},
+		"a bad slug pattern":  {url.Values{"slugs": {"Not A Slug"}, "label": {"kept"}}, "Give the first part of a page's address"},
+		"a pattern for all":   {url.Values{"slugs": {"*"}}, "Give the first part of a page's address"},
 	} {
 		tt.form.Set("form_token", b.token())
 		resp, body = b.post("/account/keys", tt.form)
@@ -722,7 +721,7 @@ func TestHostileNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.pages.items = []artifact.Artifact{{Slug: "page", Name: hostile[1], OwnerHandle: "ana", Visibility: artifact.Public, UpdatedAt: t0}}
+	e.page("ana", "page", hostile[1], artifact.Public)
 	b := e.browser()
 	var bodies []string
 	collect := func(resp *http.Response, body string) {
@@ -733,8 +732,10 @@ func TestHostileNames(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 	}
-	collect(b.openLink("invite", token))
-	collect(b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}}))
+	invited := e.browser()
+	collect(invited.openLink("invite", token))
+	collect(invited.post("/account/invite", url.Values{"password": {password}, "confirm": {password}}))
+	collect(invited.get("/account/"))
 	b.signIn("ana", password)
 	for _, name := range hostile {
 		b.connect(name)

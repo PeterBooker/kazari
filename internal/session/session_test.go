@@ -58,6 +58,14 @@ func (p *provider) SignOut(_ context.Context, _, token string) error {
 	return nil
 }
 
+func (p *provider) StartControl(_ context.Context, host, handle string) (oauth.View, error) {
+	if p.err != nil {
+		return oauth.View{}, p.err
+	}
+	p.live["started-token"] = oauth.ControlSession{Handle: handle, SessionID: 8, ExpiresAt: t0.Add(12 * time.Hour)}
+	return oauth.View{Token: "started-token", ExpiresAt: t0.Add(12 * time.Hour)}, nil
+}
+
 func manager(p *provider, insecure bool) *session.Manager {
 	return session.New(p, session.Options{
 		Host: oauth.HostAdmin, Cookie: "kazari_admin", SignInURL: "https://mcp.art.test/oauth/signin",
@@ -426,5 +434,28 @@ func TestCallbackAndSignOut(t *testing.T) {
 	// A browser whose session ended is signed out without a token.
 	if err := m.SignOut(httptest.NewRecorder(), signOut("")); err != nil {
 		t.Errorf("signing out an ended session: %v", err)
+	}
+}
+
+// Start signs the browser in on this host without the sign-in host.
+func TestStart(t *testing.T) {
+	p := &provider{live: map[string]oauth.ControlSession{}}
+	m := manager(p, false)
+	b := &browser{}
+	w := httptest.NewRecorder()
+	if err := m.Start(t.Context(), w, "ana"); err != nil {
+		t.Fatalf("Start = %v", err)
+	}
+	set := b.take(t, w)
+	if len(set) != 1 || set[0].Name != "__Host-kazari_admin" || set[0].Value != "started-token" || !set[0].HttpOnly || !set[0].Secure {
+		t.Fatalf("Start set the cookies %+v", set)
+	}
+	s, err := m.Get(b.request("GET", "https://admin.art.test/"))
+	if err != nil || s == nil || s.Handle != "ana" {
+		t.Errorf("Get after Start = %+v, %v; want ana's session", s, err)
+	}
+	p.err = errors.New("store down")
+	if err := m.Start(t.Context(), httptest.NewRecorder(), "ana"); err == nil {
+		t.Error("Start with a failing provider = nil")
 	}
 }
