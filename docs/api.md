@@ -277,9 +277,9 @@ curl -sS https://api.art.example.com/v1/artifacts \
 
 The publish result carries an `import` field with the source, how many resources were fetched, which stayed remote and why (`skipped`), how many scripts were removed, `notes` and an `outline` of the page's sections. [The MCP server page](mcp.md#import_page) describes each field and what the copy contains. `source_url` cannot be combined with `upload_id`.
 
-#### Multipart body with a tar.gz bundle
+#### Multipart body with a bundle
 
-A multipart request carries the files as a gzip-compressed tar. The first part must be `manifest`, JSON with the fields `slug`, `name`, `description`, `visibility`, `metadata` and `label`. The second part is `bundle`, the archive:
+A multipart request carries the files as an archive: a gzip-compressed tar, a plain tar or a zip, told apart by their first bytes. The first part must be `manifest`, JSON with the fields `slug`, `name`, `description`, `visibility`, `metadata` and `label`. The second part is `bundle`, the archive:
 
 ```sh
 tar -czf site.tar.gz -C site .
@@ -289,13 +289,15 @@ curl -sS https://api.art.example.com/v1/artifacts \
   -F 'bundle=@site.tar.gz;type=application/gzip'
 ```
 
-Kazari keeps only the regular files in the tar. It skips directories, links and devices, and strips a leading `./` from each name.
+Kazari keeps only the regular files in the archive. It skips directories, links and devices, and strips a leading `./` from each name.
+
+When every file is under one directory that holds an `index.html`, as in an archive made with `tar -czf site.tar.gz site`, Kazari drops that directory from the paths, so `site/index.html` is published as `index.html`.
 
 A multipart request has these limits:
 
 - The manifest is capped at 64 KiB.
 - The request body is capped at `limits.max_version_bytes` plus 1 MiB.
-- The decompressed tar stream has the same cap, counting every byte of it: headers, long-name records, padding, skipped entries and file content.
+- The decompressed tar stream, or the zip, has the same cap, counting every byte of it: headers, long-name records, padding, skipped entries and file content.
 - A file name longer than 1024 bytes is refused as soon as it is read.
 
 ### List artifacts: `GET /artifacts`
@@ -340,6 +342,8 @@ Returns the artifact record and its versions, newest first. Add `?files=true` to
 { "artifact": { ... }, "versions": [ { "number": 3, "url": "https://q3-report--v3.art.example.com/", ... } ] }
 ```
 
+The `ETag` header holds the latest version's number, such as `"3"`, ready to send back as `If-Match` with an update.
+
 File lists come in pages, newest version first. A page holds whole versions up to 5,000 files, and always at least one version. When more remain, `next_files_before` holds a version number: send it back as `?files=true&files_before=<number>` for the versions below it. The newest page always has the latest version, and `next_files_before` is absent on the last page. Every page has all the version records; only the versions of the page have `files`.
 
 An unpublished or soft-deleted artifact is returned, with `unpublished_at` or `deleted_at` set, only to admins, its owner and the users who created or updated it: the people who also see it in their listings, and the only ones who can change, republish or restore it. Anyone else gets `404 not_found`. A purged artifact is `410 gone`.
@@ -353,6 +357,8 @@ Changes files and fields in one call, and returns a publish result. Sending file
 - Everything else is carried over.
 
 Sending no files changes fields only and creates no version, and so do files that leave the version as it is (the result says `unchanged`).
+
+A slug with no artifact is `404 not_found`, unless the request adds `?create=true` ([creating on the first deploy](#creating-on-the-first-deploy)).
 
 #### After a rollback
 
@@ -393,12 +399,39 @@ These fields work differently from create, or exist only here:
 | `base_version`     | The version the new one is built on; needed while an earlier version is published ([after a rollback](#after-a-rollback)) |
 | `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version or a `restore` otherwise clears |
 | `restore`          | Clears `deleted_at` on a soft-deleted artifact, which is `404` without it       |
+| `mirror`           | `true` deletes every file of the base version that the request does not carry ([mirroring a directory](#mirroring-a-directory)) |
 
 #### Multipart body
 
 A multipart update works as create does. The `manifest` part holds the fields above, including `files` with `delete` entries. An optional `bundle` part follows, whose files are added or replaced.
 
-Inline `files` win a path clash with the bundle. The bundle does not remove files it lacks.
+Inline `files` win a path clash with the bundle. The bundle does not remove files it lacks, unless the manifest sets `mirror`.
+
+#### Mirroring a directory
+
+To make the new version hold exactly the files of the request, set `"mirror": true`. Every file of the base version that the request does not carry is deleted, which is what a redeploy of a build needs:
+
+```sh
+curl -sS -X PUT https://api.art.example.com/v1/artifacts/q3-report \
+  -H "Authorization: Bearer $KAZARI_TOKEN" \
+  -F 'manifest={"mirror":true,"label":"nightly"};type=application/json' \
+  -F 'bundle=@site.tar.gz;type=application/gzip'
+```
+
+A mirror also expects the latest version it read, so a version someone else adds meanwhile fails the request with `412 version_conflict` instead of keeping files it was meant to remove. As with a create, a bundle whose files all sit under one directory with an `index.html` loses that directory. `PATCH` refuses `mirror`.
+
+#### Creating on the first deploy
+
+To create the artifact when the slug is free and update it otherwise, add `?create=true`. One request then serves the first deploy and every one after:
+
+```sh
+curl -sS -X PUT 'https://api.art.example.com/v1/artifacts/q3-report?create=true' \
+  -H "Authorization: Bearer $KAZARI_TOKEN" \
+  -F 'manifest={"mirror":true,"name":"Q3 report"};type=application/json' \
+  -F 'bundle=@site.tar.gz;type=application/gzip'
+```
+
+A create answers `201` with the publish result and takes its fields from the request: `name`, `description`, `visibility`, `label` and the `metadata` values that are not `null`. A request with `expected_version`, `If-Match`, `base_version` or `restore` never creates. A slug held by a deleted artifact you cannot see answers `409 slug_taken`.
 
 #### Optimistic concurrency
 
@@ -757,15 +790,15 @@ To install it, save it with [`kazari skill`](cli.md#skill) as `~/.claude/skills/
 
 ### Who am I: `GET /me`
 
-`GET /me` returns the caller: their handle, whether they are an admin, their scopes, how they authenticated and their storage quota and use. For a key restricted to the weekly reports that expires at the end of February:
+`GET /me` returns the caller: their handle, whether they act as an admin, their role, their scopes, how they authenticated and their storage quota and use. For a key restricted to the weekly reports that expires at the end of February:
 
 ```json
-{ "handle": "ana", "admin": false, "scopes": ["artifacts:read", "artifacts:write"],
+{ "handle": "ana", "admin": false, "role": "member", "scopes": ["artifacts:read", "artifacts:write"],
   "source": "api_key", "slugs": ["weekly-*"], "expires_at": "2027-02-28T09:00:00Z",
   "quota_bytes": 2147483648, "used_bytes": 184320 }
 ```
 
-`source` is `api_key` or `oauth`. A `quota_bytes` of 0 means unlimited. `used_bytes` also charges 4 KiB per stored file row, so it is more than the sum of the artifacts' `size_bytes`; see [quotas](ops.md#quotas).
+`role` is the person's role, `member` or `admin`. `admin` is `true` only for an admin whose credential carries the `admin` scope, so an admin's member-scoped key shows `"role": "admin", "admin": false`. `source` is `api_key` or `oauth`. A `quota_bytes` of 0 means unlimited. `used_bytes` also charges 4 KiB per stored file row, so it is more than the sum of the artifacts' `size_bytes`; see [quotas](ops.md#quotas).
 
 `slugs` is the credential's [restriction](#restricted-credentials), and is absent when it has none. `expires_at` is when the credential ends whatever is done with it: a key's expiry, or for an OAuth connection the expiry of the key it was approved with. It is absent when there is none.
 
@@ -1134,7 +1167,7 @@ These are the codes, with their HTTP status and meaning:
 | `upload_not_found`       | 404    | Unknown, expired or someone else's upload                                          |
 | `share_link_not_found`   | 404    | The artifact has no share link with that prefix                                    |
 | `method_not_allowed`     | 405    | Route exists, method does not (`Allow` header lists the methods)                   |
-| `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period)                |
+| `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period). The message says when the slug is in the bin, and the day a purged one is free again |
 | `upload_offset_mismatch` | 409    | Chunk offset does not match the staged size                                        |
 | `anchor_mismatch`        | 409    | Edit: an anchor's line changed since it was read, or is past the end of the file   |
 | `published_not_latest`   | 409    | An earlier version is published; send `base_version` ([after a rollback](#after-a-rollback)) |

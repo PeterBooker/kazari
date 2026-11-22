@@ -26,6 +26,22 @@ curl -fsSL https://kazari.io/install.sh | sh
 
 ## Configuring the client
 
+The client needs two settings: the instance's API address and an API key. You create a key on your [account page](identity.md#the-account-page), `https://<base>/account/`.
+
+### Signing in
+
+To save both settings in the [config file](#the-config-file), run `kazari login` with the API address and paste the key when it asks:
+
+```sh
+kazari login --url https://api.art.example.com
+```
+
+The command checks the key against the instance before it saves anything, then prints who you are, such as `logged in to https://api.art.example.com as peter (member)`. It writes the file readable by you alone. Without a terminal, it reads the key from the first line of stdin, so `kazari login --url https://api.art.example.com < key.txt` works in a script.
+
+`kazari logout` removes the key from the config file and leaves the URL. The key itself keeps working until you revoke it with [`kazari keys revoke`](#keys).
+
+### Settings
+
 Each setting comes from the first of these that is set: the flag, the environment variable, the config file. The settings are:
 
 | Flag              | Variable              | Config key     | Meaning                                       |
@@ -36,9 +52,17 @@ Each setting comes from the first of these that is set: the flag, the environmen
 | `--admin-token`   | `KAZARI_ADMIN_TOKEN`  | `admin_token`  | Admin token, or an admin user's key with the `admin` scope |
 | `--admin-socket`  | `KAZARI_ADMIN_SOCKET` | `admin_socket` | Admin socket of a server on this host         |
 | `--client-config` |                       |                | Config file path                              |
-| `--json`          |                       |                | Print the JSON response instead of text       |
+| `--json`          |                       |                | Print the JSON response instead of text, and API errors as JSON |
+| `--timeout`       |                       |                | Give up on a request after this long, such as `5m` |
+| `--allow-http`    | `KAZARI_ALLOW_HTTP=1` |                | Send the key to an `http://` URL on another machine |
 
-Give the URLs without `/v1`, which the client adds. When no admin URL is set and the user URL starts with `api.`, the client derives the admin URL as `admin.<base>`. When no admin token is set, the client tries the user token on the admin host.
+The client takes a URL as people write it. A URL without a scheme means `https://`, or `http://` for `localhost`, a `*.localhost` name or a loopback address. A trailing `/` or `/v1` is dropped, since the client adds `/v1` itself.
+
+By default, a request has no overall time limit, so a large upload can take as long as it needs, but the server must accept the connection within 10 seconds and start answering within 60. `--timeout` bounds the whole request.
+
+The client sends a key over plain `http://` only to this machine. For another host it stops with an error that names `--allow-http`, which lets the request through.
+
+When no admin URL is set and the user URL starts with `api.`, the client derives the admin URL as `admin.<base>`. When no admin token is set, the client tries the user token on the admin host.
 
 ### The admin socket
 
@@ -66,7 +90,7 @@ The client commands never read `./.env` on their own. The working directory can 
 
 ### The config file
 
-The config file is `$XDG_CONFIG_HOME/kazari/config.yaml`, else `~/.config/kazari/config.yaml`. It is optional unless you name it with `--client-config`, and an unknown key in it is an error:
+The config file is `$XDG_CONFIG_HOME/kazari/config.yaml`, else `~/.config/kazari/config.yaml`. [`kazari login`](#signing-in) writes it; to write it by hand, use these keys:
 
 ```yaml
 url: https://api.art.example.com
@@ -75,12 +99,16 @@ admin_url: https://admin.art.example.com   # optional
 admin_token: ""                            # optional
 ```
 
+The file is optional unless you name it with `--client-config`. An unknown key in it is an error that lists the known ones, such as `unknown key "api_key" in ~/.config/kazari/config.yaml (known: url, token, admin_url, admin_token, admin_socket)`.
+
+A config file that holds `token` or `admin_token` must be readable by you alone. If other users can read it, the client stops and names the fix, `chmod 600 ~/.config/kazari/config.yaml`.
+
 > [!WARNING]
-> The config file, and any dotenv file holding a token, contain credentials. Make them readable by you alone with `chmod 600`.
+> A dotenv file holding a token contains a credential too. Make it readable by you alone with `chmod 600`.
 
 ## Output and exit codes
 
-By default, commands print short human-readable text: a URL after a publish, and aligned tables for lists.
+By default, commands print short human-readable text on stdout: the result line after a publish, and aligned tables for lists. Notes, warnings and summaries go to stderr, so stdout stays the part to pipe.
 
 For scripts, `--json` prints the API's JSON response instead, pretty-printed. It works as a global flag or after the command:
 
@@ -88,13 +116,42 @@ For scripts, `--json` prints the API's JSON response instead, pretty-printed. It
 kazari --json get q3-report | jq -r '.artifact.published_version'
 ```
 
-Every command exits with one of three codes:
+When the server refuses a command, stderr shows `kazari: <code>: <message>`, often followed by a line with the next step. Under `--json`, stderr carries the API's error object instead, on one line:
 
-| Exit code | Meaning                                                                       |
-| --------- | ----------------------------------------------------------------------------- |
-| `0`       | Success                                                                       |
-| `1`       | The command or the server failed; stderr shows `kazari: <code>: <message>`    |
-| `2`       | Usage or configuration error, such as a bad flag, a missing URL or token, or a bad config file |
+```json
+{"error":{"code":"slug_taken","message":"slug \"q3-report\" is already taken"}}
+```
+
+A response that is not the API's, such as a web page or a proxy's error, is never printed. The message says which address answered and that the API usually is `https://api.<base>`.
+
+### Exit codes
+
+The exit code tells the kinds of failure apart, so a script can branch without matching text:
+
+| Exit code | Meaning | API error codes |
+| --------- | ------- | --------------- |
+| `0` | Success | |
+| `1` | Any other failure of the command or the server | |
+| `2` | Usage or configuration error, such as a bad flag, a missing URL or token, a missing directory or a bad config file | |
+| `3` | Not found | `not_found`, `version_not_found`, `file_not_found` |
+| `4` | Conflict | `slug_taken`, `version_conflict`, `published_not_latest`, `anchor_mismatch` |
+| `5` | Rate limited, after the retries | `rate_limited` |
+| `6` | Not signed in, or not allowed | `unauthorized`, `forbidden` |
+
+For example, a deploy job can tell a conflict from an outage:
+
+```sh
+kazari deploy ./dist --slug q3-report
+case $? in
+  0) echo deployed ;;
+  4) echo "someone else published; try again" ;;
+  *) exit 1 ;;
+esac
+```
+
+### Retries
+
+When the server answers `429` or `503`, the client waits as long as its `Retry-After` header says, at most 30 seconds, and tries again, up to two more times. It retries reads, and writes that name the version they expect, such as `update --expected`, which the server refuses rather than repeats. Uploads of a directory are not retried.
 
 ## Server commands
 
@@ -151,13 +208,11 @@ The commands in this section use the user URL and token, except `kazari version`
 ### publish
 
 ```text
-kazari publish <dir> --slug <slug> [--name N] [--description D] [--label L]
-               [--visibility public|unlisted|members] [--meta key=value ...] [--update]
+kazari publish <dir|file> [--slug <slug>] [--name N] [--description D] [--label L]
+               [--visibility public|unlisted|members] [--meta key=value ...] [--dry-run]
 ```
 
-Creates an artifact from a directory and prints its URL. Without `--visibility`, the artifact gets the instance's default visibility, `serve.default_visibility`.
-
-The directory is streamed as a tar.gz bundle of regular files only. Symlinks are skipped, and so is every file or directory whose name starts with a dot, except `.well-known`.
+Creates an artifact from a directory, or from one file. Without `--slug`, the slug is the directory's or the file's name, lower-cased, with other characters as hyphens: `./Q3 Report` becomes `q3-report`. Without `--visibility`, the artifact gets the instance's default visibility, `serve.default_visibility`.
 
 To publish a directory as a new artifact:
 
@@ -165,17 +220,84 @@ To publish a directory as a new artifact:
 kazari publish ./site --slug q3-report --name "Q3 report" --meta team=finance
 ```
 
-The command prints the artifact's address, `https://q3-report.art.example.com/`.
+The command prints what it sent on stderr, then the result on stdout:
 
-#### Mirroring a directory
+```text
+14 files, 312.0 KiB; skipped: .env (dotfile), logo.png (symlink)
+q3-report v1 → https://q3-report.art.example.com/ (pinned: https://q3-report--v1.art.example.com/)
+```
 
-With `--update`, an existing slug gets a new version that **mirrors** the directory: files missing from the directory are deleted. The call fails with `version_conflict` if someone else published in between. A slug that does not exist yet is created as usual.
+The second address always serves version 1, whichever version is published later. When the server finds something that stops the page rendering, such as no `index.html`, it adds a `warning:` line on stderr.
 
-To publish the directory again as the next version:
+A slug that is already taken fails with `slug_taken`. To publish over an existing artifact, use [`kazari deploy`](#deploy).
+
+#### Publishing one file
+
+To publish a single page, name the file instead of a directory:
 
 ```sh
-kazari publish ./site --slug q3-report --update --label "numbers fixed"
+kazari publish ./q3-report.html
 ```
+
+An HTML file is published as `index.html`, so it opens at the artifact's address. Any other file keeps its name.
+
+#### What is sent
+
+The directory is streamed as a tar.gz bundle of its regular files. A symlink as the directory itself is followed, so `./dist` can point at the build output. These are left out and listed as skipped:
+
+- symlinks inside the directory;
+- every file or directory whose name starts with a dot, except `.well-known`;
+- files that look like secrets: `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.kdbx`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`, `credentials*`, and any file that contains a Kazari API key.
+
+A missing directory is a usage error with exit code 2.
+
+#### Leaving files out
+
+To leave more files out, list them in a `.kazariignore` file at the top of the directory, in the style of `.gitignore`:
+
+```text
+# build leftovers
+*.map
+node_modules/
+/drafts/
+docs/**/draft-*
+!.htaccess
+```
+
+A pattern without a `/` matches a name at any depth, a leading `/` or a `/` inside anchors it at the top, a trailing `/` matches directories only, and `**` matches any number of directories. A line starting with `!` sends what the lines above, or the rules in [what is sent](#what-is-sent), leave out, such as a dotfile the site needs. The last matching line wins.
+
+#### Checking before you publish
+
+To see what would be sent without sending anything, add `--dry-run`:
+
+```sh
+kazari publish ./site --slug q3-report --dry-run
+```
+
+It prints one line per file sent or skipped and needs no URL or key. With `--json`, it prints the list as JSON.
+
+### deploy
+
+```text
+kazari deploy <dir|file> [--slug <slug>] [--base N] [--name N] [--description D] [--label L]
+              [--visibility public|unlisted|members] [--meta key=value ...] [--dry-run]
+```
+
+Makes an artifact match a directory, which is what a redeploy needs. If the slug does not exist, `deploy` creates it as `publish` would. If it does, `deploy` adds a version that holds exactly the directory's files: files that are gone from the directory are deleted from the new version, so a build's old hashed assets do not pile up.
+
+To deploy a build, the first time and every time after:
+
+```sh
+kazari deploy ./dist --slug q3-report --label "numbers fixed"
+```
+
+It prints the same summary as `publish`, with the files it removed, such as `14 files, 312.0 KiB; removed: assets/index-3fa0c2.js`. When the files equal the latest version's, no version is added and stderr says `no changes: version 5 is already this content`.
+
+The slug, what is sent, `.kazariignore` and `--dry-run` work as for [`publish`](#publish). With `--dry-run`, the lines also list the files the new version would delete.
+
+`deploy` fails with `version_conflict` if someone else published between its read and its write. After a [rollback](#rollback), it needs `--base` to say which version to build on, and the error prints both commands to choose from.
+
+`publish --update` is the same command under its old name.
 
 ### import
 
@@ -199,15 +321,15 @@ A page behind a login or bot protection fails with `fetch_failed`. Save it from 
 ### update
 
 ```text
-kazari update <slug> [dir] [--label L] [--expected N] [--keep-stale]
+kazari update <slug> [dir] [--label L] [--expected N] [--base N] [--keep-stale] [--dry-run]
               [--name N] [--description D] [--meta key=value ...] [--delete path ...]
 ```
 
-Adds a version from a directory, changes fields, or both.
+Adds files from a directory as a new version, changes fields, or both.
 
-Files in `dir` are added, or replace the files at the same paths. Files you do not send are **kept**: remove them with `--delete path`, or use `publish --update` to mirror the directory. Without a directory, `update` changes only the fields you name.
+Files in `dir` are added, or replace the files at the same paths. Files you do not send are **kept**: remove them with `--delete path`, or use [`kazari deploy`](#deploy) to make the artifact match the directory. Without a directory, `update` changes only the fields you name.
 
-`--expected N` fails with `version_conflict` unless `N` is the latest version. A new version clears the stale mark unless you give `--keep-stale`.
+`--expected N` fails with `version_conflict` unless `N` is the latest version. After a [rollback](#rollback), `--base N` names the version to build on. A new version clears the stale mark unless you give `--keep-stale`. `--dry-run` lists what would be sent and deleted.
 
 To add files, change fields or delete a file:
 
@@ -223,6 +345,20 @@ kazari update q3-report --delete drafts/notes.html
 ```
 
 `--meta key=` sets an empty value. The CLI cannot delete a metadata key; send `null` through [`PATCH /artifacts/{slug}`](api.md#change-fields-patch-artifactsslug) instead.
+
+### files ls
+
+```text
+kazari files ls <slug> [--version N]
+```
+
+Lists the files of the published version, or of version `N`, with their size, type and hash.
+
+To see what version 1 held:
+
+```sh
+kazari files ls q3-report --version 1
+```
 
 ### files cat
 
@@ -247,9 +383,9 @@ kazari edit <slug> <path> --after ANCHOR | --before ANCHOR --new TEXT [flags]
 kazari edit <slug> <path> --edits FILE [flags]
 ```
 
-Changes text in one file of the latest version and publishes the result as a new version. Every other file carries over. The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`edit_file`](mcp.md#editing-files) over MCP.
+Changes text in one file of the latest version and publishes the result as a new version. Every other file carries over. After a [rollback](#rollback), `--base N` names the version whose file to change. The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`edit_file`](mcp.md#editing-files) over MCP.
 
-`--expected N` fails unless the latest version is `N`. The command prints the URL, then one line per edit with where it landed and how it matched.
+`--expected N` fails unless the latest version is `N`. The command prints the new version and its address, then one line per edit with where it landed and how it matched.
 
 #### Replacing text
 
@@ -310,7 +446,7 @@ kazari edit q3-report index.html --after 21:e03a --new "    <p>Margins held.</p>
 It prints:
 
 ```text
-https://q3-report.art.example.com/
+q3-report v4 → https://q3-report.art.example.com/ (pinned: https://q3-report--v4.art.example.com/)
 edit 1: lines 22-22 (anchor)
 ```
 
@@ -369,7 +505,7 @@ kazari rollback q3-report 1
 
 The command prints `q3-report now serves version 1:` and the address.
 
-### visibility
+While an earlier version is published, `update`, `deploy` and `edit` need `--base` to say which version they build on: the published one, to change what is served, or the latest, to carry on from it. Without it they fail with `published_not_latest`, so the next change does not quietly undo the rollback. Publishing the latest version again lifts this.
 
 ```text
 kazari visibility <slug> public|unlisted|members|unpublished
@@ -419,12 +555,12 @@ kazari stale <slug> [--grace 336h]
 kazari unstale <slug>
 ```
 
-`stale` starts the grace period after which the artifact is soft-deleted, and the page keeps serving meanwhile. `--grace` is a Go duration in hours, such as `72h` or `336h`; without it, the server's `lifecycle.default_grace` applies. `unstale` cancels the grace period. A key without `artifacts:delete` can mark only its own user's artifacts stale.
+`stale` starts the grace period after which the artifact is soft-deleted, and the page keeps serving meanwhile. `--grace` is a duration such as `72h`, `3d` or `2w`; without it, the server's `lifecycle.default_grace` applies. `unstale` cancels the grace period. A key without `artifacts:delete` can mark only its own user's artifacts stale.
 
 To retire a page in three days:
 
 ```sh
-kazari stale q3-report --grace 72h
+kazari stale q3-report --grace 3d
 ```
 
 The command prints when the artifact became stale and when it expires.
@@ -432,10 +568,12 @@ The command prints when the artifact became stale and when it expires.
 ### rm
 
 ```text
-kazari rm <slug> [--hard]
+kazari rm <slug> [--hard [--yes]]
 ```
 
 Soft-deletes an artifact, which stays restorable until the retention period ends. `--hard` purges it now. Both need a key with the `artifacts:delete` scope.
+
+On a terminal, `--hard` asks you to type the slug before it purges. Without a terminal, as in a script, it needs `--yes` instead.
 
 To delete a page:
 
@@ -447,6 +585,8 @@ The command prints `deleted q3-report`, or `purged q3-report` with `--hard`.
 
 > [!WARNING]
 > `--hard` cannot be undone: it purges the artifact at once, with no retention period.
+
+A deleted artifact keeps its slug. Publishing to the slug fails with `slug_taken`, and the message says to restore it with `kazari restore`. A purged artifact keeps its slug for a while longer, and the message names the day it is free again.
 
 ### restore
 
@@ -522,9 +662,11 @@ The [account page](identity.md#the-account-page) does the same from a browser, w
 These two commands print information about you and this binary:
 
 ```text
-kazari me        # handle, admin flag, scopes, credential source, slug patterns, expiry, storage used of quota
+kazari me        # handle, role, scopes, credential source, slug patterns, expiry, storage used of quota
 kazari version   # version, commit, the commit's date and Go version of this binary
 ```
+
+An admin whose key lacks the `admin` scope sees `role: admin (this key has no admin scope)`: the key acts as a member's.
 
 ## Admin commands
 

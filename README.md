@@ -113,14 +113,15 @@ The [MCP server reference](docs/mcp.md) covers the tools, resources and authorin
 
 ## CLI
 
-The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL https://kazari.io/install.sh | sh`. The commands you need most often:
+The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL https://kazari.io/install.sh | sh`, then sign in with a key from your account page. The commands you need most often:
 
 ```sh
+kazari login --url https://api.art.example.com               # save the address and your key
 kazari publish ./site --slug q3-report --name "Q3 report"   # create version 1
-kazari update q3-report ./site --label "fix chart"            # add files as version 2
+kazari deploy ./site --slug q3-report --label "fix chart"    # version 2 holds exactly ./site
 kazari get q3-report                                          # record and versions
 kazari rollback q3-report 1                                   # serve version 1 again
-kazari stale q3-report --grace 72h                            # retire in three days
+kazari stale q3-report --grace 3d                             # retire in three days
 kazari list --mine any --stale exclude                        # what you created or updated, not stale
 kazari --json me                                              # your account, as JSON
 ```

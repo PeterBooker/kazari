@@ -184,7 +184,7 @@ The fields are the name, description, metadata and visibility. In metadata, `nul
 
 `expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`.
 
-To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari publish --update` does for a directory.
+To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari deploy` does for a directory.
 
 `restore: true` brings back a soft-deleted artifact, which is otherwise `not_found`, clears its stale mark unless `keep_stale` is true, and then applies the other changes. It works until the retention period ends and the artifact is purged. `list_artifacts` with `deleted: "include"` or `"only"` shows the soft-deleted artifacts you may still see: your own, and the ones you created or updated. Those are also the only ones you can restore; any other is `not_found`.
 

@@ -11,20 +11,20 @@ This guide covers getting a key, installing the CLI, publishing and changing a d
 
 ## Getting a key
 
-An administrator issues your first key. A key carries scopes, which decide what it can do:
+You create your own keys on your account page at `https://art.example.com/account/`, after signing in to the instance ([the account page](identity.md#the-account-page)). A key carries scopes, which decide what it can do:
 
 - `artifacts:read` to read.
 - `artifacts:write` to publish and change.
 - `artifacts:share` to change who can open a page, and to create share links.
 - `artifacts:delete` to delete.
 
-For CI, ask for a key without the share and delete scopes and with an expiry. This admin command issues one that expires after 90 days:
+For CI, create a key without the share and delete scopes and with an expiry, such as 90 days. The key is shown once, so store it straight away.
+
+If your instance has no sign-in for you, an administrator issues the key instead:
 
 ```sh
 kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write --expires 90d
 ```
-
-The key is printed once, so store it straight away.
 
 Once you hold a key, you can issue narrower ones yourself, for example one per CI job, restricted to the pages that job publishes:
 
@@ -45,15 +45,14 @@ CGO_ENABLED=0 go build -o kazari ./cmd/kazari
 install -m 0755 kazari ~/.local/bin/kazari
 ```
 
-Then point the CLI at your instance. Export its address and your key, and check them with `kazari me`:
+Then point the CLI at your instance. `kazari login` asks for your key, checks it and saves both settings in `~/.config/kazari/config.yaml`:
 
 ```sh
-export KAZARI_URL=https://api.art.example.com
-export KAZARI_TOKEN=kzk_...
+kazari login --url https://api.art.example.com
 kazari me          # who you are, your scopes and your storage use
 ```
 
-The same settings can also live in a dotenv file named by `$KAZARI_ENV_FILE`, or in `~/.config/kazari/config.yaml` ([CLI configuration](cli.md#configuring-the-client)).
+In CI, set the environment variables `KAZARI_URL` and `KAZARI_TOKEN` instead. The settings can also live in a dotenv file named by `$KAZARI_ENV_FILE` ([CLI configuration](cli.md#configuring-the-client)).
 
 ## Publishing a directory
 
@@ -61,10 +60,12 @@ To publish, name the directory and choose a slug, which becomes the page's addre
 
 ```sh
 kazari publish ./dist --slug q3-report --name "Q3 report" --meta team=finance
-# prints https://q3-report.art.example.com/
+# prints q3-report v1 → https://q3-report.art.example.com/ (pinned: https://q3-report--v1.art.example.com/)
 ```
 
-The CLI streams the directory as a tar.gz bundle. It skips symlinks, and every file or directory whose name starts with a dot, such as `.git`, except `.well-known`.
+The CLI streams the directory as a tar.gz bundle and lists on stderr what it sent and skipped. It skips symlinks, every file or directory whose name starts with a dot, such as `.git`, except `.well-known`, and files that look like secrets, such as `*.pem` or a file holding an API key. A `.kazariignore` file leaves out more, and `--dry-run` shows the list without sending anything ([what is sent](cli.md#what-is-sent)).
+
+To publish over the same slug on every build, use `kazari deploy` instead, which creates the artifact the first time ([redeploying a directory](#redeploying-a-directory)).
 
 ### Publishing a single-page app
 
@@ -76,22 +77,34 @@ kazari publish ./dist --slug planner --meta kazari.spa=true
 
 Use relative asset paths in your build, such as Vite's `base: "./"`, so the app also works on version addresses like `planner--v3.art.example.com`.
 
+## Redeploying a directory
+
+To publish a build again, run `kazari deploy` with the same slug:
+
+```sh
+kazari deploy ./dist --slug q3-report --label "fix chart"
+```
+
+The new version holds exactly the files in `./dist`: files gone from the directory, such as a bundler's old `assets/index-<hash>.js`, are removed. If the slug does not exist yet, `deploy` creates it, so the same command serves the first build and every one after.
+
 ## Changing an artifact
 
 These commands change an artifact after its first publish:
 
 | Command | Effect |
 | ------- | ------ |
+| `kazari deploy ./dist --slug q3-report` | Adds a version that **mirrors** the directory: files missing from it are removed. Creates the artifact if it does not exist. |
 | `kazari update q3-report ./dist --label "fix chart"` | Adds a version. Files you send replace the same paths; files you leave out are **kept**. |
-| `kazari publish ./dist --slug q3-report --update` | Adds a version that **mirrors** the directory: files missing from it are removed. Creates the artifact if it does not exist. |
 | `kazari update q3-report --delete drafts/notes.html` | Removes one file in a new version. |
 | `kazari update q3-report --name "Q3 report (final)"` | Changes fields only; no new version. |
 | `kazari rollback q3-report 2` | Serves version 2 again. Nothing is deleted. |
 | `kazari visibility q3-report unlisted` | Hides it from other people's listings. `unpublished` takes it offline. |
 | `kazari visibility q3-report members` | Opens it only for people who sign in to the instance. |
 | `kazari share create q3-report --expires 14d` | Prints a link that opens a members page for someone outside, for two weeks. `kazari share revoke` ends it. |
-| `kazari stale q3-report --grace 72h` | Retires it after three days. `kazari unstale` cancels. |
+| `kazari stale q3-report --grace 3d` | Retires it after three days. `kazari unstale` cancels. |
 | `kazari rm q3-report` | Soft-deletes it now; `--hard` purges it. |
+
+After `kazari rollback`, the next `deploy`, `update` or `edit` needs `--base` to say whether it builds on the version now served or on the latest one. Without it the command fails and prints both choices.
 
 ### Preventing overwrites
 
@@ -101,17 +114,17 @@ Two people, or a person and an agent, can publish to the same artifact. To make 
 kazari update q3-report ./dist --expected 4
 ```
 
-If someone else published in between, the call fails with `version_conflict`. `publish --update` performs this check for you.
+If someone else published in between, the call fails with `version_conflict`. `kazari deploy` performs this check for you.
 
 ### Using JSON output in scripts
 
 To use a result in a script, add `--json` to any command. It prints the API's JSON response instead of text:
 
 ```sh
-url=$(kazari --json publish ./dist --slug q3-report --update | jq -r .url)
+url=$(kazari --json deploy ./dist --slug q3-report | jq -r .url)
 ```
 
-Here `jq` takes the page's address from the response.
+Here `jq` takes the page's address from the response. A failure exits with a code that names its kind, such as `4` for a conflict or `3` for not found, and with `--json` prints the API's error object on stderr ([output and exit codes](cli.md#output-and-exit-codes)).
 
 ## Deploying previews from GitHub Actions
 
@@ -129,7 +142,6 @@ jobs:
     env:
       KAZARI_URL: https://api.art.example.com
       KAZARI_TOKEN: ${{ secrets.KAZARI_TOKEN }}
-      KAZARI_VERSION: 0.1.0
       SLUG: myapp-pr-${{ github.event.number }}
     steps:
       - name: Install the Kazari CLI
@@ -145,12 +157,12 @@ jobs:
       - name: Publish
         if: github.event.action != 'closed'
         run: |
-          url=$(kazari --json publish ./dist --slug "$SLUG" --update --label "${GITHUB_SHA::7}" | jq -r .url)
+          url=$(kazari --json deploy ./dist --slug "$SLUG" --label "${GITHUB_SHA::7}" | jq -r .url)
           echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retire
         if: github.event.action == 'closed'
-        run: kazari stale "$SLUG" --grace 72h
+        run: kazari stale "$SLUG" --grace 3d
 ```
 
 On every push to a pull request, the workflow builds the site and publishes it to a slug made from the pull request's number, such as `myapp-pr-42`. When the pull request closes, it marks the preview stale with a 72-hour grace period. A key without the delete scope can do this only to artifacts its user owns, which is every preview it created; a slug that another member created first answers `403`.
@@ -174,7 +186,7 @@ curl -sS https://api.art.example.com/v1/artifacts \
   }'
 ```
 
-To publish a whole site, send it as a tar.gz bundle with a JSON manifest:
+To publish a whole site, send it as a bundle with a JSON manifest. A bundle is a tar.gz, a plain tar or a zip:
 
 ```sh
 tar -czf site.tar.gz -C dist .
@@ -184,7 +196,18 @@ curl -sS https://api.art.example.com/v1/artifacts \
   -F 'bundle=@site.tar.gz;type=application/gzip'
 ```
 
-To update an artifact, send either format to `PUT /v1/artifacts/{slug}`, with an `If-Match: "<version>"` header for the concurrency check. Bundles too large for one request go through [chunked uploads](api.md#chunked-uploads).
+To update an artifact, send either format to `PUT /v1/artifacts/{slug}`, with an `If-Match: "<version>"` header for the concurrency check. `GET /v1/artifacts/{slug}` returns the latest version in its `ETag`. Bundles too large for one request go through [chunked uploads](api.md#chunked-uploads).
+
+To deploy the way `kazari deploy` does, in one request, add `?create=true` and `"mirror": true`:
+
+```sh
+curl -sS -X PUT 'https://api.art.example.com/v1/artifacts/q3-report?create=true' \
+  -H "Authorization: Bearer $KAZARI_TOKEN" \
+  -F 'manifest={"mirror":true,"label":"nightly"};type=application/json' \
+  -F 'bundle=@site.tar.gz;type=application/gzip'
+```
+
+`create=true` creates the artifact when the slug is free, and `mirror` removes the files the bundle does not hold ([update an artifact](api.md#update-an-artifact-put-artifactsslug)).
 
 The [REST API reference](api.md) has every route, field and error code.
 
