@@ -223,6 +223,12 @@ The version list shows each version's number, date, author and size, marks the p
 
 A staged version opens only for people signed in to the instance until it is published, so publishing one is how a reviewed change goes live. The confirmation says so. Nothing is deleted, and the next publish from an agent goes live as usual.
 
+#### Deleting a version
+
+**Delete this version** frees the storage an old version takes. It asks for confirmation, then deletes the version for good, and its own address answers that the page is gone (`kazari versions rm <slug> <version>`). The list offers it on every version but the published one and the newest, which always stay.
+
+To keep only the newest versions of a page edited often, use `kazari versions prune` or the page's `kazari.keep_versions` metadata ([deleting versions](cli.md#versions)).
+
 #### Views and readers
 
 The Views section shows the page's views in the last 30 days, split into views by members and through share links, with a bar for each day and its most viewed files. On a members-only page it also lists the members who opened it, with their first and last view (`kazari admin views <slug>`).

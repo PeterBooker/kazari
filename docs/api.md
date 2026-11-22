@@ -165,6 +165,7 @@ The server interprets keys under `kazari.` itself, and accepts only these:
 | `kazari.spa`       | `true`, `false`           | `true` serves `index.html` for any missing path without an extension |
 | `kazari.indexable` | `true`, `false`           | `true` drops `X-Robots-Tag: noindex`                                 |
 | `kazari.csp`       | Fetch directives and origins, such as `frame-src https://www.youtube.com` | Adds those origins to the instance CSP, when `serve.allow_csp_override` is on ([per-artifact CSP](configuration.md#per-artifact-csp)) |
+| `kazari.keep_versions` | A whole number from `1` to `10000`, such as `20` | The sweep deletes older versions as a [prune](#prune-versions-post-artifactsslugversionsprune) keeping that many does |
 
 #### Write policy
 
@@ -579,6 +580,38 @@ Serves an existing version, older or newer than the one served now, or a staged 
 ```
 
 The response is a publish result. A version that does not exist is `404 version_not_found`. Publishing a staged version ends its staging for good: a later rollback leaves it open to everyone who can open the page.
+
+### Delete a version: `DELETE /artifacts/{slug}/versions/{n}`
+
+Deletes one version for good, to free the quota it takes. The version must be neither the published one nor the latest: the latest stays so that its number never names other content. To delete version 2:
+
+```sh
+curl -X DELETE -H "Authorization: Bearer kzk_..." https://api.art.example.com/v1/artifacts/q3-report/versions/2
+```
+
+The response lists what was deleted, with the artifact:
+
+```json
+{ "deleted": [2], "artifact": { ... } }
+```
+
+The version's address answers `410` from then on, its usage leaves the owner's quota at once, and the next `gc` run removes the blobs no other version holds. Reading or publishing it is `404 version_not_found`, whose message says it was deleted.
+
+Deleting the published or the latest version is `422 invalid_argument`. Deleting versions of an artifact you do not own takes `artifacts:delete`, as [marking one stale](#write-policy) does, and the audit log records `artifact.version_delete`.
+
+### Prune versions: `POST /artifacts/{slug}/versions/prune`
+
+Deletes every version but the newest, in one call. The body says how many of the newest to keep:
+
+```json
+{ "keep": 20 }
+```
+
+The published version and staged versions newer than it are kept as well, whatever their age, so a version waiting for review is never lost. The response is the same as for [deleting a version](#delete-a-version-delete-artifactsslugversionsn), with the numbers deleted, oldest first.
+
+To see what a prune would delete without deleting anything, add `"dry_run": true`. The response then lists those numbers and has `"dry_run": true`.
+
+To prune an artifact on every [sweep](ops.md#scheduled-jobs) instead, set its `kazari.keep_versions` [metadata](#metadata) to the number to keep.
 
 ### Stale: `POST` and `DELETE /artifacts/{slug}/stale`
 

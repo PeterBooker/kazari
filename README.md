@@ -11,7 +11,7 @@ The documentation and guides are at <https://kazari.io/docs/>.
 ## Features
 
 - **One origin per artifact.** `demo.art.example.com` serves the published version, and `demo--v3.art.example.com` pins version 3 forever. Each artifact is its own browser origin, so one page cannot read another's storage.
-- **Immutable, content-addressed versions.** Every publish is a new version, and files are stored once by SHA-256. Stage a version for signed-in reviewers before it goes live, and roll back or forward with one call; `expected_version` and `If-Match` stop lost updates.
+- **Immutable, content-addressed versions.** Every publish is a new version, and files are stored once by SHA-256. Stage a version for signed-in reviewers before it goes live, roll back or forward with one call, and prune old versions by hand or on a schedule; `expected_version` and `If-Match` stop lost updates.
 - **Three ways in, one service layer.** REST (`api.<base>/v1`), MCP over Streamable HTTP (`mcp.<base>/`, nineteen tools) and the `kazari` CLI all call the same code. Over MCP, results are trimmed to what a model needs next.
 - **Edits in place.** Agents change a page with exact or line-anchored edits instead of resending whole files. Whitespace-tolerant matches are reported, and stale anchors are refused before anything is written.
 - **Copies of existing pages.** `import_page` fetches a page with its stylesheets, fonts and images onto the instance, removes its scripts and reports an outline of its sections for the edits that follow, so an agent whose own fetch returns text can start from a real page. Any publish can name a URL for a file instead of sending its bytes.
@@ -120,6 +120,7 @@ kazari publish ./site --slug q3-report --name "Q3 report"   # create version 1
 kazari deploy ./site --slug q3-report --label "fix chart"    # version 2 holds exactly ./site
 kazari get q3-report                                          # record and versions
 kazari rollback q3-report 1                                   # serve version 1 again
+kazari versions prune q3-report --keep 20                     # delete all but the 20 newest versions
 kazari stale q3-report --grace 3d                             # retire in three days
 kazari list --mine any --stale exclude                        # what you created or updated, not stale
 kazari --json me                                              # your account, as JSON

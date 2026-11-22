@@ -520,6 +520,33 @@ The command prints `q3-report now serves version 1:` and the address.
 
 While an earlier version is published, `update`, `deploy` and `edit` need `--base` to say which version they build on: the published one, to change what is served, or the latest, to carry on from it. Without it they fail with `published_not_latest`, so the next change does not quietly undo the rollback, unless it is staged with `--stage`. Publishing the latest version again lifts this.
 
+### versions
+
+```text
+kazari versions rm <slug> <version>...
+kazari versions prune <slug> --keep N [--dry-run]
+```
+
+Deletes versions for good, to free the quota they take: every version counts in full, so a page edited often fills its owner's quota. Neither command deletes the published version or the latest one. Deleting versions of an artifact you do not own needs a key with `artifacts:delete`.
+
+To keep the 20 newest versions and delete the rest, check first, then prune:
+
+```sh
+kazari versions prune q3-report --keep 20 --dry-run
+# prints would delete versions 1, 2, 3 of q3-report
+kazari versions prune q3-report --keep 20
+```
+
+A prune also keeps the published version and staged versions newer than it, however old. To delete particular versions instead, name them:
+
+```sh
+kazari versions rm q3-report 4 7
+```
+
+Each deleted version's address answers `410`, and the next `gc` removes the files no other version holds. To prune a page on every sweep instead, set its metadata: `kazari update q3-report --meta kazari.keep_versions=20`. [Deleting versions](api.md#delete-a-version-delete-artifactsslugversionsn) in the API reference has the full rules.
+
+### visibility
+
 ```text
 kazari visibility <slug> public|unlisted|members|unpublished
 ```

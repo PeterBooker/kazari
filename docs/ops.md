@@ -620,7 +620,7 @@ Kazari runs seven maintenance jobs on its own, and an eighth with an identity pr
 
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period |
+| `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period. It also deletes the versions past an artifact's `kazari.keep_versions` |
 | `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
@@ -641,7 +641,7 @@ To see each job's interval, last run, next run and last error, list them:
 kazari admin jobs list
 ```
 
-A sweep or gc that changed something also logs a summary line, such as `sweep soft_deleted=1 purged=0 freed=0`.
+A sweep or gc that changed something also logs a summary line, such as `sweep soft_deleted=1 purged=0 freed=0 versions_deleted=0`.
 
 ### Running a job now
 
@@ -756,6 +756,8 @@ Each user has a quota, `quota_bytes`. A new user gets `limits.default_user_quota
 
 Usage is the sum of the sizes of every version of every artifact the user owns, counted logically, plus 4 KiB for each file of each version, whatever its size, because every version keeps a database row per file. A 5 MiB site of 20 files with ten versions uses 50.8 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
 
+To free the space of an artifact edited often, delete its old versions: `kazari versions prune <slug> --keep 20` once, or its `kazari.keep_versions` metadata for every [sweep](#scheduled-jobs) ([deleting versions](cli.md#versions)). The usage drops at once.
+
 Kazari checks the owner's quota whenever a version is added, whoever adds it. Under the `shared` write policy, a version that another member adds to someone else's artifact counts against the owner's quota too, and a version that would exceed it gets `403 quota_exceeded`. An admin transfer moves the artifact's usage to the new owner.
 
 A publish that fails keeps nothing: Kazari deletes the blobs it wrote before it answers, except any that a version uses, so a refused publish takes no disk once it has finished. While it runs, it can hold up to the owner's remaining quota or `max_version_bytes`, whichever is smaller.
@@ -867,7 +869,7 @@ kazari admin jobs run gc
 Blobs written in the last hour survive one more `gc` run.
 
 > [!WARNING]
-> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long; purge them there if needed. A [staged version](api.md#staging-a-version) is `private, no-cache` until it is published.
+> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long, a deleted version too; purge them there if needed. A [staged version](api.md#staging-a-version) is `private, no-cache` until it is published.
 
 ## Audit log
 
@@ -884,6 +886,7 @@ The actions, with the details each records:
 | `artifact.create`     | Created (details: `version`, `size`)                                 |
 | `artifact.update`     | Fields changed or version added (`version`, `size` when a version; `staged` when not published) |
 | `artifact.publish`    | Published version changed (`version`)                                |
+| `artifact.version_delete` | Versions deleted (`versions`, comma-separated; `reason: keep_versions` from the sweep) |
 | `artifact.stale`      | Marked stale (`expires_at`)                                          |
 | `artifact.unstale`    | Stale mark cleared                                                   |
 | `artifact.visibility` | Visibility set, including unpublish and `hide` (`visibility`)        |
@@ -961,7 +964,7 @@ In proxy mode, the proxy has its own limit. nginx defaults to `client_max_body_s
 
 ### `404` or `410` on a page
 
-`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period.
+`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period, or, on a `--v<N>` host, that the version was deleted.
 
 `kazari get <slug>` shows which timestamps are set.
 
