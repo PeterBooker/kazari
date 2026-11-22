@@ -138,7 +138,7 @@ func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number in
 		return 0, err
 	}
 	fileStmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO version_file (version_id, path, blob_hash, size, content_type) VALUES (?, ?, ?, ?, ?)`)
+		`INSERT INTO version_file (version_id, path, blob_hash, size, content_type, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -148,8 +148,12 @@ func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number in
 		return 0, err
 	}
 	defer blobStmt.Close()
-	for _, f := range v.Files {
-		if _, err := fileStmt.ExecContext(ctx, vid, f.Path, f.Hash, f.Size, f.ContentType); err != nil {
+	for i := range v.Files {
+		f := &v.Files[i]
+		if f.UploadedBy == "" {
+			f.UploadedBy = v.CreatedBy
+		}
+		if _, err := fileStmt.ExecContext(ctx, vid, f.Path, f.Hash, f.Size, f.ContentType, f.UploadedBy); err != nil {
 			if artifactIsUnique(err) {
 				return 0, artifact.Errorf(artifact.ErrInvalidArgument, "duplicate path %q", f.Path)
 			}
@@ -318,7 +322,7 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT path, blob_hash, size, content_type FROM version_file WHERE version_id = ? ORDER BY path`, versionID)
+		`SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file WHERE version_id = ? ORDER BY path`, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +330,7 @@ func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.
 	var files []artifact.File
 	for rows.Next() {
 		var f artifact.File
-		if err := rows.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType); err != nil {
+		if err := rows.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy); err != nil {
 			return nil, err
 		}
 		files = append(files, f)
@@ -860,16 +864,13 @@ func (s *ArtifactStore) FileOrigin(ctx context.Context, versionID int64, path st
 	defer func() { end(err) }()
 	var o artifact.FileOrigin
 	err = s.db.QueryRowContext(ctx, `
-		SELECT v.created_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
+		SELECT cur.uploaded_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
 		FROM version_file cur
 		JOIN version cv ON cv.id = cur.version_id
 		JOIN artifact a ON a.id = cv.artifact_id
 		JOIN user owner ON owner.id = a.owner_id
-		JOIN version v ON v.artifact_id = a.id
-		JOIN version_file vf ON vf.version_id = v.id AND vf.path = cur.path AND vf.blob_hash = cur.blob_hash
-		LEFT JOIN user u ON u.handle = v.created_by
-		WHERE cur.version_id = ? AND cur.path = ?
-		ORDER BY v.number LIMIT 1`, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
+		LEFT JOIN user u ON u.handle = cur.uploaded_by
+		WHERE cur.version_id = ? AND cur.path = ?`, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}

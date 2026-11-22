@@ -99,6 +99,10 @@ type File struct {
 	Hash        string // hex sha256
 	Size        int64
 	ContentType string
+	// UploadedBy is the handle of whoever first put this content at this
+	// path: kept while later versions carry the content unchanged, the
+	// version's author for new content. The store fills it in when empty.
+	UploadedBy string
 }
 
 // FileInput is a file being added to or removed from a version. On update,

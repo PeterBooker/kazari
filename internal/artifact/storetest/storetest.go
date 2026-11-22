@@ -92,6 +92,15 @@ func file(p, content string) artifact.File {
 	return artifact.File{Path: p, Hash: hashOf(content), Size: int64(len(content)), ContentType: "text/plain; charset=utf-8"}
 }
 
+// uploadedBy is files as the store returns them for a version by handle
+// that carried nothing on.
+func uploadedBy(handle string, files ...artifact.File) []artifact.File {
+	for i := range files {
+		files[i].UploadedBy = handle
+	}
+	return files
+}
+
 func newArtifact(slug, owner string, created time.Time) *artifact.Artifact {
 	return &artifact.Artifact{
 		Slug:        slug,
@@ -254,7 +263,7 @@ func testVersions(t *testing.T, h *harness) {
 	}
 	want := &artifact.Version{
 		ID: v1.ID, Number: 1, Label: "label", CreatedBy: "alice", CreatedAt: at(0), SizeBytes: 6,
-		Files: []artifact.File{file("a/first.js", "1"), file("index.html", "<p>"), file("z/last.css", "zz")},
+		Files: uploadedBy("alice", file("a/first.js", "1"), file("index.html", "<p>"), file("z/last.css", "zz")),
 	}
 	if diff := cmp.Diff(want, got, cmpOpts...); diff != "" {
 		t.Fatalf("GetVersion mismatch (-want +got):\n%s", diff)
@@ -1242,7 +1251,10 @@ func testFileOrigin(t *testing.T, h *harness) {
 	h.mkUser("bob")
 	a := newArtifact("demo", "alice", at(0))
 	v1 := h.create(t, a, file("sw.js", "one"), file("index.html", "page"))
-	carried := newVersion("bob", at(time.Hour), file("sw.js", "one"), file("index.html", "page two"))
+	// The service carries the uploader with unchanged content.
+	kept := file("sw.js", "one")
+	kept.UploadedBy = "alice"
+	carried := newVersion("bob", at(time.Hour), kept, file("index.html", "page two"))
 	if err := h.addVersion(a, carried, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -1278,6 +1290,15 @@ func testFileOrigin(t *testing.T, h *harness) {
 	}
 	_, err := h.store.FileOrigin(h.ctx, v1.ID, "missing.js")
 	wantErr(t, "missing file", err, artifact.ErrNotFound)
+
+	// The first upload's version going does not hand its content to whoever
+	// carried it on.
+	if _, err := h.store.DeleteVersions(h.ctx, "demo", choose(1)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.store.FileOrigin(h.ctx, carried.ID, "sw.js"); err != nil || got.Author != "alice" {
+		t.Errorf("carried on after deleting version 1: %+v, %v; want author alice", got, err)
+	}
 }
 
 func testUsage(t *testing.T, h *harness) {

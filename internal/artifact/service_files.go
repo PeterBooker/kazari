@@ -86,6 +86,9 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 		if err != nil {
 			return nil, 0, err
 		}
+		if b, ok := base[f.Path]; ok && b.Hash == f.Hash {
+			f.UploadedBy = b.UploadedBy
+		}
 		result[f.Path] = f
 	}
 
