@@ -277,6 +277,45 @@ func TestCreateDuplicateSlug(t *testing.T) {
 	wantErr(t, "duplicate Create", err, artifact.ErrSlugTaken)
 }
 
+// A taken slug says what frees it: a restore from the bin, for those who may
+// see the deleted artifact, or the day its tombstone goes.
+func TestCreateSlugTakenSaysWhy(t *testing.T) {
+	e := newEnv(t, artifact.Options{Tombstone: 10 * 24 * time.Hour})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	e.create(t, alice, "demo")
+	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	create := func(actor artifact.Actor) string {
+		t.Helper()
+		_, _, err := e.svc.Create(e.ctx, actor, artifact.CreateRequest{Slug: "demo", Files: files("a", "a")})
+		if !errors.Is(err, artifact.ErrSlugTaken) {
+			t.Fatalf("Create(demo) by %s = %v, want slug_taken", actor.Handle, err)
+		}
+		return err.Error()
+	}
+	tests := []struct {
+		name  string
+		actor artifact.Actor
+		purge bool
+		want  string
+	}{
+		{"owner of a deleted artifact", alice, false, `slug "demo" is in the bin; restore it with kazari restore demo or update_artifact restore: true`},
+		{"stranger to a deleted artifact", bob, false, `slug "demo" is already taken`},
+		{"tombstone", bob, true, `slug "demo" was purged and is free again after 2026-05-16`},
+	}
+	for _, tt := range tests {
+		if tt.purge {
+			if err := e.svc.Delete(e.ctx, alice, "demo", true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := create(tt.actor); !strings.HasSuffix(got, tt.want) {
+			t.Errorf("%s: Create(demo) = %q, want it to end %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 type countingReader struct {
 	r io.Reader
 	n int64
