@@ -494,6 +494,83 @@ func (c *ShareRevokeCmd) Run(r *runner) error {
 	return nil
 }
 
+// VersionsCmd deletes versions.
+type VersionsCmd struct {
+	Rm    VersionsRmCmd    `cmd:"" help:"Delete versions that are neither published nor the latest."`
+	Prune VersionsPruneCmd `cmd:"" help:"Delete every version but the newest, the published one and staged ones newer than it."`
+}
+
+// VersionsRmCmd deletes versions by number.
+type VersionsRmCmd struct {
+	Slug     string   `arg:"" help:"Artifact slug."`
+	Versions []string `arg:"" help:"Version numbers to delete."`
+}
+
+func (c *VersionsRmCmd) Run(r *runner) error {
+	numbers := make([]int, len(c.Versions))
+	for i, s := range c.Versions {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			return usagef("versions rm: version must be a positive integer, got %q", s)
+		}
+		numbers[i] = n
+	}
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	var last *api.DeletedVersions
+	for _, n := range numbers {
+		if last, err = cl.DeleteVersion(r.ctx, c.Slug, n); err != nil {
+			return err
+		}
+		if !r.g.JSON {
+			fmt.Fprintf(r.stdout, "deleted version %d of %s\n", n, c.Slug)
+		}
+	}
+	if r.g.JSON {
+		return r.printJSON(api.DeletedVersions{Deleted: numbers, Artifact: last.Artifact})
+	}
+	return nil
+}
+
+// VersionsPruneCmd deletes all but the newest versions.
+type VersionsPruneCmd struct {
+	Slug   string `arg:"" help:"Artifact slug."`
+	Keep   int    `required:"" help:"How many of the newest versions to keep; the published one and staged ones newer than it are kept too." placeholder:"N"`
+	DryRun bool   `name:"dry-run" help:"List the versions it would delete, and delete nothing."`
+}
+
+func (c *VersionsPruneCmd) Run(r *runner) error {
+	if c.Keep < 1 {
+		return usagef("versions prune: --keep must be at least 1")
+	}
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	res, err := cl.PruneVersions(r.ctx, c.Slug, c.Keep, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(res)
+	}
+	parts := make([]string, len(res.Deleted))
+	for i, n := range res.Deleted {
+		parts[i] = strconv.Itoa(n)
+	}
+	switch {
+	case len(parts) == 0:
+		fmt.Fprintf(r.stdout, "nothing to delete: %s keeps every version it has\n", c.Slug)
+	case c.DryRun:
+		fmt.Fprintf(r.stdout, "would delete versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
+	default:
+		fmt.Fprintf(r.stdout, "deleted versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
+	}
+	return nil
+}
+
 // RestoreCmd takes a soft-deleted artifact out of the bin.
 type RestoreCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
