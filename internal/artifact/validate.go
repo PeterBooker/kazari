@@ -48,27 +48,26 @@ var (
 // marks version hosts), 3 to 63 characters, and no reserved slug. The error
 // suggests a slug made from the one given, when one can be.
 func ValidateSlug(slug string, reserved []string) error {
-	var err error
+	var msg string
 	switch {
 	case len(slug) < SlugMinLen:
-		err = Errorf(ErrInvalidSlug, "slug %q is shorter than %d characters", slug, SlugMinLen)
+		msg = fmt.Sprintf("slug %q is shorter than %d characters", slug, SlugMinLen)
 	case len(slug) > SlugMaxLen:
-		err = Errorf(ErrInvalidSlug, "slug %q is longer than %d characters", slug, SlugMaxLen)
+		msg = fmt.Sprintf("slug %q is longer than %d characters", slug, SlugMaxLen)
 	case !slugRe.MatchString(slug):
-		err = Errorf(ErrInvalidSlug, "slug %q must be lower-case letters a-z, digits and hyphens, starting and ending "+
+		msg = fmt.Sprintf("slug %q must be lower-case letters a-z, digits and hyphens, starting and ending "+
 			"with a letter or digit", slug)
 	case strings.Contains(slug, "--"):
-		err = Errorf(ErrInvalidSlug, "slug %q may not contain \"--\"", slug)
+		msg = fmt.Sprintf("slug %q may not contain \"--\"", slug)
 	case slices.Contains(reserved, slug):
 		return Errorf(ErrInvalidSlug, "slug %q is reserved", slug)
 	default:
 		return nil
 	}
 	if s := SuggestSlug(slug); s != "" && !slices.Contains(reserved, s) {
-		e := err.(*Error)
-		e.Message += fmt.Sprintf("; %q would do", s)
+		msg += fmt.Sprintf("; %q would do", s)
 	}
-	return err
+	return Errorf(ErrInvalidSlug, "%s", msg)
 }
 
 // SuggestSlug makes a valid slug from s: lower case, with runs of other
