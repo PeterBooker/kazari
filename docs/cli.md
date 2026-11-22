@@ -42,7 +42,7 @@ Give the URLs without `/v1`, which the client adds. When no admin URL is set and
 
 ### The admin socket
 
-On the server's own host, the admin commands need no URL and no token: the server serves the admin API on a Unix socket in its data directory, and the `kazari` command finds it through the server's configuration, from `$KAZARI_CONFIG`, `/etc/kazari/kazari.yaml` or `$KAZARI_DATA_DIR`, else in `./.data` under `serve --local`. The socket's permissions are the credential, so run the command as the service user or as root (`sudo kazari admin ...`), or inside the container (`docker compose exec kazari kazari admin ...`).
+On the server's own host, the admin commands need no URL and no token: the server serves the admin API on a Unix socket in its data directory, and the `kazari` command finds it through the server's configuration, from `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml` with the `kazari.env` beside it, or `$KAZARI_DATA_DIR`, else in `./.data` under `serve --local`. The socket's permissions are the credential, so run the command as the service user or as root (`sudo kazari admin ...`), or inside the container (`docker compose exec kazari kazari admin ...`).
 
 An explicit `--admin-socket` wins over everything, an admin URL with a token wins over a socket that was merely found, and a command that finds neither says so. `admin health` needs no token even over a URL.
 
@@ -98,7 +98,7 @@ Every command exits with one of three codes:
 
 ## Server commands
 
-`serve` and `check` read the server's configuration rather than the client's, so the flags above do not apply to them.
+`serve` and `check` read the server's configuration rather than the client's, so the flags above do not apply to them, and their help leaves them out.
 
 ### serve
 
@@ -107,7 +107,7 @@ kazari serve [--config PATH] [--env-file PATH]
 kazari serve --local
 ```
 
-Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE` or a `.env` file in the working directory, which beside a configuration file only fills `${NAME}` references ([how configuration is loaded](configuration.md#how-configuration-is-loaded)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use, exits with status 1.
+Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE`, `kazari.env` beside the configuration file, or a `.env` file in the working directory, which beside a configuration file only fills `${NAME}` references ([the `.env` file](configuration.md#the-env-file)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use or a data directory another server holds, exits with status 1.
 
 `--local` runs the preset for your own machine instead, with no DNS, certificate or token: `http://<slug>.kazari.localhost:8080/`, data in `./.data` ([the local preset](configuration.md#the-local-preset)).
 
@@ -126,7 +126,9 @@ kazari check [--config PATH] [--env-file PATH]
 kazari check --local
 ```
 
-Loads the configuration as `serve` would, then checks what the first start depends on: that the data directory is writable, that the base domain, `api.` and a random subdomain resolve to this host, that the DNS provider token can write and remove a TXT record in the zone, that the listener ports are free, and whether a server is listening on the admin socket. It exits with status 2 for an invalid configuration, 1 if a check failed and 0 otherwise.
+Loads the configuration as `serve` would, then checks what the first start depends on: that the data directory is writable, that the base domain, `api.` and a random subdomain resolve to this host, that the DNS provider token can write and remove a TXT record in the zone, that `tls.cert_file` and `tls.key_file` open and cover the base domain, that the listener ports are free, whether a server is listening on the admin socket, and that the identity provider answers discovery. Its first line names the configuration file and the dotenv files read, and an `override` line follows for each key a `KAZARI_*` variable set. It exits with status 2 for an invalid configuration, 1 if a check failed and 0 otherwise.
+
+`check --local` checks the `--local` preset of `serve` in the same way.
 
 With an OpenTelemetry endpoint set ([`telemetry.otlp`](configuration.md#telemetryotlp), or `OTEL_EXPORTER_OTLP_ENDPOINT`), it also sends one record of each signal that exports: a span and a log record named `kazari check`, and a gauge `kazari.check`. That tests the protocol, the path, TLS and the headers in one go:
 
@@ -134,7 +136,7 @@ With an OpenTelemetry endpoint set ([`telemetry.otlp`](configuration.md#telemetr
 telemetry    ok    http/protobuf https://otlp.example.com/otlp: traces, metrics accepted
 ```
 
-A refusal names what to fix: `401` and `403` point at `telemetry.otlp.headers`, a refused connection or a certificate error at the endpoint and `ca_file`. The test records stay in the backend like any other. `check` also warns when `/metrics` is not served on the public admin host because `telemetry.metrics.token` is empty.
+A refusal names what to fix: `401` and `403` point at `telemetry.otlp.headers`, a refused connection or a certificate error at the endpoint and `ca_file`. The test records stay in the backend like any other. `check` also says, as a `skip` line, when `/metrics` is not served on the public admin host because `telemetry.metrics.token` is empty.
 
 To check a server's setup, run it on the server:
 
@@ -557,12 +559,13 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | `admin artifacts list [list flags] [--owner H]`                         | Every artifact with its owner; same flags as `list`, plus `--owner` for one user's |
 | `admin transfer <slug> <handle>`                                        | Give an artifact to another user                            |
 | `admin hide <slug>`                                                     | Unpublish an artifact (abuse response)                      |
-| `admin settings`                                                        | Effective server configuration, secrets redacted            |
+| `admin settings`                                                        | Effective server configuration, secrets redacted, with where each value that is not a default was set |
 | `admin jobs list`                                                       | Scheduler jobs: interval, last and next run, last error     |
 | `admin jobs run <name>`                                                 | Run a job now and wait for it                               |
 | `admin audit [--since T] [--until T] [--slug S] [--actor H] [--subject H] [--action A ...] [--limit N] [--cursor C]` | Audit log, newest first                |
 | `admin views [<slug>] [--days N]`                                       | Page views of the instance, or of one artifact with its files and the members who opened it; `--days` defaults to 30 |
-| `admin backup <dir> [--no-certs]`                                       | Write a backup of the database and every blob into a directory |
+| `admin backup <dir> [--no-certs]`                                       | Write a backup of the database and every blob into a directory, or as tar to standard output with `-` |
+| `admin restore-backup <dir> [--data-dir PATH] [--force]`                | Restore a backup directory into the data directory of a stopped server on this host |
 | `admin ready [--fresh]`                                                 | Check the running server is set up correctly; exits 1 when a check fails. Also says when a newer release is known |
 | `admin health`                                                          | Server status and version                                   |
 
@@ -666,11 +669,25 @@ It prints the number of files, their size and the directory. Over the admin sock
 
 The command checks the directory before it asks the server. A directory that holds anything, or a path that is a file, ends it with exit status 2 and no backup is started.
 
+To send the archive elsewhere, such as out of a container, name `-` for standard output:
+
+```sh
+docker compose exec -T kazari kazari admin backup - > kazari-2026-11-21.tar
+```
+
+`admin restore-backup` puts a backup directory back. It runs on the server's host with the server stopped, and needs no server: it reads the data directory from the server's configuration, or from `--data-dir`:
+
+```sh
+sudo kazari admin restore-backup /backup/kazari/2026-11-21 --force
+```
+
+It refuses, with exit status 2, while a server holds the data directory, and refuses a data directory that already holds an instance unless `--force` is given. The restored files belong to the data directory's owner. [Restoring from a backup](ops.md#restoring-from-a-backup) has the steps for each way of running Kazari.
+
 With `--json` it prints `dir`, `files`, `bytes` and `certificates`, which is `true` when the directory holds `certmagic/`.
 
 ### Readiness
 
-`admin ready` asks the running server to check its configuration, DNS records, DNS token, certificate and disk:
+`admin ready` asks the running server to check its configuration, DNS records, DNS token, certificate, identity provider and disk:
 
 ```sh
 sudo kazari admin ready

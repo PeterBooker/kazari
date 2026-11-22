@@ -282,7 +282,7 @@ docker exec kazari kazari admin keys issue ana --label laptop
           <p>You need a domain, a wildcard DNS record and a DNS API token for the certificate, or a reverse proxy that already has one. Two short files configure it, under Compose, a package or the binary alike.</p>
           {{ partial "snippet.html" (dict "lang" "sh" "code" `
 curl -fsSLO https://kazari.io/deploy/compose.yml
-curl -fsSLO https://kazari.io/deploy/kazari.yaml           # your domain, email, DNS provider
+curl -fsSLO https://kazari.io/deploy/kazari.yaml           # your domain and DNS provider
 curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env   # the DNS token
 docker compose up -d
 docker compose logs kazari        # prints the setup link for the first admin` ) }}

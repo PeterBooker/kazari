@@ -822,6 +822,7 @@ These are its routes, with the body or query parameters each takes and its respo
 | `POST`   | `/artifacts/{slug}/transfer`        | `{owner}`                                                 | `200` artifact                          |
 | `POST`   | `/artifacts/{slug}/hide`            |                                                           | `200` artifact                          |
 | `GET`    | `/settings`                         |                                                           | `200` effective config                  |
+| `GET`    | `/settings/sources`                 |                                                           | `200` where each setting was set        |
 | `GET`    | `/jobs`                             |                                                           | `200` job statuses                      |
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
 | `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `subject`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
@@ -1055,6 +1056,8 @@ Unlike `/health`, this route needs an admin credential.
 ### Settings
 
 `GET /settings` returns the effective configuration, keyed like the YAML file. Sizes and durations appear as strings, and secrets as `"***"`. `auth.local.enabled` is the value in use, whether or not the configuration sets it.
+
+`GET /settings/sources` says where each value that is not a default was set, keyed by the key's dotted path, such as `{"listen.http": "KAZARI_LISTEN_HTTP in /etc/kazari/kazari.env, over line 7 of /etc/kazari/kazari.yaml"}`. A key at its default is absent.
 
 ## Rate limits
 

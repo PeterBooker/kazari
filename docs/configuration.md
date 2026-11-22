@@ -17,11 +17,19 @@ The configuration has three sources: built-in defaults, the YAML file and enviro
 3. `/etc/kazari/kazari.yaml`, if it exists.
 4. No file: defaults plus environment variables.
 
-A key the server does not know is an error, so a typo fails loudly rather than being ignored.
+Without a file, an incomplete configuration fails with a note saying where Kazari looked, and that `--local` runs it on your own machine with nothing to configure.
+
+A key the server does not know is an error, with the closest known key when there is one (`unknown key base_domian; did you mean base_domain?`), so a typo fails loudly rather than being ignored. Every error in the file names its line and key, and Kazari lists them all at once:
+
+```text
+config: /etc/kazari/kazari.yaml: line 12: limits.max_files: want a whole number, got "lots"
+```
 
 ### The local preset
 
 `kazari serve --local` reads no file. It starts from a preset for a server on your own machine: plain HTTP on `127.0.0.1:8080` in proxy mode, the base domain `kazari.localhost`, `external_scheme: http` with `external_port: 8080`, the data in `./.data`, and `log.level: debug`. `KAZARI_*` variables apply on top of it, so `KAZARI_DATA_DIR` moves the data and `KAZARI_LISTEN_HTTP=:8080` makes it reachable from outside a container. `--local` and `--config` exclude each other.
+
+Under `--local`, `external_port` follows the port of `listen.http` unless `KAZARI_EXTERNAL_PORT` is set too, so `KAZARI_LISTEN_HTTP=127.0.0.1:18080` moves the printed URLs and the setup link to port 18080 as well.
 
 ### Precedence
 
@@ -39,11 +47,9 @@ Sections are nested mappings, with the keys and their nesting listed under [Keys
 
 ```yaml
 base_domain: art.example.com
-data_dir: /var/lib/kazari
 
 tls:
   mode: acme
-  email: ops@example.com
   dns_provider: cloudflare
   dns:
     api_token: ${KAZARI_TLS_DNS_API_TOKEN}
@@ -69,7 +75,7 @@ Any value can refer to an environment variable:
 | `${NAME:-default}`  | The value of `NAME`, falling back to `default`              |
 | `$$`                | A literal `$`                                               |
 
-A reference to a variable that is not set and has no default stops startup with an error naming the variable. A default makes the reference optional:
+When `NAME` is unset or empty and `NAME_FILE` is set, the reference takes the contents of the file `NAME_FILE` names, as for [secrets in files](#reading-a-secret-from-a-file). A reference to a variable that is not set and has no default stops startup with an error naming the variable and its `_FILE` alternative. A default makes the reference optional:
 
 ```yaml
 tls:
@@ -78,11 +84,12 @@ tls:
 
 ### The `.env` file
 
-`kazari serve` also loads variables from a dotenv file. It uses the first of:
+`kazari serve` and `kazari check` also load variables from a dotenv file. They use the first of:
 
 1. `--env-file PATH`.
 2. `$KAZARI_ENV_FILE`.
-3. `./.env` in the working directory, if it exists.
+3. `kazari.env` beside the configuration file, if it exists: `/etc/kazari/kazari.env` for `/etc/kazari/kazari.yaml`.
+4. `./.env` in the working directory, if it exists.
 
 The file has one `KEY=VALUE` per line. `#` starts a comment, `export ` before the key is allowed, and a value can be wrapped in single or double quotes:
 
@@ -93,11 +100,13 @@ export KAZARI_TLS_DNS_API_TOKEN="your-cloudflare-token"
 KAZARI_LISTEN_PROXY_MODE=true
 ```
 
-A variable already set in the process environment wins over the file. Variables from a file named by `--env-file` or `$KAZARI_ENV_FILE` feed both `${NAME}` references and the [`KAZARI_*` overrides](#overriding-keys-from-the-environment).
+A variable already set in the process environment wins over the file. Variables from a file named by `--env-file` or `$KAZARI_ENV_FILE`, or from `kazari.env` beside the configuration file, feed both `${NAME}` references and the [`KAZARI_*` overrides](#overriding-keys-from-the-environment).
 
-A `./.env` found in the working directory does the same only when no configuration file is in use, which includes `--local`. Beside a configuration file (`--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`) it feeds `${NAME}` references alone, so `${KAZARI_TLS_DNS_API_TOKEN}` still works but `KAZARI_LISTEN_PROXY_MODE` above would be ignored: a file that merely sits in the directory `serve` or `check` runs from cannot change where the configured credentials go. To override keys from a dotenv file, name it.
+A `./.env` found in the working directory does the same only when no configuration file is in use, which includes `--local`. Beside a configuration file (`--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`) it feeds `${NAME}` references alone, so `${KAZARI_TLS_DNS_API_TOKEN}` still works but `KAZARI_LISTEN_PROXY_MODE` above would be ignored: a file that merely sits in the directory `serve` or `check` runs from cannot change where the configured credentials go. `kazari check` and the start log warn about each `KAZARI_*` variable such a file held for nothing. To override keys from a dotenv file, name it, or move the lines to `kazari.env` beside the configuration file.
 
-The file holds secrets, so keep it mode `0600` and out of version control. Under systemd, the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=` instead, so those variables arrive as process environment. Under Docker Compose, `compose.yml` passes `.env` into the container the same way.
+The file holds secrets, so keep it mode `0600` and out of version control. Under systemd, the unit reads `/etc/kazari/kazari.env` with `EnvironmentFile=`, so those variables arrive as process environment; `sudo kazari check` and `sudo kazari admin` read the same file because it sits beside `kazari.yaml`. The service itself cannot read the file, and skips it without an error. Under Docker Compose, `compose.yml` passes `.env` into the container as process environment.
+
+`kazari check` prints the files it read on its first line, and the `kazari started` log line names them too.
 
 The client commands do not read `./.env`, only a file named by `$KAZARI_ENV_FILE`: see [CLI configuration](cli.md#environment-variables-and-env).
 
@@ -120,7 +129,7 @@ Docker, Swarm and Kubernetes mount secrets as files. For each secret key, the va
 KAZARI_TLS_DNS_API_TOKEN_FILE=/run/secrets/dns-token
 ```
 
-The plain variable wins when both are set. A file that cannot be read stops startup with an error naming the variable.
+The plain variable wins when both are set. A file that cannot be read stops startup with an error naming the variable. The `_FILE` variable also fills a `${KAZARI_TLS_DNS_API_TOKEN}` reference in the file, so the shipped `kazari.yaml` works with it unchanged.
 
 ### The admin token
 
@@ -157,7 +166,7 @@ An override wins over the file, whether or not the file mentions the key. A depl
 
 The secrets in `deploy/kazari.yaml` use the same names in their `${}` references, so one variable serves either way. A secret also reads the variable with `_FILE` added ([reading a secret from a file](#reading-a-secret-from-a-file)).
 
-Setting any `KAZARI_AUTH_OIDC_*` variable switches on the `auth.oidc` section, with its defaults, even when the file has none.
+Setting any `KAZARI_AUTH_OIDC_*` variable to a value that is not empty switches on the `auth.oidc` section, with its defaults, even when the file has none. An empty one, such as `KAZARI_AUTH_OIDC_CLIENT_SECRET=` left in a dotenv file, does not. When the section is incomplete, the error names what switched it on.
 
 > [!NOTE]
 > The CLI has variables of its own: `KAZARI_URL`, `KAZARI_TOKEN`, `KAZARI_ADMIN_URL` and `KAZARI_ADMIN_TOKEN` configure the client (see the [CLI reference](cli.md)). The server's admin token is `KAZARI_AUTH_ADMIN_TOKEN`, and the dashboard's address is `KAZARI_ADMIN_PUBLIC_URL`; the server reads neither `KAZARI_ADMIN_URL` nor `KAZARI_ADMIN_TOKEN`.
@@ -173,13 +182,17 @@ An override's value is a string. Keys that are not strings take these formats:
 
 ## Checking the configuration
 
-`kazari check` loads the configuration exactly as `serve` does, lists every problem if it is invalid, and otherwise checks what the first start depends on: the data directory, the DNS records, the DNS provider token and the ports. Run it before the first start and whenever something changes:
+`kazari check` loads the configuration exactly as `serve` does, lists every problem if it is invalid, and otherwise checks what the first start depends on: the data directory, the DNS records, the DNS provider token, the certificate files, the ports and the identity provider. Run it before the first start and whenever something changes:
 
 ```sh
 sudo kazari check
 ```
 
-It prints one line per check and exits with status 1 if any failed, or 2 if the configuration is invalid; [checking the setup](install.md#checking-the-setup) shows the output.
+It prints one line per check and exits with status 1 if any failed, or 2 if the configuration is invalid; [checking the setup](install.md#checking-the-setup) shows the output. After the `config` line, an `override` line names each key a `KAZARI_*` variable set, and where that variable came from:
+
+```text
+override     ok    data_dir from KAZARI_DATA_DIR in /etc/kazari/kazari.env, over line 3 of /etc/kazari/kazari.yaml
+```
 
 To see the configuration a running server uses, ask the admin API:
 
@@ -187,7 +200,7 @@ To see the configuration a running server uses, ask the admin API:
 kazari admin settings
 ```
 
-It prints the effective configuration, with secrets redacted. A key whose default depends on another shows the value in use: `auth.local.enabled` is `true` or `false` there, whether or not the file sets it. The same is available as `GET /v1/settings` on the [admin API](api.md#admin-api).
+It prints the effective configuration, with secrets redacted, and after each value that is not a default where it was set: a line of the file or a `KAZARI_*` variable. A key whose default depends on another shows the value in use: `auth.local.enabled` is `true` or `false` there, whether or not the file sets it. The same is available as `GET /v1/settings` and `GET /v1/settings/sources` on the [admin API](api.md#settings).
 
 ## Keys
 
@@ -200,13 +213,13 @@ The domain, the data directory and the shape of public URLs:
 | Key               | Type    | Default  | Meaning                                                              |
 | ----------------- | ------- | -------- | -------------------------------------------------------------------- |
 | `base_domain`     | string  | none     | Domain artifacts live under, as `<slug>.<base_domain>`. Required.    |
-| `data_dir`        | string  | none     | Directory that holds all state. Required.                            |
+| `data_dir`        | string  | `/var/lib/kazari` | Directory that holds all state.                             |
 | `external_scheme` | string  | `https`  | Scheme of the public URLs Kazari prints and returns: `https` or `http`. |
 | `external_port`   | integer | `0`      | Port appended to public URLs; `0` omits it.                          |
 
-`base_domain` is a lower-case host name, with no scheme, port or trailing dot.
+`base_domain` is a lower-case host name, with no scheme, port or trailing dot. The placeholder `example.com`, `example.org` and `example.net`, and any name under them, fail validation, so a copied example cannot start.
 
-`data_dir` holds `kazari.db`, `blobs/`, `uploads/`, `certmagic/` and the admin socket. The systemd unit and the Docker image set it to `/var/lib/kazari`; `serve --local` uses `./.data`.
+`data_dir` holds `kazari.db`, `blobs/`, `uploads/`, `certmagic/`, the admin socket and `kazari.lock`. The default is the directory the systemd unit and the Docker image provide; `serve --local` uses `./.data`. One server at a time holds the directory: a second one started on it stops with `another kazari (pid N) is using /var/lib/kazari`.
 
 `external_port` is appended only when it is not the scheme's default: `8080` gives `http://demo.kazari.localhost:8080/`, as under `--local`. `external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
 
@@ -220,9 +233,11 @@ Where Kazari accepts connections:
 | `http`       | string | `:80`   | Plain HTTP listener; `""` disables it.                     |
 | `proxy_mode` | bool   | `false` | Serve plain HTTP behind one TLS-terminating proxy.         |
 
+Each address is `host:port`. A bare port such as `8080` fails validation: write `127.0.0.1:8080` for this machine only, or `:8080` for every address.
+
 Outside proxy mode, the `http` listener answers `/health` and redirects every request for the base domain or its subdomains to HTTPS with a `301`. In proxy mode it is the only listener, and it is required.
 
-In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the last `X-Forwarded-For` entry, then from `X-Real-IP`. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
+In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the last `X-Forwarded-For` entry, then from `X-Real-IP`. Bind `http` where only the proxy reaches it, such as `127.0.0.1:8080`; `kazari check` warns about an address that is neither loopback nor private. `/health` answers on any `Host` outside the base domain, so a probe can target the backend by its address. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
 
 ### `tls`
 
@@ -231,7 +246,7 @@ Where the certificate comes from. [How the certificate is obtained](certificates
 | Key            | Type   | Default       | Meaning                                                                         |
 | -------------- | ------ | ------------- | ------------------------------------------------------------------------------- |
 | `mode`         | string | `acme`        | `acme`, `files` or `self-signed`.                                               |
-| `email`        | string | none          | ACME account contact. Required for `acme` outside proxy mode.                   |
+| `email`        | string | `""`          | ACME account contact, optional. Empty registers an account without one.          |
 | `ca`           | string | `letsencrypt` | `letsencrypt`, `letsencrypt-staging` or an `https` ACME directory URL.          |
 | `dns_provider` | string | `cloudflare`  | DNS-01 provider: `cloudflare`, `route53`, `hetzner`, `digitalocean`, `gandi`, `ovh`, `namecheap` or `duckdns`. |
 | `cert_file`    | string | `""`          | PEM certificate chain for `files`. Must cover the base domain and its wildcard. |
@@ -613,12 +628,14 @@ The optional copy of the log that goes to the endpoint ([exporting logs](ops.md#
 
 Kazari checks all of these together at startup. The error lists every failure as `key: problem`, and the server exits with status 2:
 
-- `base_domain` is required, lower-case, without scheme, port or trailing dot, and made of labels of letters, digits and hyphens.
-- `data_dir` is required.
+- `base_domain` is required, lower-case, without scheme, port or trailing dot, and made of labels of letters, digits and hyphens. It is not `example.com`, `example.org`, `example.net` or a name under one.
+- `data_dir` is not empty.
+- `listen.http`, `listen.https` and `admin.listen`, when set, are `host:port`.
 - `external_scheme` is `http` or `https`, and `external_port` is 0 to 65535.
 - Outside proxy mode `listen.https` is required; in proxy mode `listen.http` is required.
 - `tls.mode` is one of the three modes. Outside proxy mode:
-  - `acme` needs `tls.email`, a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`; `namecheap` also needs `tls.dns.user`.
+  - `acme` needs a valid `tls.ca`, a known `tls.dns_provider` and, except for `route53`, `tls.dns.api_token`; `namecheap` also needs `tls.dns.user`.
+- `tls.email`, when set, is an email address outside the placeholder domains.
   - `files` needs `tls.cert_file` and `tls.key_file`.
 - Every number and duration in `limits`, `lifecycle` and `fetch` is greater than 0, and `fetch.budget` is at least `fetch.timeout`.
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` do not exceed `limits.max_version_bytes`.
