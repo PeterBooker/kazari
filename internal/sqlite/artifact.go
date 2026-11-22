@@ -709,7 +709,7 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 	return page, nil
 }
 
-const artifactResolveSelect = `SELECT a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), a.visibility, a.metadata,
+const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), a.visibility, a.metadata,
 	a.unpublished_at, a.deleted_at, a.purged_at`
 
 func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
@@ -718,7 +718,7 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 		vis, meta          string
 		unpub, del, purged sql.NullInt64
 	)
-	if err := row.Scan(&p.Slug, &p.VersionID, &p.VersionNumber, &vis, &meta, &unpub, &del, &purged); err != nil {
+	if err := row.Scan(&p.ArtifactID, &p.Slug, &p.VersionID, &p.VersionNumber, &vis, &meta, &unpub, &del, &purged); err != nil {
 		return nil, err
 	}
 	var err error
@@ -882,8 +882,15 @@ func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn
 			`DELETE FROM version_file WHERE version_id IN (SELECT id FROM version WHERE artifact_id = ?)`, aid); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM version WHERE artifact_id = ?`, aid)
-		return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM version WHERE artifact_id = ?`, aid); err != nil {
+			return err
+		}
+		for _, table := range []string{"view_day", "view_path_day", "view_reader"} {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE artifact_id = ?`, aid); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return artifactErrOrNil("purge", err)
 }

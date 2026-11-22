@@ -75,6 +75,7 @@ var layers = map[string]layer{
 	"internal/snapshot":  domain,
 	"internal/upload":    domain,
 	"internal/user":      domain,
+	"internal/views":     domain,
 
 	"internal/blob":       platform,
 	"internal/certs":      platform,

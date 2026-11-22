@@ -959,6 +959,10 @@ func testResolve(t *testing.T, h *harness) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if p.ArtifactID == 0 {
+		t.Errorf("ResolvePublished(demo).ArtifactID = 0, want the artifact's id")
+	}
+	want.ArtifactID = p.ArtifactID
 	if diff := cmp.Diff(want, p, cmpOpts...); diff != "" {
 		t.Fatalf("ResolvePublished (-want +got):\n%s", diff)
 	}
