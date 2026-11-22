@@ -317,7 +317,7 @@ An artifact adds origins to the instance policy with its `kazari.csp` metadata, 
 
 Each source is added to that directive. A directive the instance policy does not list starts from its `default-src` sources. The other directives, among them `frame-ancestors`, `base-uri` and `form-action`, stay as `csp` sets them. A source must name an origin: `*` and a bare scheme such as `https:` are refused.
 
-To keep every artifact on the instance policy, set `allow_csp_override: false`.
+To keep every artifact on the instance policy, set `allow_csp_override: false`. A publish that sets `kazari.csp` is then refused with `invalid_metadata`, rather than accepted and ignored.
 
 #### Reserved slugs
 

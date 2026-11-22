@@ -158,8 +158,8 @@ The server offers nineteen tools. The six with more to know have their own secti
 | ---- | ------------ |
 | `create_artifact` | Create an artifact from inline `files[]`, an `upload_id` or both, and publish it as version 1 ([Files named by URL](#files-named-by-url)). |
 | `import_page` | Copy a web page into a new artifact: its stylesheets, fonts and images fetched, its scripts removed ([Importing a page](#import_page)). |
-| `update_artifact` | Add a version, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. Changing the visibility needs `artifacts:share`. |
-| `edit_file` | Change one text file of the latest version with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
+| `update_artifact` | Add a version from whole files, edits to several files and deletions, change the name, description, metadata or visibility, or restore a soft-deleted artifact with `restore: true`. Changing the visibility needs `artifacts:share`. |
+| `edit_file` | Change one text file with text or anchor edits, and publish the result as a new version ([Editing files](#editing-files)). |
 | `begin_upload` | Start a [chunked upload](#uploading-in-chunks); returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. With `archive_sha256` and `archive_bytes`, also an `archive_url` for [an archive from a shell](#uploading-an-archive-from-a-shell). |
 | `upload_chunk` | Append one chunk of one file at a stated offset. |
 | `discard_upload` | Remove an upload you no longer need. |
@@ -170,7 +170,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `mark_stale` | Start the grace period (`grace`, such as `72h` or `14d`) after which the artifact is soft-deleted. Needs `artifacts:delete` unless you own the artifact. |
 | `unmark_stale` | Cancel a pending expiry. |
 | `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. Needs `artifacts:share`. |
-| `create_share_link` | Create a URL that opens a `members` artifact without signing in. Needs `artifacts:share`. |
+| `create_share_link` | Create a URL that opens a `members` artifact without signing in, and with `version` one that opens that version. Needs `artifacts:share`. |
 | `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
 | `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. Needs `artifacts:share`. |
 | `delete_artifact` | Soft-delete, which `update_artifact` with `restore: true` undoes, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
@@ -178,11 +178,35 @@ The server offers nineteen tools. The six with more to know have their own secti
 
 ### `update_artifact`
 
-Adds a version, changes the artifact's fields, or both. A new version comes from changed files, `delete: true` entries and an `upload_id`, and every file you do not mention carries over.
+Adds a version, changes the artifact's fields, or both. A new version comes from changed files, edits, `delete: true` entries and an `upload_id`, and every file you do not mention carries over. When the files match the latest version, no version is added and the result says `unchanged`.
 
-The fields are the name, description, metadata and visibility. In metadata, `null` deletes a key.
+Each entry in `files[]` does one of four things:
 
-`expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`.
+| Entry | Effect |
+| ----- | ------ |
+| `{path, content}` | Adds or replaces the file. `content: ""` is an empty file; an entry with no `content`, `url`, `edits` or `delete` is refused. |
+| `{path, url}` | Adds or replaces the file with a download ([Files named by URL](#files-named-by-url)). |
+| `{path, edits}` | Changes the text file with [text or anchor edits](#editing-files), applied to the base version's copy. |
+| `{path, delete: true}` | Removes the file. A path that is not there is `file_not_found`. |
+
+A change across files is one call with `edits` per file, so it makes one version and no in-between state is served:
+
+```json
+{
+  "slug": "q3-report",
+  "expected_version": 3,
+  "files": [
+    { "path": "index.html", "edits": [{ "old_text": "Q3 report", "new_text": "Q4 report" }] },
+    { "path": "style.css", "edits": [{ "old_text": "color: red", "new_text": "color: navy" }] }
+  ]
+}
+```
+
+The result's `edited` field lists each file's edit outcomes, as in [edit results](#edit-results).
+
+The fields are the name, description, metadata and visibility. In metadata, `null` deletes a key. `visibility` also takes `unpublished`, as `set_visibility` does.
+
+`expected_version` guards against concurrent publishes: when a newer version is the latest, the call fails with `version_conflict`. `base_version` names the version the new one builds on, the latest by default ([Versions and conflicts](#versions-and-conflicts)).
 
 To make the new version hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files`, and send a `delete: true` entry for each path not in the set. That is what `kazari publish --update` does for a directory.
 
@@ -231,28 +255,49 @@ Fetches dial public addresses only, follow at most five redirects, send no crede
 
 Returns one file of the published version, or of the version given in `version`. Text comes inline, and `anchors: true` prefixes every line with its [anchor](#anchor-edits). Binaries up to 256 KiB come as a base64 blob, and larger files as a REST download URL.
 
-The result names the `version` read and the `latest_version`. For text, its `content` field repeats the text, anchored when asked, for clients that show only the structured content.
+The text starts with a line that names the file, the version read and its size, and says when an edit of that text needs `base_version`:
+
+```text
+index.html, version 1 (latest 4; edit_file and update_artifact need base_version: 1 to change this text), 17 lines
+```
+
+The structured result names the `version` read and the `latest_version`. For text, its `content` field repeats the text, anchored when asked, for clients that show only the structured content.
 
 To read only some lines of a text file, pass `start_line` and `end_line`, 1-based and inclusive. The result holds those lines, anchored when asked, and states `start_line`, `end_line` and `total_lines`. A window works on a text file of any size up to `limits.max_file_bytes`, so an agent that already knows where a change goes, from an earlier read, an edit result or an import outline, reads just those lines.
 
 A text file larger than the inline limit, 1 MiB, comes back as a download URL, and windows are the way to read it over MCP. A window holds as many whole lines as fit the inline limit; when it was cut short, the note after the text says where to continue.
 
+A file of a slug that does not exist is `not_found`, and the message names the slug and, when one of the slugs you can see is close, suggests it.
+
 ### `set_visibility`
 
-Sets one of four visibilities. `members` means that only people signed in to the instance, and holders of a share link, can open the page. `unpublished` takes the page offline, and setting `public`, `unlisted` or `members` brings it back.
+Sets one of four visibilities. `members` means that only people signed in to the instance, and holders of a share link, can open the page. `unpublished` takes the page offline, and setting `public`, `unlisted` or `members` brings it back. A word such as `private` or `hidden` is refused with a hint to use `members`.
+
+The summary says who can open the page now:
+
+```text
+q3-report is now members-only: people who sign in to this instance, or who hold a share link, can open it at https://q3-report.art.example.com/ (version 3).
+```
 
 ### `create_share_link`
 
 Returns a URL that opens a `members` artifact without signing in. The link works until `expires_in` passes or it is revoked, and disabling the user who created it revokes it; by default it lasts 7 days, and at most `serve.share_link_max_ttl`.
 
-The URL is returned only this once. `list_share_links` shows the links without their URLs.
+The result holds the `url`, the link's `prefix`, `label` and `expires_at`, and the artifact's `slug` and `visibility`. With `version`, it adds `version_url`, the same link on that version's address. The URLs are returned only this once. `list_share_links` shows the links without their URLs.
 
 ### Results
 
-Every result starts with a one-line text summary, then the JSON of the result, which is also the structured content. For publishing tools, the summary names the address and version:
+Every result starts with a text summary, then the JSON of the result, which is also the structured content. For publishing tools, the summary names the address and version, and each warning follows on its own line:
 
 ```text
 Published https://q3-report.art.example.com/ (version 3)
+Warning: there is no index.html at the root, so the page's address answers 404: name the main page index.html
+```
+
+When the files match the latest version, the summary says so and no version is added:
+
+```text
+No change: the files match version 3; no version was added. https://q3-report.art.example.com/ serves version 3.
 ```
 
 The JSON in the text content leaves `<`, `>` and `&` unescaped, so HTML in an excerpt costs the model no more than the HTML itself. `get_guide` returns the Markdown alone.
@@ -261,25 +306,29 @@ The tools that publish or change an artifact (`create_artifact`, `import_page`, 
 
 | Field | Meaning |
 | ----- | ------- |
-| `url`, `version` | The address and the version the call published or serves. |
+| `url`, `version`, `version_url` | The address, the version the call published or serves, and that version's pinned address. |
+| `unchanged` | Present when the files matched the latest version, so no version was added. |
+| `warnings` | Present when the version will not render as published: no root `index.html`, a file a page links to that is missing, or an origin the Content-Security-Policy blocks. |
 | `slug`, `name`, `visibility` | The artifact. |
 | `published_version`, `latest_version` | What is served, and what the next edit's `expected_version` should be. |
 | `expires_at`, `unpublished_at`, `deleted_at` | Present only when set. |
 | `note` | Present only when the page is offline, with the step that brings it back, for clients that show the model only the structured content. |
 
-`edit_file` adds `path` and `edits` ([Edit results](#edit-results)), and `import_page` adds `import`. `get_artifact` returns the rest of the record. The result's `_meta` carries the description for the [preview app](#preview-app), which hosts show the user but not the model.
+`edit_file` adds `path` and `edits` ([Edit results](#edit-results)), `update_artifact` adds `edited` when it applied edits, and `import_page` adds `import`. `get_artifact` returns the rest of the record. The result's `_meta` carries the description for the [preview app](#preview-app), which hosts show the user but not the model.
 
-The other tools return the REST API's types: `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `CreatedShareLink`, `ShareLinkList` and `OK`.
+`create_share_link` returns the [result above](#create_share_link). The other tools return the REST API's types: `ArtifactDetail`, `ArtifactList`, `Upload`, `ChunkResult`, `StaleResult`, `ShareLinkList` and `OK`.
+
+A call whose arguments do not match the tool's input schema fails with `invalid_argument`, and the next step gives the shape the tool takes. Before it validates, the server reads a few common slips as meant: `old_string` and `new_string` for `old_text` and `new_text`, edits sent at the top level or as one object, an omitted `new_text` (a deletion), numbers sent as strings, and `files` sent as a map from path to content.
 
 ### Descriptions and instructions
 
-Tool descriptions are generated from the instance's configuration, so they state its real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, inline-upload threshold, chunk limit, default visibility and longest share-link lifetime. A model needs nothing else to use the tools.
+Tool descriptions are generated from the instance's configuration, so they state its real slug rules, reserved slugs, URL shape, size limits, CSP allow-list, whether `kazari.csp` is taken, inline-upload threshold, chunk limit, default visibility and longest share-link lifetime. A model needs nothing else to use the tools. The rules shared by several tools are stated once, in `create_artifact`'s description, and the others refer to it.
 
-The server's instructions say how the tools fit together: edit with text edits and the `expected_version` from the last result, read first only when the current text is unknown, and read again on a conflict. They also point to the [skill](#skill). For a [restricted credential](api.md#restricted-credentials) they add one line naming its slug patterns, so the model chooses a slug the server accepts.
+The server's instructions say how the tools fit together: edit with text edits and the `expected_version` from the last result, read first only when the current text is unknown, send every edit to one file in one call and never call `edit_file` in parallel on one artifact, make a change across files one `update_artifact` call, and follow a conflict's next step. They also point to the [skill](#skill). For a [restricted credential](api.md#restricted-credentials) they add one line naming its slug patterns, so the model chooses a slug the server accepts.
 
 ## Editing files
 
-`edit_file` changes one text file of the artifact's latest version and publishes the result as a new version. Every other file carries over, as with `update_artifact`. Only the changed text travels, so a one-line change to a large page is a small call.
+`edit_file` changes one text file of the artifact's latest version, or of `base_version`, and publishes the result as a new version. Every other file carries over, as with `update_artifact`. Only the changed text travels, so a one-line change to a large page is a small call.
 
 The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`kazari edit`](cli.md#edit) in the CLI.
 
@@ -289,7 +338,7 @@ Text edits are the default. An agent that published the page knows its text, and
 
 ### Text edits
 
-A text edit is `{old_text, new_text, replace_all}`. `old_text` must match the file once, unless `replace_all` replaces every match. Edits apply in order, each to the result of the one before.
+A text edit is `{old_text, new_text, replace_all}`. `old_text` must match the file once, unless `replace_all` replaces every match. An omitted or empty `new_text` deletes the match. Edits apply in order, each to the result of the one before.
 
 To change a heading, provided version 3 is still the latest:
 
@@ -346,7 +395,15 @@ Anchors cost a read and about 8 bytes a line. They pay off when the agent does n
 
 `expected_version` works as on `update_artifact`: a newer latest version fails the call with `version_conflict`. Without it, the edits that still apply are applied to the newest content.
 
-`edit_file` always edits the latest version, while `read_file` reads the published version unless given `version`. The two differ only after `publish_version` rolled back. `read_file` returns both numbers, so an agent can read `latest_version` before editing.
+The conflict says whether every edit still applies, as sent, to the newer version, and the number to resend with:
+
+```text
+version_conflict: latest version is 7, expected 6; every edit still applies to version 7 as sent: resend the same edits with expected_version 7
+```
+
+Two `edit_file` calls in parallel on one artifact always conflict, since each makes a version. Send every edit to one file in one call, and a change across files as one `update_artifact` call.
+
+`base_version` names the version a change builds on, the latest by default. While an earlier version is published, after `publish_version` rolled back, a change without `base_version` fails with `published_not_latest`, so it never quietly undoes the rollback. Set it to the published version to fix the page people see, or to the latest to carry on from it. `update_artifact` takes it too.
 
 ### Edit results
 
@@ -370,7 +427,11 @@ A miss (`edit_not_found`) names the most similar lines with their anchors. An am
 
 ## Uploading in chunks
 
-Inline content is fine up to the inline guidance, which is 2 MiB by default for any single file or for the files together. Above that, stage the files in a chunked upload:
+Inline `files[]` are for content the model writes itself, up to the inline guidance, which is 2 MiB by default for any single file or for the files together. A file already on disk goes through an upload whatever its size: with a shell as [an archive](#uploading-an-archive-from-a-shell), without one in chunks.
+
+A binary file sent inline needs `encoding: "base64"`. A `data:<type>;base64,` prefix is stripped, and base64 sent without `encoding` for an image, font, PDF, archive or media file is refused with `invalid_argument` rather than stored as text.
+
+To stage files in a chunked upload:
 
 1. Call `begin_upload`. It returns `upload_id`, `expires_at`, `max_chunk_bytes` and `max_total_bytes`. `max_chunk_bytes` is 4 MiB by default, measured after base64 decoding.
 2. Call `upload_chunk` for each chunk of each file, with `upload_id`, `path`, `offset`, `content` and `encoding` (`base64` for binary, `utf8` for text). The first chunk of a path has `offset: 0`, and each next one uses the `bytes_received` of the previous result.
@@ -390,7 +451,7 @@ upload_offset_mismatch: ... (current=<n>: resend this path from offset <n>)
 
 An agent with a shell but no Kazari credential sends a whole site in one request instead of chunk by chunk. That is the case in a sandbox whose MCP connection is signed in while its shell is not, and whose files are too large to pass through tool calls:
 
-1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`.
+1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`. A single file goes the same way: `zip ../logo.zip logo.png`.
 2. Call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` (`wc -c < site.zip`). The result carries `archive_url`.
 3. Send the archive with `curl --fail-with-body -T site.zip '<archive_url>'`. No credential is needed: the token in the URL stands for one.
 4. Call `create_artifact` or `update_artifact` with `upload_id`, as after chunks.
@@ -474,17 +535,18 @@ Per-artifact `kazari.csp` overrides do not change the decision. A `members` page
 A failed tool call is an MCP tool error (`isError: true`) whose text is `<code>: <message>`, with the same codes as the REST API. For most codes a second line, `Next step: ...`, says what to do:
 
 ```text
-version_conflict: latest version is 5, expected 3
-Next step: Someone published since you read it: read the artifact again (get_artifact, or read_file for the file), redo your change on the new content and retry with expected_version set to the new latest_version.
+not_found: artifact "q3-reprot" not found; did you mean "q3-report"?
+Next step: Check the slug: list_artifacts with mine "any" lists the artifacts you created or updated, and deleted "include" adds soft-deleted ones. If get_artifact shows deleted_at, the artifact is soft-deleted: update_artifact with restore: true brings it back.
 ```
 
 The codes are:
 
 | Code | Meaning |
 | ---- | ------- |
-| `invalid_slug`, `invalid_path`, `invalid_metadata`, `invalid_argument` | Input rejected; the message says why. |
+| `invalid_slug`, `invalid_path`, `invalid_metadata`, `invalid_argument` | Input rejected; the message says why. An invalid slug suggests one that would do, such as `q3-report` for `Q3_Report`. `kazari.csp` is `invalid_metadata` on an instance with `serve.allow_csp_override: false`. |
 | `slug_taken` | Another artifact, or a recent tombstone, holds the slug. |
-| `version_conflict` | `expected_version` is not the latest version. |
+| `version_conflict` | `expected_version` is not the latest version; for `edit_file`, the message says whether the edits still apply to it. |
+| `published_not_latest` | An earlier version is published and the change named no `base_version`. |
 | `edit_not_found` | An `old_text` matched nowhere, even ignoring whitespace; the message names the closest lines. |
 | `edit_ambiguous` | An `old_text` matched more than once without `replace_all`; the message lists the lines. |
 | `anchor_mismatch` | An anchor's line changed since the file was read, or is past its end. |
@@ -495,7 +557,7 @@ The codes are:
 | `share_link_not_found` | The artifact has no share link with that prefix. |
 | `too_many_uploads` | Too many open uploads for this user; `discard_upload` frees one. |
 | `fetch_failed` | The server could not fetch a URL: the message names the address and what happened (a status, a non-public address, a timeout, a size over the limit). |
-| `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. |
+| `not_found`, `version_not_found`, `file_not_found` | Nothing at that slug, version or path. `not_found` names the slug and suggests a close one you can see. |
 | `gone` | The artifact was purged. |
 | `forbidden` | The token lacks the tool's scope (`forbidden: scope "artifacts:write" required`), or lacks `artifacts:share` for a `visibility` argument, or is [restricted](api.md#restricted-credentials) to other slugs, or the write policy denies the change, or `mark_stale` lacks `artifacts:delete` on an artifact you do not own. |
 | `rate_limited` | The credential used up its write budget (`rate_limited: too many writes; retry in 12s`). |
