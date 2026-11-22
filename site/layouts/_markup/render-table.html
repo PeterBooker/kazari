@@ -1,4 +1,5 @@
-<div class="table-wrap">
+{{- /* Focusable so a keyboard can scroll a table wider than the column. */ -}}
+<div class="table-wrap" tabindex="0">
 <table>
   <thead>
     {{- range .THead }}

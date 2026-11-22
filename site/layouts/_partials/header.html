@@ -4,7 +4,7 @@
 <header class="site-header">
   <div class="header-inner">
     {{- if $inDocs }}
-    <button class="icon-button nav-toggle" type="button" aria-controls="docs-nav" aria-expanded="false" aria-label="Open the documentation menu">{{ partial "icon.html" "menu" }}</button>
+    <button class="icon-button nav-toggle" type="button" aria-controls="docs-nav" aria-expanded="false" aria-label="Documentation menu">{{ partial "icon.html" "menu" }}</button>
     {{- end }}
     <a class="brand" href="{{ site.Home.RelPermalink }}">{{ partial "logo.html" }}<span>Kazari</span></a>
     <nav class="header-nav" aria-label="Main">
@@ -14,8 +14,8 @@
     </nav>
     <div class="header-actions">
       <a class="season-label" href="{{ site.Home.RelPermalink }}#season" title="The current solar term, which sets the site's colour"><span class="sekki-kanji" lang="ja"></span><span class="sekki-name"></span></a>
-      <button class="search-button" type="button" data-search-open aria-label="Search the documentation">
-        {{ partial "icon.html" "search" }}<span class="search-label">Search docs</span><kbd>/</kbd>
+      <button class="search-button" type="button" data-search-open aria-keyshortcuts="/ Control+K Meta+K">
+        {{ partial "icon.html" "search" }}<span class="search-label">Search docs</span><kbd aria-hidden="true">/</kbd>
       </button>
       <button class="icon-button" type="button" data-theme-toggle aria-label="Switch colour theme">
         <span class="theme-icon-light">{{ partial "icon.html" "sun" }}</span><span class="theme-icon-dark">{{ partial "icon.html" "moon" }}</span>
