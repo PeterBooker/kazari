@@ -89,7 +89,11 @@ func TestChromiumSignIn(t *testing.T) {
 	c.fill("#confirm", testPassword)
 	c.click(`form[action="/account/setup"] button[type="submit"]`)
 
-	c.wait("the sign-in page after setup", onSignIn+` && !!document.querySelector("#login")`)
+	c.wait("the account's welcome after setup", `location.origin === `+quote(apex)+` && location.pathname === "/account/" && `+
+		`document.body.textContent.includes("Welcome, Peter")`)
+	c.shot("2-welcome")
+	c.open(admin + "/")
+	c.wait("the dashboard's sign-in page", onSignIn+` && !!document.querySelector("#login")`)
 	c.shot("2-sign-in")
 	c.fill("#login", "peter")
 	c.fill("#password", testPassword)
