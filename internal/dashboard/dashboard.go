@@ -89,8 +89,17 @@ type Deps struct {
 	Updates   Updates
 	Settings  func() map[string]any // the effective configuration, secrets redacted
 	Views     *views.Service        // nil with analytics off
-	Links     present.Links
-	Logger    *slog.Logger
+	// Flags remembers what an admin put away, such as the getting-started
+	// list; nil offers nothing to put away.
+	Flags  Flags
+	Links  present.Links
+	Logger *slog.Logger
+}
+
+// Flags keeps per-person flags by name. sqlite.FlagStore implements it.
+type Flags interface {
+	Flagged(ctx context.Context, handle, name string) (bool, error)
+	SetFlag(ctx context.Context, handle, name string, at time.Time) error
 }
 
 // Options describe the instance the dashboard runs on.
@@ -558,7 +567,7 @@ func (s *server) done(w http.ResponseWriter, r *http.Request, to, flash string) 
 // own POST and nowhere else.
 var flashes = func() map[string]string {
 	all := map[string]string{}
-	for _, m := range []map[string]string{peopleFlashes, pagesFlashes, systemFlashes} {
+	for _, m := range []map[string]string{overviewFlashes, peopleFlashes, pagesFlashes, systemFlashes} {
 		maps.Copy(all, m)
 	}
 	return all

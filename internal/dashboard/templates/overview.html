@@ -17,7 +17,12 @@
 {{else}}<p class="soft">Nothing needs attention right now.</p>
 {{end}}</section>
 
-{{if .Data.New}}{{template "overview-start" .}}
+{{if .Data.Start}}{{template "overview-start" .}}
+{{else}}<section class="box section" aria-labelledby="connect">
+<h2 class="h2" id="connect">Connector address</h2>
+<p class="soft">People add this address to their AI agent as a connector. Each person's account page has the steps.</p>
+{{template "overview-connector" .}}
+</section>
 {{end}}
 <section class="tiles" aria-label="Counts">
 <div class="box tile"><h2 class="label">People</h2><span class="big">{{.Data.People.Total}}</span>
@@ -27,8 +32,10 @@
 <ul class="dash soft"><li>{{.Data.Pages.Live}} live, {{.Data.Pages.Stale}} stale, {{.Data.Pages.Unpublished}} unpublished, {{.Data.Pages.Bin}} in the bin</li>
 <li>{{.Data.Pages.Public}} public, {{.Data.Pages.Unlisted}} unlisted, {{.Data.Pages.Members}} for members</li></ul>
 <a class="link" href="/pages">All pages</a></div>
-<div class="box tile"><h2 class="label">Storage</h2><span class="big">{{bytes .Data.Storage.Counted}}</span>
-<ul class="dash soft"><li>Counted against quotas, in {{howmany .Data.Storage.Versions "version"}}</li><li>{{bytes .Data.Storage.Stored}} on disk, each file stored once</li></ul>
+<div class="box tile"><h2 class="label">Storage</h2><span class="big">{{bytes .Data.Storage.Stored}}</span>
+<ul class="dash soft"><li>On disk, each file stored once however many versions hold it</li>
+<li>{{bytes .Data.Storage.Content}} of content in {{howmany .Data.Storage.Versions "version"}}, every version in full</li>
+<li>{{bytes .Data.Storage.Counted}} counted against quotas: the content, and 4 KiB for each file of each version</li></ul>
 {{if .Data.Storage.HasDisk}}<div class="usage"><span class="soft">{{bytes .Data.Storage.DiskFree}} free of {{bytes .Data.Storage.DiskSize}} on the data disk</span>
 <meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Data.Storage.DiskUsed}}" aria-label="Data disk used">{{.Data.Storage.DiskUsed}}% used</meter></div>
 {{end}}</div>
@@ -44,22 +51,7 @@
 
 {{template "overview-views" .}}
 
-{{if .Data.Jobs}}<section class="section" aria-labelledby="jobs">
-<div class="section-head">
-<h2 class="h2" id="jobs">Jobs</h2>
-<a class="link" href="/system#jobs">Run a job</a>
-</div>
-<table class="table">
-<thead><tr><th>Job</th><th>Last run</th><th>Result</th><th>Next run</th></tr></thead>
-<tbody>
-{{range .Data.Jobs}}<tr><td data-label="Job"><span class="mono">{{.Name}}</span></td>
-<td data-label="Last run">{{if .LastRun}}{{when .LastRun}}{{else}}<span class="soft">not yet</span>{{end}}</td>
-<td data-label="Result">{{if .Running}}<span class="status tone-note">Running</span>{{else if .LastError}}<span class="status tone-danger">Failed</span>{{else if .LastRun}}<span class="status tone-ok">Succeeded</span>{{else}}<span class="status tone-neutral">Waiting</span>{{end}}</td>
-<td data-label="Next run">{{if .NextRun}}{{when .NextRun}}{{else}}<span class="soft">on demand</span>{{end}}</td></tr>
-{{end}}</tbody>
-</table>
-</section>
-{{end}}
+
 <section class="section" aria-labelledby="recent">
 <div class="section-head">
 <h2 class="h2" id="recent">Recent activity</h2>
@@ -74,7 +66,7 @@
 
 {{define "overview-start"}}<section class="box section" aria-labelledby="start">
 <h2 class="h2" id="start">Getting started</h2>
-<p class="soft">This instance is new. Three steps and the first page is live.</p>
+<p class="soft">Three steps and the first page is live. Each is marked done once it has happened on this instance.</p>
 <ol class="steps">
 <li><strong>{{if .Data.LocalAccounts}}Invite a person{{else}}Add a person{{end}}</strong>{{if .Data.Invited.Done}} <span class="status tone-ok">Done</span>{{end}}
 {{if .Data.LocalAccounts}}<span class="soft">You get a link to copy and send. It works once, and Kazari sends no email.</span>
@@ -82,9 +74,8 @@
 {{else}}<span class="soft">People sign in at your identity provider. Whoever it admits appears under People at their first sign-in.</span>
 <a class="link" href="/people">See people</a>{{end}}</li>
 <li><strong>Connect an agent</strong>{{if .Data.Connected.Done}} <span class="status tone-ok">Done</span>{{end}}
-<span class="soft">Add this address as a connector in your AI agent, then sign in when it asks.</span>
-<div class="copy"><label class="sr-only" for="connector">Connector address</label><input class="input input-mono" id="connector" type="text" readonly value="{{.Data.MCPURL}}">
-<button type="button" class="btn" data-copy-target="connector" hidden>Copy the address</button></div>
+<span class="soft">Add this address as a connector in your AI agent, then sign in when it asks. In claude.ai and the Claude desktop app: Settings, then Connectors, then Add custom connector.</span>
+{{template "overview-connector" .}}
 <details class="more"><summary>From a terminal</summary>
 <p class="soft">Claude Code adds the connector with one command:</p>
 <div class="snippet"><pre><code id="connector-cli">claude mcp add --transport http kazari {{.Data.MCPURL}}</code></pre>
@@ -99,4 +90,10 @@ kazari publish ./site --slug hello</code></pre>
 <span class="soft">Ask the agent for a page and tell it to publish with Kazari. It answers with the page's address.</span>
 <a class="link" href="/pages">See pages</a></li>
 </ol>
-</section>{{end}}
+{{if .Data.Dismissable}}<form class="inline" method="post" action="/start/dismiss">{{template "token" .}}
+<button type="submit" class="link">Put this list away</button></form>
+<p class="help">The connector address stays on this page either way.</p>
+{{end}}</section>{{end}}
+
+{{define "overview-connector"}}<div class="copy"><label class="sr-only" for="connector">Connector address</label><input class="input input-mono" id="connector" type="text" readonly value="{{.Data.MCPURL}}" autocomplete="off" spellcheck="false">
+<button type="button" class="btn" data-copy-target="connector" hidden>Copy the address</button></div>{{end}}

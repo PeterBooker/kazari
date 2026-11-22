@@ -610,6 +610,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		deps := dashboard.Deps{
 			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
 			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
+			Flags: sqlite.NewFlagStore(a.db),
 		}
 		// Assigned only when there is one: a nil *update.Checker in the
 		// interface would not be a nil interface.

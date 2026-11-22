@@ -32,6 +32,25 @@ const quotaHighPct = 90
 
 func (s *server) overviewRoutes(mux *http.ServeMux) {
 	s.view(mux, "GET /{$}", s.overview)
+	s.action(mux, "POST /start/dismiss", s.dismissStart)
+}
+
+var overviewFlashes = map[string]string{
+	"start-dismissed": "The getting-started list is put away.",
+}
+
+// startDismissed is the flag of an admin who put the getting-started list
+// away.
+const startDismissed = "getting-started-dismissed"
+
+func (s *server) dismissStart(w http.ResponseWriter, r *http.Request, c *request) error {
+	if s.d.Flags == nil {
+		return notFound("There is nothing to put away on this instance.")
+	}
+	if err := s.d.Flags.SetFlag(r.Context(), c.me.Handle, startDismissed, s.now()); err != nil {
+		return err
+	}
+	return s.done(w, r, "/", "start-dismissed")
 }
 
 // attention is one thing the admin should look at: a word for what it is,
@@ -212,7 +231,8 @@ type pageCounts struct {
 }
 
 type storageView struct {
-	Counted  int64 // what quotas count: every version in full
+	Counted  int64 // what quotas count: every version in full, and FileChargeBytes a file
+	Content  int64 // every version in full
 	Stored   int64 // on disk, each file once
 	Versions int64
 	HasDisk  bool
@@ -235,9 +255,9 @@ type startStep struct {
 
 type overviewData struct {
 	Attention []attention
-	// New is an instance with no page yet, or nobody but the admin on it:
-	// the getting-started list stands where the activity would.
-	New                         bool
+	// Start shows the getting-started list: a step is not done yet, and
+	// the admin has not put it away, which Dismissable offers.
+	Start, Dismissable          bool
 	Invited, Connected, Shipped startStep
 	LocalAccounts               bool
 	MCPURL, CLIURL              string
@@ -245,7 +265,6 @@ type overviewData struct {
 	Pages                       pageCounts
 	Storage                     storageView
 	Cert                        certView
-	Jobs                        []scheduler.JobStatus
 	Views                       viewsPanel
 	Events                      []audit.Event
 	BaseDomain                  string
@@ -280,8 +299,10 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		return err
 	}
 	used := make(map[string]int64, len(owners))
+	var counted int64
 	for _, o := range owners {
 		used[o.Handle] = o.Bytes
+		counted += o.Bytes
 	}
 	for i := range users {
 		u := &users[i]
@@ -318,7 +339,7 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 	if err != nil {
 		return err
 	}
-	d.Storage = storageView{Counted: versions.Bytes, Stored: blobs.Bytes, Versions: versions.Count}
+	d.Storage = storageView{Counted: counted, Content: versions.Bytes, Stored: blobs.Bytes, Versions: versions.Count}
 	if free, total, err := s.diskUsage(); err == nil && total > 0 {
 		in.DiskFree, in.DiskTotal = free, total
 		d.Storage.HasDisk, d.Storage.DiskFree, d.Storage.DiskSize = true, free, total
@@ -336,8 +357,7 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		}
 	}
 	if s.d.Jobs != nil {
-		d.Jobs = s.d.Jobs.Status()
-		in.Jobs = d.Jobs
+		in.Jobs = s.d.Jobs.Status()
 	}
 	if s.d.Ready != nil {
 		if rep, ok := s.d.Ready.Last(); ok {
@@ -355,11 +375,16 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 	}
 	d.Events = recent.Events
 
-	d.New = d.Pages.Total == 0 || d.People.Total <= 1
-	if d.New {
-		d.Invited.Done = d.People.Total > 1
-		d.Shipped.Done = d.Pages.Total > 0
-		d.Connected.Done = keyUsed || d.Shipped.Done || s.granted(ctx)
+	d.Invited.Done = d.People.Total > 1
+	d.Shipped.Done = d.Pages.Total > 0
+	d.Connected.Done = keyUsed || s.granted(ctx)
+	d.Start = !d.Invited.Done || !d.Connected.Done || !d.Shipped.Done
+	if d.Start && s.d.Flags != nil {
+		dismissed, err := s.d.Flags.Flagged(ctx, c.me.Handle, startDismissed)
+		if err != nil {
+			return err
+		}
+		d.Start, d.Dismissable = !dismissed, true
 	}
 	return s.render(w, r, c, http.StatusOK, "overview", page{Title: "Overview", Nav: "overview"}, d)
 }
