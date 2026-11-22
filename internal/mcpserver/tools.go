@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	pathpkg "path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -901,12 +902,28 @@ func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]arti
 	return out, dl.Close, nil
 }
 
-// decode returns raw bytes in a string; base64 may be unpadded and contain line breaks.
+// binaryExts are the extensions whose content is never text, so base64
+// sent without encoding is a slip, not the file.
+var binaryExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".avif": true,
+	".ico": true, ".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".pdf": true, ".zip": true, ".mp4": true,
+	".webm": true, ".mp3": true}
+
+// decode returns raw bytes in a string; base64 may be unpadded, contain line
+// breaks and start with a data: URL's "data:<type>;base64,".
 func decode(path, content, encoding string) (string, error) {
 	switch strings.ToLower(encoding) {
 	case "", "utf8", "utf-8", "text":
+		if encoding == "" && binaryExts[strings.ToLower(pathpkg.Ext(path))] && looksBase64(content) {
+			return "", artifact.Errorf(artifact.ErrInvalidArgument, "content of %q looks like base64, but encoding is "+
+				"not set, so it would be stored as text: add encoding: \"base64\"", path)
+		}
 		return content, nil
 	case "base64":
+		if rest, ok := strings.CutPrefix(content, "data:"); ok {
+			if _, data, ok := strings.Cut(rest, ";base64,"); ok {
+				content = data
+			}
+		}
 		s := strings.Map(func(r rune) rune {
 			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
 				return -1
@@ -923,6 +940,20 @@ func decode(path, content, encoding string) (string, error) {
 		return string(data), nil
 	}
 	return "", artifact.Errorf(artifact.ErrInvalidArgument, "encoding of %q must be utf8 or base64, not %q", path, encoding)
+}
+
+// looksBase64 reports whether s is base64 or a base64 data: URL.
+func looksBase64(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "data:"); ok {
+		_, _, ok = strings.Cut(rest, ";base64,")
+		return ok
+	}
+	s = strings.TrimRight(strings.NewReplacer("\r", "", "\n", "").Replace(s), "=")
+	if len(s) < 8 {
+		return false
+	}
+	_, err := base64.RawStdEncoding.DecodeString(s)
+	return err == nil
 }
 
 // parseGrace returns 0, the instance default, for "".

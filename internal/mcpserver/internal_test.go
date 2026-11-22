@@ -100,6 +100,25 @@ func TestDecode(t *testing.T) {
 	if _, err := decode("p", "x", "hex"); err == nil {
 		t.Errorf("decode with encoding hex: no error")
 	}
+	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg=="
+	for _, c := range []struct{ path, content, enc, want string }{
+		{"img/a.png", "data:image/png;base64," + png, "base64", "\x89PNG"},
+		{"img/a.PNG", png, "base64", "\x89PNG"},
+		{"notes.txt", png, "", png[:4]},
+		{"img/a.png", "a short caption", "", "a short"},
+		{"img/a.png", "caption text", "", "caption"},
+	} {
+		got, err := decode(c.path, c.content, c.enc)
+		if err != nil || !strings.HasPrefix(got, c.want) {
+			t.Errorf("decode(%q, %.20q, %q) = %.20q, %v; want it to start with %q", c.path, c.content, c.enc, got, err, c.want)
+		}
+	}
+	for _, content := range []string{png, "data:image/png;base64," + png} {
+		_, err := decode("img/a.png", content, "")
+		if err == nil || !strings.Contains(err.Error(), `add encoding: "base64"`) {
+			t.Errorf("decode(img/a.png, %.20q, \"\") = %v, want an error naming encoding base64", content, err)
+		}
+	}
 }
 
 func TestObserverBoundsMethods(t *testing.T) {
