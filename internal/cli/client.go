@@ -497,6 +497,28 @@ func (c *Client) Publish(ctx context.Context, slug string, version int) (*api.Pu
 	return &out, nil
 }
 
+// DeleteVersion deletes one version that is neither published nor the latest.
+func (c *Client) DeleteVersion(ctx context.Context, slug string, version int) (*api.DeletedVersions, error) {
+	var out api.DeletedVersions
+	err := c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/versions/"+strconv.Itoa(version), nil, nil, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PruneVersions deletes every version but the keep newest, the published one
+// and the staged ones newer than it; with dryRun it only lists them.
+func (c *Client) PruneVersions(ctx context.Context, slug string, keep int, dryRun bool) (*api.DeletedVersions, error) {
+	var out api.DeletedVersions
+	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/versions/prune", nil, nil,
+		api.PruneRequest{Keep: keep, DryRun: dryRun}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // MarkStale marks the artifact stale; grace is a Go duration, "" for the
 // server default.
 func (c *Client) MarkStale(ctx context.Context, slug, grace string) (*api.StaleResult, error) {

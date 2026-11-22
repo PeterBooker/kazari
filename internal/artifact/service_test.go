@@ -187,7 +187,7 @@ func TestCreateAndGet(t *testing.T) {
 	want := &artifact.Artifact{
 		Slug: "demo", Name: "Demo", Description: "A demo", OwnerHandle: "alice",
 		Visibility: artifact.Unlisted, Metadata: map[string]string{"team": "core"},
-		PublishedVersion: 1, LatestVersion: 1, SizeBytes: 15,
+		PublishedVersion: 1, LatestVersion: 1, VersionCount: 1, SizeBytes: 15,
 		CreatedAt: start, UpdatedAt: start,
 	}
 	if diff := cmp.Diff(want, a); diff != "" {
@@ -196,8 +196,8 @@ func TestCreateAndGet(t *testing.T) {
 	wantV := &artifact.Version{
 		ID: v.ID, Number: 1, Label: "first", CreatedBy: "alice", CreatedAt: start, SizeBytes: 15,
 		Files: []artifact.File{
-			{Path: "app.js", Hash: sha("go()"), Size: 4, ContentType: "text/javascript; charset=utf-8"},
-			{Path: "index.html", Hash: sha("<h1>hi</h1>"), Size: 11, ContentType: "text/html; charset=utf-8"},
+			{Path: "app.js", Hash: sha("go()"), Size: 4, ContentType: "text/javascript; charset=utf-8", UploadedBy: "alice"},
+			{Path: "index.html", Hash: sha("<h1>hi</h1>"), Size: 11, ContentType: "text/html; charset=utf-8", UploadedBy: "alice"},
 		},
 	}
 	if diff := cmp.Diff(wantV, v); diff != "" {
@@ -499,7 +499,8 @@ func TestUpdateAddsVersion(t *testing.T) {
 	a, v, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{
 		Slug:  "demo",
 		Label: "second",
-		Files: append(files("c.txt", "new c", "d/e.txt", "ddd"), del("b.txt")),
+		// a.txt is sent again unchanged, which leaves it alice's.
+		Files: append(files("a.txt", "aaa", "c.txt", "new c", "d/e.txt", "ddd"), del("b.txt")),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -508,9 +509,9 @@ func TestUpdateAddsVersion(t *testing.T) {
 		t.Fatalf("new version = %+v", v)
 	}
 	wantFiles := []artifact.File{
-		{Path: "a.txt", Hash: sha("aaa"), Size: 3, ContentType: "text/plain; charset=utf-8"},
-		{Path: "c.txt", Hash: sha("new c"), Size: 5, ContentType: "text/plain; charset=utf-8"},
-		{Path: "d/e.txt", Hash: sha("ddd"), Size: 3, ContentType: "text/plain; charset=utf-8"},
+		{Path: "a.txt", Hash: sha("aaa"), Size: 3, ContentType: "text/plain; charset=utf-8", UploadedBy: "alice"},
+		{Path: "c.txt", Hash: sha("new c"), Size: 5, ContentType: "text/plain; charset=utf-8", UploadedBy: "bob"},
+		{Path: "d/e.txt", Hash: sha("ddd"), Size: 3, ContentType: "text/plain; charset=utf-8", UploadedBy: "bob"},
 	}
 	if diff := cmp.Diff(wantFiles, v.Files); diff != "" {
 		t.Fatalf("version 2 files (-want +got):\n%s", diff)
@@ -741,6 +742,25 @@ func TestWorkerControlled(t *testing.T) {
 			t.Helper()
 			e.transfer(t, "bob")
 			e.setUser(t, "role = 'admin', disabled_at = 1")
+		}, false},
+		// The new owner carries the script on unchanged, then deletes the
+		// version alice uploaded it in: it is still hers.
+		{"owner policy, the upload's version deleted", artifact.WriteOwner, func(t *testing.T, e *env) {
+			t.Helper()
+			e.transfer(t, "bob")
+			bob := artifact.Actor{Handle: "bob"}
+			e.versions(t, bob, "demo", 3, false)
+			if _, err := e.svc.DeleteVersion(e.ctx, bob, "demo", 1); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"shared, author disabled, the upload's version deleted", artifact.WriteShared, func(t *testing.T, e *env) {
+			t.Helper()
+			e.versions(t, artifact.Actor{Handle: "bob"}, "demo", 3, false)
+			e.setUser(t, "disabled_at = 1")
+			if _, _, err := e.svc.PruneVersions(e.ctx, artifact.System, "demo", 1, false); err != nil {
+				t.Fatal(err)
+			}
 		}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

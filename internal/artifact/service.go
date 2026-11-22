@@ -409,6 +409,11 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		if err := s.checkWritable(actor, a, involved, req.Restore); err != nil {
 			return err
 		}
+		// The sweep deletes versions past the number for whoever set it.
+		if _, set := req.Metadata[MetaKeepVersions]; set && !mayDelete(actor, a) {
+			return Errorf(ErrForbidden, "setting %s on %q needs the artifacts:delete scope or ownership, as deleting versions does",
+				MetaKeepVersions, req.Slug)
+		}
 		if err := s.applyFields(a, req); err != nil {
 			return err
 		}
@@ -483,6 +488,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	}
 	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Staged: req.Stage, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
+		// The base may have been deleted since it was read, and its blobs
+		// collected; from here on the collector waits for this hold.
+		if baseNumber > 0 {
+			if _, err := s.store.GetVersion(ctx, req.Slug, baseNumber); err != nil {
+				return err
+			}
+		}
 		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
 			return err
@@ -718,6 +730,13 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 		a.Metadata = m
 	}
 	return nil
+}
+
+// mayDelete reports whether actor may delete for good on a: any admin, the
+// owner, or a credential with artifacts:delete. Marking stale and deleting
+// versions take it on top of the write policy.
+func mayDelete(actor Actor, a *Artifact) bool {
+	return actor.Admin || actor.CanDelete || actor.Handle == a.OwnerHandle
 }
 
 // checkCSPOverride refuses kazari.csp where the instance ignores it, so a

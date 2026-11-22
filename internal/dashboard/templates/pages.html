@@ -27,7 +27,7 @@
 <td data-label="Owner"><a class="mono" href="/people/{{.OwnerHandle}}">{{.OwnerHandle}}</a></td>
 <td data-label="Open to" class="nowrap">{{.Open}}</td>
 <td data-label="Status" class="nowrap"><span class="status {{.State.Tone}}">{{.State.Label}}</span></td>
-<td class="num" data-label="Versions">{{.LatestVersion}}</td>
+<td class="num" data-label="Versions">{{.VersionCount}}</td>
 <td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
 {{if $.Data.ViewsOn}}<td class="num" data-label="Views, 30 days">{{.Views}}</td>
 {{end}}<td data-label="Updated" class="nowrap">{{when .UpdatedAt}}</td>

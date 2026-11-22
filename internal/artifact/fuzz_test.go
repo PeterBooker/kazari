@@ -410,3 +410,21 @@ func FuzzCheckPage(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseKeepVersions(f *testing.F) {
+	for _, s := range []string{"1", "20", "10000", "10001", "0", "-1", "+5", "05", " 5", "5 ", "five", "", "1e3", "0x10"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		n, err := artifact.ParseKeepVersions(s)
+		if err != nil {
+			return
+		}
+		if n < 1 || n > artifact.MaxKeepVersions {
+			t.Errorf("ParseKeepVersions(%q) = %d, want 1 to %d", s, n, artifact.MaxKeepVersions)
+		}
+		if got := fmt.Sprint(n); got != s {
+			t.Errorf("ParseKeepVersions(%q) = %d, which is written %q", s, n, got)
+		}
+	})
+}

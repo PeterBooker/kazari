@@ -377,3 +377,47 @@ func TestSweepSkipsArtifactChangedSinceListing(t *testing.T) {
 		t.Fatalf("after sweep: deleted %v stale %v, want live and not stale", a.DeletedAt, a.StaleAt)
 	}
 }
+
+// getVersionHook calls before once, as the store is asked for a version for
+// the nth time.
+type getVersionHook struct {
+	*sqlite.ArtifactStore
+	n      int
+	before func()
+}
+
+func (h *getVersionHook) GetVersion(ctx context.Context, slug string, number int) (*artifact.Version, error) {
+	if h.n--; h.n == 0 {
+		h.before()
+	}
+	return h.ArtifactStore.GetVersion(ctx, slug, number)
+}
+
+// A version built on a base that is deleted, and its blobs collected, after
+// the base was read would hold files whose content is gone.
+func TestUpdateOnBaseDeletedMeanwhile(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo", "index.html", "v1", "old.css", "only in version 1")
+	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo",
+		Files: []artifact.FileInput{files("index.html", "v2")[0], del("old.css")}}); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(2 * time.Hour) // past the collector's grace for version 1's blobs
+	hs := &getVersionHook{ArtifactStore: e.store, n: 2}
+	svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Now: e.clock.Now})
+	// The base is read first, the latest second.
+	hs.before = func() {
+		if _, err := svc.DeleteVersion(e.ctx, alice, "demo", 1); err != nil {
+			t.Errorf("delete version 1: %v", err)
+		}
+		if n, err := svc.CollectGarbage(e.ctx); err != nil || n == 0 {
+			t.Errorf("CollectGarbage = %d, %v; want version 1's blobs collected", n, err)
+		}
+	}
+	_, _, err := svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", BaseVersion: 1, Files: files("new.txt", "new")})
+	wantErr(t, "Update on a base deleted meanwhile", err, artifact.ErrVersionNotFound)
+	if a, err := e.store.Get(e.ctx, "demo"); err != nil || a.LatestVersion != 2 {
+		t.Errorf("after the refused update: %+v, %v; want latest version 2", a, err)
+	}
+}

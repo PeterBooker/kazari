@@ -80,7 +80,10 @@ func TestEventSentences(t *testing.T) {
 		{audit.Event{Actor: "ana", Action: audit.ArtifactCreate, Slug: "q3-report", Details: d{"version": "1"}}, "ana created q3-report"},
 		{audit.Event{Actor: "ana", Action: audit.ArtifactImport, Slug: "q3", Details: d{"source": "https://example.com/"}}, "ana imported q3 from https://example.com/"},
 		{audit.Event{Actor: "ana", Action: audit.ArtifactUpdate, Slug: "q3-report", Details: d{"version": "4", "size": "10"}}, "ana published version 4 of q3-report"},
+		{audit.Event{Actor: "ana", Action: audit.ArtifactUpdate, Slug: "q3-report", Details: d{"version": "5", "size": "10", "staged": "true"}}, "ana staged version 5 of q3-report"},
 		{audit.Event{Actor: "ana", Action: audit.ArtifactUpdate, Slug: "q3-report"}, "ana changed the details of q3-report"},
+		{audit.Event{Actor: "ana", Action: audit.ArtifactVersionDelete, Slug: "q3-report", Details: d{"versions": "2"}}, "ana deleted version 2 of q3-report"},
+		{audit.Event{Actor: "scheduler", Action: audit.ArtifactVersionDelete, Slug: "q3-report", Details: d{"versions": "1,2,3", "reason": "keep_versions"}}, "the scheduler deleted versions 1, 2, 3 of q3-report, past the number it keeps"},
 		{audit.Event{Actor: "boss", Action: audit.ArtifactPublish, Slug: "q3-report", Details: d{"version": "2"}}, "boss switched q3-report to version 2"},
 		{audit.Event{Actor: "ana", Action: audit.ArtifactStale, Slug: "notes", Details: d{"expires_at": "2026-12-05T12:00:00Z"}}, "ana marked notes stale, to move to the bin on 5 Dec 2026"},
 		{audit.Event{Actor: "ana", Action: audit.ArtifactUnstale, Slug: "notes"}, "ana cleared the stale mark on notes"},
@@ -140,7 +143,7 @@ func TestEventSentences(t *testing.T) {
 		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "api_key", "key_prefix": "abcdefgh"}}, "ana signed in with key abcdefgh"},
 		{audit.Event{Actor: "ana", Action: "oauth.signin", Details: d{"via": "oidc"}}, "ana signed in at the provider"},
 		// An action from a later version is not lost.
-		{audit.Event{Actor: "ana", Action: "artifact.version_delete", Slug: "q3-report"}, "ana did artifact.version_delete on q3-report"},
+		{audit.Event{Actor: "ana", Action: "artifact.comment", Slug: "q3-report"}, "ana did artifact.comment on q3-report"},
 		{audit.Event{Actor: "", Action: "something.new"}, "someone did something.new"},
 	}
 	seen := map[string]bool{}

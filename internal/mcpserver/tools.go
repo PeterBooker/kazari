@@ -49,7 +49,7 @@ type CreateInput struct {
 	Slug        string            `json:"slug" jsonschema:"permanent URL name: 3-63 of a-z 0-9 and -, no leading/trailing hyphen, no --"`
 	Name        string            `json:"name" jsonschema:"human-readable title"`
 	Description string            `json:"description" jsonschema:"one or two sentences on what the page is"`
-	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable and kazari.csp are interpreted by the server"`
+	Metadata    map[string]string `json:"metadata,omitempty" jsonschema:"string labels; kazari.spa, kazari.indexable, kazari.csp and kazari.keep_versions are interpreted by the server"`
 	Visibility  string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members (only people signed in to this instance, or with a share link); omitted means the instance default"`
 	Label       string            `json:"label,omitempty" jsonschema:"optional note on this version"`
 	Files       []FileInput       `json:"files,omitempty" jsonschema:"inline files; index.html is served at the root URL"`
@@ -618,6 +618,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if in.Version < 0 || in.Version > a.LatestVersion {
 				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d; its latest is %d",
 					a.Slug, in.Version, a.LatestVersion)
+			}
+			if in.Version > 0 && !slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == in.Version }) {
+				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "version %d of %s was deleted",
+					in.Version, a.Slug)
 			}
 			if slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == in.Version && v.Staged }) {
 				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,

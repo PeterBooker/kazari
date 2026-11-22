@@ -9,7 +9,8 @@ import (
 // its transaction. Users are named by handle, and the caller passes the time
 // so the store never reads the clock.
 type Store interface {
-	// Create inserts a with its first version (setting v.ID, v.Number = 1),
+	// Create inserts a with its first version (setting v.ID, v.Number = 1,
+	// and the UploadedBy of each file without one to v.CreatedBy),
 	// the blob rows and the owner's actor row. ErrSlugTaken also covers
 	// tombstones. ErrQuotaExceeded, with nothing written, when quota > 0 and
 	// the owner's usage plus v's would exceed it (see Usage).
@@ -18,14 +19,15 @@ type Store interface {
 	// Get returns tombstones too, or ErrNotFound.
 	Get(ctx context.Context, slug string) (*Artifact, error)
 
-	// GetVersion returns the version with its Files, or ErrVersionNotFound.
+	// GetVersion returns the version with its Files, or ErrVersionNotFound,
+	// whose message says when the version was deleted.
 	GetVersion(ctx context.Context, slug string, number int) (*Version, error)
 
 	// ListVersions returns newest first, without Files.
 	ListVersions(ctx context.Context, slug string) ([]Version, error)
 
 	// AddVersion calls fn on the current row and, when it returns nil, inserts
-	// v (setting v.ID and v.Number = latest+1), publishes it unless v.Staged,
+	// v (setting v.ID and v.Number = latest+1, and UploadedBy as Create does), publishes it unless v.Staged,
 	// writes what fn
 	// may change (name, description, visibility, metadata, the stale, expires,
 	// unpublished and deleted times, updated_at), records the blobs and marks
@@ -33,6 +35,15 @@ type Store interface {
 	// error from fn (returned as is), on ErrVersionConflict when expected != 0
 	// is not the latest number, or on a quota failure as for Create.
 	AddVersion(ctx context.Context, slug string, v *Version, expected int, quota int64, fn func(a *Artifact) error) error
+
+	// DeleteVersions calls fn on the current row and its versions (newest
+	// first, without Files) and, when it returns nil, deletes the versions
+	// whose numbers fn returned with their file rows, in one transaction, and
+	// returns those numbers. The blobs stay for the garbage collector. The
+	// published and the latest version are never deleted: ErrInvalidArgument,
+	// and ErrVersionNotFound for a number without a version, with nothing
+	// written, as on an error from fn, which is returned as is.
+	DeleteVersions(ctx context.Context, slug string, fn func(a *Artifact, vs []Version) ([]int, error)) ([]int, error)
 
 	// Update calls fn on the current row and, when it returns nil, writes its
 	// mutable fields (including OwnerHandle and PublishedVersion), clears
@@ -57,18 +68,20 @@ type Store interface {
 	List(ctx context.Context, q ListQuery) (ListPage, error)
 
 	// ResolvePublished includes the lifecycle times so the caller can choose
-	// between 404 and 410. ErrNotFound only when no row exists at all.
+	// between 404 and 410, and leaves LatestVersion 0. ErrNotFound only when
+	// no row exists at all.
 	ResolvePublished(ctx context.Context, slug string) (*Published, error)
 
-	// ResolveVersion is ResolvePublished for one version number;
-	// ErrVersionNotFound when the artifact exists but the version does not.
+	// ResolveVersion is ResolvePublished for one version number, with
+	// LatestVersion set; a number below the latest without a version has
+	// VersionDeleted set. ErrVersionNotFound for any other number the
+	// artifact has no version for.
 	ResolveVersion(ctx context.Context, slug string, number int) (*Published, error)
 
 	Files(ctx context.Context, versionID int64) (map[string]File, error)
 
-	// FileOrigin looks up the version's file at path, then the artifact's
-	// earliest version with the same content at that path. ErrNotFound when
-	// the version has no such file.
+	// FileOrigin looks up the version's file at path and its UploadedBy.
+	// ErrNotFound when the version has no such file.
 	FileOrigin(ctx context.Context, versionID int64, path string) (*FileOrigin, error)
 
 	// Usage sums every version of the handle's artifacts: its size plus
@@ -79,6 +92,10 @@ type Store interface {
 	ListExpired(ctx context.Context, now time.Time) ([]Artifact, error)          // expires_at <= now, not deleted
 	ListRetentionDue(ctx context.Context, before time.Time) ([]Artifact, error)  // deleted_at <= before, not purged
 	ListTombstonesDue(ctx context.Context, before time.Time) ([]Artifact, error) // purged_at <= before
+
+	// ListKeepVersions returns the artifacts whose metadata sets
+	// MetaKeepVersions, neither soft-deleted nor purged.
+	ListKeepVersions(ctx context.Context) ([]Artifact, error)
 
 	// Purge calls fn, when not nil, on the current row and, when it returns
 	// nil, deletes every version and file row, clears the published pointer

@@ -339,3 +339,77 @@ func TestMigrationFillsAuditSubject(t *testing.T) {
 		}
 	}
 }
+
+// Existing files take the uploader the earliest version with the same
+// content at the path gave them, as FileOrigin found it before 0019.
+func TestMigrationFillsFileUploader(t *testing.T) {
+	ctx := t.Context()
+	raw, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "kazari.db")+"?_pragma=foreign_keys(1)&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	sub, err := fs.Sub(migrationFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := fs.Glob(sub, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := fstest.MapFS{}
+	for _, name := range names {
+		if name >= "0019" {
+			continue
+		}
+		b, err := fs.ReadFile(sub, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		older[name] = &fstest.MapFile{Data: b}
+	}
+	if err := migrate(ctx, raw, older); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO user (id, handle, role, created_at) VALUES (1, 'ann', 'member', 1)`,
+		`INSERT INTO artifact (id, slug, owner_id, visibility, created_at, updated_at) VALUES (1, 'demo', 1, 'public', 1, 1)`,
+		`INSERT INTO version (id, artifact_id, number, created_by, created_at) VALUES
+			(1, 1, 1, 'ann', 1), (2, 1, 2, 'bob', 2), (3, 1, 3, 'bob', 3), (4, 1, 4, 'carol', 4)`,
+		`INSERT INTO version_file (version_id, path, blob_hash, size) VALUES
+			(1, 'sw.js', 'h1', 1), (1, 'index.html', 'h2', 1),
+			(2, 'sw.js', 'h1', 1), (2, 'index.html', 'h3', 1),
+			(3, 'sw.js', 'h4', 1), (3, 'index.html', 'h3', 1),
+			(4, 'sw.js', 'h1', 1), (4, 'index.html', 'h3', 1)`,
+	} {
+		if _, err := raw.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := migrate(ctx, raw, sub); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		version int
+		path    string
+		want    string
+	}{
+		{1, "sw.js", "ann"},
+		{1, "index.html", "ann"},
+		{2, "sw.js", "ann"},
+		{2, "index.html", "bob"},
+		{3, "sw.js", "bob"},
+		{3, "index.html", "bob"},
+		{4, "sw.js", "ann"},
+		{4, "index.html", "bob"},
+	} {
+		var got string
+		if err := raw.QueryRowContext(ctx, `SELECT uploaded_by FROM version_file WHERE version_id = ? AND path = ?`,
+			tt.version, tt.path).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != tt.want {
+			t.Errorf("version %d %s uploaded_by = %q, want %q", tt.version, tt.path, got, tt.want)
+		}
+	}
+}

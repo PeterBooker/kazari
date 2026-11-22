@@ -34,6 +34,8 @@ var slugRoutes = map[string]slugCase{
 	"DELETE /v1/artifacts/{slug}":                      {"?hard=true", nil, http.StatusNoContent},
 	"POST /v1/artifacts/{slug}/edit":                   {"/edit", api.EditRequest{Path: "index.html", Edits: []api.Edit{{OldText: "<h1>", NewText: "<h2>"}}}, http.StatusOK},
 	"POST /v1/artifacts/{slug}/publish":                {"/publish", api.PublishRequest{Version: 1}, http.StatusOK},
+	"DELETE /v1/artifacts/{slug}/versions/{n}":         {"/versions/9", nil, http.StatusNotFound},
+	"POST /v1/artifacts/{slug}/versions/prune":         {"/versions/prune", api.PruneRequest{Keep: 1}, http.StatusOK},
 	"POST /v1/artifacts/{slug}/stale":                  {"/stale", nil, http.StatusOK},
 	"DELETE /v1/artifacts/{slug}/stale":                {"/stale", nil, http.StatusOK},
 	"GET /v1/artifacts/{slug}/files/{path...}":         {"/files/index.html", nil, http.StatusOK},

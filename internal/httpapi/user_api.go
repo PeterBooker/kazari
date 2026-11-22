@@ -152,6 +152,8 @@ func (h *userAPI) routes() []route {
 		{"DELETE /v1/artifacts/{slug}", auth.ScopeDelete, true, h.deleteArtifact},
 		write("POST /v1/artifacts/{slug}/edit", h.editFile),
 		write("POST /v1/artifacts/{slug}/publish", h.publish),
+		write("DELETE /v1/artifacts/{slug}/versions/{n}", h.deleteVersion),
+		write("POST /v1/artifacts/{slug}/versions/prune", h.pruneVersions),
 		write("POST /v1/artifacts/{slug}/stale", h.markStale),
 		write("DELETE /v1/artifacts/{slug}/stale", h.unmarkStale),
 		read("GET /v1/artifacts/{slug}/files/{path...}", h.readFile),
@@ -714,6 +716,35 @@ func (h *userAPI) publish(w http.ResponseWriter, r *http.Request, p auth.Princip
 		return err
 	}
 	writeJSON(w, http.StatusOK, h.links.Result(a, req.Version))
+	return nil
+}
+
+func (h *userAPI) deleteVersion(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil || n < 1 {
+		return invalid("the version must be a positive version number")
+	}
+	a, err := h.d.Artifacts.DeleteVersion(r.Context(), present.Actor(p), r.PathValue("slug"), n)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, api.DeletedVersions{Deleted: []int{n}, Artifact: h.links.Artifact(a)})
+	return nil
+}
+
+func (h *userAPI) pruneVersions(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
+	var req api.PruneRequest
+	if err := decodeJSON(w, r, jsonLimit, &req, false); err != nil {
+		return err
+	}
+	a, deleted, err := h.d.Artifacts.PruneVersions(r.Context(), present.Actor(p), r.PathValue("slug"), req.Keep, req.DryRun)
+	if err != nil {
+		return err
+	}
+	if deleted == nil {
+		deleted = []int{}
+	}
+	writeJSON(w, http.StatusOK, api.DeletedVersions{Deleted: deleted, DryRun: req.DryRun, Artifact: h.links.Artifact(a)})
 	return nil
 }
 

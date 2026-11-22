@@ -620,7 +620,7 @@ Kazari runs seven maintenance jobs on its own, and an eighth with an identity pr
 
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period |
+| `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period. It also deletes the versions past an artifact's `kazari.keep_versions` |
 | `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
@@ -641,7 +641,7 @@ To see each job's interval, last run, next run and last error, list them:
 kazari admin jobs list
 ```
 
-A sweep or gc that changed something also logs a summary line, such as `sweep soft_deleted=1 purged=0 freed=0`.
+A sweep or gc that changed something also logs a summary line, such as `sweep soft_deleted=1 purged=0 freed=0 versions_deleted=0`.
 
 ### Running a job now
 
@@ -735,14 +735,14 @@ Each period is a `lifecycle` setting in the [configuration](configuration.md#lif
 
 A page can register a service worker on its own host. The browser keeps that worker after the person who uploaded it loses the artifact, so Kazari answers every worker-script request (`Service-Worker: script`) itself. The answer is a small script that replaces the worker and unregisters it, sent instead of the file when:
 
-- the artifact or version is not served: unpublished, soft-deleted, purged or never there;
+- the artifact or version is not served: unpublished, soft-deleted, purged, deleted or never there;
 - the path holds no file, or a file that is not JavaScript;
 - the artifact is `members` and the visitor has no access;
 - the script's uploader can no longer change the artifact: they are disabled, or under `auth.write_policy: owner` they are neither its owner nor an admin.
 
-The uploader is whoever first put that content at that path in the artifact, so a new version that carries the script on does not change it. To keep a worker after a transfer, or after its author is disabled, publish the script with changed content. Enabling the user again restores the script.
+The uploader is whoever first put that content at that path in the artifact, so a new version that carries the script on does not change it, and nor does deleting the version it was uploaded in. To keep a worker after a transfer, or after its author is disabled, publish the script with changed content. Enabling the user again restores the script.
 
-A purged artifact also sends `Clear-Site-Data: "storage"`. Other answers leave the origin's storage alone, because a first registration looks the same as an update check, and a page that registers a missing script would lose its visitors' data on every load.
+A purged artifact, and the host of a deleted version of a page that is not `members`, also send `Clear-Site-Data: "storage"`. Other answers leave the origin's storage alone, because a first registration looks the same as an update check, and a page that registers a missing script would lose its visitors' data on every load.
 
 The browser checks for an update only when it returns to the host, and it runs the check after the navigation. The first visit after the change therefore still passes through the old worker, which can see that request and its response, and a browser that never returns keeps the worker. On a `--v<N>` host, whose files are cached as immutable, a worker that asked for cached updates can put the check off for up to a day. After disabling a user or transferring an artifact, revoke any share link that matters.
 
@@ -755,6 +755,8 @@ The browser checks for an update only when it returns to the host, and it runs t
 Each user has a quota, `quota_bytes`. A new user gets `limits.default_user_quota`, 2 GiB by default, and `0` means unlimited.
 
 Usage is the sum of the sizes of every version of every artifact the user owns, counted logically, plus 4 KiB for each file of each version, whatever its size, because every version keeps a database row per file. A 5 MiB site of 20 files with ten versions uses 50.8 MiB of quota, even though unchanged files are stored once. Soft-deleted artifacts keep counting until they are purged; a hard delete frees the space at once.
+
+To free the space of an artifact edited often, delete its old versions: run `kazari versions prune <slug> --keep 20` once, or set its `kazari.keep_versions` metadata for every [sweep](#scheduled-jobs) ([deleting versions](cli.md#versions)). The usage drops at once.
 
 Kazari checks the owner's quota whenever a version is added, whoever adds it. Under the `shared` write policy, a version that another member adds to someone else's artifact counts against the owner's quota too, and a version that would exceed it gets `403 quota_exceeded`. An admin transfer moves the artifact's usage to the new owner.
 
@@ -867,7 +869,7 @@ kazari admin jobs run gc
 Blobs written in the last hour survive one more `gc` run.
 
 > [!WARNING]
-> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long; purge them there if needed. A [staged version](api.md#staging-a-version) is `private, no-cache` until it is published.
+> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long, a deleted version too; purge them there if needed. A [staged version](api.md#staging-a-version) is `private, no-cache` until it is published.
 
 ## Audit log
 
@@ -884,6 +886,7 @@ The actions, with the details each records:
 | `artifact.create`     | Created (details: `version`, `size`)                                 |
 | `artifact.update`     | Fields changed or version added (`version`, `size` when a version; `staged` when not published) |
 | `artifact.publish`    | Published version changed (`version`)                                |
+| `artifact.version_delete` | Versions deleted (`versions`, comma-separated; `reason: keep_versions` from the sweep) |
 | `artifact.stale`      | Marked stale (`expires_at`)                                          |
 | `artifact.unstale`    | Stale mark cleared                                                   |
 | `artifact.visibility` | Visibility set, including unpublish and `hide` (`visibility`)        |
@@ -961,7 +964,7 @@ In proxy mode, the proxy has its own limit. nginx defaults to `client_max_body_s
 
 ### `404` or `410` on a page
 
-`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period.
+`404` with the instance page means there is no such slug, the artifact is unpublished or soft-deleted, or there is no such version on a `--v<N>` host. `410 Gone` means the artifact was purged and its slug is still in the tombstone period, or, on a `--v<N>` host of a page that is not `members`, that the version was deleted.
 
 `kazari get <slug>` shows which timestamps are set.
 

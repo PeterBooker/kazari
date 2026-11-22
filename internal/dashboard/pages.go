@@ -24,6 +24,7 @@ var pagesFlashes = map[string]string{
 	"page-restored":            "The page is restored from the bin.",
 	"page-handed-over":         "The page has a new owner.",
 	"version-published":        "That version is now the published one.",
+	"version-deleted":          "That version is deleted.",
 	"version-published-hidden": "That version is now the published one. The page is still hidden: publish it again under Address and access to show it.",
 	"link-revoked":             "The share link is revoked.",
 	"page-taken-down":          "The page is hidden. Its owner can still sign in.",
@@ -47,6 +48,8 @@ func (s *server) pagesRoutes(mux *http.ServeMux) {
 	s.action(mux, "POST /pages/{slug}/owner", s.pagesHandOver)
 	s.view(mux, "GET /pages/{slug}/versions/{n}/publish", s.pagesPublishConfirm)
 	s.action(mux, "POST /pages/{slug}/versions/{n}/publish", s.pagesPublish)
+	s.view(mux, "GET /pages/{slug}/versions/{n}/delete", s.pagesDeleteVersionConfirm)
+	s.action(mux, "POST /pages/{slug}/versions/{n}/delete", s.pagesDeleteVersion)
 	s.issue(mux, "POST /pages/{slug}/links", s.pagesLinkCreate)
 	s.view(mux, "GET /pages/{slug}/links/{prefix}/revoke", s.pagesLinkRevokeConfirm)
 	s.action(mux, "POST /pages/{slug}/links/{prefix}/revoke", s.pagesLinkRevoke)
@@ -289,6 +292,7 @@ type versionRow struct {
 	artifact.Version
 	URL, Host string
 	Published bool
+	Latest    bool
 }
 
 type linkRow struct {
@@ -352,7 +356,8 @@ func (s *server) pageView(ctx context.Context, c *request, slug string) (*pageDa
 	}
 	for _, v := range versions {
 		vu := s.d.Links.VersionURL(a.Slug, v.Number)
-		d.Versions = append(d.Versions, versionRow{Version: v, URL: vu, Host: hostOf(vu), Published: v.Number == a.PublishedVersion})
+		d.Versions = append(d.Versions, versionRow{Version: v, URL: vu, Host: hostOf(vu), Published: v.Number == a.PublishedVersion,
+			Latest: v.Number == a.LatestVersion})
 	}
 	// A page in the bin has links, but they open nothing and cannot change
 	// until it is restored.
@@ -555,6 +560,48 @@ func (s *server) pagesPublish(w http.ResponseWriter, r *http.Request, c *request
 		return s.done(w, r, pagePath(a.Slug), "version-published-hidden")
 	}
 	return s.done(w, r, pagePath(a.Slug), "version-published")
+}
+
+func (s *server) pagesDeleteVersionConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
+	a, v, err := s.version(r, c)
+	if err != nil {
+		return err
+	}
+	if a.DeletedAt != nil {
+		return refused("The page is in the bin. Restore it first.")
+	}
+	version := strconv.Itoa(v.Number)
+	switch v.Number {
+	case a.PublishedVersion:
+		return refused("Version %d is the published one. Publish another version first.", v.Number)
+	case a.LatestVersion:
+		return refused("Version %d is the newest. It stays, so its number never shows other content.", v.Number)
+	}
+	host := hostOf(s.d.Links.VersionURL(a.Slug, v.Number))
+	d := pageConfirmation(a.Slug)
+	d.Title = "Delete version " + version + " of " + a.Slug
+	d.Ends = []string{
+		"Version " + version + " is gone for good: nothing brings it back.",
+		"Its own address " + host + " stops serving it.",
+		"The space it took counts against the owner's storage no more.",
+	}
+	d.Stays = []string{"Every other version, and the page at its address, stay as they are."}
+	if v.Staged {
+		d.Ends = append(d.Ends, "It was staged, so nobody outside the instance saw it.")
+	}
+	d.Action, d.Button, d.Danger = pagePath(a.Slug)+"/versions/"+version+"/delete", "Delete version "+version, true
+	return s.confirm(w, r, c, d)
+}
+
+func (s *server) pagesDeleteVersion(w http.ResponseWriter, r *http.Request, c *request) error {
+	a, v, err := s.version(r, c)
+	if err != nil {
+		return err
+	}
+	if _, err := s.d.Artifacts.DeleteVersion(r.Context(), c.actor, a.Slug, v.Number); err != nil {
+		return pageErr(err)
+	}
+	return s.done(w, r, pagePath(a.Slug), "version-deleted")
 }
 
 // pageConfirmation starts the confirmation of a change to the page slug,

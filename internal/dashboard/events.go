@@ -115,6 +115,10 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 	},
 	audit.ArtifactUpdate: func(s *eventLine, e audit.Event) {
 		if v := e.Details["version"]; v != "" {
+			if e.Details["staged"] == "true" {
+				s.words("staged version ").words(v).words(" of ").page(e.Slug, true)
+				return
+			}
 			s.words("published version ").words(v).words(" of ").page(e.Slug, true)
 			return
 		}
@@ -122,6 +126,17 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 	},
 	audit.ArtifactPublish: func(s *eventLine, e audit.Event) {
 		s.words("switched ").page(e.Slug, true).words(" to version ").words(e.Details["version"])
+	},
+	audit.ArtifactVersionDelete: func(s *eventLine, e audit.Event) {
+		vs := strings.Split(e.Details["versions"], ",")
+		noun := "version "
+		if len(vs) > 1 {
+			noun = "versions "
+		}
+		s.words("deleted "+noun+strings.Join(vs, ", ")+" of ").page(e.Slug, true)
+		if e.Details["reason"] == "keep_versions" {
+			s.words(", past the number it keeps")
+		}
 	},
 	audit.ArtifactStale: func(s *eventLine, e audit.Event) {
 		s.words("marked ").page(e.Slug, true).words(" stale")
