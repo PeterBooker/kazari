@@ -48,6 +48,9 @@ enableGitInfo = true
     source = "../docs"
     target = "content/docs"
   [[module.mounts]]
+    source = "../CHANGELOG.md"
+    target = "content/docs/changelog.md"
+  [[module.mounts]]
     source = "static"
     target = "static"
   # The deployment files, so that https://kazari.io/deploy/compose.yml is the

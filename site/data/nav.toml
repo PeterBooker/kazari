@@ -65,3 +65,7 @@
     title = "Development"
     path = "/docs/development"
     description = "Working on Kazari itself: running the server from source or the Docker image, the checks CI runs, releasing, and building the website."
+  [[sections.pages]]
+    title = "Changelog"
+    path = "/docs/changelog"
+    description = "What changed in each Kazari release, newest first: new features, changes in behaviour, fixes, and what to do before and after upgrading."

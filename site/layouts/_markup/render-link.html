@@ -4,6 +4,9 @@
 {{- if and (not $u.IsAbs) (strings.HasSuffix $u.Path ".md") -}}
   {{- if eq (path.Base $u.Path) "README.md" -}}
     {{- $href = printf "%s/blob/%s/README.md" site.Params.repo site.Params.branch -}}
+  {{- else if eq $u.Path "../CHANGELOG.md" -}}
+    {{- /* The root CHANGELOG.md is mounted as the docs changelog page. */ -}}
+    {{- $href = (site.GetPage "/docs/changelog").RelPermalink -}}
   {{- else -}}
     {{- with .PageInner.GetPage (strings.TrimSuffix ".md" $u.Path) -}}
       {{- $href = .RelPermalink -}}

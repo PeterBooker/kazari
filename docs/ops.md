@@ -191,9 +191,9 @@ docker compose up -d
 
 The container keeps its data in the volume `kazari_data`.
 
-### Upgrading to 0.8
+### Upgrading to 0.7
 
-Kazari 0.8 adds [built-in accounts](identity.md#built-in-accounts) and the [dashboard](dashboard.md). An instance that signs people in at an identity provider keeps doing so. Four things change for the others, and for scripts:
+Kazari 0.7 adds [built-in accounts](identity.md#built-in-accounts) and the [dashboard](dashboard.md). An instance that signs people in at an identity provider keeps doing so. Four things change for the others, and for scripts:
 
 - **Sign-in is a password.** Without an `auth.oidc` section, the sign-in page asks for a handle and a password, with **Use an API key instead** under the form. People who signed in with an API key have no password yet, and their keys keep working. To give a person a password, make them a reset link with `kazari admin users reset-password <handle>` and send it to them ([resetting a password](identity.md#resetting-a-password)). To keep sign-in by API key alone, set `auth.local.enabled` to `false`.
 - **The dashboard needs an address with `admin.listen`.** The admin host serves the dashboard at `/`. On an instance that sets `admin.listen`, the dashboard stays off until `admin.public_url` says where a browser reaches the listener ([the dashboard's address](configuration.md#the-dashboards-address)).

@@ -158,15 +158,31 @@ GitHub Actions runs five workflows from `.github/workflows/`:
 
 ### Releasing
 
-Before tagging, record the database schema of the release, so that later migrations are tested against it. The command writes `internal/sqlite/testdata/schema/0.7.0.sql`; commit it:
+A release is a pull request, then a tag. The pull request adds the version's section to [`CHANGELOG.md`](../CHANGELOG.md) and records the release's database schema. In Claude Code, the `release` skill in `.claude/skills/` drafts both from the pull requests merged since the last tag and opens the pull request; edit the section there before merging.
+
+Each section starts with the bare version as its heading, then the date, a short summary and the changes under **Upgrading**, **New**, **Changed** and **Fixed**:
+
+```markdown
+## 0.8.0
+
+Released 2026-12-01.
+```
+
+To see the release notes a tag will publish, print its section:
 
 ```sh
-go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.7.0
+.github/scripts/release-notes.sh 0.8.0
+```
+
+The schema of the release is recorded so that later migrations are tested against it. The command writes `internal/sqlite/testdata/schema/0.8.0.sql`; commit it in the same pull request:
+
+```sh
+go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.8.0
 ```
 
 `TestMigrateFromEveryRelease` migrates every recorded schema and fails when the result differs from a fresh database.
 
-To release, push a tag named for the version without a `v`, such as `0.7.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`, one image for `linux/amd64` and `linux/arm64` with an SBOM attached. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
+Once the pull request is merged, push a tag named for the version without a `v`, such as `0.8.0`, on the merge commit. `release.yml` refuses a tag that is not a version or has no section in `CHANGELOG.md`, runs `ci.yml` on the tagged commit, then runs goreleaser with that section as the release notes. goreleaser publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`, one image for `linux/amd64` and `linux/arm64` with an SBOM attached. `release.yml` then records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
 
 Two builds of one commit give the same archives and packages: the binary and every file carry the commit's time, not the time of the build.
 

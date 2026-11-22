@@ -58,8 +58,10 @@ go run ./cmd/kazari check       # preflight: config, DNS, DNS token, ports (--lo
 # release dry run (real releases run in GitHub Actions from a version tag without a v, such as 0.3.0)
 goreleaser release --snapshot --clean --skip=publish,sign,sbom
 
-# before tagging a release: record its schema, which TestMigrateFromEveryRelease migrates from then on
-go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.7.0
+# before tagging a release (the release skill prepares the pull request): print the release notes the tag will
+# publish from CHANGELOG.md, and record the schema, which TestMigrateFromEveryRelease migrates from then on
+.github/scripts/release-notes.sh 0.8.0
+go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.8.0
 ```
 
 ## Configuration
