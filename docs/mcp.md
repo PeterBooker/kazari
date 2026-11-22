@@ -166,7 +166,7 @@ A run whose credential has ended gets `401` on every request, and may report onl
 
 - `kazari admin keys list ana` shows whether the key expired or was revoked.
 - `kazari admin grants list ana` shows the user's connections, with the last refresh and the expiry of each. A connection that is not listed has lapsed or was revoked.
-- `kazari admin audit --since 720h` shows `oauth.revoke` and `key.revoke` events, with the reason where Kazari ended a connection itself.
+- `kazari admin audit --since 30d` shows `oauth.revoke` and `key.revoke` events, with the reason where Kazari ended a connection itself.
 
 If the run reaches the server and a call fails with `forbidden`, the message names the scope the key lacks or the slug patterns it is restricted to.
 
