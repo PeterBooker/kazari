@@ -600,10 +600,10 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	// get the per-IP budget every other surface has before authentication.
 	accountIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	accountLimit := ratelimit.Middleware(accountIPs, ratelimit.IPKey, nil)
-	apexH, err := apexHandler(cfg)
-	if err != nil {
-		return err
-	}
+	front := account.NewFront(account.FrontOptions{
+		URL: strings.TrimSuffix(cfg.ExternalURL(""), "/"), MCPURL: mcpURL, APIURL: apiBase, AdminURL: dashboardURL(cfg),
+	})
+	apexH := apexHandler(front.Home)
 
 	adminHost := adminH
 	if cfg.DashboardEnabled() {
@@ -650,8 +650,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	mcpIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	mcpLimit := ratelimit.Middleware(mcpIPs, ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
-		api:     a.surface(instrument.SurfaceAPI, true, apiH),
-		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		api:     a.surface(instrument.SurfaceAPI, true, apiHost(front.API, apiH)),
+		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(frontPage(front.Connector, mcpMux(oauthSvc.Handler(), mcpH)))),
 		admin:   publicAdmin,
 		apex:    a.surface(instrument.SurfaceApex, true, apexH),
 		account: a.surface(instrument.SurfaceAccount, true, accountLimit(accountH)),

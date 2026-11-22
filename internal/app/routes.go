@@ -1,23 +1,19 @@
 package app
 
 import (
-	"bytes"
-	_ "embed"
-	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/PeterBooker/kazari/internal/account"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/session"
+	"github.com/PeterBooker/kazari/internal/theme"
 )
-
-//go:embed apex.html
-var apexPage string
 
 type hosts struct {
 	api, mcp, admin, apex, account, site http.Handler
@@ -106,28 +102,33 @@ func hostname(host string) string {
 
 // apexHandler serves /health and the instance page; neither discloses the
 // version.
-func apexHandler(cfg config.Config) (http.Handler, error) {
-	t, err := template.New("apex").Parse(apexPage)
-	if err != nil {
-		return nil, fmt.Errorf("app: apex page: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, struct{ BaseDomain string }{cfg.BaseDomain}); err != nil {
-		return nil, fmt.Errorf("app: apex page: %w", err)
-	}
-	page := buf.Bytes()
-
+func apexHandler(home http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpapi.Liveness)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Length", strconv.Itoa(len(page)))
-		if r.Method != http.MethodHead {
-			w.Write(page)
-		}
-	})
+	mux.Handle("GET /{$}", home)
 	mux.HandleFunc("/", http.NotFound)
-	return middleware.Routed(mux), nil
+	return middleware.Routed(mux)
+}
+
+// frontPage answers a browser that opens the root of a host whose root is
+// no page, the connector or the API address, with page; every other request
+// goes on to next.
+func frontPage(page, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && session.Navigation(r) {
+			page.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// apiHost serves the API with its front page and the theme that page loads.
+func apiHost(page, api http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET "+account.APIAssetPrefix, theme.Handler(account.APIAssetPrefix))
+	mux.Handle("/", frontPage(page, api))
+	return mux
 }
 
 func redirectHandler(cfg config.Config) http.Handler {

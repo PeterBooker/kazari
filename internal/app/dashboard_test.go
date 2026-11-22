@@ -609,3 +609,47 @@ func TestAccountAndDashboardMetrics(t *testing.T) {
 		}
 	}
 }
+
+// A browser that opens a host whose root is no page finds words and links,
+// not an error: the apex, the connector address and the API address. A
+// client of the API or of MCP gets what it always got.
+func TestFrontPages(t *testing.T) {
+	in := start(t, testConfig(t))
+	addr := in.app.Addrs().HTTP
+	b := newBrowser(t, addr)
+	for _, tt := range []struct {
+		name, url string
+		want      []string
+	}{
+		{"the apex", "http://localhost/", []string{"Sign in to your account", `href="http://localhost/account/"`, `value="http://mcp.localhost/"`, "Open the dashboard"}},
+		{"the connector address", "http://mcp.localhost/", []string{"The connector <b>address</b>", `value="http://mcp.localhost/"`, `href="/oauth/assets/theme.`}},
+		{"the API address", "http://api.localhost/", []string{"The API <b>address</b>", "export KAZARI_URL=http://api.localhost", `href="/assets/theme.`}},
+	} {
+		r := b.get(tt.url)
+		wantStatus(t, r, http.StatusOK, tt.name)
+		if !strings.HasPrefix(r.header.Get("Content-Type"), "text/html") || r.header.Get("Content-Security-Policy") == "" {
+			t.Errorf("%s: Content-Type %q, CSP %q", tt.name, r.header.Get("Content-Type"), r.header.Get("Content-Security-Policy"))
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(r.body, want) {
+				t.Errorf("%s lacks %q", tt.name, want)
+			}
+		}
+		for _, bad := range []string{"An Kazari", "<style", " style="} {
+			if strings.Contains(r.body, bad) {
+				t.Errorf("%s holds %q", tt.name, bad)
+			}
+		}
+		css := regexp.MustCompile(`href="(/[a-z/]+/theme\.[^"]+\.css)"`).FindStringSubmatch(r.body)
+		if css == nil {
+			t.Errorf("%s loads no stylesheet", tt.name)
+			continue
+		}
+		host := strings.TrimSuffix(tt.url, "/")
+		wantStatus(t, get(t, client(addr), host+css[1]), http.StatusOK, tt.name+": its stylesheet")
+	}
+	api := get(t, client(addr), "http://api.localhost/")
+	if strings.HasPrefix(api.header.Get("Content-Type"), "text/html") {
+		t.Errorf("a client of the API at its root got the page: %q", truncate(api.body))
+	}
+}
