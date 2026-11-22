@@ -153,10 +153,10 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 			out.Encoding = "base64"
 			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)+" "+f.ContentType),
 				&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
-				URI:      fileURI(in.Slug, f.Path),
-				MIMEType: f.ContentType,
-				Blob:     fc.data,
-			}}}}, out, nil
+					URI:      fileURI(in.Slug, f.Path),
+					MIMEType: f.ContentType,
+					Blob:     fc.data,
+				}}}}, out, nil
 		}
 	})
 }
