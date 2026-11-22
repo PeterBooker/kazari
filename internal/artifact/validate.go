@@ -45,21 +45,57 @@ var (
 )
 
 // ValidateSlug allows lower-case letters, digits and single hyphens ("--"
-// marks version hosts), 3 to 63 characters, and no reserved slug.
+// marks version hosts), 3 to 63 characters, and no reserved slug. The error
+// suggests a slug made from the one given, when one can be.
 func ValidateSlug(slug string, reserved []string) error {
+	var err error
 	switch {
 	case len(slug) < SlugMinLen:
-		return Errorf(ErrInvalidSlug, "slug %q is shorter than %d characters", slug, SlugMinLen)
+		err = Errorf(ErrInvalidSlug, "slug %q is shorter than %d characters", slug, SlugMinLen)
 	case len(slug) > SlugMaxLen:
-		return Errorf(ErrInvalidSlug, "slug %q is longer than %d characters", slug, SlugMaxLen)
+		err = Errorf(ErrInvalidSlug, "slug %q is longer than %d characters", slug, SlugMaxLen)
 	case !slugRe.MatchString(slug):
-		return Errorf(ErrInvalidSlug, "slug %q must match %s", slug, slugRe.String())
+		err = Errorf(ErrInvalidSlug, "slug %q must be lower-case letters a-z, digits and hyphens, starting and ending "+
+			"with a letter or digit", slug)
 	case strings.Contains(slug, "--"):
-		return Errorf(ErrInvalidSlug, "slug %q may not contain \"--\"", slug)
+		err = Errorf(ErrInvalidSlug, "slug %q may not contain \"--\"", slug)
 	case slices.Contains(reserved, slug):
 		return Errorf(ErrInvalidSlug, "slug %q is reserved", slug)
+	default:
+		return nil
 	}
-	return nil
+	if s := SuggestSlug(slug); s != "" && !slices.Contains(reserved, s) {
+		e := err.(*Error)
+		e.Message += fmt.Sprintf("; %q would do", s)
+	}
+	return err
+}
+
+// SuggestSlug makes a valid slug from s: lower case, with runs of other
+// characters as single hyphens, cut to SlugMaxLen. It is "" when nothing
+// valid remains, and never s itself.
+func SuggestSlug(s string) string {
+	var b strings.Builder
+	hyphen := false
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			if hyphen && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			hyphen = false
+			continue
+		}
+		hyphen = true
+	}
+	out := b.String()
+	if len(out) > SlugMaxLen {
+		out = strings.TrimRight(out[:SlugMaxLen], "-")
+	}
+	if out == s || len(out) < SlugMinLen {
+		return ""
+	}
+	return out
 }
 
 // ValidatePath returns p cleaned, rejecting anything that could escape or

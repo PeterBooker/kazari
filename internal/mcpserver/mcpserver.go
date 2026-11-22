@@ -70,7 +70,9 @@ type Options struct {
 	MaxChunkBytes       int64
 	MaxTotalBytes       int64
 	CSP                 string
-	ReservedSlugs       []string
+	// AllowCSPOverride says the instance adds an artifact's kazari.csp to CSP.
+	AllowCSPOverride bool
+	ReservedSlugs    []string
 	// MaxInlineReadBytes is the largest text file read_file returns inline and the
 	// largest file of any kind the file resource returns.
 	MaxInlineReadBytes int64

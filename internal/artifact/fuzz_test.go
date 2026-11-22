@@ -45,6 +45,24 @@ func FuzzValidateSlug(f *testing.F) {
 	})
 }
 
+func FuzzSuggestSlug(f *testing.F) {
+	for _, s := range []string{"Q3_Report", "my demo", "--a--b--", "Démo page", "ab", strings.Repeat("ab-", 40), "demo", ""} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		got := artifact.SuggestSlug(s)
+		if got == "" {
+			return
+		}
+		if err := artifact.ValidateSlug(got, nil); err != nil || got == s {
+			t.Errorf("SuggestSlug(%q) = %q, want a valid slug other than the input: %v", s, got, err)
+		}
+		if again := artifact.SuggestSlug(got); again != "" {
+			t.Errorf("SuggestSlug(%q) = %q, then %q; want no suggestion for a valid slug", s, got, again)
+		}
+	})
+}
+
 func FuzzValidatePath(f *testing.F) {
 	for _, p := range []string{"index.html", "a/b/c.css", "./a//b/../c.js", "a/./b", "dir/", "/abs", "..", "../x", "a/../../x",
 		"a\\b", "a\x00b", "a\x7fb", "café.html", "bad\xff.html", ".kazari", ".kazari/x", "a/.kazari/x", ".kazarix",

@@ -187,7 +187,8 @@ type VisibilityInput struct {
 type ShareLinkInput struct {
 	Slug      string `json:"slug" jsonschema:"artifact to share"`
 	Label     string `json:"label,omitempty" jsonschema:"note on who the link is for, e.g. Acme review"`
-	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h or 14d; default 7d"`
+	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h, 14d or 2w; default 7d"`
+	Version   int    `json:"version,omitempty" jsonschema:"also return version_url, the link opening this version"`
 }
 
 // ListShareLinksInput is the input of list_share_links.
@@ -263,7 +264,7 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 			return &mcp.CallToolResult{InputRequests: ir.requests}, zero, nil
 		}
 		if err != nil {
-			return nil, zero, b.toolError(ctx, t.Name, err)
+			return nil, zero, b.toolError(ctx, t.Name, b.notFound(ctx, present.Actor(p), req, err))
 		}
 		if w, ok := any(out).(warned); ok {
 			for _, line := range w.warningLines() {
@@ -589,23 +590,33 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "create_share_link", Annotations: annotations("Create share link", false, false, false)},
-		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (api.CreatedShareLink, string, error) {
+		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareLinkInput) (ShareLinkResult, string, error) {
 			ttl, err := present.ParseDuration("expires_in", in.ExpiresIn)
 			if err != nil {
-				return api.CreatedShareLink{}, "", err
-			}
-			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
-			if err != nil {
-				return api.CreatedShareLink{}, "", err
+				return ShareLinkResult{}, "", err
 			}
 			a, _, err := arts.Get(ctx, actor, in.Slug)
 			if err != nil {
-				return api.CreatedShareLink{}, "", err
+				return ShareLinkResult{}, "", err
 			}
-			out := links.CreatedShareLink(a, l, token, b.o.Now())
+			if in.Version < 0 || in.Version > a.LatestVersion {
+				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d; its latest is %d",
+					a.Slug, in.Version, a.LatestVersion)
+			}
+			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
+			if err != nil {
+				return ShareLinkResult{}, "", err
+			}
+			out := ShareLinkResult{URL: links.ShareURL(a.Slug, token), Slug: a.Slug, Visibility: string(a.Visibility),
+				Prefix: l.Prefix, Label: l.Label, ExpiresAt: l.ExpiresAt}
 			line := fmt.Sprintf("Share link for %s: %s (until %s). Anyone with this URL can open the page until then; "+
 				"give it to the user, and revoke it with revoke_share_link prefix %q.",
 				a.Slug, out.URL, l.ExpiresAt.Format(time.RFC3339), l.Prefix)
+			if in.Version > 0 {
+				latest := strings.TrimSuffix(links.ArtifactURL(a.Slug), "/")
+				out.VersionURL = strings.TrimSuffix(links.VersionURL(a.Slug, in.Version), "/") + strings.TrimPrefix(out.URL, latest)
+				line += fmt.Sprintf(" Version %d: %s.", in.Version, out.VersionURL)
+			}
 			if !a.Visibility.Gated() {
 				line += fmt.Sprintf(" Note: %s is %s, so anyone can open it without the link; set_visibility \"members\" "+
 					"limits it to members and link holders.", a.Slug, a.Visibility)

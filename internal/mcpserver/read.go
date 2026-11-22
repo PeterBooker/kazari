@@ -98,14 +98,14 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 		Description: b.text.tools["read_file"],
 		Annotations: annotations("Read file", true, false, true),
 	}
-	mcp.AddTool(s, t, func(ctx context.Context, _ *mcp.CallToolRequest, in ReadFileInput) (res *mcp.CallToolResult, out ReadFileResult, err error) {
+	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (res *mcp.CallToolResult, out ReadFileResult, err error) {
 		defer b.recoverTool(ctx, t.Name, func(e error) { res, out, err = nil, ReadFileResult{}, e })
 		if err := requireScope(p, auth.ScopeRead); err != nil {
 			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 		}
 		a, _, err := b.d.Artifacts.Get(ctx, actor, in.Slug)
 		if err != nil {
-			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
+			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, b.notFound(ctx, actor, req, err))
 		}
 		version := in.Version
 		if version == 0 {

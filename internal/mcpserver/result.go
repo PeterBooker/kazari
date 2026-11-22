@@ -52,6 +52,19 @@ type WriteResult struct {
 	description string
 }
 
+// ShareLinkResult is the structured result of create_share_link: the URLs,
+// which hold the link's secret and are shown only this once, and what
+// list_share_links and revoke_share_link need.
+type ShareLinkResult struct {
+	URL        string    `json:"url"`
+	VersionURL string    `json:"version_url,omitempty"`
+	Slug       string    `json:"slug"`
+	Visibility string    `json:"visibility"`
+	Prefix     string    `json:"prefix"`
+	Label      string    `json:"label,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
 // EditedFile is the outcome of one file's edits in update_artifact.
 type EditedFile struct {
 	Path  string            `json:"path"`

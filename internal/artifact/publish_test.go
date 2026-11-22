@@ -172,3 +172,27 @@ func TestEditConflictSaysWhetherEditsApply(t *testing.T) {
 		}
 	}
 }
+
+// Where the instance ignores kazari.csp, setting it is refused rather than
+// accepted and ignored; removing it and other keys still work.
+func TestCSPOverrideRefusedWhenOff(t *testing.T) {
+	csp := map[string]string{artifact.MetaCSP: "frame-src https://www.youtube.com"}
+	for _, allow := range []bool{false, true} {
+		e := newEnv(t, artifact.Options{AllowCSPOverride: allow})
+		alice := e.user(t, "alice")
+		_, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "demo", Metadata: csp, Files: files("index.html", "x")})
+		if allow != (err == nil) || !allow && !errors.Is(err, artifact.ErrInvalidMetadata) {
+			t.Errorf("Create with kazari.csp, overrides %v: err = %v", allow, err)
+		}
+		e.create(t, alice, "plain", "index.html", "x")
+		_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "plain",
+			Metadata: map[string]*string{artifact.MetaCSP: new("frame-src https://www.youtube.com")}})
+		if allow != (err == nil) || !allow && !errors.Is(err, artifact.ErrInvalidMetadata) {
+			t.Errorf("Update with kazari.csp, overrides %v: err = %v", allow, err)
+		}
+		if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "plain",
+			Metadata: map[string]*string{artifact.MetaCSP: nil, "team": new("web")}}); err != nil {
+			t.Errorf("Update removing kazari.csp, overrides %v: err = %v", allow, err)
+		}
+	}
+}

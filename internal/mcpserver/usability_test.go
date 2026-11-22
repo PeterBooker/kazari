@@ -128,3 +128,29 @@ func TestVisibilityWords(t *testing.T) {
 		t.Errorf("update_artifact public = %+v", on)
 	}
 }
+
+func TestSlugErrorsSuggest(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{"slug": "q3-report", "name": "Q3", "description": "d",
+		"files": []map[string]any{{"path": "index.html", "content": "x"}}})
+
+	if msg := fails(t, cs, "create_artifact", map[string]any{"slug": "Q4_Report", "name": "Q4", "description": "d",
+		"files": []map[string]any{{"path": "index.html", "content": "x"}}}); !strings.Contains(msg, `"q4-report" would do`) {
+		t.Errorf("invalid slug = %q, want a suggestion", msg)
+	}
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"get_artifact", map[string]any{"slug": "q3-reprot"}, `not_found: artifact "q3-reprot" not found; did you mean "q3-report"?`},
+		{"read_file", map[string]any{"slug": "q3-repor", "path": "index.html"}, `not_found: artifact "q3-repor" not found; did you mean "q3-report"?`},
+		{"get_artifact", map[string]any{"slug": "budget"}, `not_found: artifact "budget" not found` + "\n"},
+	}
+	for _, c := range cases {
+		if msg := fails(t, cs, c.tool, c.args); !strings.HasPrefix(msg, c.want) {
+			t.Errorf("%s %v = %q, want prefix %q", c.tool, c.args, msg, c.want)
+		}
+	}
+}

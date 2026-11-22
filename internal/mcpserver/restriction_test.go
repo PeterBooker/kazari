@@ -222,9 +222,9 @@ func TestShareScopeOnTools(t *testing.T) {
 		}
 	}
 	for name, args := range map[string]map[string]any{
-		"create_artifact":   {"slug": "new-page", "name": "n", "description": "d", "visibility": "public", "files": file},
-		"update_artifact":   {"slug": "demo", "visibility": "unlisted"},
-		"import_page":       {"slug": "copy", "url": page.URL + "/", "visibility": "members"},
+		"create_artifact": {"slug": "new-page", "name": "n", "description": "d", "visibility": "public", "files": file},
+		"update_artifact": {"slug": "demo", "visibility": "unlisted"},
+		"import_page":     {"slug": "copy", "url": page.URL + "/", "visibility": "members"},
 	} {
 		if msg := fails(t, cs, name, args); !strings.HasPrefix(msg, `forbidden: scope "artifacts:share" required`) {
 			t.Errorf("%s without the share scope: %q", name, msg)
@@ -253,7 +253,7 @@ func TestShareScopeOnTools(t *testing.T) {
 	if res, _ := ok[mcpserver.WriteResult](t, cs, "set_visibility", map[string]any{"slug": "demo", "visibility": "members"}); res.Visibility != "members" {
 		t.Errorf("set_visibility with the share scope = %+v", res)
 	}
-	ok[api.CreatedShareLink](t, cs, "create_share_link", map[string]any{"slug": "demo"})
+	ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "demo"})
 	ok[api.OK](t, cs, "revoke_share_link", map[string]any{"slug": "demo", "prefix": link.Prefix})
 	if offered(t, cs, "update_artifact") {
 		t.Errorf("update_artifact is offered with the share scope alone")
