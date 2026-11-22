@@ -4,6 +4,7 @@ package mcpserver
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -208,6 +209,7 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 			Logger:       b.sdkLog,
 			Capabilities: caps,
 			SchemaCache:  b.schema,
+			SetCacheable: cacheable,
 		},
 	)
 	// Added first, so the observer outside it records the code it gives.
@@ -221,6 +223,19 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 	b.addSkill(s, p)
 	b.addPreview(s)
 	return s
+}
+
+// cacheable marks every result private, as skills/list is: the instructions
+// of server/discover name a restricted credential's slugs, the tool list
+// follows the credential's scopes, and a resource is what the caller may
+// read. What changes only with the instance's configuration keeps as long as
+// skills/list; an artifact changes with every publish, so it is stale at once.
+func cacheable(_ context.Context, req mcp.Request, c *mcp.Cacheable) {
+	c.CacheScope = "private"
+	c.TTLMs = int(skillsTTL / time.Millisecond)
+	if r, ok := req.(*mcp.ReadResourceRequest); ok && strings.HasPrefix(r.Params.URI, resourcePrefix) {
+		c.TTLMs = 0
+	}
 }
 
 // restrictionLine tells the model which slugs a restricted credential
