@@ -134,7 +134,7 @@ func (s *Service) Begin(ctx context.Context, owner string) (u *Upload, err error
 // hash. The digest is required, not optional, because the URL will pass
 // through a model's context and logs: bound to the bytes, it lets whoever
 // holds it stage nothing the owner does not already have.
-func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64) (u *Upload, token string, err error) {
+func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64, path string) (u *Upload, token string, err error) {
 	ctx, span := s.span(ctx, "upload.begin_archive", "")
 	defer func() { endBegin(span, u, err) }()
 	sum = strings.ToLower(sum)
@@ -147,8 +147,15 @@ func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int6
 	if size > s.opts.MaxTotalBytes {
 		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %s", artifact.FormatBytes(s.opts.MaxTotalBytes))
 	}
+	if path != "" {
+		clean, err := artifact.ValidatePath(path)
+		if err != nil {
+			return nil, "", err
+		}
+		path = clean
+	}
 	token = randomText(tokenBytes)
-	u, err = s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size})
+	u, err = s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size, Path: path})
 	if err != nil {
 		return nil, "", err
 	}

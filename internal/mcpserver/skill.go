@@ -104,7 +104,7 @@ func (t texts) skillText(o Options) string {
 			"`encoding: \"base64\"`; a `data:` URL prefix is stripped. Without a shell, stage with `upload_chunk` for each "+
 			"file, `offset: 0` first and the `bytes_received` of the previous chunk after that. With a shell, archive the "+
 			"files from inside the page's directory (`zip -r ../site.zip .` or `tar czf ../site.tar.gz .`, so paths start "+
-			"at the page root; a single file needs no archive: send it as is and add `&path=<its path>` to `archive_url`), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
+			"at the page root; a single file needs no archive: send it as is, with its path as `archive_path` in `begin_upload`), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
 			"(`wc -c < site.zip`), and send it with `curl --fail-with-body -T site.zip '<archive_url>'`: the URL needs no "+
 			"credential, accepts only that digest and is spent by the first body that matches; the archive may be at most "+
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+

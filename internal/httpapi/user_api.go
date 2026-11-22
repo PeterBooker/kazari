@@ -863,7 +863,7 @@ func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 		writeJSON(w, http.StatusCreated, present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes))
 		return nil
 	}
-	u, token, err := h.d.Uploads.BeginArchive(r.Context(), p.Handle, req.ArchiveSHA256, req.ArchiveBytes)
+	u, token, err := h.d.Uploads.BeginArchive(r.Context(), p.Handle, req.ArchiveSHA256, req.ArchiveBytes, req.ArchivePath)
 	if err != nil {
 		return err
 	}

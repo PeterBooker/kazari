@@ -29,6 +29,9 @@ type Archive struct {
 	TokenHash  string // hex SHA-256 of the token
 	SHA256     string // hex, lower case
 	Bytes      int64
+	// Path, when set, is where the body is staged as one file, whatever it
+	// holds; otherwise the body is a zip or a gzip-compressed tar.
+	Path       string
 	Attempts   int       // bodies that missed the digest
 	ReceivedAt time.Time // zero until the archive arrived
 }

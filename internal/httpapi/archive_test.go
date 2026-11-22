@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -42,9 +41,17 @@ func zipBytes(t *testing.T, files map[string]string) []byte {
 // server, since the response carries the instance's public address.
 func (e *env) beginArchive(t *testing.T, archive []byte) (api.Upload, string) {
 	t.Helper()
+	return e.beginArchiveAt(t, archive, "")
+}
+
+// beginArchiveAt is beginArchive for one file staged at path, or for an
+// archive when path is empty.
+func (e *env) beginArchiveAt(t *testing.T, archive []byte, path string) (api.Upload, string) {
+	t.Helper()
 	var up api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice,
-		api.BeginUploadRequest{ArchiveSHA256: sha(string(archive)), ArchiveBytes: int64(len(archive))}, http.StatusCreated, &up)
+		api.BeginUploadRequest{ArchiveSHA256: sha(string(archive)), ArchiveBytes: int64(len(archive)), ArchivePath: path},
+		http.StatusCreated, &up)
 	prefix := apiBase + "/uploads/" + up.UploadID + "/archive?token="
 	if !strings.HasPrefix(up.ArchiveURL, prefix) || len(up.ArchiveURL) != len(prefix)+43 {
 		t.Fatalf("archive_url = %q, want %s<43 characters>", up.ArchiveURL, prefix)
@@ -110,8 +117,8 @@ func TestArchiveUploadTarGz(t *testing.T) {
 	}
 }
 
-// One file needs no archive: the URL names its path, and the body is staged
-// as it is, even when it looks like an archive.
+// One file needs no archive: the upload is begun with its path, and the body
+// is staged there as it is, even when it looks like an archive.
 func TestArchiveUploadOneFile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -123,9 +130,10 @@ func TestArchiveUploadOneFile(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
-			up, put := e.beginArchive(t, tc.body)
+			up, put := e.beginArchiveAt(t, tc.body, tc.path)
 			var res api.ArchiveResult
-			e.expect(e.put(put+"&path="+url.QueryEscape(tc.path), tc.body), http.StatusOK, &res)
+			// A path in the query is not the sender's to choose.
+			e.expect(e.put(put+"&path=other.html", tc.body), http.StatusOK, &res)
 			if res.Files != 1 || res.Bytes != int64(len(tc.body)) {
 				t.Fatalf("archive result = %+v, want one file of %d bytes", res, len(tc.body))
 			}
@@ -137,15 +145,22 @@ func TestArchiveUploadOneFile(t *testing.T) {
 		})
 	}
 
-	e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
-	body := []byte("<h1>one</h1>")
-	_, put := e.beginArchive(t, body)
-	e.apiErr(e.put(put+"&path=../escape.html", body), http.StatusUnprocessableEntity, api.CodeInvalidPath)
-	_, put = e.beginArchive(t, body)
-	plain := e.apiErr(e.put(put, body), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
-	if !strings.Contains(plain.Message, "&path=") {
-		t.Errorf("a plain file without a path: %q, want the message to name &path=", plain.Message)
-	}
+	t.Run("a bad path", func(t *testing.T) {
+		e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+		body := []byte("<h1>one</h1>")
+		e.apiErr(e.jsonReq(http.MethodPost, e.u("/v1/uploads"), e.alice,
+			api.BeginUploadRequest{ArchiveSHA256: sha(string(body)), ArchiveBytes: int64(len(body)), ArchivePath: "../escape.html"}),
+			http.StatusUnprocessableEntity, api.CodeInvalidPath)
+	})
+	t.Run("a plain file without a path", func(t *testing.T) {
+		e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+		body := []byte("<h1>one</h1>")
+		_, put := e.beginArchive(t, body)
+		plain := e.apiErr(e.put(put, body), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+		if !strings.Contains(plain.Message, "archive_path") {
+			t.Errorf("a plain file without a path: %q, want the message to name archive_path", plain.Message)
+		}
+	})
 }
 
 func TestArchiveUploadAttemptsExhausted(t *testing.T) {

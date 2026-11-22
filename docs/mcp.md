@@ -489,7 +489,7 @@ upload_offset_mismatch: ... (current=<n>: resend this path from offset <n>)
 
 An agent with a shell but no Kazari credential sends a whole site in one request instead of chunk by chunk. That is the case in a sandbox whose MCP connection is signed in while its shell is not, and whose files are too large to pass through tool calls:
 
-1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`. A single file needs no archive: use the file itself in the steps below, and add `&path=` with its path, such as `&path=logo.png`, to the `archive_url`.
+1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`. A single file needs no archive: use the file itself in the steps below, and give its path in the artifact as `archive_path` in step 2, such as `logo.png`.
 2. Call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` (`wc -c < site.zip`). The result carries `archive_url`.
 3. Send the archive with `curl --fail-with-body -T site.zip '<archive_url>'`. No credential is needed: the token in the URL stands for one.
 4. Call `create_artifact` or `update_artifact` with `upload_id`, as after chunks.
