@@ -378,6 +378,7 @@ These describe sign-in and access:
 | Metric                                      | Type    | Labels                                                                                  |
 | ------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
 | `kazari_gate_requests_total`                | counter | `kazari_gate_result` (`public`, `member`, `share_link`, `redirect`, `denied`)           |
+| `kazari_views_requests_total`               | counter | `kazari_views_result` (`counted`, `not_page`, `prefetch`, `bot`, `dropped`): what became of each HTML page served |
 | `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `password`, `passkey`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`, `delayed`) |
 | `kazari_user_link_operations_total`         | counter | `kazari_user_link_purpose` (`invite`, `reset`, `setup`), `kazari_user_link_operation` (`create`, `use`, `revoke`) |
 | `kazari_user_password_hash_duration_seconds` | histogram | `kazari_user_password_operation` (`hash`, `verify`): the time includes the wait for a free slot |
@@ -553,7 +554,7 @@ Spans do contain slugs, versions, file paths, OAuth client ids and control-plane
 
 ## Scheduled jobs
 
-Kazari runs five maintenance jobs on its own:
+Kazari runs seven maintenance jobs on its own:
 
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -562,6 +563,8 @@ Kazari runs five maintenance jobs on its own:
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
 | `update-check`   | 1 day                                              | Asks GitHub for the newest release, so the dashboard can say when the instance is behind ([the update check](#the-update-check)) |
+| `views-flush`    | 1 minute                                           | Writes the [page views](#page-views) counted since its last run                                     |
+| `views-prune`    | 1 day                                              | Deletes daily view counts older than `analytics.retention`                                           |
 
 `gc` spares recent blobs so that a publish in progress never loses one. The unreferenced blobs it finds are those of purged or hard-deleted artifacts and of a publish that a crash interrupted, since a failed publish deletes its own. It also removes temporary files a crash left behind: blob writes, spilled bundles and database copies of a backup older than an hour. While a [backup](#taking-a-backup) is being written, `gc` skips its run and logs `gc: skipped, a backup is running`.
 
@@ -600,6 +603,39 @@ The job exists only in a build with a release version, so a build from source do
 admin:
   update_check: false
 ```
+
+## Page views
+
+Kazari counts how often each artifact's pages are opened, for the [dashboard](dashboard.md#page-views) and `kazari admin views`. Counting costs serving no database work: views add up in memory, and the `views-flush` job writes them once a minute in one transaction.
+
+### What counts as a view
+
+A view is a `GET` for an HTML file of an artifact, on its own address or a version's, that loads a page into a browser tab. These do not count:
+
+- scripts, styles, images and every other file that is not HTML;
+- a page in a frame, a fetch from a script, a `HEAD` or a range request;
+- a prefetch or prerender that a browser makes before anyone clicks;
+- a request whose user agent names a crawler, a link preview or a command-line client, or names nothing.
+
+A mail scanner that opens links in a real browser looks like a person and counts. The `kazari_views_requests_total` metric shows how many requests each rule left out.
+
+### What is kept
+
+Kazari stores daily totals per page and per file: views, daily visitors, and how many views came from members and through share links. It keeps no request log, IP address, user agent or referrer.
+
+A daily visitor is one IP address and user agent on one page on one day. Kazari tells them apart with a hash held in memory and replaced at midnight UTC, so a visitor cannot be followed from one day to the next, and a restart during a day counts a returning visitor again.
+
+On a members-only page, Kazari also records which members opened it, with their first and last view and a count. `analytics.readers: false` turns that off.
+
+### Retention
+
+The daily counts are kept for `analytics.retention`, 366 days by default, and the `views-prune` job deletes older ones. The list of members who opened a page is kept while the page exists. Removing a page for good deletes its counts with it.
+
+### Limits
+
+Between two flushes Kazari holds at most 100,000 counts (a page and a day, a file and a day, or a reader) and tells apart at most 200,000 visitors a day. Past either limit it counts the view as `dropped` or stops counting new visitors, so serving never takes more memory. A failed flush keeps its counts for the next run, within the same limit, and the dashboard lists the failing job under Needs attention.
+
+When the server stops, it writes the counts it holds after the last request has finished. A crash loses at most the last minute.
 
 ## Lifecycle
 

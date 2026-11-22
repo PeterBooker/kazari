@@ -825,6 +825,8 @@ These are its routes, with the body or query parameters each takes and its respo
 | `GET`    | `/jobs`                             |                                                           | `200` job statuses                      |
 | `POST`   | `/jobs/{name}/run`                  |                                                           | `200` job status                        |
 | `GET`    | `/audit`                            | `since`, `until`, `slug`, `actor`, `subject`, `action`, `limit`, `cursor` | `200` `{events, next_cursor}`      |
+| `GET`    | `/views`                            | `days`                                                    | `200` the instance's page views         |
+| `GET`    | `/artifacts/{slug}/views`           | `days`                                                    | `200` one artifact's page views         |
 | `POST`   | `/backup`                           | `certs`                                                   | `200` tar archive                       |
 | `GET`    | `/ready`                            | `fresh`                                                   | `200` `{ready, checked_at, checks, update?}` |
 | `GET`    | `/health` (also `/v1/health`)       |                                                           | `200` `{"status":"ok","version":"..."}` |
@@ -982,6 +984,29 @@ The response holds the page and a cursor for the next one:
 ```
 
 `next_cursor` is absent on the last page. A malformed `cursor` or time is `422`.
+
+### Page views
+
+`GET /views` returns the instance's [page views](ops.md#page-views) over the last `days` days, today included: the totals, one entry per day and the ten most viewed artifacts. `days` defaults to 30 and runs from 1 to the days of `analytics.retention`; anything else is `422`. With analytics off, both routes answer `404`. For example:
+
+```sh
+curl -sS -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "https://admin.art.example.com/v1/views?days=7"
+```
+
+The response names its first and last day, both UTC dates:
+
+```json
+{
+  "from": "2026-11-16", "to": "2026-11-22",
+  "days": [ { "day": "2026-11-16", "views": 12, "visitors": 5, "member_views": 3, "link_views": 0 }, ... ],
+  "totals": { "views": 140, "visitors": 61, "member_views": 20, "link_views": 4 },
+  "top": [ { "slug": "q3-report", "views": 96, "visitors": 40, "member_views": 0, "link_views": 4 } ]
+}
+```
+
+`visitors` is the sum of each day's visitors, so one browser on three days counts three times. `member_views` and `link_views` are the views of members signed in to a members-only page and of people holding a share link.
+
+`GET /artifacts/{slug}/views` returns the same for one artifact, with `files`, its ten most viewed files over the range, and `readers`, up to 100 members who opened it, the latest first, each with `handle`, `name`, `first_at`, `last_at` and `views`. Readers are not bound to the range. An unknown slug is `404`.
 
 ### Backup
 

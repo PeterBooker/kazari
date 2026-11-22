@@ -29,9 +29,9 @@ func TestTrend(t *testing.T) {
 func TestViewChart(t *testing.T) {
 	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 	c := newViewChart([]views.DayTotals{
-		{Day: day, Totals: views.Totals{Views: 4, Visitors: 2}},
+		{Day: day, Views: 4, Visitors: 2},
 		{Day: day.AddDate(0, 0, 1)},
-		{Day: day.AddDate(0, 0, 2), Totals: views.Totals{Views: 1, Visitors: 1}},
+		{Day: day.AddDate(0, 0, 2), Views: 1, Visitors: 1},
 	})
 	if c.Width != 3*chartSlot || c.Height != chartHeight {
 		t.Errorf("newViewChart: %dx%d, want %dx%d", c.Width, c.Height, 3*chartSlot, chartHeight)
