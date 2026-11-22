@@ -399,7 +399,8 @@ func TestKeysFromPasswordSession(t *testing.T) {
 	}
 	for _, want := range []string{"it cannot be shown again", `data-copy-target="secret"`, "Authorization: Bearer " + secret,
 		// The command line takes the API's origin and adds the version itself.
-		"export KAZARI_URL=https://api.art.test\nexport KAZARI_TOKEN=" + secret + "\n", e.mcp.URL + "/", "weekly-* q3-report"} {
+		"kazari login --url https://api.art.test<", "export KAZARI_URL=https://api.art.test\nexport KAZARI_TOKEN=" + secret + "<",
+		e.mcp.URL + "/", "weekly-* q3-report"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the new-key page lacks %q", want)
 		}

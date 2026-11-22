@@ -370,10 +370,13 @@
   --header "Authorization: Bearer {{.Secret}}"</code></pre>
 <button type="button" class="btn btn-sm" data-copy-target="use-mcp" hidden>Copy the command</button></div>
 <h3 class="h3">The command line</h3>
-<div class="snippet"><pre><code id="use-cli">export KAZARI_URL={{.APIURL}}
-export KAZARI_TOKEN={{.Secret}}
-kazari me</code></pre>
-<button type="button" class="btn btn-sm" data-copy-target="use-cli" hidden>Copy the lines</button></div>
+<p class="soft">Save the address and the key for every later command, pasting the key when asked:</p>
+<div class="snippet"><pre><code id="use-cli">kazari login --url {{.APIURL}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="use-cli" hidden>Copy the command</button></div>
+<p class="soft">Or for this shell alone:</p>
+<div class="snippet"><pre><code id="use-env">export KAZARI_URL={{.APIURL}}
+export KAZARI_TOKEN={{.Secret}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="use-env" hidden>Copy the lines</button></div>
 <h3 class="h3">Any HTTP client</h3>
 <div class="snippet"><pre><code id="use-http">Authorization: Bearer {{.Secret}}</code></pre>
 <button type="button" class="btn btn-sm" data-copy-target="use-http" hidden>Copy the header</button></div>
