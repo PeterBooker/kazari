@@ -98,7 +98,7 @@ func TestInviteLink(t *testing.T) {
 	// The link and the new password show who it is: the browser is signed
 	// in, and the account page welcomes them with the next step.
 	page := b.page()
-	for _, want := range []string{"Welcome, <b>Ana Sousa</b>", "Your password is set and you are signed in.", "Connect your AI agent", e.mcp.URL + "/"} {
+	for _, want := range []string{"Welcome, <b>Ana Sousa</b>", "Your password is set and you are signed in.", "Signed in by choosing a password with a link", "Connect your AI agent", e.mcp.URL + "/"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("account page after the invite lacks %q", want)
 		}

@@ -2,7 +2,7 @@
 
 {{define "event"}}
 {{- $d := .Details -}}
-{{- if eq .Action "oauth.signin"}}Signed in {{if eq (index $d "via") "password"}}with the password{{else if eq (index $d "via") "passkey"}}with a passkey{{else if eq (index $d "via") "api_key"}}with the API key <span class="mono">{{index $d "key_prefix"}}</span>{{else}}at the identity provider{{end}}
+{{- if eq .Action "oauth.signin"}}Signed in {{if eq (index $d "via") "password"}}with the password{{else if eq (index $d "via") "passkey"}}with a passkey{{else if eq (index $d "via") "api_key"}}with the API key <span class="mono">{{index $d "key_prefix"}}</span>{{else if eq (index $d "via") "link"}}by choosing a password with a link{{else}}at the identity provider{{end}}
 {{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Password changed{{else if eq (index $d "via") "reset"}}New password set through a reset link{{else if eq (index $d "via") "recovery"}}New password set with a recovery code{{else}}First password set{{end}}
 {{- else if eq .Action "passkey.create"}}Passkey {{index $d "name"}} added
 {{- else if eq .Action "passkey.delete"}}Passkey {{index $d "name"}} removed
