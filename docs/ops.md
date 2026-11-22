@@ -836,7 +836,7 @@ The actions, with the details each records:
 | `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
 | `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`); `password` stands for any sign-in to a built-in account, a passkey's too |
 | `oauth.revoke`        | OAuth grant revoked (`grant`, or `user` for all of a user's; `reason: refresh_replay` when Kazari revoked it because a retired refresh token was presented again) |
-| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey`, `api_key` or `link` (choosing a password with a link), and `key_prefix` for `api_key`) |
 | `dashboard.signin`    | An admin opened a session on the dashboard (`credential`)            |
 | `session.revoke`      | A person's browser sessions ended (`user`, `sessions`)               |
 | `invite.create`       | Invite, reset or setup link made (`id`, `purpose`, `expires_at`; `handle` unless `setup`; `revoke_all` when set) |

@@ -380,7 +380,7 @@ What the session can do follows the key. It opens the dashboard only when the ke
 
 When an MCP client connects, the same link leads to a consent page with an API key field in place of a sign-in. Approving with a valid key binds the grant to that key's user and to the key ([Approving with an API key](#approving-with-an-api-key)).
 
-Browser sign-ins are recorded as `oauth.signin`, with `via: oidc`, `via: password` or `via: api_key`.
+Browser sign-ins are recorded as `oauth.signin`, with `via: oidc`, `via: password`, `via: passkey`, `via: api_key`, or `via: link` for the sign-in that follows choosing a password with a link.
 
 ### Approving with an API key
 
