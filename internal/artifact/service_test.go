@@ -683,20 +683,23 @@ func TestWorkerControlled(t *testing.T) {
 		want   bool
 	}{
 		{"shared", artifact.WriteShared, nil, true},
-		{"shared, author not owner", artifact.WriteShared, func(t *testing.T, e *env) { e.transfer(t, "bob") }, true},
-		{"shared, author disabled", artifact.WriteShared, func(t *testing.T, e *env) { e.setUser(t, "disabled_at = 1") }, false},
+		{"shared, author not owner", artifact.WriteShared, func(t *testing.T, e *env) { t.Helper(); e.transfer(t, "bob") }, true},
+		{"shared, author disabled", artifact.WriteShared, func(t *testing.T, e *env) { t.Helper(); e.setUser(t, "disabled_at = 1") }, false},
 		{"shared, author enabled again", artifact.WriteShared, func(t *testing.T, e *env) {
+			t.Helper()
 			e.setUser(t, "disabled_at = 1")
 			e.setUser(t, "disabled_at = NULL")
 		}, true},
 		{"owner policy, author owner", artifact.WriteOwner, nil, true},
-		{"owner policy, author disabled", artifact.WriteOwner, func(t *testing.T, e *env) { e.setUser(t, "disabled_at = 1") }, false},
-		{"owner policy, author not owner", artifact.WriteOwner, func(t *testing.T, e *env) { e.transfer(t, "bob") }, false},
+		{"owner policy, author disabled", artifact.WriteOwner, func(t *testing.T, e *env) { t.Helper(); e.setUser(t, "disabled_at = 1") }, false},
+		{"owner policy, author not owner", artifact.WriteOwner, func(t *testing.T, e *env) { t.Helper(); e.transfer(t, "bob") }, false},
 		{"owner policy, author admin", artifact.WriteOwner, func(t *testing.T, e *env) {
+			t.Helper()
 			e.transfer(t, "bob")
 			e.setUser(t, "role = 'admin'")
 		}, true},
 		{"owner policy, admin disabled", artifact.WriteOwner, func(t *testing.T, e *env) {
+			t.Helper()
 			e.transfer(t, "bob")
 			e.setUser(t, "role = 'admin', disabled_at = 1")
 		}, false},

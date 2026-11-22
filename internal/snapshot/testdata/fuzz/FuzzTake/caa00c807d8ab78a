@@ -1,0 +1,4 @@
+go test fuzz v1
+string("<link on href=missing><video 4 poster=\x10>")
+string("@import \"more.css\"; body{background:url('bg.png')} @font-face{src:url(\xc3۠https://fonts.gstatic.com/f.woff2)}")
+bool(false)

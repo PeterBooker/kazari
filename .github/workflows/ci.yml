@@ -16,13 +16,13 @@ concurrency:
 env:
   CGO_ENABLED: "0"
   # The maintenance skill updates these.
-  STATICCHECK_VERSION: "v0.8.2"
+  GOLANGCI_LINT_VERSION: "v2.15.0"
   GOVULNCHECK_VERSION: "v1.10.0"
   GORELEASER_VERSION: "v2.20.3"
 
 jobs:
   lint:
-    name: Format, vet, staticcheck, govulncheck
+    name: Format, vet, golangci-lint, govulncheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,8 +47,10 @@ jobs:
         run: go fix -diff ./...
       - name: go vet
         run: go vet ./...
-      - name: staticcheck
-        run: go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" ./...
+      # Built from source with the toolchain of go.mod: a released binary
+      # refuses a module on a newer Go than the one that built it.
+      - name: golangci-lint
+        run: go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION" run
       - name: govulncheck
         run: go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./...
       - name: shellcheck

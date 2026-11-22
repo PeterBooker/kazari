@@ -51,7 +51,9 @@ func (w *walker) element(n *html.Node) (remove bool) {
 			w.description = attr(n, "content")
 		}
 	case atom.Link:
-		return w.link(n)
+		if w.link(n) {
+			return true
+		}
 	case atom.Img:
 		w.localRef(n, "src", "image")
 		w.srcset(n)
@@ -162,11 +164,33 @@ func (w *walker) absolute(n *html.Node, key string) {
 // dropScriptURL removes a javascript: URL when scripts are being removed:
 // it is a script that runs on a click.
 func (w *walker) dropScriptURL(n *html.Node, key, v string) bool {
-	if w.keepScripts || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(v)), "javascript:") {
+	if w.keepScripts || !isScriptURL(v) {
 		return false
 	}
 	delAttr(n, key)
 	return true
+}
+
+// isScriptURL reads the scheme as a browser does: its URL parser drops
+// leading controls and spaces, and tabs and line breaks anywhere.
+func isScriptURL(v string) bool {
+	const scheme = "javascript:"
+	v = strings.TrimLeftFunc(v, func(r rune) bool { return r <= ' ' || unicode.IsSpace(r) })
+	matched := 0
+	for i := 0; i < len(v) && matched < len(scheme); i++ {
+		c := v[i]
+		if c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != scheme[matched] {
+			return false
+		}
+		matched++
+	}
+	return matched == len(scheme)
 }
 
 func (w *walker) srcset(n *html.Node) {

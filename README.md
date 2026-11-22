@@ -137,7 +137,7 @@ go run ./cmd/kazari admin users create peter --role admin   # over the socket in
 docker compose up --build                               # the same server from the Docker image
 go test -race ./...                                     # tests with the race detector
 test -z "$(gofmt -l .)" && go vet ./...                 # formatting and vet
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...  # lint
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run   # lint
 ```
 
 [Developing Kazari](docs/development.md) has the rest: building a stamped binary, releasing, and building the website.

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestTelemetryDefaults(t *testing.T) {
@@ -25,8 +27,8 @@ func TestTelemetryDefaults(t *testing.T) {
 		Traces:  Traces{OTLP: true},
 		Metrics: Metrics{Prometheus: true},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Default().Telemetry = %+v, want %+v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Default().Telemetry mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -73,8 +75,8 @@ telemetry:
 		Metrics: Metrics{Prometheus: true, Token: testAdminToken, OTLP: true, Interval: Duration(30 * time.Second)},
 		Logs:    LogExport{OTLP: true, Level: "warn"},
 	}
-	if !reflect.DeepEqual(c.Telemetry, want) {
-		t.Errorf("Telemetry = %+v, want %+v", c.Telemetry, want)
+	if diff := cmp.Diff(want, c.Telemetry); diff != "" {
+		t.Errorf("Telemetry mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -107,8 +109,8 @@ func TestTelemetryEnv(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadWith: %v", err)
 			}
-			if !reflect.DeepEqual(c.Telemetry.OTLP.Headers, tt.want) {
-				t.Errorf("Headers = %#v, want %#v", c.Telemetry.OTLP.Headers, tt.want)
+			if diff := cmp.Diff(tt.want, c.Telemetry.OTLP.Headers); diff != "" {
+				t.Errorf("Headers mismatch (-want +got):\n%s", diff)
 			}
 			if r := c.Telemetry.Traces.SiteSampleRatio; r == nil || *r != 0.25 {
 				t.Errorf("SiteSampleRatio = %v, want 0.25", r)
@@ -169,13 +171,13 @@ func TestHeadersRedacted(t *testing.T) {
 	}
 	tel := m["telemetry"].(map[string]any)
 	headers := tel["otlp"].(map[string]any)["headers"]
-	if want := map[string]any{"authorization": "***", "x-team": "***"}; !reflect.DeepEqual(headers, want) {
-		t.Errorf("headers = %#v, want %#v", headers, want)
+	if diff := cmp.Diff(map[string]any{"authorization": "***", "x-team": "***"}, headers); diff != "" {
+		t.Errorf("redacted headers mismatch (-want +got):\n%s", diff)
 	}
 	if got := tel["metrics"].(map[string]any)["token"]; got != "***" {
 		t.Errorf("token = %#v, want ***", got)
 	}
-	if got := Default().Redacted()["telemetry"].(map[string]any)["otlp"].(map[string]any)["headers"]; !reflect.DeepEqual(got, map[string]any{}) {
+	if got := Default().Redacted()["telemetry"].(map[string]any)["otlp"].(map[string]any)["headers"]; !cmp.Equal(got, map[string]any{}) {
 		t.Errorf("empty headers = %#v, want an empty map", got)
 	}
 

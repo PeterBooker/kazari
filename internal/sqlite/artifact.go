@@ -491,6 +491,7 @@ func (s *ArtifactStore) TransferOwned(ctx context.Context, from, to, by string, 
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		var ids []int64
 		for rows.Next() {
 			var (
@@ -498,7 +499,6 @@ func (s *ArtifactStore) TransferOwned(ctx context.Context, from, to, by string, 
 				slug string
 			)
 			if err := rows.Scan(&id, &slug); err != nil {
-				rows.Close()
 				return err
 			}
 			ids = append(ids, id)

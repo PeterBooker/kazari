@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -407,8 +408,26 @@ func TestRecover(t *testing.T) {
 			panic(http.ErrAbortHandler)
 		}))
 		defer func() {
-			if v := recover(); v != http.ErrAbortHandler {
+			if v, _ := recover().(error); !errors.Is(v, http.ErrAbortHandler) {
 				t.Errorf("recovered %v, want http.ErrAbortHandler", v)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("abort was logged: %s", buf)
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		t.Error("ServeHTTP returned instead of panicking")
+	})
+
+	t.Run("wrapped abort handler re-panics", func(t *testing.T) {
+		l, buf := newJSONLogger()
+		abort := fmt.Errorf("copy: %w", http.ErrAbortHandler)
+		h := Recover(l)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic(abort)
+		}))
+		defer func() {
+			if v := recover(); v != any(abort) {
+				t.Errorf("recovered %v, want %v", v, abort)
 			}
 			if buf.Len() != 0 {
 				t.Errorf("abort was logged: %s", buf)

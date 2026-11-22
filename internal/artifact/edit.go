@@ -996,7 +996,7 @@ func AnchorableText(r io.Reader) (bool, error) {
 	br := bufio.NewReader(r)
 	for {
 		c, size, err := br.ReadRune()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return true, nil
 		}
 		if err != nil {
@@ -1021,7 +1021,7 @@ func StreamAnchored(w io.Writer, r io.ReadSeeker) error {
 	for n := 1; ; n++ {
 		sum, passed := fnvOffset, int64(0)
 		chunk, err := br.ReadSlice('\n')
-		for err == bufio.ErrBufferFull {
+		for errors.Is(err, bufio.ErrBufferFull) {
 			sum = fnv1a(sum, chunk)
 			passed += int64(len(chunk))
 			chunk, err = br.ReadSlice('\n')
@@ -1064,9 +1064,9 @@ func copyLineFrom(bw *bufio.Writer, br *bufio.Reader, r io.ReadSeeker, off int64
 		if _, werr := bw.Write(chunk); werr != nil {
 			return werr
 		}
-		switch err {
-		case bufio.ErrBufferFull:
-		case nil, io.EOF:
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+		case err == nil, errors.Is(err, io.EOF):
 			return nil
 		default:
 			return fmt.Errorf("%w: %w", ErrFileRead, err)
@@ -1096,16 +1096,20 @@ func excerpt(text string, r [2]int, startLine, endLine int) string {
 	from, back := lineStartBack(text, a, excerptContext)
 	firstShown := aLine - back
 	if eLine-aLine+1 <= excerptMax {
-		return anchored(splitLines(text[from:lineEndForward(text, e, excerptContext)]), firstShown, 0)
+		return anchored(windowLines(text[from:lineEndForward(text, e, excerptContext)]), firstShown, 0)
 	}
 	half := excerptMax / 2
-	head := splitLines(text[from:lineEndForward(text, a, half-1)])
+	head := windowLines(text[from:lineEndForward(text, a, half-1)])
 	tailFrom, tailBack := lineStartBack(text, e, half-1)
-	tail := splitLines(text[tailFrom:lineEndForward(text, e, excerptContext)])
+	tail := windowLines(text[tailFrom:lineEndForward(text, e, excerptContext)])
 	tailFirst := eLine - tailBack
 	return anchored(head, firstShown, 0) + fmt.Sprintf("\n... %d lines not shown ...\n", tailFirst-firstShown-len(head)) +
 		anchored(tail, tailFirst, 0)
 }
+
+// windowLines splits text that ends before its last line's break, where an
+// empty last line is still a line; splitLines would drop it.
+func windowLines(window string) []string { return strings.Split(window, "\n") }
 
 // lineStartBack returns the start of the line n lines before the one
 // holding off, and how many lines it went back (fewer at the top).

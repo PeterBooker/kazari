@@ -1,9 +1,10 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -104,8 +105,8 @@ func TestExpandNode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expand: %v", err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %#v, want %#v", got, tt.want)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("expand mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -205,8 +206,8 @@ auth:
 		{"auth.oidc.auto_provision", c.Auth.OIDC.AutoProvision, true},
 	}
 	for _, ch := range checks {
-		if !reflect.DeepEqual(ch.got, ch.want) {
-			t.Errorf("%s = %#v, want %#v", ch.name, ch.got, ch.want)
+		if diff := cmp.Diff(ch.want, ch.got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", ch.name, diff)
 		}
 	}
 

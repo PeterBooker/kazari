@@ -48,7 +48,7 @@ var ErrorCodes = []string{
 	CodeNotFound, CodeVersionNotFound, CodeFileNotFound, CodeUploadNotFound, CodeSlugTaken,
 	CodeVersionConflict, CodeTooLarge, CodeTooManyFiles, CodeTooManyUploads, CodeQuotaExceeded,
 	CodeInvalidSlug, CodeInvalidPath, CodeInvalidMetadata, CodeInvalidArgument, CodeForbidden,
-	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeRateLimited, CodeHandleTaken,
+	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeDigestMismatch, CodeRateLimited, CodeHandleTaken,
 	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
 	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning, CodeLastAdmin,
 	CodeTooManyKeys, CodeSetupDone, CodeBackupRunning, CodeNoSpace, CodeBusy,

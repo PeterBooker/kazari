@@ -60,6 +60,7 @@ type fakeAPI struct {
 }
 
 func newFakeAPI(t *testing.T, routes map[string]http.HandlerFunc) (*fakeAPI, *httptest.Server) {
+	t.Helper()
 	f := &fakeAPI{t: t, routes: routes}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)

@@ -759,10 +759,11 @@ func identity(subject, email string, verified bool) auth.Identity {
 func TestResolveIdentity(t *testing.T) {
 	type setup func(t *testing.T, f *fixture)
 	existing := func(handle, email string) setup {
-		return func(t *testing.T, f *fixture) { f.mustCreate(t, handle, email, "") }
+		return func(t *testing.T, f *fixture) { t.Helper(); f.mustCreate(t, handle, email, "") }
 	}
 	disabled := func(handle, email string) setup {
 		return func(t *testing.T, f *fixture) {
+			t.Helper()
 			f.mustCreate(t, handle, email, "")
 			if _, err := f.svc.UpdateUser(context.Background(), handle, user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 				t.Fatal(err)
@@ -770,10 +771,11 @@ func TestResolveIdentity(t *testing.T) {
 		}
 	}
 	admin := func(handle, email string) setup {
-		return func(t *testing.T, f *fixture) { f.mustCreate(t, handle, email, user.RoleAdmin) }
+		return func(t *testing.T, f *fixture) { t.Helper(); f.mustCreate(t, handle, email, user.RoleAdmin) }
 	}
 	linkedAs := func(handle, subject string, role user.Role) setup {
 		return func(t *testing.T, f *fixture) {
+			t.Helper()
 			f.mustCreate(t, handle, "", role)
 			if err := f.store.LinkIdentity(context.Background(), handle,
 				user.Identity{Issuer: issuer, Subject: subject, LastLoginAt: t0}); err != nil {
@@ -783,7 +785,7 @@ func TestResolveIdentity(t *testing.T) {
 	}
 	linked := func(handle, subject string) setup { return linkedAs(handle, subject, "") }
 	both := func(a, b setup) setup {
-		return func(t *testing.T, f *fixture) { a(t, f); b(t, f) }
+		return func(t *testing.T, f *fixture) { t.Helper(); a(t, f); b(t, f) }
 	}
 	auto := user.Options{AutoProvision: true, AllowedDomains: []string{"example.com"}, DefaultQuota: 77}
 
@@ -803,6 +805,7 @@ func TestResolveIdentity(t *testing.T) {
 			identity("s1", "bob@example.com", true), "alice", user.RoleMember, nil},
 		{"linked but disabled", user.Options{},
 			both(disabled("alice", ""), func(t *testing.T, f *fixture) {
+				t.Helper()
 				if err := f.store.LinkIdentity(context.Background(), "alice",
 					user.Identity{Issuer: issuer, Subject: "s1", LastLoginAt: t0}); err != nil {
 					t.Fatal(err)

@@ -44,6 +44,7 @@ func BenchmarkSiteServe(b *testing.B) {
 }
 
 func benchSite(b *testing.B, in *instance) {
+	b.Helper()
 	hc := client(in.app.Addrs().HTTP)
 	ctx := context.Background()
 	admin := cli.NewClient("http://admin.localhost", adminToken, hc)

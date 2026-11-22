@@ -5,9 +5,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func writeEnvFile(t *testing.T, dir, content string) string {
@@ -48,8 +49,8 @@ func TestLoadEnvFile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadEnvFile: %v", err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("LoadEnvFile = %q, want %q", got, tt.want)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("LoadEnvFile mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

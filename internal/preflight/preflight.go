@@ -77,8 +77,8 @@ func Run(ctx context.Context, cfg config.Config, opts Options) []Finding {
 	checkDataDir(cfg, add)
 	checkDNS(ctx, cfg, opts, add)
 	checkDNSToken(ctx, cfg, opts, add)
-	checkPorts(cfg, add)
-	checkSocket(cfg, add)
+	checkPorts(ctx, cfg, add)
+	checkSocket(ctx, cfg, add)
 	checkMetrics(cfg, add)
 	checkDashboard(cfg, add)
 	if opts.Telemetry != nil {
@@ -293,7 +293,7 @@ func checkDNSToken(ctx context.Context, cfg config.Config, opts Options, add add
 	add("dns token", OK, "%s wrote and removed a TXT record in zone %s", cfg.TLS.DNSProvider, zone)
 }
 
-func checkPorts(cfg config.Config, add adder) {
+func checkPorts(ctx context.Context, cfg config.Config, add adder) {
 	addrs := []string{cfg.Listen.HTTP}
 	if !cfg.Listen.ProxyMode {
 		addrs = []string{cfg.Listen.HTTPS, cfg.Listen.HTTP}
@@ -302,7 +302,7 @@ func checkPorts(cfg config.Config, add adder) {
 		if addr == "" {
 			continue
 		}
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		switch {
 		case err == nil:
 			ln.Close()
@@ -317,13 +317,13 @@ func checkPorts(cfg config.Config, add adder) {
 	}
 }
 
-func checkSocket(cfg config.Config, add adder) {
+func checkSocket(ctx context.Context, cfg config.Config, add adder) {
 	path := cfg.AdminSocketPath()
 	if path == "" {
 		add("admin socket", Skip, "disabled")
 		return
 	}
-	conn, err := net.DialTimeout("unix", path, 2*time.Second)
+	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "unix", path)
 	if err != nil {
 		add("admin socket", OK, "%s (no server listening yet)", path)
 		return

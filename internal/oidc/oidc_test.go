@@ -116,6 +116,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func signJWT(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
+	t.Helper()
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "test", "typ": "JWT"})
 	payload, err := json.Marshal(claims)
 	if err != nil {

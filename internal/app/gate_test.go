@@ -23,6 +23,7 @@ type browser struct {
 }
 
 func newBrowser(t *testing.T, addr string) *browser {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)

@@ -29,6 +29,7 @@ type metadataServer struct {
 }
 
 func newMetadataServer(t *testing.T) *metadataServer {
+	t.Helper()
 	m := &metadataServer{
 		name: "Claude Code",
 		// As claude.ai's document lists them: a grant Kazari does not offer is

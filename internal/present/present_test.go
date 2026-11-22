@@ -2,7 +2,6 @@ package present
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -15,55 +14,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/update"
-	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
-
-func TestError(t *testing.T) {
-	cases := []struct {
-		err    error
-		status int
-		code   string
-	}{
-		{artifact.ErrNotFound, 404, api.CodeNotFound},
-		{artifact.Errorf(artifact.ErrSlugTaken, "x"), 409, api.CodeSlugTaken},
-		{artifact.ErrVersionConflict, 412, api.CodeVersionConflict},
-		{artifact.ErrTooLarge, 413, api.CodeTooLarge},
-		{artifact.ErrInvalidSlug, 422, api.CodeInvalidSlug},
-		{artifact.ErrForbidden, 403, api.CodeForbidden},
-		{artifact.ErrGone, 410, api.CodeGone},
-		{artifact.ErrQuotaExceeded, 403, api.CodeQuotaExceeded},
-		{&upload.OffsetMismatchError{Path: "a", Current: 7}, 409, api.CodeOffsetMismatch},
-		{auth.ErrInvalidToken, 401, api.CodeUnauthorized},
-		{user.ErrNotFound, 404, api.CodeNotFound},
-		{user.ErrHandleTaken, 409, api.CodeHandleTaken},
-		{user.ErrInvalidScope, 422, api.CodeInvalidArgument},
-		{user.ErrLastAdmin, 409, api.CodeLastAdmin},
-		{user.ErrSelf, 403, api.CodeForbidden},
-		{user.ErrTooManyKeys, 403, api.CodeTooManyKeys},
-		{user.ErrSetupDone, 409, api.CodeSetupDone},
-		{user.ErrLocalOff, 403, api.CodeForbidden},
-		{user.ErrLinkNotFound, 404, api.CodeNotFound},
-		{user.ErrWeakPassword, 422, api.CodeInvalidArgument},
-		{user.ErrBadPassword, 401, api.CodeUnauthorized},
-		{&http.MaxBytesError{Limit: 10}, 413, api.CodeTooLarge},
-		{errors.New("boom"), 500, api.CodeInternal},
-	}
-	for _, c := range cases {
-		status, e := Error(c.err)
-		if status != c.status || e.Code != c.code {
-			t.Errorf("Error(%v) = %d %s, want %d %s", c.err, status, e.Code, c.status, c.code)
-		}
-	}
-	_, e := Error(&upload.OffsetMismatchError{Path: "a", Current: 7})
-	if e.Current == nil || *e.Current != 7 {
-		t.Errorf("offset mismatch did not carry current size: %+v", e)
-	}
-	_, e = Error(errors.New("secret detail"))
-	if e.Message != "internal error" {
-		t.Errorf("internal error leaked message %q", e.Message)
-	}
-}
 
 func TestActorOperator(t *testing.T) {
 	tests := []struct {

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,7 +202,7 @@ func TestObserveAbortStillCounted(t *testing.T) {
 	h := obs.Observe("site", ObserveOptions{})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
 	func() {
 		defer func() {
-			if v := recover(); v != http.ErrAbortHandler {
+			if v, _ := recover().(error); !errors.Is(v, http.ErrAbortHandler) {
 				t.Errorf("recovered %v, want http.ErrAbortHandler", v)
 			}
 		}()

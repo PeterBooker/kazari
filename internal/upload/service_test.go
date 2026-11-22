@@ -346,7 +346,7 @@ func TestAppendChunk(t *testing.T) {
 					if !errors.Is(err, st.wantErr) {
 						t.Fatalf("step %d: err = %v, want %v", i, err, st.wantErr)
 					}
-					if st.wantErr == artifact.ErrOffsetMismatch {
+					if errors.Is(st.wantErr, artifact.ErrOffsetMismatch) {
 						var om *upload.OffsetMismatchError
 						if !errors.As(err, &om) {
 							t.Fatalf("step %d: err = %T, want *OffsetMismatchError", i, err)

@@ -18,7 +18,7 @@ test -z "$(gofmt -l .)"
 go mod tidy -diff
 go fix -diff ./...
 go vet ./...                    # also with GOOS/GOARCH set to linux/arm64 and darwin/arm64
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run    # the linters in .golangci.yml, staticcheck among them
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check
@@ -26,6 +26,11 @@ go test -race -count=1 -shuffle=on -timeout=5m ./...
 CGO_ENABLED=0 go test -count=1 -shuffle=on -timeout=5m ./...      # the configuration that ships
 CGO_ENABLED=0 go test -run='^$' -bench=. -benchtime=1x ./...      # every benchmark once
 .github/scripts/smoke.sh ./kazari                                 # the built binary: serve --local, publish, fetch
+
+# what scheduled.yml adds daily: every fuzz target for a count of executions, and the sign-in pages
+# in a real browser (skipped unless the variable names a Chromium or Chrome command)
+.github/scripts/fuzz.sh 20000
+KAZARI_TEST_CHROMIUM=chromium go test -count=1 -run '^TestChromiumSignIn$' ./internal/app
 
 # only when .github/ changed (workflows.yml)
 pipx run zizmor==1.32.0 .
@@ -52,6 +57,9 @@ go run ./cmd/kazari check       # preflight: config, DNS, DNS token, ports (--lo
 
 # release dry run (real releases run in GitHub Actions from a version tag without a v, such as 0.3.0)
 goreleaser release --snapshot --clean --skip=publish,sign,sbom
+
+# before tagging a release: record its schema, which TestMigrateFromEveryRelease migrates from then on
+go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.7.0
 ```
 
 ## Configuration
@@ -71,5 +79,19 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 - Time is injected (`Options.Now`). Tests use a fixed clock and the scheduler's `Trigger`, never sleeps; they run against real SQLite in `t.TempDir()`, a real `blob.FS` and `httptest`.
 - Standard library first: no web framework, ORM, DI container or assertion library. kong parses the command line, `go-cmp` is fine in tests.
 - SQLite timestamps are INTEGER unix nanoseconds. Migrations are `internal/sqlite/migrations/NNNN_*.sql`, applied at start. Users are referenced by id internally and by handle externally.
-- A bug fix adds a test at the lowest layer that reproduces it.
+- A bug fix adds a test at the lowest layer that reproduces it, seen to fail without the fix.
+- A new package gets a row in `internal/app/deps_test.go`, which holds the import rules above; the row is added, the rule is not loosened. The same goes for every test that walks a registry (routes, tools, templates, store methods, error codes).
 - A change in behaviour (commands, flags, limits, tools, defaults) updates every file that states it: `docs/`, `site/content/docs/`, `site/layouts/home.html`, `README.md`, `deploy/kazari.yaml`, `deploy/kazari.reference.yaml`, `deploy/compose.yml`. `examples/kazari/SKILL.md` is generated, never edited: after a change to the skill text, the tool descriptions or the defaults, run `go test ./internal/mcpserver -run TestExampleSkill -update`. After any change under `docs/`, `site/` or `deploy/`, `hugo --source site --gc --minify` must print no WARN or ERROR.
+
+## Tests
+
+- Tests are in `package x_test` and go through the public API; what a test needs from inside is exported in `export_test.go`. Assert what the test is about, at the layer where the rule lives.
+- A failure names the function, the input, what it got and what it wanted: `ParseHost(%q) = %q, want %q`. Structures are compared with `cmp.Diff` and printed as `(-want +got)`; errors with `errors.Is`, by their text only where the text is the product (a configuration message, CLI output, a tool's error).
+- `t.Error` and carry on; `t.Fatal` only when the rest cannot run, and never from a goroutine the test started.
+- A table is a slice of structs with a `name`, for cases that share their logic. Subtest names are short phrases.
+- A helper that can fail takes `t` first and starts with `t.Helper()`; one that checks returns a value or an error and the test reports it. Teardown goes in `t.Cleanup`. New tests use `t.Context()`, `t.TempDir()`, `t.Setenv()` and `t.Chdir()`.
+- Hermetic: loopback only, no wall clock, no home directory, no keyring, no fixed port. A test that needs more is gated by an environment variable and skips with a message that names it, as `TestChromiumSignIn` does.
+- Pure timer and goroutine logic runs in a `testing/synctest` bubble; a wait on real I/O is a poll with a deadline that says what it waited for. Every goroutine a test starts is stopped and waited for: `internal/app` and `internal/scheduler` fail on a leaked one (`leaktest.Main`).
+- A function that parses text from outside the process has a fuzz target in `fuzz_test.go` that asserts properties (no panic, round trip, idempotence). A failing input is committed under `testdata/fuzz/` with the fix.
+- No retries and no skipped test without a reason. Coverage finds untested code and gates nothing.
+- A lint finding is fixed, or silenced on its line with `//nolint:<linter> // why`; a linter is not switched off to pass.

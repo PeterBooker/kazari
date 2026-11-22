@@ -163,6 +163,7 @@ func typeLines(t *testing.T, body string) []string {
 func TestMetricsScrapeToken(t *testing.T) {
 	const token = "scrape-0123456789abcdef0123456789"
 	public := func(t *testing.T, metricsToken string) *http.Client {
+		t.Helper()
 		cfg := testConfig(t)
 		cfg.BaseDomain = "art.test"
 		cfg.Auth.AdminToken = ""

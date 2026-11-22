@@ -223,7 +223,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 		case errors.Is(err, backup.ErrNotEmpty):
 			return usagef("admin backup: %s is not empty; name an empty directory or one that does not exist yet", c.Dir)
 		case errors.Is(err, backup.ErrUnsafeEntry):
-			return fmt.Errorf("admin backup: the server sent an archive this command will not unpack: %v", err)
+			return fmt.Errorf("admin backup: the server sent an archive this command will not unpack: %w", err)
 		}
 		return fmt.Errorf("admin backup: the backup is incomplete, remove %s and run it again: %w", c.Dir, err)
 	}

@@ -95,7 +95,7 @@ test -z "$(gofmt -l .)"                                   # formatting check
 go mod tidy -diff                                         # go.mod and go.sum are tidy
 go fix -diff ./...                                        # no pending modernizer fix
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...    # lint
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run   # the linters in .golangci.yml
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
 shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check   # the release configuration
@@ -105,6 +105,42 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release
 ```
 
 A test that fails under `-shuffle=on` prints its seed; run it again with `-shuffle=<seed>`.
+
+### Fuzzing the parsers
+
+Every function that parses text from outside the process has a fuzz target in its package's `fuzz_test.go`. `go test` runs each target on its seeds and on the inputs under `testdata/fuzz/`, so the commands above already cover them. To search for new inputs, run every target for a number of executions each:
+
+```sh
+.github/scripts/fuzz.sh            # 200,000 executions a target
+.github/scripts/fuzz.sh 20000      # a shorter run
+```
+
+To fuzz one target for longer, name its package and the target:
+
+```sh
+go test -run='^$' -fuzz='^FuzzParseHost$' -fuzztime=5000000x ./internal/site
+```
+
+A failing input is written to `testdata/fuzz/<target>/` in the package. Commit it with the fix: it then runs in every `go test`.
+
+### Testing the sign-in pages in a browser
+
+`TestChromiumSignIn` drives Chromium or Chrome through the first admin's setup, a password sign-in, adding a passkey and signing in with it, on the dashboard and on the page an MCP client opens. By default it is skipped. To run it, name the browser in `KAZARI_TEST_CHROMIUM`:
+
+```sh
+KAZARI_TEST_CHROMIUM=chromium go test -count=1 -run '^TestChromiumSignIn$' ./internal/app
+```
+
+The test starts its own server on a free port and its own browser profile with a virtual authenticator, so it needs no running server and no passkey device. The value can carry flags, such as `google-chrome --no-sandbox`.
+
+To keep a screenshot of every step, add `-artifacts` and a directory that exists:
+
+```sh
+mkdir -p /tmp/kazari-browser
+KAZARI_TEST_CHROMIUM=chromium go test -count=1 -run '^TestChromiumSignIn$' -artifacts -outputdir=/tmp/kazari-browser ./internal/app
+```
+
+The screenshots are in `_artifacts/` below that directory.
 
 ### What CI runs
 
@@ -116,13 +152,21 @@ GitHub Actions runs five workflows from `.github/workflows/`:
 | `workflows.yml` | A change under `.github/` | [zizmor](https://docs.zizmor.sh/) and actionlint on the workflows, and `gh actions-lock --verify` on the lockfile |
 | `package.yml` | A change to `deploy/`, `go.mod`, `go.sum` or `.goreleaser.yaml` | Builds `deploy/Dockerfile` and the release dry run, and starts both images with `.github/scripts/smoke-image.sh` |
 | `install-script.yml` | A change to `site/static/install.sh` | Installs the latest release with the script |
-| `scheduled.yml` | Daily, and by hand from the Actions tab | govulncheck, the race tests five times in a random order, the install script, and the coverage of the whole module in the run's summary |
+| `scheduled.yml` | Daily, and by hand from the Actions tab | govulncheck, the race tests five times in a random order, every fuzz target, the browser test of the sign-in pages, the install script, and the coverage of the whole module in the run's summary |
 
-`ci.yml` and `workflows.yml` name the version of each tool they run, so a new release of a linter cannot fail a pull request that did not change. Coverage is reported and gates nothing.
+`ci.yml` and `workflows.yml` name the version of each tool they run, so a new release of a linter cannot fail a pull request that did not change. CI builds golangci-lint from source, because a released binary refuses a module on a newer Go than the one that built it. Coverage is reported and gates nothing.
 
 ### Releasing
 
-To release, push a tag named for the version without a `v`, such as `0.3.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`, one image for `linux/amd64` and `linux/arm64` with an SBOM attached. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
+Before tagging, record the database schema of the release, so that later migrations are tested against it. The command writes `internal/sqlite/testdata/schema/0.7.0.sql`; commit it:
+
+```sh
+go test ./internal/sqlite -run TestMigrateFromEveryRelease -dump-schema 0.7.0
+```
+
+`TestMigrateFromEveryRelease` migrates every recorded schema and fails when the result differs from a fresh database.
+
+To release, push a tag named for the version without a `v`, such as `0.7.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`, one image for `linux/amd64` and `linux/arm64` with an SBOM attached. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
 
 Two builds of one commit give the same archives and packages: the binary and every file carry the commit's time, not the time of the build.
 

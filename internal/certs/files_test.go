@@ -38,6 +38,7 @@ func writeFile(t *testing.T, name string, data []byte, mtime time.Time) {
 }
 
 func pairPaths(t *testing.T) (string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	return filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 }
