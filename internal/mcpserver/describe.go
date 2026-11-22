@@ -91,7 +91,7 @@ func newTexts(links present.Links, o Options) texts {
 	}
 
 	t.archive = fmt.Sprintf("With a shell: 1) From inside the page's directory, zip -r ../site.zip . (or tar czf "+
-		"../site.tar.gz .), so paths start at the page root; a single file goes the same way (zip ../logo.zip logo.png). "+
+		"../site.tar.gz .), so paths start at the page root; a single file needs no archive: use it in place of site.zip and add &path=<its path> to archive_url. "+
 		"2) begin_upload with archive_sha256 (sha256sum site.zip) and archive_bytes (wc -c < site.zip); the archive may "+
 		"be at most %s. 3) curl --fail-with-body -T site.zip '<archive_url>': the URL needs no credential, accepts only "+
 		"a body with that digest, and is spent by the first one that matches; after %d bodies that do not, the upload "+

@@ -61,7 +61,7 @@ func (h *userAPI) receiveArchive(w http.ResponseWriter, r *http.Request, _ auth.
 			fmt.Sprintf("the body has %d bytes and sha256 %s, not what the upload was begun with", n, got))
 	}
 
-	files, closeFiles, err := h.readArchive(ctx, spill, n)
+	files, closeFiles, err := h.readArchive(ctx, spill, n, r.URL.Query().Get("path"))
 	if err != nil {
 		return h.dropArchive(ctx, u, err)
 	}
@@ -108,8 +108,12 @@ func removedArchive(err error) error {
 }
 
 // readArchive tells a zip from a gzip-compressed tar by its first bytes, not
-// by a Content-Type the sender may not have set.
-func (h *userAPI) readArchive(ctx context.Context, spill *os.File, size int64) ([]artifact.FileInput, func(), error) {
+// by a Content-Type the sender may not have set. With a path, the body is
+// one file at that path, whatever it looks like.
+func (h *userAPI) readArchive(ctx context.Context, spill *os.File, size int64, path string) ([]artifact.FileInput, func(), error) {
+	if path != "" {
+		return []artifact.FileInput{{Path: path, Content: io.NewSectionReader(spill, 0, size)}}, func() {}, nil
+	}
 	var head [2]byte
 	if _, err := spill.ReadAt(head[:], 0); err != nil {
 		return nil, nil, invalid("the archive is too short to be a zip or a gzip-compressed tar")
@@ -125,7 +129,7 @@ func (h *userAPI) readArchive(ctx context.Context, spill *os.File, size int64) (
 		}
 		return b.files, func() { h.closeBundle(ctx, b) }, nil
 	}
-	return nil, nil, invalid("the archive is neither a zip nor a gzip-compressed tar")
+	return nil, nil, invalid("the archive is neither a zip nor a gzip-compressed tar; to send one file as it is, add &path=<name> to the URL")
 }
 
 // readZip lists the regular files of a zip. Entries inflate only when read,

@@ -829,6 +829,12 @@ Kazari reads the body only once the token has opened an upload, caps it at `arch
 
 Regular files are staged under their paths in the archive, with a leading `./` removed, and follow the [path rules](#file-paths) of a bundle; directories, links and other entries are skipped. Archive the contents of the site's directory rather than the directory itself, so that `index.html` sits at the root.
 
+To send one file without an archive, declare the file's own digest and size in `begin_upload`, and add `path` to the URL. The body is staged at that path as it is, even a zip:
+
+```sh
+curl --fail-with-body -T logo.png "$ARCHIVE_URL&path=assets/logo.png"
+```
+
 A body that does not match is `422 upload_digest_mismatch`, and the message counts the attempts left: after three, the upload is removed. A body that matches but cannot be staged, for example a zip with a path that escapes or with entries whose compressed sizes add up to more than the archive, as overlapping entries can, is `422` with the archive's error, and the upload is removed too, because the same bytes would fail the same way. Once an archive is received the token is spent, and it answers `404 upload_not_found` like an unknown one.
 
 > [!NOTE]

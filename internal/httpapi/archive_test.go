@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -106,6 +107,44 @@ func TestArchiveUploadTarGz(t *testing.T) {
 		http.StatusCreated, nil)
 	if got := e.read(e.alice, "tarred", "index.html", 0); got != "<h1>tar</h1>" {
 		t.Errorf("index.html = %q", got)
+	}
+}
+
+// One file needs no archive: the URL names its path, and the body is staged
+// as it is, even when it looks like an archive.
+func TestArchiveUploadOneFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+		path string
+	}{
+		{"a page", []byte("<h1>one</h1>"), "index.html"},
+		{"a zip kept whole", zipBytes(t, map[string]string{"a.txt": "a"}), "files/kept.zip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+			up, put := e.beginArchive(t, tc.body)
+			var res api.ArchiveResult
+			e.expect(e.put(put+"&path="+url.QueryEscape(tc.path), tc.body), http.StatusOK, &res)
+			if res.Files != 1 || res.Bytes != int64(len(tc.body)) {
+				t.Fatalf("archive result = %+v, want one file of %d bytes", res, len(tc.body))
+			}
+			e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "one-file", UploadID: up.UploadID},
+				http.StatusCreated, nil)
+			if got := e.read(e.alice, "one-file", tc.path, 0); got != string(tc.body) {
+				t.Errorf("%s = %q, want the body as sent", tc.path, got)
+			}
+		})
+	}
+
+	e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+	body := []byte("<h1>one</h1>")
+	_, put := e.beginArchive(t, body)
+	e.apiErr(e.put(put+"&path=../escape.html", body), http.StatusUnprocessableEntity, api.CodeInvalidPath)
+	_, put = e.beginArchive(t, body)
+	plain := e.apiErr(e.put(put, body), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+	if !strings.Contains(plain.Message, "&path=") {
+		t.Errorf("a plain file without a path: %q, want the message to name &path=", plain.Message)
 	}
 }
 
