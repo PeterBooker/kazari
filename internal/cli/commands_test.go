@@ -901,6 +901,14 @@ func TestRunAdmin(t *testing.T) {
 	if err != nil || since.Sub(now.Add(-24*time.Hour)).Abs() > time.Minute {
 		t.Errorf("since query = %q (%v)", query, err)
 	}
+	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "audit", "--since", "3d")
+	if r.code != 0 {
+		t.Fatalf("admin audit --since 3d: %+v", r)
+	}
+	q, _ = url.ParseQuery(query)
+	if since, err := time.Parse(time.RFC3339, q.Get("since")); err != nil || since.Sub(now.Add(-72*time.Hour)).Abs() > time.Minute {
+		t.Errorf("admin audit --since 3d: since query = %q (%v), want three days ago", query, err)
+	}
 
 	// The issued key is printed once and the admin token never.
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "keys", "issue", "bob")
