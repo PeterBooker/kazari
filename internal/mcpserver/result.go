@@ -6,15 +6,34 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
+
+func editedFiles(in []artifact.FileEdits) []EditedFile {
+	var out []EditedFile
+	for _, f := range in {
+		e := EditedFile{Path: f.Path, Edits: make([]api.EditOutcome, len(f.Outcomes))}
+		for i, o := range f.Outcomes {
+			e.Edits[i] = api.EditOutcome(o)
+		}
+		out = append(out, e)
+	}
+	return out
+}
 
 // WriteResult is the structured result of the tools that publish or change an
 // artifact. It is the REST API's PublishResult without the full record, whose
 // description, metadata and timestamps the model sent or rarely needs:
 // get_artifact returns them.
 type WriteResult struct {
-	URL              string     `json:"url"`
-	Version          int        `json:"version"`
+	URL     string `json:"url"`
+	Version int    `json:"version"`
+	// VersionURL is the version's pinned URL; Unchanged says the files
+	// matched it, so no version was added; Warnings name what will stop the
+	// page from rendering as published.
+	VersionURL       string     `json:"version_url,omitempty"`
+	Unchanged        bool       `json:"unchanged,omitempty"`
+	Warnings         []string   `json:"warnings,omitempty"`
 	Slug             string     `json:"slug"`
 	Name             string     `json:"name"`
 	Visibility       string     `json:"visibility"`
@@ -27,9 +46,22 @@ type WriteResult struct {
 	// model only the structured result.
 	Note   string            `json:"note,omitempty"`
 	Import *api.ImportReport `json:"import,omitempty"`
+	// Edited is how update_artifact applied the edits of each file.
+	Edited []EditedFile `json:"edited,omitempty"`
 
 	description string
 }
+
+// EditedFile is the outcome of one file's edits in update_artifact.
+type EditedFile struct {
+	Path  string            `json:"path"`
+	Edits []api.EditOutcome `json:"edits"`
+}
+
+// warned is a result whose summary lists warnings, each on its own line.
+type warned interface{ warningLines() []string }
+
+func (r WriteResult) warningLines() []string { return r.Warnings }
 
 // resultMeta is a result with _meta for the preview, which hosts show the
 // user but not the model.
@@ -54,6 +86,9 @@ func writeResult(r api.PublishResult) WriteResult {
 	out := WriteResult{
 		URL:              r.URL,
 		Version:          r.Version,
+		VersionURL:       r.VersionURL,
+		Unchanged:        r.Unchanged,
+		Warnings:         r.Warnings,
 		Slug:             a.Slug,
 		Name:             a.Name,
 		Visibility:       a.Visibility,
@@ -76,8 +111,9 @@ func writeResult(r api.PublishResult) WriteResult {
 
 func editFileResult(r api.EditResult) EditFileResult {
 	return EditFileResult{
-		WriteResult: writeResult(api.PublishResult{URL: r.URL, Version: r.Version, Artifact: r.Artifact}),
-		Path:        r.Path,
-		Edits:       r.Edits,
+		WriteResult: writeResult(api.PublishResult{URL: r.URL, Version: r.Version, VersionURL: r.VersionURL,
+			Warnings: r.Warnings, Artifact: r.Artifact}),
+		Path:  r.Path,
+		Edits: r.Edits,
 	}
 }

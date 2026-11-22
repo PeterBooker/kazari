@@ -21,23 +21,25 @@ import (
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 )
 
-// FileInput is an inline file of create_artifact.
+// FileInput is an inline file of create_artifact. Content is a pointer so an
+// entry that leaves it out is told apart from an empty file.
 type FileInput struct {
-	Path        string `json:"path" jsonschema:"path inside the artifact, relative, e.g. index.html or assets/app.js"`
-	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
+	Path        string  `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
+	Content     *string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64; \"\" for an empty file"`
+	Encoding    string  `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
+	ContentType string  `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
+	URL         string  `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
 }
 
-// UpdateFileInput is an inline file or a deletion of update_artifact.
+// UpdateFileInput is an inline file, an edit or a deletion of update_artifact.
 type UpdateFileInput struct {
-	Path        string `json:"path" jsonschema:"path inside the artifact, relative, e.g. index.html or assets/app.js"`
-	Content     string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
-	Delete      bool   `json:"delete,omitempty" jsonschema:"true removes this path from the new version; content is ignored"`
+	Path        string      `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
+	Content     *string     `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64; \"\" for an empty file"`
+	Encoding    string      `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
+	ContentType string      `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
+	URL         string      `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
+	Edits       []EditInput `json:"edits,omitempty" jsonschema:"edits to this text file of the base version, as in edit_file, instead of content"`
+	Delete      bool        `json:"delete,omitempty" jsonschema:"true removes this path from the new version"`
 }
 
 // CreateInput is the input of create_artifact.
@@ -60,9 +62,10 @@ type UpdateInput struct {
 	Name            *string            `json:"name,omitempty" jsonschema:"new title"`
 	Description     *string            `json:"description,omitempty" jsonschema:"new description"`
 	Metadata        map[string]*string `json:"metadata,omitempty" jsonschema:"keys to set; a null value deletes the key"`
-	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public, unlisted or members"`
+	Visibility      *string            `json:"visibility,omitempty" jsonschema:"public, unlisted, members or unpublished (offline)"`
 	Label           string             `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	ExpectedVersion int                `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
+	BaseVersion     int                `json:"base_version,omitempty" jsonschema:"version the new one builds on; default the latest, required while an earlier version is published"`
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 	Restore         bool               `json:"restore,omitempty" jsonschema:"bring back a soft-deleted artifact (get_artifact shows deleted_at) before applying the other changes"`
 }
@@ -70,7 +73,7 @@ type UpdateInput struct {
 // EditInput is one edit of edit_file: a text edit or an anchor edit.
 type EditInput struct {
 	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: the exact text to replace, copied from the file; it must match once unless replace_all"`
-	NewText    string `json:"new_text" jsonschema:"the replacement; empty deletes the text or lines"`
+	NewText    string `json:"new_text,omitempty" jsonschema:"the replacement; empty or omitted deletes the text or lines"`
 	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"text edit: replace every match of old_text"`
 	Start      string `json:"start,omitempty" jsonschema:"anchor edit: anchor of the first line to replace, e.g. 12:3fa0, from read_file with anchors: true"`
 	End        string `json:"end,omitempty" jsonschema:"anchor edit: anchor of the last line to replace, inclusive; default start"`
@@ -84,6 +87,7 @@ type EditFileInput struct {
 	Path            string      `json:"path" jsonschema:"text file to edit, e.g. index.html"`
 	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits (start, after, before), not both, applied to the latest version"`
 	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
+	BaseVersion     int         `json:"base_version,omitempty" jsonschema:"version whose file to edit; default the latest, required while an earlier version is published"`
 	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 }
@@ -256,6 +260,11 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 		if err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, err)
 		}
+		if w, ok := any(out).(warned); ok {
+			for _, line := range w.warningLines() {
+				summary += "\nWarning: " + line
+			}
+		}
 		// Unescaped, "<" costs one byte of the model's context instead of six.
 		var js strings.Builder
 		enc := json.NewEncoder(&js)
@@ -377,8 +386,17 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
+			// Models fill optional fields with "": that leaves the
+			// visibility alone rather than changing it.
+			vis := ""
 			if in.Visibility != nil {
-				if err := present.RequireShare(p, *in.Visibility); err != nil {
+				vis = *in.Visibility
+			}
+			if err := present.RequireShare(p, vis); err != nil {
+				return WriteResult{}, "", err
+			}
+			if vis != "" {
+				if err := checkVisibility(vis); err != nil {
 					return WriteResult{}, "", err
 				}
 			}
@@ -386,49 +404,53 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			req := artifact.UpdateRequest{
+			a, v, err := b.update(ctx, actor, artifact.UpdateRequest{
 				Slug:            in.Slug,
 				Name:            in.Name,
 				Description:     in.Description,
 				Metadata:        in.Metadata,
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
+				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
 				Restore:         in.Restore,
 				Files:           files,
-			}
-			// Models fill optional fields with "": that leaves the
-			// visibility alone rather than changing it.
-			if in.Visibility != nil && *in.Visibility != "" {
-				v := artifact.Visibility(*in.Visibility)
-				req.Visibility = &v
-			}
-			a, v, err := arts.Update(ctx, actor, req)
+			}, vis)
 			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
 			}
 			if v == nil {
 				res := writeResult(links.Result(a, 0))
-				return res, "Updated fields, no new version. " + publishedLine(res), nil
+				line := "Updated fields, no new version. " + publishedLine(res)
+				if vis != "" {
+					line = visibilityLine(res)
+				}
+				return res, line, nil
 			}
 			res := writeResult(links.Published(a, v))
-			return res, publishedLine(res), nil
+			res.Edited = editedFiles(v.Edited)
+			line := publishedLine(res)
+			if len(res.Edited) > 0 {
+				parts := make([]string, len(res.Edited))
+				for i, f := range res.Edited {
+					parts[i] = f.Path + " (" + editParts(f.Edits) + ")"
+				}
+				line += "; edited " + strings.Join(parts, ", ")
+			}
+			return res, line, nil
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "edit_file", InputSchema: b.editSchema,
 		Annotations: annotations("Edit file", false, false, false), Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in EditFileInput) (EditFileResult, string, error) {
-			edits := make([]artifact.Edit, len(in.Edits))
-			for i, e := range in.Edits {
-				edits[i] = artifact.Edit(e)
-			}
 			a, v, outs, err := arts.Edit(ctx, actor, artifact.EditRequest{
 				Slug:            in.Slug,
 				Path:            in.Path,
-				Edits:           edits,
+				Edits:           edits(in.Edits),
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
+				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
 			})
 			if err != nil {
@@ -558,7 +580,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				return WriteResult{}, "", err
 			}
 			res := writeResult(links.Result(a, 0))
-			return res, publishedLine(res), nil
+			return res, visibilityLine(res), nil
 		})
 
 	register(b, s, p, &mcp.Tool{Name: "create_share_link", Annotations: annotations("Create share link", false, false, false)},
@@ -678,8 +700,12 @@ func confirmed(answer mcp.InputResponse) bool {
 
 // editLine names each edit's match so a fuzzy match is never silent.
 func editLine(r EditFileResult) string {
-	parts := make([]string, len(r.Edits))
-	for i, e := range r.Edits {
+	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, editParts(r.Edits))
+}
+
+func editParts(edits []api.EditOutcome) string {
+	parts := make([]string, len(edits))
+	for i, e := range edits {
 		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
 		if e.EndLine < e.StartLine {
 			where = fmt.Sprintf("removed at line %d", e.StartLine)
@@ -690,10 +716,30 @@ func editLine(r EditFileResult) string {
 		}
 		parts[i] += ")"
 	}
-	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, strings.Join(parts, "; "))
+	return strings.Join(parts, "; ")
+}
+
+// visibilityLine says who can open the page now.
+func visibilityLine(r WriteResult) string {
+	if r.UnpublishedAt != nil || r.DeletedAt != nil {
+		return publishedLine(r)
+	}
+	who := map[string]string{
+		string(artifact.Public):   "public: anyone can open it, and it is listed",
+		string(artifact.Unlisted): "unlisted: anyone with the URL can open it, and it is not listed",
+		string(artifact.Members):  "members-only: people who sign in to this instance, or who hold a share link, can open it",
+	}[r.Visibility]
+	if who == "" {
+		who = r.Visibility
+	}
+	return fmt.Sprintf("%s is now %s at %s (version %d).", r.Slug, who, r.URL, r.Version)
 }
 
 func publishedLine(r WriteResult) string {
+	if r.Unchanged {
+		return fmt.Sprintf("No change: the files match version %d; no version was added. %s serves version %d.",
+			r.Version, r.URL, r.PublishedVersion)
+	}
 	line := fmt.Sprintf("Published %s (version %d)", r.URL, r.Version)
 	switch {
 	case r.DeletedAt != nil:
@@ -766,6 +812,48 @@ func (b *builder) release(ctx context.Context, uploadID string, release func(boo
 	}
 }
 
+func edits(in []EditInput) []artifact.Edit {
+	out := make([]artifact.Edit, len(in))
+	for i, e := range in {
+		out[i] = artifact.Edit(e)
+	}
+	return out
+}
+
+// checkVisibility refuses a visibility before any upload or download is
+// opened for the call.
+func checkVisibility(v string) error {
+	if v == artifact.Unpublished {
+		return nil
+	}
+	_, err := artifact.ParseVisibility(v)
+	return err
+}
+
+// update applies req, then a visibility through SetVisibility, so
+// "unpublished" works as in set_visibility; a call that only sets the
+// visibility changes nothing else.
+func (b *builder) update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest, vis string) (*artifact.Artifact, *artifact.Version, error) {
+	only := vis != "" && len(req.Files) == 0 && req.Name == nil && req.Description == nil && len(req.Metadata) == 0 &&
+		!req.Restore && req.ExpectedVersion == 0
+	var (
+		a   *artifact.Artifact
+		v   *artifact.Version
+		err error
+	)
+	if !only {
+		if a, v, err = b.d.Artifacts.Update(ctx, actor, req); err != nil {
+			return nil, nil, err
+		}
+	}
+	if vis != "" {
+		if a, err = b.d.Artifacts.SetVisibility(ctx, actor, req.Slug, vis); err != nil {
+			return nil, nil, err
+		}
+	}
+	return a, v, nil
+}
+
 func createFiles(in []FileInput) []UpdateFileInput {
 	out := make([]UpdateFileInput, len(in))
 	for i, f := range in {
@@ -787,13 +875,20 @@ func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]arti
 		switch {
 		case f.Delete:
 			fi = artifact.FileInput{Path: f.Path, Delete: true}
-		case f.URL != "" && f.Content != "":
+		case len(f.Edits) > 0 && (f.URL != "" || f.Content != nil):
+			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has edits and also content or url; give one", f.Path)
+		case len(f.Edits) > 0:
+			fi = artifact.FileInput{Path: f.Path, Edits: edits(f.Edits), ContentType: f.ContentType}
+		case f.URL != "" && f.Content != nil:
 			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
 		case f.URL != "":
 			fi, err = dl.Add(f.Path, f.URL, f.ContentType)
+		case f.Content == nil:
+			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has no content: give content (\"\" for an empty "+
+				"file), url, edits or delete: true", f.Path)
 		default:
 			var data string
-			if data, err = decode(f.Path, f.Content, f.Encoding); err == nil {
+			if data, err = decode(f.Path, *f.Content, f.Encoding); err == nil {
 				fi = artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType}
 			}
 		}

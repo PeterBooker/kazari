@@ -108,12 +108,20 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 		if version == 0 {
 			version = a.PublishedVersion
 		}
+		head := func(path, what string) *mcp.TextContent {
+			return &mcp.TextContent{Text: readHeader(path, version, a.PublishedVersion, a.LatestVersion, what)}
+		}
 		if in.StartLine > 0 || in.EndLine > 0 {
 			w, note, err := b.readWindow(ctx, actor, in, version, a.LatestVersion)
 			if err != nil {
 				return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: w.Content}, &mcp.TextContent{Text: note}}}, w, nil
+			content := []mcp.Content{head(w.Path, fmt.Sprintf("lines %d-%d of %d", w.StartLine, w.EndLine, w.TotalLines)),
+				&mcp.TextContent{Text: w.Content}}
+			if note != "" {
+				content = append(content, &mcp.TextContent{Text: note})
+			}
+			return &mcp.CallToolResult{Content: content}, w, nil
 		}
 		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
 		f := fc.file
@@ -128,7 +136,8 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 			}
 			msg := fmt.Sprintf("%s is %d bytes (%s, sha256 %s), too large to return inline. Download it from %s "+
 				"with the API key as a bearer token.", f.Path, f.Size, f.ContentType, f.Hash, out.URL)
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, out, nil
+			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)),
+				&mcp.TextContent{Text: msg}}}, out, nil
 		case err != nil:
 			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
 		case fc.text:
@@ -138,16 +147,46 @@ func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Ac
 				body, out.Anchored = artifact.AnchorLines(body), true
 			}
 			out.Content = body
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: body}}}, out, nil
+			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, lineCount(fc.data)),
+				&mcp.TextContent{Text: body}}}, out, nil
 		default:
 			out.Encoding = "base64"
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)+" "+f.ContentType),
+				&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
 				URI:      fileURI(in.Slug, f.Path),
 				MIMEType: f.ContentType,
 				Blob:     fc.data,
 			}}}}, out, nil
 		}
 	})
+}
+
+// readHeader is the first line of every read: which version was read, and
+// what an edit of that text needs, which matters most after a rollback.
+func readHeader(path string, version, published, latest int, what string) string {
+	var state string
+	switch {
+	case version != latest:
+		state = fmt.Sprintf("latest %d; edit_file and update_artifact need base_version: %d to change this text", latest, version)
+	case published != latest:
+		state = fmt.Sprintf("the latest; version %d is published, so edit_file and update_artifact need base_version: %d "+
+			"to change this text", published, version)
+	default:
+		state = "the latest"
+	}
+	return fmt.Sprintf("%s, version %d (%s), %s", path, version, state, what)
+}
+
+// lineCount counts as artifact.AnchorLines does: "a\nb\n" is two lines.
+func lineCount(data []byte) string {
+	n := bytes.Count(data, []byte("\n"))
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		n++
+	}
+	if n == 1 {
+		return "1 line"
+	}
+	return fmt.Sprintf("%d lines", n)
 }
 
 // downloadURL pins version 0 to the published version.
@@ -334,9 +373,9 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	out := ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash, Encoding: "utf8",
 		Content: w.sb.String(), Anchored: in.Anchors, Version: version, LatestVersion: latest,
 		StartLine: start, EndLine: last, TotalLines: total}
-	note := fmt.Sprintf("Lines %d-%d of %d in %s.", start, last, total, f.Path)
+	note := ""
 	if last < end {
-		note += fmt.Sprintf(" The window was cut at the %s inline limit: continue from start_line %d.",
+		note = fmt.Sprintf("The window was cut at the %s inline limit: continue from start_line %d.",
 			size(b.o.MaxInlineReadBytes), last+1)
 	}
 	return out, note, nil

@@ -239,6 +239,14 @@ func TestParseVisibility(t *testing.T) {
 			t.Errorf("ParseVisibility(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
 	}
+	for _, in := range []string{"private", "Hidden", "internal"} {
+		if _, err := artifact.ParseVisibility(in); err == nil || !strings.Contains(err.Error(), `did you mean "members"?`) {
+			t.Errorf("ParseVisibility(%q) = %v, want a hint at members", in, err)
+		}
+	}
+	if _, err := artifact.ParseVisibility("everyone"); err == nil || strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("ParseVisibility(%q) = %v, want no hint", "everyone", err)
+	}
 }
 
 func TestErrorIs(t *testing.T) {

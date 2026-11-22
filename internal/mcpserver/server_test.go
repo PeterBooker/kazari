@@ -200,6 +200,18 @@ func fails(t *testing.T, cs *mcp.ClientSession, name string, args any) string {
 	return text(res)
 }
 
+// readBody is a read_file result's text after its header line.
+func readBody(res *mcp.CallToolResult) string {
+	if len(res.Content) < 2 {
+		return ""
+	}
+	tc, _ := res.Content[1].(*mcp.TextContent)
+	if tc == nil {
+		return ""
+	}
+	return tc.Text
+}
+
 func firstLine(res *mcp.CallToolResult) string {
 	if len(res.Content) == 0 {
 		return ""
@@ -317,16 +329,19 @@ func TestToolsRoundTrip(t *testing.T) {
 	}
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
-	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || text(res) != html || rf.Content != html {
+	if rf.Encoding != "utf8" || rf.Size != int64(len(html)) || readBody(res) != html || rf.Content != html {
 		t.Errorf("read_file index.html = %+v, %q", rf, text(res))
 	}
 	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "assets/logo.png", "version": 1})
 	if rf.Encoding != "base64" || rf.ContentType != "image/png" || rf.Content != "" {
 		t.Errorf("read_file logo = %+v", rf)
 	}
-	er, isRes := res.Content[0].(*mcp.EmbeddedResource)
+	if got := firstLine(res); got != "assets/logo.png, version 1 (the latest), 18 B image/png" {
+		t.Errorf("read_file logo header = %q", got)
+	}
+	er, isRes := res.Content[1].(*mcp.EmbeddedResource)
 	if !isRes || !bytes.Equal(er.Resource.Blob, pngBytes) || er.Resource.URI != "kazari://artifacts/demo/files/assets/logo.png" {
-		t.Errorf("read_file logo content = %#v", res.Content[0])
+		t.Errorf("read_file logo content = %#v", res.Content[1])
 	}
 
 	list, _ := ok[api.ArtifactList](t, cs, "list_artifacts", map[string]any{"mine": "created"})
@@ -535,8 +550,8 @@ func TestChunkedPublish(t *testing.T) {
 	if !strings.Contains(text(res), rf.URL) {
 		t.Errorf("read_file text = %q", text(res))
 	}
-	if _, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "bundle", "path": "index.html"}); text(res) != "inline wins" {
-		t.Errorf("index.html = %q", text(res))
+	if _, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "bundle", "path": "index.html"}); readBody(res) != "inline wins" {
+		t.Errorf("index.html = %q", readBody(res))
 	}
 
 	if msg := fails(t, cs, "upload_chunk", chunk(0, data[:10])); !strings.HasPrefix(msg, "upload_not_found: ") {

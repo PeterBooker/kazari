@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"fmt"
 	"mime"
 	"path"
 	"regexp"
@@ -166,7 +167,18 @@ func ParseVisibility(s string) (Visibility, error) {
 	case Unlisted, Members:
 		return Visibility(s), nil
 	}
-	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
+	return "", Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q%s", Public, Unlisted, Members, VisibilityHint(s))
+}
+
+// VisibilityHint points a word that means "not for everyone" at Members,
+// the visibility that does that; "" for any other word.
+func VisibilityHint(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "private", "hidden", "internal", "secret", "restricted", "protected", "team":
+		return fmt.Sprintf("; %q is not one: did you mean %q? It serves the page only to people who sign in to this "+
+			"instance and to holders of a share link", s, Members)
+	}
+	return ""
 }
 
 // ValidateName allows one line of valid UTF-8, at most NameMaxBytes, with no
