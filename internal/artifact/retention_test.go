@@ -217,3 +217,39 @@ func TestKeepVersionsMetadata(t *testing.T) {
 		}
 	}
 }
+
+// Setting kazari.keep_versions has the sweep delete versions, so it takes
+// what deleting them takes.
+func TestKeepVersionsNeedsDeleteOrOwnership(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteShared})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	e.create(t, alice, "demo", "index.html", "v1")
+	e.versions(t, alice, "demo", 5, false)
+
+	keep := map[string]*string{artifact.MetaKeepVersions: new("1")}
+	_, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Metadata: keep})
+	wantErr(t, "bob setting keep_versions on alice's page", err, artifact.ErrForbidden)
+	_, _, err = e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Metadata: keep, BaseVersion: 5,
+		Files: files("index.html", "v6")})
+	wantErr(t, "bob setting keep_versions with a new version", err, artifact.ErrForbidden)
+	_, _, err = e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{artifact.MetaKeepVersions: nil}})
+	wantErr(t, "bob removing keep_versions", err, artifact.ErrForbidden)
+	if _, err := e.svc.Sweep(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.numbers(t, alice, "demo"); len(got) != 5 {
+		t.Errorf("versions after bob's refused keep_versions and a sweep = %v, want all five", got)
+	}
+
+	for _, who := range []struct {
+		name  string
+		actor artifact.Actor
+	}{
+		{"the owner", alice},
+		{"bob with artifacts:delete", artifact.Actor{Handle: "bob", CanDelete: true}},
+	} {
+		if _, _, err := e.svc.Update(e.ctx, who.actor, artifact.UpdateRequest{Slug: "demo", Metadata: keep}); err != nil {
+			t.Errorf("%s setting keep_versions: %v", who.name, err)
+		}
+	}
+}

@@ -187,7 +187,7 @@ func (s *Service) deleteVersions(ctx context.Context, actor Actor, slug string, 
 		if err := s.checkWritable(actor, a, involved, false); err != nil {
 			return nil, err
 		}
-		if !actor.Admin && !actor.CanDelete && actor.Handle != a.OwnerHandle {
+		if !mayDelete(actor, a) {
 			return nil, Errorf(ErrForbidden, "deleting versions of %q needs the artifacts:delete scope or ownership", slug)
 		}
 		ns, err := choose(a, vs)
@@ -237,7 +237,7 @@ func (s *Service) MarkStale(ctx context.Context, actor Actor, slug string, grace
 	now := s.now()
 	expires := now.Add(grace)
 	return s.modify(ctx, actor, slug, false, audit.ArtifactStale, func(a *Artifact) (map[string]string, error) {
-		if !actor.Admin && !actor.CanDelete && actor.Handle != a.OwnerHandle {
+		if !mayDelete(actor, a) {
 			return nil, Errorf(ErrForbidden, "marking %q stale needs the artifacts:delete scope or ownership", slug)
 		}
 		a.StaleAt, a.ExpiresAt = &now, &expires
