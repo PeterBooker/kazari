@@ -282,7 +282,7 @@ func User(u *user.User) api.User {
 // WithAccount adds how the person signs in to their wire type.
 func WithAccount(u api.User, a user.Account) api.User {
 	u.Password, u.Invited, u.Keys, u.LastActiveAt = a.HasPassword, a.Invited, a.LiveKeys, a.LastActive()
-	u.RecoveryCodes = a.RecoveryCodes
+	u.RecoveryCodes, u.Passkeys = a.RecoveryCodes, a.Passkeys
 	return u
 }
 

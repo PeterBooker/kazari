@@ -364,11 +364,12 @@ type User struct {
 	Identities  []Identity `json:"identities,omitempty"`
 	// How the person signs in, on the admin API: whether they have set a
 	// password, whether an invite is waiting for them to, their unused
-	// recovery codes, their live keys and the latest of their sign-ins and
+	// recovery codes, their passkeys, their live keys and the latest of their sign-ins and
 	// key uses.
 	Password      bool       `json:"password,omitempty"`
 	Invited       bool       `json:"invited,omitempty"`
 	RecoveryCodes int        `json:"recovery_codes,omitempty"`
+	Passkeys      int        `json:"passkeys,omitempty"`
 	Keys          int        `json:"keys,omitempty"`
 	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
 	// Sessions counts the person's browser sessions, on GET /users/{handle}.

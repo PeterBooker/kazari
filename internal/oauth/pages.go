@@ -11,6 +11,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/theme"
 )
 
@@ -88,10 +89,15 @@ type signInPage struct {
 	Password bool   // the password form; else the API-key form
 	Switch   string // the address of the other form, "" when there is none
 	Recover  string // the recovery-code page, "" when there is none
-	Lifetime string // of a session, e.g. "12 hours"
-	Host     string
-	Path     string
-	Nonce    string
+	// Passkey is the ceremony of the passkey form beside the password
+	// form; nil leaves the form out.
+	Passkey *passkey.Ceremony
+	// PasskeyError says why the last passkey was not accepted.
+	PasskeyError string
+	Lifetime     string // of a session, e.g. "12 hours"
+	Host         string
+	Path         string
+	Nonce        string
 	// RequestID continues an MCP client's authorization; KeyConsent then
 	// offers the consent page that takes an API key in place of a sign-in.
 	RequestID  string

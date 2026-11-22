@@ -41,7 +41,8 @@ type peoplePersonData struct {
 	Form  peopleForm
 
 	HasPassword   bool
-	RecoveryCodes int          // unused
+	RecoveryCodes int // unused
+	Passkeys      int
 	Pending       []peopleLink // their links that can still be used
 
 	Keys, PastKeys []peopleKey
@@ -103,7 +104,7 @@ func (s *server) peoplePersonData(ctx context.Context, c *request, u *user.User)
 		Form:        peopleForm{Name: u.DisplayName, Email: u.Email, Role: string(u.Role), Quota: peopleQuotaText(u.QuotaBytes)},
 		KeyForm:     newPeopleKeyForm(u),
 		MaxKeyDays:  s.maxKeyDays(),
-		HasPassword: acc.HasPassword, RecoveryCodes: acc.RecoveryCodes,
+		HasPassword: acc.HasPassword, RecoveryCodes: acc.RecoveryCodes, Passkeys: acc.Passkeys,
 	}
 	links, err := s.peopleLinks(ctx)
 	if err != nil {

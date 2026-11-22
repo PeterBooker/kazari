@@ -132,6 +132,9 @@ func newPeopleRow(u *user.User, acc user.Account, own artifact.OwnerUsage) peopl
 	if acc.HasPassword {
 		r.Methods = append(r.Methods, "password")
 	}
+	if acc.Passkeys > 0 {
+		r.Methods = append(r.Methods, "passkey")
+	}
 	if acc.Identities > 0 {
 		r.Methods = append(r.Methods, "provider")
 	}

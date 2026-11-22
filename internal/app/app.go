@@ -42,6 +42,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/oidc"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
@@ -332,12 +333,25 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	var (
 		passwords  oauth.Passwords
 		recoverURL string
+		passkeys   *passkey.Service
 	)
 	if cfg.LocalAccounts() {
 		passwords = users
 		recoverURL = cfg.ExternalURL("") + "account/recover"
 	}
-	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauth.Options{
+	if cfg.LocalAccounts() && passkey.Supported(cfg.BaseDomain) {
+		// The apex and the sign-in host share the base domain, so a passkey
+		// made on the account page signs in on the sign-in page.
+		passkeys, err = passkey.New(users, passkey.Options{
+			RPID:    cfg.BaseDomain,
+			Origins: []string{strings.TrimSuffix(cfg.ExternalURL(""), "/"), strings.TrimSuffix(mcpURL, "/")},
+			Now:     now,
+		})
+		if err != nil {
+			return fmt.Errorf("app: %w", err)
+		}
+	}
+	oauthOpts := oauth.Options{
 		Passwords:          passwords,
 		RecoverURL:         recoverURL,
 		ControlCallback:    controlCallback(cfg),
@@ -352,7 +366,13 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		ViewCallback:       viewCallback(cfg),
 		Fetch:              fetchObs,
 		Telemetry:          tel,
-	})
+	}
+	// Set only when there is one: a nil *passkey.Service in the interface
+	// would not be a nil interface.
+	if passkeys != nil {
+		oauthOpts.Passkeys = passkeys
+	}
+	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauthOpts)
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
 	a.obs = middleware.NewObserver(tel, cfg.Listen.ProxyMode)
@@ -529,9 +549,13 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			Telemetry:       tel,
 		}),
 	})
-	accountH := account.New(account.Deps{
+	accountDeps := account.Deps{
 		Sessions: oauthSvc, Users: users, Grants: oauthSvc, Artifacts: arts, Audit: auditStore, Links: links, Logger: log,
-	}, account.Options{
+	}
+	if passkeys != nil {
+		accountDeps.Passkeys = passkeys
+	}
+	accountH := account.New(accountDeps, account.Options{
 		URL:             strings.TrimSuffix(cfg.ExternalURL(""), "/"),
 		SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
 		AdminURL:        dashboardURL(cfg),

@@ -229,6 +229,14 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 		}
 	},
 	audit.RecoveryCreate: func(s *eventLine, e audit.Event) { s.words("made new recovery codes") },
+	audit.PasskeyCreate: func(s *eventLine, e audit.Event) {
+		s.words("added the passkey " + e.Details["name"])
+		ownerOfPasskey(s, e)
+	},
+	audit.PasskeyDelete: func(s *eventLine, e audit.Event) {
+		s.words("removed the passkey " + e.Details["name"])
+		ownerOfPasskey(s, e)
+	},
 	audit.RecoveryUse: func(s *eventLine, e audit.Event) {
 		s.words("used a recovery code")
 		if n := e.Details["left"]; n != "" {
@@ -275,6 +283,8 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 		switch e.Details["via"] {
 		case "password":
 			s.words("signed in with their password")
+		case "passkey":
+			s.words("signed in with a passkey")
 		case "api_key":
 			s.words("signed in with key ").mono(e.Details["key_prefix"])
 		case "oidc":
@@ -283,6 +293,13 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 			s.words("signed in")
 		}
 	},
+}
+
+// ownerOfPasskey names whose passkey it is when that is not the actor.
+func ownerOfPasskey(s *eventLine, e audit.Event) {
+	if who := e.Details["handle"]; who != "" && who != e.Actor {
+		s.words(" of ").person(who)
+	}
 }
 
 func roleWords(role string) string {

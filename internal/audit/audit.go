@@ -36,6 +36,8 @@ const (
 	PasswordSet     = "password.set"
 	RecoveryCreate  = "recovery.create"
 	RecoveryUse     = "recovery.use"
+	PasskeyCreate   = "passkey.create"
+	PasskeyDelete   = "passkey.delete"
 	SessionRevoke   = "session.revoke" // a person's browser sessions ended
 	DashboardSignIn = "dashboard.signin"
 	AuditExport     = "audit.export"

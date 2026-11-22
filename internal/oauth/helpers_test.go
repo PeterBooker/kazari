@@ -21,6 +21,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -118,7 +119,8 @@ type env struct {
 	store  *sqlite.OAuthStore
 	users  *user.Service
 	clock  *clock
-	idp    *fakeIDP // nil without an identity provider
+	idp    *fakeIDP         // nil without an identity provider
+	keys   *passkey.Service // nil unless envOptions.passkeys
 	rec    *recorder
 	jar    http.CookieJar
 	client *http.Client
@@ -136,6 +138,9 @@ type envOptions struct {
 	// checker replaces the service that checks passwords, to count or hold
 	// its calls.
 	checker oauth.Passwords
+	// passkeys adds the passkey sign-in, for passkeys of the relying party
+	// art.test made on the apex, https://art.test.
+	passkeys bool
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -180,6 +185,14 @@ func newEnv(t *testing.T, eo envOptions) *env {
 
 	e.srv = httptest.NewUnstartedServer(nil)
 	base := "http://" + e.srv.Listener.Addr().String()
+	var keys oauth.Passkeys
+	if eo.passkeys {
+		e.keys, err = passkey.New(e.users, passkey.Options{RPID: "art.test", Origins: []string{"https://art.test", base}, Now: e.clock.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = e.keys
+	}
 	e.svc = oauth.New(e.store, e.users, e.users, idp, e.rec, oauth.Options{
 		Issuer:             base,
 		Resource:           base + "/",
@@ -193,6 +206,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		ControlCallback:    controlCallback,
 		Passwords:          passwords,
 		RecoverURL:         recoverURL(passwords),
+		Passkeys:           keys,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()

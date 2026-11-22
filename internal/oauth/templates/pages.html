@@ -52,7 +52,7 @@
 <input type="hidden" name="path" value="{{.Path}}">
 <input type="hidden" name="nonce" value="{{.Nonce}}">
 {{end}}{{if .Password}}<div class="field"><label for="login">Handle or email</label>
-<input class="input" type="text" id="login" name="login" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+<input class="input" type="text" id="login" name="login" value="{{.Login}}" autocomplete="username{{if .Passkey}} webauthn{{end}}" autocapitalize="none" spellcheck="false" required></div>
 <div class="field"><label for="password">Password</label>
 <input class="input" type="password" id="password" name="password" autocomplete="current-password" required aria-describedby="password_help">
 <p class="help" id="password_help">You stay signed in for {{.Lifetime}}.</p></div>
@@ -63,7 +63,19 @@
 <button type="submit" class="btn btn-primary">Sign in</button>
 </div>
 </form>
-{{if or .Password .Switch}}<div class="door-alt">
+{{with .Passkey}}<form method="post" action="/oauth/signin" data-passkey="get" data-passkey-options="{{.Options}}"{{if not $.V.PasskeyError}} hidden{{end}}>
+{{if $.V.RequestID}}<input type="hidden" name="request_id" value="{{$.V.RequestID}}">
+{{else}}<input type="hidden" name="host" value="{{$.V.Host}}">
+<input type="hidden" name="path" value="{{$.V.Path}}">
+<input type="hidden" name="nonce" value="{{$.V.Nonce}}">
+{{end}}<input type="hidden" name="passkey_token" value="{{.Token}}">
+<input type="hidden" name="passkey" value="">
+{{with $.V.PasskeyError}}{{template "alert" .}}{{end}}<p class="error" data-passkey-error hidden>{{template "icon/alert"}}<span>No passkey was used. Try again, or sign in with your password.</span></p>
+<div class="actions">
+<button type="submit" class="btn">{{template "icon/key"}}Sign in with a passkey</button>
+</div>
+</form>
+{{end}}{{if or .Password .Switch}}<div class="door-alt">
 {{if .Switch}}<a class="link" href="{{.Switch}}">{{if .Password}}Use an API key instead{{else}}Use your password instead{{end}}</a>
 {{end}}{{if and .RequestID .KeyConsent}}<a class="link" href="/oauth/consent?with=key">Use an API key instead</a>
 {{end}}{{if and .Password .Recover}}<a class="link" href="{{.Recover}}">Lost your password? Use a recovery code</a>

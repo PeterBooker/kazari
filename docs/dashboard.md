@@ -143,7 +143,7 @@ Opening a person shows everything about them in one place. From top to bottom:
 
 #### Resetting a password
 
-**Create a reset link** is for a person who lost their password and has no [recovery code](identity.md#recovery-codes) left, or who has none yet because they used API keys until now. The confirmation page has one option, off by default: **Also disconnect their apps and revoke their keys**, for an account someone else may have got into. It deletes their recovery codes too.
+**Create a reset link** is for a person who lost their password and has no [passkey](identity.md#passkeys) or [recovery code](identity.md#recovery-codes) left, or who has none yet because they used API keys until now. The confirmation page has one option, off by default: **Also disconnect their apps and revoke their keys**, for an account someone else may have got into. It removes their passkeys and recovery codes too.
 
 The link is shown once on the next page and works for 24 hours by default. Using it signs the person out of every browser (`kazari admin users reset-password ana`, with `--revoke-all` for the option).
 

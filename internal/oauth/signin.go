@@ -14,6 +14,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -212,6 +213,13 @@ func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, 
 	if s.opts.RecoverURL != "" {
 		p.Recover = PathRecover
 	}
+	if p.Password && s.passkeys != nil {
+		if c, err := s.passkeys.SignIn(); err != nil {
+			s.log.Error("oauth: begin passkey sign-in", "err", err)
+		} else {
+			p.Passkey = &c
+		}
+	}
 	p.Error = errMsg
 	if s.passwords != nil && s.keys != nil && p.RequestID == "" {
 		q := url.Values{"host": {p.Host}, "path": {p.Path}, "nonce": {p.Nonce}}
@@ -283,7 +291,13 @@ func (s *Service) serveSignInForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var handle, keyPrefix, via string
-	if _, byKey := f["api_key"]; byKey {
+	if _, byPasskey := f["passkey"]; byPasskey {
+		u, ok := s.passkeySignIn(w, r, page)
+		if !ok {
+			return
+		}
+		handle, via = u.Handle, viaPasskey
+	} else if _, byKey := f["api_key"]; byKey {
 		// An MCP client's authorization takes a key on the consent page,
 		// where the key bounds the grant, not here.
 		if s.keys == nil || req != nil {
@@ -373,6 +387,50 @@ func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page si
 	}
 	s.accountDelay.Reset(account)
 	s.signedIn(ctx, viaPassword, signInOK)
+	return u, true
+}
+
+// passkeySignIn checks the passkey the sign-in form carries. When ok is
+// false it has answered, with the form again. A passkey names its person
+// only once it verifies, so refusals are counted per address alone.
+func (s *Service) passkeySignIn(w http.ResponseWriter, r *http.Request, page signInPage) (*user.User, bool) {
+	ctx := r.Context()
+	if s.passkeys == nil {
+		s.message(w, http.StatusForbidden, "Sign-in required", "This instance does not sign people in with a passkey.", "")
+		return nil, false
+	}
+	refuse := func(status int, msg string) {
+		page.PasskeyError = msg
+		s.renderSignIn(w, status, page, false, "")
+	}
+	attempt, wait := s.ipDelay.Begin(ratelimit.IPKey(r))
+	if wait > 0 {
+		s.ipDelay.Refused(ctx)
+		s.signedIn(ctx, viaPasskey, signInDelayed)
+		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
+		refuse(http.StatusTooManyRequests, "Too many attempts. Try again in "+waitText(wait)+".")
+		return nil, false
+	}
+	u, err := s.passkeys.Verify(ctx, r.PostForm.Get("passkey_token"), r.PostForm.Get("passkey"))
+	switch {
+	case errors.Is(err, passkey.ErrExpired):
+		attempt.Done()
+		s.signedIn(ctx, viaPasskey, signInFailed)
+		refuse(http.StatusBadRequest, "This page was open too long. Use your passkey again.")
+		return nil, false
+	case errors.Is(err, passkey.ErrRejected):
+		attempt.Failed()
+		s.signedIn(ctx, viaPasskey, signInFailed)
+		refuse(http.StatusUnauthorized, "That passkey was not accepted. It may have been removed from your account.")
+		return nil, false
+	case err != nil:
+		attempt.Done()
+		s.log.ErrorContext(ctx, "oauth: check passkey", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return nil, false
+	}
+	attempt.Done()
+	s.signedIn(ctx, viaPasskey, signInOK)
 	return u, true
 }
 

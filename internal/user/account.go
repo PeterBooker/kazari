@@ -92,8 +92,9 @@ func (s *Service) Invite(ctx context.Context, req InviteRequest) (_ *User, _ *Li
 // IssueLink makes a link that lets handle set a password, ending any earlier
 // link of the same purpose: PurposeInvite replaces an invite that was lost
 // or has lapsed, PurposeReset is for a person who has a password or lost
-// it. With revokeAll, using a reset link also revokes the person's keys and
-// OAuth grants. ErrNotFound, ErrDisabled, ErrLocalOff.
+// it. With revokeAll, using a reset link also revokes the person's keys,
+// recovery codes, passkeys and OAuth grants. ErrNotFound, ErrDisabled,
+// ErrLocalOff.
 func (s *Service) IssueLink(ctx context.Context, handle string, purpose Purpose, revokeAll bool) (_ *Link, token string, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.issue_link")
 	defer func() { endSpan(span, err) }()
@@ -252,7 +253,7 @@ type RedeemRequest struct {
 // Redeem uses the link token names up and sets the person's password; a
 // PurposeSetup link creates the first admin with it. It does not sign
 // anyone in. A reset ends the person's browser sessions, and with
-// Link.RevokeAll their keys, recovery codes and OAuth grants.
+// Link.RevokeAll their keys, recovery codes, passkeys and OAuth grants.
 // ErrLinkNotFound and ErrSetupDone as for Link; ErrWeakPassword and, for
 // setup, ErrInvalidHandle, with the link left unused.
 func (s *Service) Redeem(ctx context.Context, token string, req RedeemRequest) (_ *User, err error) {
@@ -311,6 +312,9 @@ func (s *Service) Redeem(ctx context.Context, token string, req RedeemRequest) (
 			return nil, fmt.Errorf("user: reset %q: %w", u.Handle, err)
 		}
 		if err := s.store.DeleteRecoveryCodes(ctx, u.Handle); err != nil {
+			return nil, fmt.Errorf("user: reset %q: %w", u.Handle, err)
+		}
+		if err := s.store.DeletePasskeys(ctx, u.Handle); err != nil {
 			return nil, fmt.Errorf("user: reset %q: %w", u.Handle, err)
 		}
 		if s.opts.RevokeGrants != nil {

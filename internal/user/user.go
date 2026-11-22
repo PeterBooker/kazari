@@ -66,6 +66,17 @@ var (
 	// ErrBadRecoveryCode is a refused recovery: an unknown name, a disabled
 	// account, or a code that is wrong or used, never told apart.
 	ErrBadRecoveryCode = errors.New("user: wrong name or recovery code")
+	// ErrPasskeyNotFound is a passkey that is unknown, another person's, or
+	// whose person is disabled.
+	ErrPasskeyNotFound = errors.New("user: passkey not found")
+	// ErrPasskeyExists is a passkey added twice.
+	ErrPasskeyExists = errors.New("user: passkey already added")
+	// ErrTooManyPasskeys is a passkey refused because its person holds
+	// MaxPasskeys.
+	ErrTooManyPasskeys = errors.New("user: too many passkeys")
+	// ErrPasskeyStale is a passkey made for a user handle the person no
+	// longer has: two pages added their first passkey at once.
+	ErrPasskeyStale = errors.New("user: passkey made for another user handle")
 )
 
 // Purpose is what a Link is for.
@@ -109,16 +120,18 @@ type Account struct {
 	LiveKeys   int
 	// RecoveryCodes is how many unused recovery codes the person holds.
 	RecoveryCodes   int
+	Passkeys        int
 	PasswordLoginAt *time.Time
+	PasskeyLoginAt  *time.Time
 	IdentityLoginAt *time.Time
 	KeyUsedAt       *time.Time
 }
 
-// LastActive is the latest of the last password sign-in, sign-in at the
-// identity provider and key use; nil when there is none.
+// LastActive is the latest of the last password or passkey sign-in,
+// sign-in at the identity provider and key use; nil when there is none.
 func (a Account) LastActive() *time.Time {
 	var last *time.Time
-	for _, t := range []*time.Time{a.PasswordLoginAt, a.IdentityLoginAt, a.KeyUsedAt} {
+	for _, t := range []*time.Time{a.PasswordLoginAt, a.PasskeyLoginAt, a.IdentityLoginAt, a.KeyUsedAt} {
 		if t != nil && (last == nil || t.After(*last)) {
 			last = t
 		}
@@ -168,6 +181,18 @@ type KeyStatus struct {
 	ExpiresAt *time.Time // nil when the key never expires
 	Slugs     []string   // the key's restriction, empty when it has none
 	Scopes    []string   // what the key acts with now: its scopes, capped at its owner's role
+}
+
+// Passkey is a WebAuthn credential a person signs in with. Record is the
+// credential as the passkey package keeps it, opaque here.
+type Passkey struct {
+	ID           int64
+	UserHandle   string
+	Name         string
+	CredentialID []byte
+	Record       []byte
+	CreatedAt    time.Time
+	LastUsedAt   *time.Time
 }
 
 // Identity links an upstream (issuer, subject) pair to a user.
@@ -288,6 +313,28 @@ type Store interface {
 	UseRecoveryCode(ctx context.Context, handle, hash string, at time.Time, passwordHash string) (left int, err error)
 	// DeleteRecoveryCodes deletes every recovery code of the user.
 	DeleteRecoveryCodes(ctx context.Context, handle string) error
+
+	// PasskeyUserID returns the user handle the user's passkeys are made
+	// for, or nil when they have never added one. ErrNotFound.
+	PasskeyUserID(ctx context.Context, handle string) ([]byte, error)
+	// CreatePasskey inserts p for p.UserHandle and sets p.ID, storing
+	// webauthnID as the user's passkey user handle if they have none, in one
+	// transaction. ErrNotFound, ErrDisabled; ErrPasskeyStale when the user
+	// has another user handle; ErrTooManyPasskeys when they hold max;
+	// ErrPasskeyExists for a credential id that is stored already.
+	CreatePasskey(ctx context.Context, p *Passkey, webauthnID []byte, max int) error
+	// ListPasskeys returns the user's passkeys, oldest first. ErrNotFound.
+	ListPasskeys(ctx context.Context, handle string) ([]Passkey, error)
+	// GetPasskey returns the passkey with credentialID, its user and the
+	// user's passkey user handle. ErrPasskeyNotFound.
+	GetPasskey(ctx context.Context, credentialID []byte) (*Passkey, *User, []byte, error)
+	// TouchPasskey stores the record a sign-in updated and when it was.
+	TouchPasskey(ctx context.Context, id int64, record []byte, at time.Time) error
+	// DeletePasskey deletes the user's passkey id and returns it.
+	// ErrPasskeyNotFound.
+	DeletePasskey(ctx context.Context, handle string, id int64) (*Passkey, error)
+	// DeletePasskeys deletes every passkey of the user.
+	DeletePasskeys(ctx context.Context, handle string) error
 
 	// ListAccounts returns every user's Account, ordered by handle, with
 	// keys counted as live at now.

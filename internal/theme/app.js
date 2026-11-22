@@ -1,4 +1,5 @@
-// Copy buttons and local times. Every page works without this file.
+// Copy buttons, local times and passkeys. Every page works without this
+// file, except that a passkey needs it.
 (function () {
   "use strict";
 
@@ -87,4 +88,96 @@
     times();
     setInterval(times, minute);
   }
+
+  // A passkey form carries its ceremony's options in data-passkey-options
+  // and stays hidden until the browser can answer them. The answer goes
+  // back in the form's passkey field, as JSON in the form WebAuthn names.
+  if (!window.PublicKeyCredential || !navigator.credentials) return;
+
+  function decode(s) {
+    var b = atob(s.replace(/-/g, "+").replace(/_/g, "/")), out = new Uint8Array(b.length);
+    for (var i = 0; i < b.length; i++) out[i] = b.charCodeAt(i);
+    return out.buffer;
+  }
+
+  function encode(buf) {
+    var b = "", bytes = new Uint8Array(buf);
+    for (var i = 0; i < bytes.length; i++) b += String.fromCharCode(bytes[i]);
+    return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function ids(list) {
+    (list || []).forEach(function (c) { c.id = decode(c.id); });
+  }
+
+  function options(raw, create) {
+    var o = JSON.parse(raw);
+    o.challenge = decode(o.challenge);
+    if (create) {
+      o.user.id = decode(o.user.id);
+      ids(o.excludeCredentials);
+    } else {
+      ids(o.allowCredentials);
+    }
+    return o;
+  }
+
+  function answer(cred) {
+    var r = cred.response, out = {
+      id: cred.id,
+      rawId: encode(cred.rawId),
+      type: cred.type,
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+      response: { clientDataJSON: encode(r.clientDataJSON) }
+    };
+    if (cred.authenticatorAttachment) out.authenticatorAttachment = cred.authenticatorAttachment;
+    if (r.attestationObject) {
+      out.response.attestationObject = encode(r.attestationObject);
+      if (r.getTransports) out.response.transports = r.getTransports();
+    } else {
+      out.response.authenticatorData = encode(r.authenticatorData);
+      out.response.signature = encode(r.signature);
+      if (r.userHandle) out.response.userHandle = encode(r.userHandle);
+    }
+    return JSON.stringify(out);
+  }
+
+  document.querySelectorAll("form[data-passkey]").forEach(function (form) {
+    var create = form.getAttribute("data-passkey") === "create";
+    var raw = form.getAttribute("data-passkey-options");
+    var field = form.querySelector('input[name="passkey"]');
+    var error = form.querySelector("[data-passkey-error]");
+    var waiting = null;
+    if (!raw || !field) return;
+    form.hidden = false;
+    document.querySelectorAll("[data-passkey-nojs]").forEach(function (el) { el.hidden = true; });
+
+    function send(cred) {
+      field.value = answer(cred);
+      form.submit();
+    }
+
+    // The browser checks the form's required fields before this runs.
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (waiting) waiting.abort();
+      if (error) error.hidden = true;
+      var ask = create
+        ? navigator.credentials.create({ publicKey: options(raw, true) })
+        : navigator.credentials.get({ publicKey: options(raw, false) });
+      ask.then(send, function () {
+        if (error) error.hidden = false;
+      });
+    });
+
+    // On the sign-in page, offer the passkeys in the name field's autofill.
+    var autofill = document.querySelector('input[autocomplete~="webauthn"]');
+    if (create || !autofill || !PublicKeyCredential.isConditionalMediationAvailable || !window.AbortController) return;
+    PublicKeyCredential.isConditionalMediationAvailable().then(function (ok) {
+      if (!ok) return;
+      waiting = new AbortController();
+      navigator.credentials.get({ publicKey: options(raw, false), mediation: "conditional", signal: waiting.signal })
+        .then(send, function () {});
+    });
+  });
 })();

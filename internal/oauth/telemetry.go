@@ -27,6 +27,7 @@ const (
 	viaOIDC           = "oidc"
 	viaAPIKey         = "api_key"
 	viaPassword       = "password"
+	viaPasskey        = "passkey"
 	signInOK          = "ok"
 	signInNotAdmitted = "not_admitted"
 	signInFailed      = "failed"

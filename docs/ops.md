@@ -378,7 +378,7 @@ These describe sign-in and access:
 | Metric                                      | Type    | Labels                                                                                  |
 | ------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
 | `kazari_gate_requests_total`                | counter | `kazari_gate_result` (`public`, `member`, `share_link`, `redirect`, `denied`)           |
-| `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `password`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`, `delayed`) |
+| `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `password`, `passkey`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`, `delayed`) |
 | `kazari_user_link_operations_total`         | counter | `kazari_user_link_purpose` (`invite`, `reset`, `setup`), `kazari_user_link_operation` (`create`, `use`, `revoke`) |
 | `kazari_user_password_hash_duration_seconds` | histogram | `kazari_user_password_operation` (`hash`, `verify`): the time includes the wait for a free slot |
 | `kazari_oauth_token_requests_total`         | counter | `kazari_oauth_grant_type`, `error_type` (the RFC 6749 error code)                       |
@@ -798,9 +798,9 @@ The actions, with the details each records:
 | `key.issue`           | API key issued (`prefix`, `label`, `scopes`; `slugs`, `expires_at` and `issued_by` when it has them) |
 | `key.rotate`          | API key replaced (`prefix`, `new_prefix`, `old_expires_at`, and the new key's details) |
 | `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
-| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`); `password` stands for any sign-in to a built-in account, a passkey's too |
 | `oauth.revoke`        | OAuth grant revoked (`grant`, or `user` for all of a user's; `reason: refresh_replay` when Kazari revoked it because a retired refresh token was presented again) |
-| `oauth.signin`        | A browser signed in (`via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey` or `api_key`, and `key_prefix` for `api_key`) |
 | `dashboard.signin`    | An admin opened a session on the dashboard (`credential`)            |
 | `session.revoke`      | A person's browser sessions ended (`user`, `sessions`)               |
 | `invite.create`       | Invite, reset or setup link made (`id`, `purpose`, `expires_at`; `handle` unless `setup`; `revoke_all` when set) |
@@ -808,6 +808,8 @@ The actions, with the details each records:
 | `invite.revoke`       | Link revoked before it was used (the same details)                   |
 | `password.set`        | Password set (`handle`, `via: invite`, `reset`, `setup`, `change` or `recovery`) |
 | `recovery.create`     | A new set of recovery codes made, ending the old one (`handle`, `codes`) |
+| `passkey.create`      | A passkey added on the account page (`handle`, `id`, `name`)         |
+| `passkey.delete`      | A passkey removed (`handle`, `id`, `name`)                           |
 | `recovery.use`        | A recovery code used to set a password (`handle`, `left`)            |
 | `backup.create`       | Backup written (`files`, `bytes`; `certificates` is `true` when the archive holds `certmagic/`) |
 | `audit.export`        | The log exported as CSV from the dashboard                           |

@@ -1,8 +1,8 @@
 // Package account serves the pages a person opens for themselves, on the
 // apex under /account/: the three link pages that set a password (the
 // first-run setup, an invite, a reset), the page that sets one with a
-// recovery code, and the account page with its password, recovery codes,
-// API keys and connected apps.
+// recovery code, and the account page with its password, passkeys,
+// recovery codes, API keys and connected apps.
 //
 // A link page needs no session: the link is the credential. Opening one
 // consumes nothing; the token moves from the address into a short-lived
@@ -32,6 +32,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/session"
@@ -83,14 +84,21 @@ type Pages interface {
 	List(ctx context.Context, actor artifact.Actor, q artifact.ListQuery) (artifact.ListPage, error)
 }
 
-// Deps are the collaborators of the account pages. Audit and Artifacts may
-// be nil; the account page then leaves their sections out.
+// Passkeys adds passkeys to accounts. passkey.Service implements it.
+type Passkeys interface {
+	Registration(ctx context.Context, u *user.User) (passkey.Ceremony, error)
+	Register(ctx context.Context, u *user.User, token, response, name string) (*user.Passkey, error)
+}
+
+// Deps are the collaborators of the account pages. Audit, Artifacts and
+// Passkeys may be nil; the account page then leaves their sections out.
 type Deps struct {
 	Sessions  session.Provider
 	Users     *user.Service
 	Grants    Grants
 	Artifacts Pages
 	Audit     audit.Reader
+	Passkeys  Passkeys
 	Links     present.Links
 	Logger    *slog.Logger
 }
@@ -183,6 +191,10 @@ func New(d Deps, o Options) http.Handler {
 		}
 		handle("POST "+Prefix+"password", s.signedIn(s.changePassword))
 		handle("POST "+Prefix+"recovery-codes", s.signedIn(s.once(s.newRecoveryCodes)))
+		if d.Passkeys != nil {
+			handle("POST "+Prefix+"passkeys", s.signedIn(s.addPasskey))
+			handle("POST "+Prefix+"passkeys/{id}/remove", s.signedIn(s.removePasskey))
+		}
 		handle("GET "+Prefix+"recover", s.recoverPage)
 		handle("POST "+Prefix+"recover", s.recover)
 	}

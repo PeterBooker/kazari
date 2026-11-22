@@ -23,6 +23,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -122,9 +123,17 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		// The real parameters cost 64 MiB a hash.
 		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1},
 	})
-	var passwords oauth.Passwords
+	var (
+		passwords oauth.Passwords
+		keys      *passkey.Service
+	)
 	if !eo.noLocal {
 		passwords = e.users
+		var err error
+		keys, err = passkey.New(e.users, passkey.Options{RPID: "art.test", Origins: []string{apexURL, mcpURL}, Now: e.clock.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	e.oauth = oauth.New(sqlite.NewOAuthStore(db), e.users, e.users, nil, e.audit, oauth.Options{
 		Issuer:          mcpURL,
@@ -132,6 +141,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		Now:             e.clock.Now,
 		InsecureCookies: true,
 		Passwords:       passwords,
+		Passkeys:        oauthPasskeys(keys),
 		ControlCallback: func(host string) (string, bool) {
 			return apexURL + account.CallbackPath, host == oauth.HostAccount
 		},
@@ -155,16 +165,28 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	if eo.grants != nil {
 		grants = eo.grants(grants)
 	}
-	e.apex.Config.Handler = account.New(account.Deps{
+	deps := account.Deps{
 		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.pages, Audit: e.audit,
 		Links: present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
-	}, opts)
+	}
+	if keys != nil {
+		deps.Passkeys = keys
+	}
+	e.apex.Config.Handler = account.New(deps, opts)
 	e.mcp.Config.Handler = e.oauth.Handler()
 	e.apex.Start()
 	e.mcp.Start()
 	t.Cleanup(e.apex.Close)
 	t.Cleanup(e.mcp.Close)
 	return e
+}
+
+// oauthPasskeys keeps a nil *passkey.Service out of the interface.
+func oauthPasskeys(k *passkey.Service) oauth.Passkeys {
+	if k == nil {
+		return nil
+	}
+	return k
 }
 
 var asAdmin = auth.ContextWithPrincipal(context.Background(), auth.Principal{Handle: "admin", Admin: true})

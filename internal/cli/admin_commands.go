@@ -104,6 +104,9 @@ func (r *runner) printUser(u *api.User) error {
 	case u.Invited:
 		fmt.Fprintf(tw, "password:\tnot set, invited\n")
 	}
+	if u.Passkeys > 0 {
+		fmt.Fprintf(tw, "passkeys:\t%d\n", u.Passkeys)
+	}
 	if u.RecoveryCodes > 0 {
 		fmt.Fprintf(tw, "recovery codes:\t%d unused\n", u.RecoveryCodes)
 	}

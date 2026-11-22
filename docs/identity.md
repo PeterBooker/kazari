@@ -1,6 +1,6 @@
 # Identity and sign-in
 
-People sign in to Kazari in one of two ways, chosen for the whole instance: with a built-in account, a password that Kazari keeps, or at your organisation's identity provider. Agents and scripts use API keys, or OAuth access tokens that an MCP client obtains by sending a person through that sign-in.
+People sign in to Kazari in one of two ways, chosen for the whole instance: with a built-in account, a password or a passkey that Kazari keeps, or at your organisation's identity provider. Agents and scripts use API keys, or OAuth access tokens that an MCP client obtains by sending a person through that sign-in.
 
 This page explains how sign-in works, covers built-in accounts and the account page, connects an identity provider, sets who is let in, and covers token lifetimes, revoking access and troubleshooting. It assumes a running instance ([installation guide](install.md)).
 
@@ -12,7 +12,7 @@ Kazari is an OAuth 2.1 authorization server towards MCP clients. Towards people 
 
 An instance signs people in one way, never both:
 
-- **Built-in accounts** are the default. A person signs in with their handle or email and a password, which they set through a link an admin sends them ([Built-in accounts](#built-in-accounts)).
+- **Built-in accounts** are the default. A person signs in with their handle or email and a password, which they set through a link an admin sends them, or with a [passkey](#passkeys) they add later ([Built-in accounts](#built-in-accounts)).
 - **An identity provider** takes over once the configuration has an `auth.oidc` section. People then sign in with their organisation account, and Kazari keeps no password ([Connecting an identity provider](#connecting-an-identity-provider)).
 
 One sign-in page, on `mcp.<base>`, serves every place a person signs in: connecting an MCP client, opening a `members` page, the [account page](#the-account-page) and the [dashboard](dashboard.md).
@@ -65,7 +65,7 @@ An OAuth token always acts as a member, so it never opens the admin host. Kazari
 
 ## Built-in accounts
 
-A built-in account is a user with a password. Built-in accounts are on by default when the configuration has no `auth.oidc` section, and off when it has one ([`auth.local`](configuration.md#authlocal)).
+A built-in account is a user with a password, and optionally passkeys. Built-in accounts are on by default when the configuration has no `auth.oidc` section, and off when it has one ([`auth.local`](configuration.md#authlocal)).
 
 Kazari sends no email. Every step that another product would do by email is a link that an admin copies and sends: an invite for a new person, a reset for a lost password, and the setup link that creates the first admin of a fresh instance ([creating the first admin](install.md#creating-the-first-admin)).
 
@@ -122,6 +122,22 @@ When an MCP client connects, `/oauth/authorize` shows this sign-in page first, u
 
 After several wrong passwords the page asks the person to wait before the next attempt, a second at first and never more than a minute. A wait ends by itself, and no account is ever locked.
 
+### Passkeys
+
+A passkey signs a person in with their fingerprint, their face or their device's PIN, in place of the password. Their device or password manager keeps it, and a passkey works only on the instance it was made for, so it cannot be phished.
+
+To add one, a person opens the [account page](#the-account-page), enters their current password under **Passkeys**, gives the passkey a name such as Work laptop, and chooses **Add a passkey**. The browser then asks them to confirm with a fingerprint, face or PIN. A person can hold 20 passkeys.
+
+To sign in with a passkey, choose **Sign in with a passkey** under the password form, or pick the passkey where the browser offers it in the **Handle or email** field. No name or password is typed. A passkey sign-in opens the same 12-hour session as a password, and leads to the consent page of an MCP client the same way.
+
+The account page lists each passkey with when it was added and last used. **Remove** stops a passkey signing in at once. A reset link made with `--revoke-all` removes every passkey of the person.
+
+#### Requirements
+
+Passkeys need a browser with JavaScript, and a base domain that is a registrable name such as `art.example.com`. The apex and the sign-in host both end in it, so a passkey added on the account page signs in on the sign-in page.
+
+On `localhost`, as `kazari serve --local` runs, browsers refuse to make a passkey that both hosts share, so the passkey form is left out and people sign in with their password. The same holds for a base domain that is itself a public suffix, such as `github.io`.
+
 ### Resetting a password
 
 A person who has lost their password asks an admin for a reset link, which works for 24 hours by default (`auth.local.reset_ttl`). Make one on the person's page in the dashboard, or with the CLI:
@@ -132,7 +148,7 @@ kazari admin users reset-password ana
 
 Using a reset link sets the new password and signs the person out of every browser. Their API keys and connected apps keep working.
 
-To end those as well, for example when someone else may have used the account, add `--revoke-all`. Using the link then also revokes every API key of the person, deletes their recovery codes and disconnects every app:
+To end those as well, for example when someone else may have used the account, add `--revoke-all`. Using the link then also revokes every API key of the person, removes their passkeys and recovery codes, and disconnects every app:
 
 ```sh
 kazari admin users reset-password ana --revoke-all
@@ -162,12 +178,12 @@ Every person has an account page at `https://<base>/account/`, where they sign i
 
 - their profile: handle, name, email and role, which only an admin changes;
 - their recent sign-ins and the recent security events of the account, such as a changed password, a new key or a reset link an admin made for them, each with who acted, since nobody is told of these by email;
-- the password form and recovery codes, on an instance with built-in accounts;
+- the password form, passkeys and recovery codes, on an instance with built-in accounts;
 - their API keys, with issue, rotate and revoke;
 - their connected apps, each of which they can disconnect;
 - the pages they own.
 
-On an instance with an identity provider the page has no password form and no recovery codes, and everything else is the same.
+On an instance with an identity provider the page has no password form, passkeys or recovery codes, and everything else is the same.
 
 #### Changing a password
 
@@ -190,7 +206,7 @@ A person can hold 50 live keys at most, however they are issued. Revoked and exp
 
 ### Moving to an identity provider, or back
 
-To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords stop signing anyone in, and the invite, reset, setup and recovery pages answer `404`.
+To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords and passkeys stop signing anyone in, and the invite, reset, setup and recovery pages answer `404`.
 
 Users, their pages, keys and connected apps stay. A person whose email at the provider is the one on their Kazari user links to it at their first sign-in ([Provisioning policy](#provisioning-policy)).
 

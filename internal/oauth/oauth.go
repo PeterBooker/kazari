@@ -34,6 +34,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -301,6 +302,17 @@ type Passwords interface {
 	CheckPassword(ctx context.Context, login, password string) (*user.User, error)
 }
 
+// Passkeys signs people in to the accounts Kazari keeps itself with a
+// passkey. passkey.Service implements it.
+type Passkeys interface {
+	// SignIn begins a sign-in, for a page to carry.
+	SignIn() (passkey.Ceremony, error)
+	// Verify returns the person whose passkey answered the ceremony token
+	// names: passkey.ErrExpired for a token that is not live,
+	// passkey.ErrRejected for an answer that is not accepted.
+	Verify(ctx context.Context, token, response string) (*user.User, error)
+}
+
 // Options configures a Service.
 type Options struct {
 	Issuer string // e.g. https://mcp.art.example.com
@@ -337,6 +349,9 @@ type Options struct {
 	// identity provider, turns the password form off; the pages then ask
 	// for an API key.
 	Passwords Passwords
+	// Passkeys adds a passkey sign-in beside the password form. It is used
+	// only with Passwords.
+	Passkeys Passkeys
 	// RecoverURL is the page that sets a new password with a recovery code,
 	// which the password form links to; "" leaves the link out.
 	RecoverURL string
@@ -377,6 +392,7 @@ type Service struct {
 	users     *user.Service
 	keys      Keys
 	passwords Passwords // nil with an identity provider
+	passkeys  Passkeys  // nil without passwords
 	idp       IdentityProvider
 	audit     audit.Recorder
 	opts      Options
@@ -456,16 +472,19 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 		origin = strings.ToLower(u.Scheme + "://" + u.Host)
 	}
 	// Built-in accounts or an identity provider, never both.
-	passwords := opts.Passwords
+	passwords, passkeys := opts.Passwords, opts.Passkeys
 	if idp != nil {
 		passwords = nil
+	}
+	if passwords == nil {
+		passkeys = nil
 	}
 	backoff := func(free int, scope string) *ratelimit.Backoff {
 		return ratelimit.NewBackoff(ratelimit.BackoffOptions{Free: free, Base: signInBaseDelay, Max: signInMaxDelay,
 			Now: opts.Now, Scope: scope, Telemetry: opts.Telemetry})
 	}
 	return &Service{
-		store: store, users: users, keys: keys, passwords: passwords, idp: idp, audit: rec, opts: opts, origin: origin,
+		store: store, users: users, keys: keys, passwords: passwords, passkeys: passkeys, idp: idp, audit: rec, opts: opts, origin: origin,
 		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(origin),
 		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(opts.Telemetry.Meter(scope)),
 		accountDelay: backoff(accountFreeFailures, ratelimit.ScopeAccount), ipDelay: backoff(ipFreeFailures, ratelimit.ScopeIP),

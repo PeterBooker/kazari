@@ -12,6 +12,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -20,7 +21,7 @@ import (
 // lists, theirs and an admin's alike: nobody is told of them by email, so
 // here is where they show.
 var securityActions = []string{
-	oauth.ActionSignIn, audit.PasswordSet, "recovery.", "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
+	oauth.ActionSignIn, audit.PasswordSet, "recovery.", "passkey.", "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
 	"invite.", audit.UserCreate, audit.UserUpdate,
 }
 
@@ -72,12 +73,18 @@ type accountPageData struct {
 	MaxKeyDays int // 0 = no limit
 	// RecoveryCodes is how many unused recovery codes the person holds.
 	RecoveryCodes int
-	SignIns       []audit.Event
-	Events        []audit.Event
-	Keys          []keyRow // live
-	OldKeys       []keyRow // revoked or expired
-	Apps          []appRow
-	Pages         []pageRow
+	// PasskeysOn shows the passkey section, whose list is Passkeys and
+	// whose form carries Ceremony; PasskeyName is what was typed into it.
+	PasskeysOn  bool
+	Passkeys    []user.Passkey
+	Ceremony    *passkey.Ceremony
+	PasskeyName string
+	SignIns     []audit.Event
+	Events      []audit.Event
+	Keys        []keyRow // live
+	OldKeys     []keyRow // revoked or expired
+	Apps        []appRow
+	Pages       []pageRow
 	// Err names what is wrong with a field; Seconds is the wait of
 	// Err["current"] == "wait".
 	Err     map[string]string
@@ -101,6 +108,7 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 	d.MinLength = s.d.Users.MinPasswordLength()
 	d.MaxKeyDays = int(s.o.MaxKeyTTL / (24 * time.Hour))
 
+	var err error
 	if d.Local {
 		acc, err := s.d.Users.Account(ctx, v.user.Handle)
 		if err != nil {
@@ -108,6 +116,21 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 			return
 		}
 		d.RecoveryCodes = acc.RecoveryCodes
+	}
+	if d.Local && s.d.Passkeys != nil {
+		d.PasskeysOn = true
+		if d.Passkeys, err = s.d.Users.Passkeys(ctx, v.user.Handle); err != nil {
+			s.fail(w, r, "list passkeys", err)
+			return
+		}
+		if len(d.Passkeys) < user.MaxPasskeys {
+			c, err := s.d.Passkeys.Registration(ctx, v.user)
+			if err != nil {
+				s.fail(w, r, "begin passkey registration", err)
+				return
+			}
+			d.Ceremony = &c
+		}
 	}
 	keys, err := s.keys(ctx, v.user.Handle)
 	if err != nil {

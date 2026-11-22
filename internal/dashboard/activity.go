@@ -41,7 +41,7 @@ var activityKinds = []struct {
 }{
 	{"pages", "Pages", []string{"artifact."}},
 	{"links", "Share links", []string{"share_link."}},
-	{"people", "People", []string{"user.", "invite.", "password.", "session."}},
+	{"people", "People", []string{"user.", "invite.", "password.", "recovery.", "passkey.", "session."}},
 	{"keys", "Keys", []string{"key."}},
 	{"apps", "Connected apps and sign-ins", []string{"oauth.", "dashboard."}},
 	{"operations", "Operations", []string{"backup.", "audit."}},
