@@ -57,7 +57,7 @@
 <div class="actions span-2"><button type="submit" class="btn btn-primary">Save changes</button></div>
 </form>
 <dl class="kv">
-<dt>Storage</dt><dd>{{template "people-usage" $p}}</dd>
+<dt>Quota used</dt><dd>{{template "people-usage" $p}}<br><span class="soft">Every version in full, and 4 KiB for each file of each version</span></dd>
 <dt>Added</dt><dd>{{when .Data.CreatedAt}}</dd>
 {{if .Data.DisabledAt}}<dt>Disabled</dt><dd>{{when .Data.DisabledAt}}</dd>{{end}}
 <dt>Last active</dt><dd>{{if $p.LastActive}}{{when $p.LastActive}}{{else}}<span class="soft">never</span>{{end}}</dd>

@@ -198,7 +198,7 @@ func TestOverviewCounts(t *testing.T) {
 	strictMarkup(t, "the overview", r.body)
 	for _, want := range []string{
 		"2 active, 1 invited, 1 disabled", "1 admin<",
-		"1 live, 0 stale, 0 unpublished, 1 in the bin", "1 public, 0 unlisted, 0 for members",
+		"1 live, 0 stale, 0 unpublished, 1 in the bin", "1 public, 0 unlisted, 0 members only",
 		"5 GiB free of 100 GiB", `value="95"`,
 		"5 days", "mode <span class=\"mono\">acme</span>",
 		`tone-danger">Job failed`, `href="/system#jobs"`,
