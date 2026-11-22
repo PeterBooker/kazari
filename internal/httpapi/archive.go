@@ -180,6 +180,10 @@ type zipEntry struct {
 	rc io.ReadCloser
 }
 
+// Size is the entry's uncompressed size, which the zip reader holds the
+// entry to: one that inflates to more or less fails.
+func (e *zipEntry) Size() int64 { return int64(e.f.UncompressedSize64) }
+
 func (e *zipEntry) Read(p []byte) (int, error) {
 	if e.rc == nil {
 		rc, err := e.f.Open()

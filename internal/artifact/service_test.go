@@ -2218,3 +2218,20 @@ func TestChangeInTheBinSaysRestore(t *testing.T) {
 		t.Errorf("stranger's Update in the bin: err = %v, want a bare not_found", err)
 	}
 }
+
+// Under the owner policy, someone involved in an artifact sees it in the bin
+// but cannot restore it, so they are not told to.
+func TestChangeInTheBinNamesRestoreToWriters(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteOwner})
+	alice := e.user(t, "alice")
+	e.user(t, "bob")
+	e.create(t, alice, "demo")
+	e.transfer(t, "bob")
+	if err := e.svc.Delete(e.ctx, artifact.Actor{Handle: "bob"}, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: files("index.html", "v2")})
+	if !errors.Is(err, artifact.ErrNotFound) || strings.Contains(err.Error(), "restore") {
+		t.Errorf("Update by the involved alice, who cannot write: err = %v, want a bare not_found", err)
+	}
+}

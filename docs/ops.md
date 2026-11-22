@@ -187,7 +187,7 @@ This needs the `sqlite3` command, which the Docker image does not have.
 > [!WARNING]
 > Do not copy `kazari.db` with `cp` or `rsync` while the server runs. The WAL makes that copy inconsistent; use SQLite's `.backup` as above, or `kazari admin backup`.
 
-The database first and the blobs second gives a complete backup. Blobs are immutable and deleted only once no version references them, so a later blob copy holds everything the database snapshot refers to. The only gap is blobs of artifacts purged, or versions deleted, in between, which the snapshot no longer needs once it is restored and swept.
+The database first and the blobs second gives a complete backup. Blobs are immutable and deleted only once no version references them, so a later blob copy holds everything the database snapshot refers to. The only gap is blobs of artifacts purged in between, which the snapshot no longer needs once it is restored and swept.
 
 To restore such a copy, stop the server and put the blobs back first and the database second, then give the files to the data directory's owner:
 

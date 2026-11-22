@@ -257,10 +257,12 @@ func (r *runner) run(args []string) (err error) {
 }
 
 // focusedHelp leaves out of a command's help the global flags it does not
-// read: every client flag for serve and check, and the user API's for the
+// read: every client flag for serve and check, all but --json for
+// restore-backup, which needs no server, and the user API's for the other
 // admin commands, whose own flags say when they fall back to those.
 func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
-	top := ctx.Selected()
+	selected := ctx.Selected()
+	top := selected
 	for top != nil && top.Parent != ctx.Model.Node {
 		top = top.Parent
 	}
@@ -269,6 +271,8 @@ func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
 	case top == nil:
 	case top.Name == "serve" || top.Name == "check":
 		hide = func(name string) bool { return name != "help" }
+	case top.Name == "admin" && selected.Name == "restore-backup":
+		hide = func(name string) bool { return name != "help" && name != "json" }
 	case top.Name == "admin":
 		hide = func(name string) bool { return name == "url" || name == "token" }
 	}

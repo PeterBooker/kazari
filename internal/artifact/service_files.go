@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"mime"
 	"net/http"
@@ -204,15 +203,10 @@ func (l *limitReader) Read(p []byte) (int, error) {
 }
 
 // knownSize is r's size when r can tell it without being read: inline
-// content and staged files can, a stream cannot.
+// content, staged and bundled files and zip entries can, a stream cannot.
 func knownSize(r io.Reader) (int64, bool) {
-	switch v := r.(type) {
-	case interface{ Size() int64 }:
+	if v, ok := r.(interface{ Size() int64 }); ok {
 		return v.Size(), true
-	case interface{ Stat() (fs.FileInfo, error) }:
-		if fi, err := v.Stat(); err == nil && fi.Mode().IsRegular() {
-			return fi.Size(), true
-		}
 	}
 	return 0, false
 }

@@ -261,8 +261,8 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 		fc, err := b.readInline(ctx, actor, slug, path, 0, b.o.MaxInlineReadBytes, b.o.MaxInlineReadBytes)
 		if errors.Is(err, errTooLargeToInline) {
 			return nil, &toolError{e: api.Error{Code: api.CodeTooLarge, Message: fmt.Sprintf(
-				"%s is %d bytes, more than the %s resource limit; use read_file for a download URL",
-				fc.file.Path, fc.file.Size, size(b.o.MaxInlineReadBytes))}, cause: err}
+				"%s is %s, more than the %s resource limit; use read_file for a download URL",
+				fc.file.Path, size(fc.file.Size), size(b.o.MaxInlineReadBytes))}, cause: err}
 		}
 		if err != nil {
 			return nil, b.resourceError(ctx, uri, err)
