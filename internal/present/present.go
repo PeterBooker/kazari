@@ -21,6 +21,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // Links builds public URLs. URL takes a host label ("demo" or "demo--v3")
@@ -390,6 +391,50 @@ func credential(p auth.Principal) string {
 // Job converts a scheduler status.
 func Job(s scheduler.JobStatus) api.JobStatus {
 	return api.JobStatus{Name: s.Name, Every: s.Every.String(), LastRun: s.LastRun, LastError: s.LastError, NextRun: s.NextRun, Running: s.Running}
+}
+
+// dateLayout is how a day is written on the wire.
+const dateLayout = time.DateOnly
+
+func viewTotals(t views.Totals) api.ViewTotals {
+	return api.ViewTotals{Views: t.Views, Visitors: t.Visitors, MemberViews: t.MemberViews, LinkViews: t.LinkViews}
+}
+
+func viewDays(days []views.DayTotals) []api.ViewDay {
+	out := make([]api.ViewDay, 0, len(days))
+	for _, d := range days {
+		out = append(out, api.ViewDay{Day: d.Day.Format(dateLayout), ViewTotals: viewTotals(d.Totals)})
+	}
+	return out
+}
+
+// ViewSummary converts the instance's views. The wire range names its last
+// day, not the day after it.
+func ViewSummary(s *views.Summary) api.ViewSummary {
+	out := api.ViewSummary{
+		From: s.From.Format(dateLayout), To: s.To.AddDate(0, 0, -1).Format(dateLayout),
+		Days: viewDays(s.Days), Totals: viewTotals(s.Totals), Top: make([]api.ArtifactViewTotals, 0, len(s.Top)),
+	}
+	for _, a := range s.Top {
+		out.Top = append(out.Top, api.ArtifactViewTotals{Slug: a.Slug, ViewTotals: viewTotals(a.Totals)})
+	}
+	return out
+}
+
+// ArtifactViews converts one artifact's views.
+func ArtifactViews(r *views.Report) api.ArtifactViews {
+	out := api.ArtifactViews{
+		Slug: r.Slug, From: r.From.Format(dateLayout), To: r.To.AddDate(0, 0, -1).Format(dateLayout),
+		Days: viewDays(r.Days), Totals: viewTotals(r.Totals),
+		Files: make([]api.ViewFile, 0, len(r.Files)), Readers: make([]api.ViewReader, 0, len(r.Readers)),
+	}
+	for _, f := range r.Files {
+		out.Files = append(out.Files, api.ViewFile{Path: f.Path, Views: f.Views})
+	}
+	for _, rd := range r.Readers {
+		out.Readers = append(out.Readers, api.ViewReader{Handle: rd.Handle, Name: rd.Name, FirstAt: rd.FirstAt, LastAt: rd.LastAt, Views: rd.Views})
+	}
+	return out
 }
 
 // AuditEvent converts an audit row.

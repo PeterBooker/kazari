@@ -37,6 +37,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/theme"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // Reserved paths on every artifact host.
@@ -109,9 +110,9 @@ type Gate struct {
 
 // Results of the gate, the values of kazari.gate.result.
 const (
-	resultPublic    = "public"
-	resultMember    = "member"
-	resultShareLink = "share_link"
+	resultPublic    = string(views.ViaPublic)
+	resultMember    = string(views.ViaMember)
+	resultShareLink = string(views.ViaShareLink)
 	resultRedirect  = "redirect"
 	resultDenied    = "denied"
 )
@@ -144,30 +145,30 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 }
 
 // Allow reports whether r may be served p on host, the artifact host's
-// label (<slug> or <slug>--v<N>). A public or unlisted artifact is always
-// allowed. Otherwise the visitor needs a view cookie that opens this host;
+// label (<slug> or <slug>--v<N>), and who was let in. A public or unlisted
+// artifact is always allowed. Otherwise the visitor needs a view cookie that opens this host;
 // without one, Allow answers the request and returns false: a page
 // navigation is sent to sign in, anything else (a script, an image, a
 // fetch, a frame, a client such as curl) gets 401.
-func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) bool {
+func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) (views.Access, bool) {
 	if !p.Visibility.Gated() {
 		g.decided(r.Context(), resultPublic)
-		return true
+		return views.Access{Via: views.ViaPublic}, true
 	}
-	via, err := g.admitted(r, p, host)
+	a, err := g.admitted(r, p, host)
 	if err != nil {
 		g.log.ErrorContext(r.Context(), "gate: check access", "host", host, "err", err)
 		g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
-		return false
+		return views.Access{}, false
 	}
-	if via != "" {
-		g.decided(r.Context(), via)
-		return true
+	if a.Via != "" {
+		g.decided(r.Context(), string(a.Via))
+		return a, true
 	}
 	if navigation(r) {
 		g.decided(r.Context(), resultRedirect)
 		g.toSignIn(w, r, host)
-		return false
+		return views.Access{}, false
 	}
 	g.decided(r.Context(), resultDenied)
 	hdr := w.Header()
@@ -181,14 +182,14 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	if r.Method != http.MethodHead {
 		_, _ = w.Write([]byte(body))
 	}
-	return false
+	return views.Access{}, false
 }
 
 // Admits reports whether r's view cookie opens host. Unlike Allow it answers
 // nothing and counts nothing.
 func (g *Gate) Admits(r *http.Request, p *artifact.Published, host string) (bool, error) {
-	via, err := g.admitted(r, p, host)
-	return via != "", err
+	a, err := g.admitted(r, p, host)
+	return a.Via != "", err
 }
 
 // decided counts the gate's decision and puts it on the request's span.
@@ -199,27 +200,27 @@ func (g *Gate) decided(ctx context.Context, result string) {
 	}
 }
 
-// admitted returns how the request's view cookie opens host, resultMember
-// or resultShareLink, or "" when it does not.
-func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (string, error) {
+// admitted returns how the request's view cookie opens host, by a member's
+// sign-in or a share link, or a zero Access when it does not.
+func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (views.Access, error) {
 	ck, err := r.Cookie(g.name(viewCookie))
 	if err != nil || ck.Value == "" {
-		return "", nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie opens nothing
+		return views.Access{}, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie opens nothing
 	}
-	via, notFound := resultMember, oauth.ErrNotFound
+	a, notFound := views.Access{Via: views.ViaMember}, oauth.ErrNotFound
 	if artifact.IsLinkToken(ck.Value) {
-		via, notFound = resultShareLink, artifact.ErrLinkNotFound
+		a.Via, notFound = views.ViaShareLink, artifact.ErrLinkNotFound
 		_, err = g.links.CheckShareLink(r.Context(), p.Slug, ck.Value)
 	} else {
-		_, err = g.sessions.Viewer(r.Context(), host, ck.Value)
+		a.Handle, err = g.sessions.Viewer(r.Context(), host, ck.Value)
 	}
 	switch {
 	case errors.Is(err, notFound):
-		return "", nil
+		return views.Access{}, nil
 	case err != nil:
-		return "", err
+		return views.Access{}, err
 	}
-	return via, nil
+	return a, nil
 }
 
 // navigation reports whether r loads a page into a browser tab, where a

@@ -214,3 +214,13 @@ meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--beni); }
   .head-actions { flex-basis: 100%; margin-left: 0; }
   .attention .status { flex-basis: 100%; }
 }
+
+/* Views a day: one series in the accent, bars on a recessive baseline. */
+.chart { margin: 8px 0 4px; }
+.chart-plot { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-base { stroke: var(--border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-hit { fill: transparent; }
+.chart-bar { fill: var(--season); }
+.chart-day:hover .chart-hit { fill: var(--season-soft); }
+.chart-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: .85rem; }
+@media (forced-colors: active) { .chart-bar { fill: CanvasText; } .chart-base { stroke: CanvasText; } }

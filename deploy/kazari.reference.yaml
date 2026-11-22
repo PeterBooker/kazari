@@ -130,6 +130,13 @@ admin:
   public_url: ""                     # default https://admin.<base_domain>
   update_check: true                 # ask GitHub once a day for the newest release
 
+# Page views of artifacts, counted in memory and stored as daily totals for
+# the dashboard; no request log, IP address or user agent is kept.
+analytics:
+  enabled: true
+  readers: true                      # record which members opened a members page
+  retention: 8784h                   # 366 days of daily counts; at least 24h
+
 log:
   level: info                        # debug | info | warn | error
   format: text                       # text | json

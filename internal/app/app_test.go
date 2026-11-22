@@ -504,12 +504,12 @@ func TestAdminListener(t *testing.T) {
 	wantStatus(t, do(t, hc, http.MethodGet, "http://"+addr+"/v1/users", adminToken, "anything.example"), http.StatusOK, "admin listener with token")
 	jobs := do(t, hc, http.MethodGet, "http://"+addr+"/v1/jobs", adminToken, "")
 	wantStatus(t, jobs, http.StatusOK, "jobs")
-	for _, name := range []string{"sweep", "gc", "uploads-expire", "oauth-cleanup"} {
+	for _, name := range []string{"sweep", "gc", "uploads-expire", "oauth-cleanup", "views-flush", "views-prune"} {
 		if !strings.Contains(jobs.body, `"`+name+`"`) {
 			t.Errorf("jobs lack %s: %s", name, jobs.body)
 		}
 	}
-	for _, name := range []string{"gc", "uploads-expire", "oauth-cleanup"} {
+	for _, name := range []string{"gc", "uploads-expire", "oauth-cleanup", "views-flush", "views-prune"} {
 		if err := in.app.Scheduler().Trigger(context.Background(), name); err != nil {
 			t.Errorf("trigger %s: %v", name, err)
 		}

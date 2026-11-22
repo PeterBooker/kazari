@@ -171,6 +171,10 @@ func jobConsequence(name string) string {
 		return "Expired sign-ins and tokens stay in the database until it runs."
 	case "update-check":
 		return "The dashboard does not know whether a newer version exists."
+	case "views-flush":
+		return "Page views are held in memory, up to a limit, until it runs."
+	case "views-prune":
+		return "Old view counts stay in the database until it runs."
 	}
 	return "It runs again on its schedule."
 }
@@ -242,6 +246,7 @@ type overviewData struct {
 	Storage                     storageView
 	Cert                        certView
 	Jobs                        []scheduler.JobStatus
+	Views                       viewsPanel
 	Events                      []audit.Event
 	BaseDomain                  string
 }
@@ -306,6 +311,9 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		return err
 	}
 	d.Pages = countPages(census)
+	if d.Views, err = s.viewsPanel(ctx); err != nil {
+		return err
+	}
 	versions, blobs, err := s.d.Artifacts.Storage(ctx)
 	if err != nil {
 		return err

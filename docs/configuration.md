@@ -494,6 +494,38 @@ admin:
   update_check: false
 ```
 
+### `analytics`
+
+Page views of artifacts, counted for the [dashboard](dashboard.md#page-views):
+
+| Key         | Type     | Default | Meaning                                                              |
+| ----------- | -------- | ------- | -------------------------------------------------------------------- |
+| `enabled`   | bool     | `true`  | Count page views of artifacts.                                       |
+| `readers`   | bool     | `true`  | Record which members opened a members page, and when.                |
+| `retention` | duration | `8784h` | How long daily counts are kept: 366 days. At least `24h`.            |
+
+Kazari counts views in memory and writes them once a minute as daily totals per page and per file. It keeps no request log, IP address or user agent. [Page views](ops.md#page-views) says what counts as a view.
+
+#### Turning analytics off
+
+To count nothing, turn analytics off:
+
+```yaml
+analytics:
+  enabled: false
+```
+
+The dashboard then says that analytics is off, and the counts already stored stay until they pass the retention or analytics is turned on again and the `views-prune` job removes them.
+
+#### Counting without names
+
+On a `members` page Kazari knows who signed in, and by default records each member's first and last view. To keep the counts but not the names, turn readers off:
+
+```yaml
+analytics:
+  readers: false
+```
+
 ### `log`
 
 Log level and format:
@@ -597,6 +629,7 @@ Kazari checks all of these together at startup. The error lists every failure as
 - `auth.local.min_password_length` is between 8 and 256, and `auth.local.invite_ttl` and `auth.local.reset_ttl` are greater than 0. `auth.local.enabled` is not `true` while `auth.oidc` is present.
 - With `auth.oidc`, `issuer` is an `https` URL, and `client_id` and `client_secret` are set.
 - `admin.public_url`, when set, is an `http` or `https` origin with no path, query or credentials, and `http` only for `localhost`, a name under it or a loopback address.
+- `analytics.retention` is at least `24h`.
 - `log.level` and `log.format` are among the listed values.
 - `telemetry.otlp.protocol`, when set, is `http/protobuf` or `grpc`, and `telemetry.otlp.compression` is `gzip` or `none`.
 - `telemetry.otlp.endpoint`, when set, is an absolute `http` or `https` URL with no credentials, query or fragment, and with no path under `grpc`. Credentials belong in `telemetry.otlp.headers`, because the endpoint appears in `kazari check`, `kazari admin settings` and error messages.

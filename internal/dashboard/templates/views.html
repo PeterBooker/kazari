@@ -1,0 +1,66 @@
+{{define "viewchart"}}<figure class="chart">
+<svg class="chart-plot" viewBox="0 0 {{.Width}} {{.Height}}" role="img" aria-label="{{.Label}}">
+<line class="chart-base" x1="0" y1="{{.Height}}" x2="{{.Width}}" y2="{{.Height}}"/>
+{{range .Bars}}<g class="chart-day"><title>{{.Title}}</title><rect class="chart-hit" x="{{.X}}" y="0" width="{{$.Slot}}" height="{{$.Height}}"/>{{if .Path}}<path class="chart-bar" d="{{.Path}}"/>{{end}}</g>
+{{end}}</svg>
+<figcaption class="chart-axis soft"><span>{{.From.Format "2 Jan 2006"}}</span><span>{{.To.Format "2 Jan 2006"}}</span></figcaption>
+</figure>
+<details class="more"><summary>The numbers by day</summary>
+<table class="table">
+<thead><tr><th>Day</th><th class="num">Views</th><th class="num">Visitors</th></tr></thead>
+<tbody>
+{{range .Days}}<tr><td data-label="Day" class="nowrap">{{.Day.Format "Mon 2 Jan"}}</td><td class="num" data-label="Views">{{.Views}}</td><td class="num" data-label="Visitors">{{.Visitors}}</td></tr>
+{{end}}</tbody>
+</table>
+</details>{{end}}
+
+{{define "views-off"}}<p class="soft">Analytics is off on this instance. Set <span class="mono">analytics.enabled</span> to count page views.</p>{{end}}
+
+{{define "overview-views"}}<section class="box section" aria-labelledby="views">
+<div class="section-head">
+<h2 class="h2" id="views">Views</h2>
+</div>
+{{with .Data.Views}}{{if .Off}}{{template "views-off"}}
+{{else if not .Total.Views}}<p class="soft">No page has been viewed in the last 30 days. Views of every page are counted here once someone opens one in a browser.</p>
+{{else}}<div class="tiles">
+<div class="tile"><h3 class="label">Last 7 days</h3><span class="big">{{.Week.Views}}</span>
+<ul class="dash soft"><li>{{howmany .Week.Views "view"}}, {{trend .Week.Views .LastWeek.Views}}</li><li>{{howmany .Week.Visitors "daily visitor"}}</li></ul></div>
+<div class="tile"><h3 class="label">Last 30 days</h3><span class="big">{{.Total.Views}}</span>
+<ul class="dash soft"><li>{{howmany .Total.Visitors "daily visitor"}}</li><li>{{.Total.MemberViews}} by members, {{.Total.LinkViews}} through share links</li></ul></div>
+</div>
+{{template "viewchart" .Chart}}
+{{if .Top}}<h3 class="label">Most viewed, last 30 days</h3>
+<table class="table">
+<thead><tr><th>Page</th><th class="num">Views</th><th class="num">Daily visitors</th></tr></thead>
+<tbody>
+{{range .Top}}<tr><td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a></td><td class="num" data-label="Views">{{.Views}}</td><td class="num" data-label="Daily visitors">{{.Visitors}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}{{end}}{{end}}</section>{{end}}
+
+{{define "page-views"}}<section class="section" aria-labelledby="page-views">
+<h2 class="h2" id="page-views">Views</h2>
+{{with .Data.Views}}{{if .Off}}{{template "views-off"}}
+{{else}}{{if not .Total.Views}}<p class="soft">Nobody has opened this page in the last 30 days.</p>
+{{else}}<p class="soft">{{howmany .Total.Views "view"}} and {{howmany .Total.Visitors "daily visitor"}} in the last 30 days: {{.Total.MemberViews}} by members, {{.Total.LinkViews}} through share links.</p>
+{{template "viewchart" .Chart}}
+{{if .Files}}<h3 class="label">Most viewed files</h3>
+<table class="table">
+<thead><tr><th>File</th><th class="num">Views</th></tr></thead>
+<tbody>
+{{range .Files}}<tr><td data-label="File"><span class="mono">{{.Path}}</span></td><td class="num" data-label="Views">{{.Views}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}{{end}}
+{{if .Readers}}<h3 class="label">Members who opened it</h3>
+<table class="table">
+<thead><tr><th>Person</th><th class="num">Views</th><th>First opened</th><th>Last opened</th></tr></thead>
+<tbody>
+{{range .Readers}}<tr><td data-label="Person"><a class="mono" href="/people/{{.Handle}}">{{.Handle}}</a>{{with .Name}} <span class="soft">{{.}}</span>{{end}}</td>
+<td class="num" data-label="Views">{{.Views}}</td><td data-label="First opened" class="nowrap">{{when .FirstAt}}</td><td data-label="Last opened" class="nowrap">{{when .LastAt}}</td></tr>
+{{end}}</tbody>
+</table>
+{{else if .ReadersOff}}<p class="soft">This instance does not record who opens a page (<span class="mono">analytics.readers</span>).</p>
+{{else if .Members}}<p class="soft">No member has opened it yet. Members who sign in to open it are listed here.</p>
+{{else}}<p class="soft">Only members-only pages record who opened them: on other pages visitors are not signed in.</p>
+{{end}}{{end}}{{end}}</section>{{end}}

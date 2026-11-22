@@ -110,6 +110,8 @@ type pageRow struct {
 	// StepAt when; "" when nothing is due.
 	Step   string
 	StepAt time.Time
+	// Views are the last viewDays days' views, on the Pages list.
+	Views int64
 }
 
 func (s *server) pageRow(a *artifact.Artifact) pageRow {
@@ -182,6 +184,7 @@ func (f pagesFilter) query() (q artifact.ListQuery, ok bool) {
 }
 
 type pagesListData struct {
+	ViewsOn      bool
 	Filter       pagesFilter
 	States       []pageState
 	Visibilities any
@@ -197,7 +200,7 @@ func (s *server) pagesList(w http.ResponseWriter, r *http.Request, c *request) e
 	ctx := r.Context()
 	f := readPagesFilter(r.URL.Query())
 	cursor := r.URL.Query().Get("cursor")
-	data := pagesListData{Filter: f, States: pageStates, Visibilities: visibilities}
+	data := pagesListData{ViewsOn: s.d.Views != nil, Filter: f, States: pageStates, Visibilities: visibilities}
 	if cursor != "" {
 		data.First = f.address("")
 	}
@@ -212,6 +215,9 @@ func (s *server) pagesList(w http.ResponseWriter, r *http.Request, c *request) e
 		}
 		if found.NextCursor != "" {
 			data.Next = f.address(found.NextCursor)
+		}
+		if err := s.rowViews(ctx, data.Rows); err != nil {
+			return err
 		}
 	}
 	var err error
@@ -305,6 +311,7 @@ type pageData struct {
 	Versions     []versionRow
 	Links        []linkRow
 	Events       []audit.Event
+	Views        pageViews
 	Owners       []user.User // who the page can be handed to
 	Visibilities any
 	// The share-link form: its limits, and what was typed when it was
@@ -351,6 +358,9 @@ func (s *server) pageView(ctx context.Context, c *request, slug string) (*pageDa
 		for i := range links {
 			d.Links = append(d.Links, linkRow{ShareLink: links[i], State: linkState(&links[i], now)})
 		}
+	}
+	if d.Views, err = s.pageViews(ctx, a.Slug, a.Visibility == artifact.Members); err != nil {
+		return nil, err
 	}
 	events, err := s.d.Audit.List(ctx, audit.Query{Slug: a.Slug, Limit: pageEvents})
 	if err != nil {
@@ -723,4 +733,23 @@ func (s *server) pagesRemove(w http.ResponseWriter, r *http.Request, c *request)
 		return pageErr(err)
 	}
 	return s.done(w, r, "/pages", "page-removed")
+}
+
+// rowViews fills in each row's views with one query.
+func (s *server) rowViews(ctx context.Context, rows []pageRow) error {
+	if s.d.Views == nil || len(rows) == 0 {
+		return nil
+	}
+	slugs := make([]string, len(rows))
+	for i := range rows {
+		slugs[i] = rows[i].Slug
+	}
+	sums, err := s.d.Views.Sums(ctx, slugs, viewDays)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		rows[i].Views = sums[rows[i].Slug].Views
+	}
+	return nil
 }

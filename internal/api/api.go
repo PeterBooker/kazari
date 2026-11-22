@@ -546,6 +546,65 @@ type JobStatus struct {
 	Running   bool       `json:"running"`
 }
 
+// ViewTotals are page views over a range of days. Visitors is the sum of
+// each day's visitors: one person on three days counts three times.
+type ViewTotals struct {
+	Views       int64 `json:"views"`
+	Visitors    int64 `json:"visitors"`
+	MemberViews int64 `json:"member_views"`
+	LinkViews   int64 `json:"link_views"`
+}
+
+// ViewDay is one UTC day's views; Day is YYYY-MM-DD.
+type ViewDay struct {
+	Day string `json:"day"`
+	ViewTotals
+}
+
+// ArtifactViewTotals are one artifact's views over a range.
+type ArtifactViewTotals struct {
+	Slug string `json:"slug"`
+	ViewTotals
+}
+
+// ViewSummary is GET /views: the instance's views from From to To, both
+// YYYY-MM-DD and included, a day each in Days, the most viewed artifacts in
+// Top.
+type ViewSummary struct {
+	From   string               `json:"from"`
+	To     string               `json:"to"`
+	Days   []ViewDay            `json:"days"`
+	Totals ViewTotals           `json:"totals"`
+	Top    []ArtifactViewTotals `json:"top"`
+}
+
+// ViewFile is the views of one file of an artifact.
+type ViewFile struct {
+	Path  string `json:"path"`
+	Views int64  `json:"views"`
+}
+
+// ViewReader is a member who opened a members page.
+type ViewReader struct {
+	Handle  string    `json:"handle"`
+	Name    string    `json:"name,omitempty"`
+	FirstAt time.Time `json:"first_at"`
+	LastAt  time.Time `json:"last_at"`
+	Views   int64     `json:"views"`
+}
+
+// ArtifactViews is GET /artifacts/{slug}/views. Readers are the latest
+// first and not bound to the range.
+type ArtifactViews struct {
+	Slug    string       `json:"slug"`
+	From    string       `json:"from"`
+	To      string       `json:"to"`
+	Days    []ViewDay    `json:"days"`
+	Totals  ViewTotals   `json:"totals"`
+	Files   []ViewFile   `json:"files"`
+	Readers []ViewReader `json:"readers"`
+}
+
 // AuditList is one page of GET /audit, newest first.
 type AuditList struct {
 	Events     []AuditEvent `json:"events"`

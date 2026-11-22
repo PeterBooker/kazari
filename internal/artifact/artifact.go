@@ -201,6 +201,7 @@ type ListPage struct {
 
 // Published is what the serving path needs to answer a request.
 type Published struct {
+	ArtifactID    int64
 	Slug          string
 	VersionID     int64 // 0 when nothing is published
 	VersionNumber int

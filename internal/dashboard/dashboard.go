@@ -42,6 +42,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // Grants are a person's connected applications and browser sessions.
@@ -87,6 +88,7 @@ type Deps struct {
 	Backup    Backups
 	Updates   Updates
 	Settings  func() map[string]any // the effective configuration, secrets redacted
+	Views     *views.Service        // nil with analytics off
 	Links     present.Links
 	Logger    *slog.Logger
 }
@@ -126,6 +128,8 @@ type Options struct {
 
 	// Lifecycle timings, for the dates the pages show.
 	Retention, Tombstone time.Duration
+	// ViewReaders: members who open a members page are recorded.
+	ViewReaders bool
 	// Limits a form states.
 	MaxKeyTTL, MaxShareLinkTTL time.Duration
 	DefaultQuota               int64
@@ -179,7 +183,7 @@ func New(d Deps, o Options) http.Handler {
 		}),
 	}
 	funcs := template.FuncMap{}
-	for _, m := range []template.FuncMap{commonFuncs, overviewFuncs, activityFuncs, systemFuncs} {
+	for _, m := range []template.FuncMap{commonFuncs, overviewFuncs, activityFuncs, systemFuncs, viewFuncs} {
 		maps.Copy(funcs, m)
 	}
 	s.tmpl = template.Must(theme.Templates().Funcs(funcs).ParseFS(templateFS, "templates/*.html"))

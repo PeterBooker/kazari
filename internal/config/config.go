@@ -52,6 +52,7 @@ type Config struct {
 	Fetch     Fetch     `yaml:"fetch"`
 	Auth      Auth      `yaml:"auth"`
 	Admin     Admin     `yaml:"admin"`
+	Analytics Analytics `yaml:"analytics"`
 	Log       Log       `yaml:"log"`
 	Telemetry Telemetry `yaml:"telemetry"`
 }
@@ -204,6 +205,19 @@ type Admin struct {
 	UpdateCheck bool `yaml:"update_check"`
 }
 
+// Analytics configures the counting of page views.
+type Analytics struct {
+	// Count page views of artifacts.
+	Enabled bool `yaml:"enabled"`
+	// Record which members opened a members page.
+	Readers bool `yaml:"readers"`
+	// How long daily counts are kept.
+	Retention Duration `yaml:"retention"`
+}
+
+// MinAnalyticsRetention is the shortest analytics.retention: one day.
+const MinAnalyticsRetention = Duration(day)
+
 // DefaultAdminSocket is admin.socket's default, under data_dir.
 const DefaultAdminSocket = "admin.sock"
 
@@ -275,6 +289,11 @@ func Default() Config {
 			Socket:      DefaultAdminSocket,
 			Dashboard:   true,
 			UpdateCheck: true,
+		},
+		Analytics: Analytics{
+			Enabled:   true,
+			Readers:   true,
+			Retention: Duration(366 * day),
 		},
 		Log: Log{
 			Level:  "info",

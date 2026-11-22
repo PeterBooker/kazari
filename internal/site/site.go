@@ -24,6 +24,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // Resolver looks up what to serve for a slug. ResolvePublished and
@@ -40,11 +41,19 @@ type Resolver interface {
 // Gate guards artifacts with visibility members. gate.Gate implements it.
 type Gate interface {
 	// Allow reports whether r may be served p on host, the request host's
-	// label (<slug> or <slug>--v<N>). On false it has answered the request.
-	Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) bool
+	// label (<slug> or <slug>--v<N>), and who was let in. On false it has
+	// answered the request.
+	Allow(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) (views.Access, bool)
 	// Admits reports whether r carries access to p on host, and answers nothing.
 	Admits(r *http.Request, p *artifact.Published, host string) (bool, error)
 	ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string)
+}
+
+// Views counts page views. views.Recorder implements it.
+type Views interface {
+	// Record is given every request answered with an HTML file, and counts
+	// those that are page views.
+	Record(r *http.Request, h views.Hit)
 }
 
 // ReservedPrefix is left to the Gate on every artifact host; no artifact file
@@ -86,6 +95,8 @@ type Options struct {
 	// gated artifacts and reserved paths are not found: nothing gated is
 	// ever served unchecked.
 	Gate Gate
+	// Views counts page views; nil counts none.
+	Views Views
 }
 
 // MaxImmutableAge is the default and the cap of ImmutableMaxAge.
@@ -201,6 +212,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 
+	access := views.Access{Via: views.ViaPublic}
 	host := slug
 	if version != 0 {
 		host += artifact.VersionSeparator + strconv.Itoa(version)
@@ -229,7 +241,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Public pages pass the gate too, which counts them.
-		if !h.opts.Gate.Allow(w, r, p, host) {
+		var ok bool
+		if access, ok = h.opts.Gate.Allow(w, r, p, host); !ok {
 			return
 		}
 	}
@@ -241,7 +254,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.serveVersion(w, r, p, version != 0, files)
+	h.serveVersion(w, r, p, access, version != 0, files)
 }
 
 func (h *handler) resolve(ctx context.Context, slug string, version int) (*artifact.Published, error) {
@@ -251,7 +264,7 @@ func (h *handler) resolve(ctx context.Context, slug string, version int) (*artif
 	return h.resolver.ResolveVersion(ctx, slug, version)
 }
 
-func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifact.Published, pinned bool, files map[string]artifact.File) {
+func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifact.Published, access views.Access, pinned bool, files map[string]artifact.File) {
 	clean, dir, ok := cleanPath(r.URL.Path)
 	if !ok {
 		h.writeError(w, r, http.StatusNotFound)
@@ -281,7 +294,7 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 		}
 	}
 	if found {
-		h.serveFile(w, r, p, pinned, f)
+		h.serveFile(w, r, p, access, pinned, f)
 		return
 	}
 
@@ -297,7 +310,7 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 	// SPA routes have no extension; assets that miss still 404.
 	if p.SPA && path.Ext(clean) == "" {
 		if f, ok := files[indexFile]; ok {
-			h.serveFile(w, r, p, pinned, f)
+			h.serveFile(w, r, p, access, pinned, f)
 			return
 		}
 	}
@@ -339,7 +352,7 @@ func (h *handler) redirectDir(w http.ResponseWriter, r *http.Request, p *artifac
 	w.WriteHeader(http.StatusMovedPermanently)
 }
 
-func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.Published, pinned bool, f artifact.File) {
+func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.Published, access views.Access, pinned bool, f artifact.File) {
 	rc, err := h.blobs.Open(r.Context(), f.Hash)
 	if err != nil {
 		h.internalError(w, r, fmt.Errorf("open blob %s for %s/%s: %w", f.Hash, p.Slug, f.Path, err))
@@ -354,7 +367,19 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.
 	if !p.Indexable {
 		hdr.Set("X-Robots-Tag", "noindex")
 	}
+	// Ahead of ServeContent, so a 304 counts as the view it is; a 412 counts
+	// too, which is rare and not worth wrapping the writer to see.
+	if h.opts.Views != nil && html(f.ContentType) {
+		h.opts.Views.Record(r, views.Hit{ArtifactID: p.ArtifactID, Path: f.Path, Access: access,
+			IP: middleware.ClientIP(r), UA: r.Header.Get("User-Agent")})
+	}
 	http.ServeContent(w, r, f.Path, time.Time{}, rc)
+}
+
+// html reports whether ct is an HTML page, the one kind of file a view is.
+func html(ct string) bool {
+	base, _, _ := strings.Cut(ct, ";")
+	return strings.EqualFold(strings.TrimSpace(base), "text/html")
 }
 
 // serveNotFoundFile avoids ServeContent, which always answers 200 or 206.

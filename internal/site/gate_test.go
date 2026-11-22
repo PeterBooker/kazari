@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // fakeGate records its calls; allow decides Allow.
@@ -25,18 +26,19 @@ func (g *fakeGate) Admits(*http.Request, *artifact.Published, string) (bool, err
 	return g.allow, g.gateErr
 }
 
-func (g *fakeGate) Allow(w http.ResponseWriter, _ *http.Request, p *artifact.Published, host string) bool {
+func (g *fakeGate) Allow(w http.ResponseWriter, _ *http.Request, p *artifact.Published, host string) (views.Access, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.allowed = append(g.allowed, host)
 	if !p.Visibility.Gated() {
-		return true
+		return views.Access{Via: views.ViaPublic}, true
 	}
 	if !g.allow {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("gate says no to " + p.Slug))
+		return views.Access{}, false
 	}
-	return g.allow
+	return views.Access{Via: views.ViaMember, Handle: "alice"}, true
 }
 
 func (g *fakeGate) ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact.Published, host string) {

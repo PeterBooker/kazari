@@ -89,6 +89,8 @@ var jobAbout = map[string]string{
 	"uploads-expire": "Drops uploads that were started and never finished.",
 	"oauth-cleanup":  "Forgets expired sign-ins, tokens and applications that never connected.",
 	"update-check":   "Asks GitHub for the newest Kazari release, once a day.",
+	"views-flush":    "Saves the page views counted in the last minute.",
+	"views-prune":    "Deletes daily view counts older than analytics.retention.",
 }
 
 // settingsGroup is one section of the configuration, flattened to dotted

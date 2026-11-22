@@ -68,7 +68,7 @@ A session lasts 12 hours. Kazari checks the role on every request, so an admin w
 
 ## Overview
 
-The Overview is the first page. It lists what needs attention, then counts and recent activity.
+The Overview is the first page. It lists what needs attention, then counts, page views and recent activity.
 
 ### Needs attention
 
@@ -89,6 +89,12 @@ When nothing needs attention, the section says so.
 Below, the page shows the people by status, the pages by status and visibility, the storage in use, the certificate's mode and expiry, each job's last and next run, and the last ten events of the [activity log](#activity).
 
 Storage has two numbers. The first is what quotas count: every version in full. The second is what the blobs take on disk, where a file that several versions share is stored once.
+
+### Page views
+
+The Views panel shows how often the instance's pages were opened in the last 30 days: the views of the last 7 days against the 7 before, the views and daily visitors of the 30 days, a bar for each day and the five most viewed pages. Under the chart, **The numbers by day** opens the same counts as a table (`kazari admin views`).
+
+A view is a page opened in a browser tab, counted once a minute, so a new view shows within a minute or two. A daily visitor is one browser on one day: someone who opens pages on three days counts three times. [Page views](ops.md#page-views) says what counts and what is kept. With [analytics](configuration.md#analytics) off, the panel says so.
 
 ### Getting started
 
@@ -179,7 +185,7 @@ A person's own page therefore has no **Disable** button for them.
 
 ## Pages
 
-The Pages page lists every page on the instance, whoever owns it: slug, name, owner, who it is open to, status, versions, size, when it was updated and the date of its next lifecycle step. A page's status is *live*, *stale*, *unpublished* or *in the bin*.
+The Pages page lists every page on the instance, whoever owns it: slug, name, owner, who it is open to, status, versions, size, views in the last 30 days, when it was updated and the date of its next lifecycle step. A page's status is *live*, *stale*, *unpublished* or *in the bin*.
 
 Search by slug or name, and filter by status, visibility and owner. The list shows 50 pages at a time. The command is:
 
@@ -189,7 +195,7 @@ kazari admin artifacts list --search report --visibility members
 
 ### A page's own page
 
-Opening a page shows its address, owner and visibility, its lifecycle in dates, its versions, its share links and its activity, with every action that changes it.
+Opening a page shows its address, owner and visibility, its lifecycle in dates, its versions, its views, its share links and its activity, with every action that changes it.
 
 #### Changing who can open a page
 
@@ -204,6 +210,12 @@ A page marked stale shows the date it moves to the bin, and **Keep the page** cl
 The version list shows each version's number, date, author and size, marks the published one, and links to each version's own address. **Publish this version** asks for confirmation, then makes that version the one at the page's address (`kazari rollback <slug> <version>`).
 
 Nothing is deleted, and the next publish from an agent goes live as usual.
+
+#### Views and readers
+
+The Views section shows the page's views in the last 30 days, split into views by members and through share links, with a bar for each day and its most viewed files. On a members-only page it also lists the members who opened it, with their first and last view (`kazari admin views <slug>`).
+
+Visitors to public and unlisted pages are not signed in, so those pages count views but name nobody. With `analytics.readers` off, no page names anyone.
 
 #### Share links
 

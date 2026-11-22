@@ -26,6 +26,7 @@ type AdminCmd struct {
 	Hide       AdminHideCmd       `cmd:"" help:"Unpublish an artifact at once."`
 	Settings   AdminSettingsCmd   `cmd:"" help:"Show the server's effective configuration, secrets redacted."`
 	Audit      AdminAuditCmd      `cmd:"" help:"Read the audit log."`
+	Views      AdminViewsCmd      `cmd:"" help:"Page views of the instance, or of one artifact with the members who opened it."`
 	Backup     AdminBackupCmd     `cmd:"" help:"Write a backup of the database and every blob into a directory."`
 	Ready      AdminReadyCmd      `cmd:"" help:"Check the running server is set up correctly: configuration, DNS, certificate, disk."`
 	Health     AdminHealthCmd     `cmd:"" help:"Check the server is up; needs no token."`
@@ -610,7 +611,7 @@ func (c *AdminJobsListCmd) Run(r *runner) error {
 
 // AdminJobsRunCmd runs one job.
 type AdminJobsRunCmd struct {
-	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup or update-check."`
+	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup, update-check, views-flush or views-prune."`
 }
 
 func (c *AdminJobsRunCmd) Run(r *runner) error {
@@ -687,6 +688,95 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 		fmt.Fprintf(r.stderr, "more results: --cursor %s\n", l.NextCursor)
 	}
 	return nil
+}
+
+// AdminViewsCmd shows page views.
+type AdminViewsCmd struct {
+	Slug string `arg:"" optional:"" help:"An artifact; without one, the whole instance."`
+	Days int    `default:"30" help:"How many days back, today included." placeholder:"N"`
+}
+
+func (c *AdminViewsCmd) Run(r *runner) error {
+	cl, err := r.adminClient(true)
+	if err != nil {
+		return err
+	}
+	if c.Slug == "" {
+		s, err := cl.ViewSummary(r.ctx, c.Days)
+		if err != nil {
+			return err
+		}
+		if r.g.JSON {
+			return r.printJSON(s)
+		}
+		fmt.Fprintf(r.stdout, "%s to %s: %s\n", s.From, s.To, viewLine(s.Totals))
+		if len(s.Top) > 0 {
+			fmt.Fprintln(r.stdout)
+			tw := newTable(r.stdout)
+			fmt.Fprintln(tw, "SLUG\tVIEWS\tVISITORS\tMEMBERS\tSHARE LINKS")
+			for _, a := range s.Top {
+				fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\n", a.Slug, a.Views, a.Visitors, a.MemberViews, a.LinkViews)
+			}
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+		}
+		return printViewDays(r, s.Days)
+	}
+
+	a, err := cl.ArtifactViews(r.ctx, c.Slug, c.Days)
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(a)
+	}
+	fmt.Fprintf(r.stdout, "%s, %s to %s: %s\n", a.Slug, a.From, a.To, viewLine(a.Totals))
+	if len(a.Files) > 0 {
+		fmt.Fprintln(r.stdout)
+		tw := newTable(r.stdout)
+		fmt.Fprintln(tw, "FILE\tVIEWS")
+		for _, f := range a.Files {
+			fmt.Fprintf(tw, "%s\t%d\n", f.Path, f.Views)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if err := printViewDays(r, a.Days); err != nil {
+		return err
+	}
+	if len(a.Readers) > 0 {
+		fmt.Fprintln(r.stdout)
+		tw := newTable(r.stdout)
+		fmt.Fprintln(tw, "READER\tNAME\tVIEWS\tFIRST OPENED\tLAST OPENED")
+		for _, rd := range a.Readers {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", rd.Handle, dash(rd.Name), rd.Views, fmtTime(rd.FirstAt), fmtTime(rd.LastAt))
+		}
+		return tw.Flush()
+	}
+	return nil
+}
+
+func viewLine(t api.ViewTotals) string {
+	return fmt.Sprintf("%d views, %d daily visitors, %d by members, %d by share link", t.Views, t.Visitors, t.MemberViews, t.LinkViews)
+}
+
+// printViewDays lists the days with views; a month of empty days says
+// nothing.
+func printViewDays(r *runner, days []api.ViewDay) error {
+	if !slices.ContainsFunc(days, func(d api.ViewDay) bool { return d.Views > 0 }) {
+		return nil
+	}
+	fmt.Fprintln(r.stdout)
+	tw := newTable(r.stdout)
+	fmt.Fprintln(tw, "DAY\tVIEWS\tVISITORS")
+	for _, d := range days {
+		if d.Views > 0 {
+			fmt.Fprintf(tw, "%s\t%d\t%d\n", d.Day, d.Views, d.Visitors)
+		}
+	}
+	return tw.Flush()
 }
 
 // AdminHealthCmd checks liveness.

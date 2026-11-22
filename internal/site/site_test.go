@@ -220,7 +220,9 @@ func newFixture(t *testing.T) *fixture {
 
 func (fx *fixture) add(t *testing.T, slug string, id int64, n int, meta map[string]string, files []testFile) {
 	t.Helper()
-	p := &artifact.Published{Slug: slug, VersionID: id, VersionNumber: n, Visibility: artifact.Public, Metadata: meta}
+	// Every version of an artifact shares its id; a slug's length is
+	// unique enough among the fixture's.
+	p := &artifact.Published{ArtifactID: int64(len(slug)), Slug: slug, VersionID: id, VersionNumber: n, Visibility: artifact.Public, Metadata: meta}
 	p.DeriveFlags()
 	if cur, ok := fx.res.latest[slug]; !ok || cur.VersionNumber < n {
 		fx.res.latest[slug] = p

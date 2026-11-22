@@ -227,6 +227,33 @@ func (c *Client) RunJob(ctx context.Context, name string) error {
 	return c.doJSON(ctx, http.MethodPost, "/jobs/"+seg(name)+"/run", nil, nil, nil, nil)
 }
 
+// ViewSummary returns the instance's page views over the last days days,
+// today included.
+func (c *Client) ViewSummary(ctx context.Context, days int) (*api.ViewSummary, error) {
+	var out api.ViewSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/views", viewQuery(days), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ArtifactViews returns one artifact's page views over the last days days.
+func (c *Client) ArtifactViews(ctx context.Context, slug string, days int) (*api.ArtifactViews, error) {
+	var out api.ArtifactViews
+	if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug)+"/views", viewQuery(days), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func viewQuery(days int) url.Values {
+	q := url.Values{}
+	if days > 0 {
+		q.Set("days", strconv.Itoa(days))
+	}
+	return q
+}
+
 // AuditParams filters GET /audit. Zero fields are omitted.
 type AuditParams struct {
 	Since, Until string // RFC 3339; Since is inclusive, Until is not

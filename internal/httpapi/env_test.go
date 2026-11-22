@@ -33,6 +33,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -62,6 +63,8 @@ type config struct {
 	backup   httpapi.BackupWriter
 	ready    httpapi.ReadyChecker
 	updates  httpapi.Updates
+	// noViews turns analytics off.
+	noViews bool
 }
 
 type env struct {
@@ -71,6 +74,7 @@ type env struct {
 	users   *user.Service
 	uploads *upload.Service
 	jobRuns *atomic.Int32
+	views   *views.Recorder // nil with noViews
 	userURL string
 	admURL  string
 	// alice is the key of a member with every member scope.
@@ -117,6 +121,15 @@ func newEnv(t *testing.T, c config) *env {
 		Run:   func(context.Context) error { runs.Add(1); return nil },
 	})
 	links := present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }}
+	var (
+		viewSvc *views.Service
+		viewRec *views.Recorder
+	)
+	if !c.noViews {
+		vs := sqlite.NewViewStore(db)
+		viewSvc = views.New(vs, views.Options{Now: now})
+		viewRec = views.NewRecorder(vs, views.RecorderOptions{Readers: true, Now: now})
+	}
 
 	if c.user.IPRatePerMinute == 0 {
 		c.user.IPRatePerMinute = -1 // tests make many requests from one IP
@@ -148,11 +161,12 @@ func newEnv(t *testing.T, c config) *env {
 		Metrics: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, "kazari_up 1\n")
 		}),
+		Views: viewSvc,
 		Links: links,
 	}, c.admin))
 	t.Cleanup(admSrv.Close)
 
-	e := &env{t: t, ctx: ctx, art: art, users: users, uploads: uploads, jobRuns: &runs,
+	e := &env{t: t, ctx: ctx, art: art, users: users, uploads: uploads, jobRuns: &runs, views: viewRec,
 		userURL: userSrv.URL, admURL: admSrv.URL}
 	if !c.empty {
 		e.alice = e.member("alice", nil)

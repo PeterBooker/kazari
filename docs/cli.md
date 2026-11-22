@@ -528,7 +528,7 @@ kazari version   # version, commit, the commit's date and Go version of this bin
 
 ## Admin commands
 
-Admin commands manage users, invites, keys, identities, OAuth grants, artifacts and the server. On the server's host they use [the admin socket](#the-admin-socket) and need no token; elsewhere they use the admin URL and token from [configuring the client](#configuring-the-client). `admin health` needs no token either way.
+Admin commands manage users, invites, keys, identities, OAuth grants, artifacts and the server, and read the audit log and page views. On the server's host they use [the admin socket](#the-admin-socket) and need no token; elsewhere they use the admin URL and token from [configuring the client](#configuring-the-client). `admin health` needs no token either way.
 
 The [dashboard](dashboard.md) does the same from a browser: it has no task that these commands lack.
 
@@ -561,6 +561,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | `admin jobs list`                                                       | Scheduler jobs: interval, last and next run, last error     |
 | `admin jobs run <name>`                                                 | Run a job now and wait for it                               |
 | `admin audit [--since T] [--until T] [--slug S] [--actor H] [--subject H] [--action A ...] [--limit N] [--cursor C]` | Audit log, newest first                |
+| `admin views [<slug>] [--days N]`                                       | Page views of the instance, or of one artifact with its files and the members who opened it; `--days` defaults to 30 |
 | `admin backup <dir> [--no-certs]`                                       | Write a backup of the database and every blob into a directory |
 | `admin ready [--fresh]`                                                 | Check the running server is set up correctly; exits 1 when a check fails. Also says when a newer release is known |
 | `admin health`                                                          | Server status and version                                   |
@@ -586,6 +587,22 @@ kazari admin keys issue ana --label ci --scopes artifacts:read,artifacts:write -
 kazari admin jobs run sweep
 kazari admin audit --since 24h --slug q3-report
 ```
+
+### Page views
+
+To see how often pages were opened in the last 30 days, run `admin views`. It prints the totals, the most viewed artifacts and each day with views:
+
+```sh
+kazari admin views
+```
+
+To see one artifact over the last week, with its most viewed files and the members who opened it, name it:
+
+```sh
+kazari admin views q3-report --days 7
+```
+
+`--days` runs from 1 to the days of `analytics.retention`, today included. With analytics off, both forms fail with `analytics is off on this instance` ([page views](ops.md#page-views)).
 
 ### OAuth grants
 

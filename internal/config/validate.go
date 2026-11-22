@@ -75,6 +75,10 @@ func (c *Config) Validate() error {
 		v.add("fetch.budget", "must not be shorter than fetch.timeout")
 	}
 
+	if c.Analytics.Retention < MinAnalyticsRetention {
+		v.add("analytics.retention", "must be at least 24h")
+	}
+
 	v.oneOf("auth.write_policy", c.Auth.WritePolicy, "shared", "owner")
 	if t := c.Auth.AdminToken; t != "" && len(t) < MinAdminTokenLen && !IsLocalhost(c.BaseDomain) {
 		v.add("auth.admin_token", fmt.Sprintf("must be at least %d characters; generate one with openssl rand -hex 32", MinAdminTokenLen))
