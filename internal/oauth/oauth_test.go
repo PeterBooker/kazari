@@ -30,17 +30,18 @@ func TestMetadata(t *testing.T) {
 		want map[string]any
 	}{
 		{"/.well-known/oauth-authorization-server", map[string]any{
-			"issuer":                                e.srv.URL,
-			"authorization_endpoint":                e.srv.URL + "/oauth/authorize",
-			"token_endpoint":                        e.srv.URL + "/oauth/token",
-			"registration_endpoint":                 e.srv.URL + "/oauth/register",
-			"scopes_supported":                      []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
-			"response_types_supported":              []any{"code"},
-			"response_modes_supported":              []any{"query"},
-			"grant_types_supported":                 []any{"authorization_code", "refresh_token"},
-			"token_endpoint_auth_methods_supported": []any{"none"},
-			"code_challenge_methods_supported":      []any{"S256"},
-			"client_id_metadata_document_supported": true,
+			"issuer":                                         e.srv.URL,
+			"authorization_endpoint":                         e.srv.URL + "/oauth/authorize",
+			"token_endpoint":                                 e.srv.URL + "/oauth/token",
+			"registration_endpoint":                          e.srv.URL + "/oauth/register",
+			"scopes_supported":                               []any{"artifacts:read", "artifacts:write", "artifacts:share", "artifacts:delete"},
+			"response_types_supported":                       []any{"code"},
+			"response_modes_supported":                       []any{"query"},
+			"grant_types_supported":                          []any{"authorization_code", "refresh_token"},
+			"token_endpoint_auth_methods_supported":          []any{"none"},
+			"code_challenge_methods_supported":               []any{"S256"},
+			"client_id_metadata_document_supported":          true,
+			"authorization_response_iss_parameter_supported": true,
 		}},
 		{"/.well-known/oauth-protected-resource", map[string]any{
 			"resource":                 e.srv.URL + "/",
@@ -486,6 +487,54 @@ func TestAuthenticateUnknownTokens(t *testing.T) {
 		if _, err := e.svc.Authenticate(context.Background(), tok); !errors.Is(err, auth.ErrInvalidToken) {
 			t.Errorf("Authenticate(%q) err = %v, want ErrInvalidToken", tok, err)
 		}
+	}
+}
+
+// Every response to the client's redirect URI names the issuer exactly as
+// the metadata does (RFC 9207), whatever the person decided.
+func TestAuthorizationResponseIss(t *testing.T) {
+	const redirect = "https://app.example/cb?tenant=a"
+	tests := []struct {
+		name      string
+		scope     string
+		action    string
+		wantError string
+	}{
+		{"approved", "", "approve", ""},
+		{"denied", "", "deny", "access_denied"},
+		{"no scope in common with the key", "artifacts:delete", "approve", "invalid_scope"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, envOptions{noIDP: true})
+			if _, err := e.users.CreateUser(t.Context(), user.CreateUserRequest{Handle: "carol"}); err != nil {
+				t.Fatal(err)
+			}
+			_, key, err := e.users.IssueKey(t.Context(), user.IssueKeyRequest{Handle: "carol", Label: "laptop", Scopes: []string{auth.ScopeRead}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, body := e.get("/.well-known/oauth-authorization-server")
+			var meta struct {
+				Issuer string `json:"issuer"`
+			}
+			if err := json.Unmarshal([]byte(body), &meta); err != nil || meta.Issuer == "" {
+				t.Fatalf("metadata %s: %v", body, err)
+			}
+
+			e.signIn(authorizeParams(e.register(redirect), redirect, tt.scope, newPKCE("iss")))
+			resp, _ := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {tt.action}, "api_key": {key}})
+			q := location(t, resp).Query()
+			if q.Get("iss") != meta.Issuer {
+				t.Errorf("iss = %q, want the metadata issuer %q (query %v)", q.Get("iss"), meta.Issuer, q)
+			}
+			if q.Get("error") != tt.wantError || (tt.wantError == "") == (q.Get("code") == "") {
+				t.Errorf("error = %q, code %q; want error %q", q.Get("error"), q.Get("code"), tt.wantError)
+			}
+			if q.Get("state") != "client-state" || q.Get("tenant") != "a" {
+				t.Errorf("state = %q, tenant = %q; want the client's state and the redirect URI's own query", q.Get("state"), q.Get("tenant"))
+			}
+		})
 	}
 }
 
