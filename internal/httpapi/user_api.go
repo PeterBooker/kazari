@@ -299,7 +299,7 @@ func (h *userAPI) createMultipart(w http.ResponseWriter, r *http.Request, p auth
 		Visibility:  artifact.Visibility(m.Visibility),
 		Metadata:    m.Metadata,
 		Label:       m.Label,
-		Files:       b.files,
+		Files:       stripTopDir(b.files),
 	})
 }
 
@@ -346,6 +346,7 @@ func (h *userAPI) getArtifact(w http.ResponseWriter, r *http.Request, p auth.Pri
 	}
 	d := h.links.Detail(a, versions)
 	d.NextFilesBefore = next
+	w.Header().Set("ETag", strconv.Quote(strconv.Itoa(a.LatestVersion)))
 	writeJSON(w, http.StatusOK, d)
 	return nil
 }
@@ -355,6 +356,10 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 		req    api.UpdateArtifactRequest
 		bundle *bundle
 	)
+	create, err := queryBool(r, "create")
+	if err != nil {
+		return err
+	}
 	switch mediaType(r) {
 	case "application/json":
 		if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
@@ -382,14 +387,123 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	}
 	defer closeDownloads()
 	if bundle != nil {
-		files = artifact.MergeFiles(files, bundle.files)
+		bf := bundle.files
+		if req.Mirror {
+			bf = stripTopDir(bf)
+		}
+		files = artifact.MergeFiles(files, bf)
 	}
 	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
 	if err != nil {
 		return err
 	}
 	defer done()
+	if create {
+		created, err := h.createAbsent(w, r, p, req, files)
+		if created || err != nil {
+			return err
+		}
+	}
+	if req.Mirror {
+		if files, err = h.mirror(r, p, &req, files); err != nil {
+			return err
+		}
+	}
 	return h.update(w, r, p, req, files)
+}
+
+// createAbsent is PUT ?create=true on a slug with no artifact the caller can
+// see. It reports false, with nothing written, when the artifact exists, so
+// the PUT updates it instead.
+func (h *userAPI) createAbsent(w http.ResponseWriter, r *http.Request, p auth.Principal, req api.UpdateArtifactRequest, files []artifact.FileInput) (bool, error) {
+	slug := r.PathValue("slug")
+	expected, err := expectedVersion(r, req.ExpectedVersion)
+	if err != nil || expected != 0 || req.BaseVersion != 0 || req.Restore {
+		return false, err
+	}
+	_, _, err = h.d.Artifacts.Get(r.Context(), present.Actor(p), slug)
+	switch {
+	case err == nil:
+		return false, nil
+	case !errors.Is(err, artifact.ErrNotFound) && !errors.Is(err, artifact.ErrGone):
+		return false, err
+	}
+	if !p.HasScope(auth.ScopeWrite) {
+		return false, artifact.Errorf(artifact.ErrForbidden, "scope %q required", auth.ScopeWrite)
+	}
+	cr := artifact.CreateRequest{Slug: slug, Label: req.Label, Files: files}
+	if req.Name != nil {
+		cr.Name = *req.Name
+	}
+	if req.Description != nil {
+		cr.Description = *req.Description
+	}
+	if req.Visibility != nil {
+		if err := present.RequireShare(p, *req.Visibility); err != nil {
+			return false, err
+		}
+		cr.Visibility = artifact.Visibility(*req.Visibility)
+	}
+	for k, v := range req.Metadata {
+		if v == nil {
+			continue
+		}
+		if cr.Metadata == nil {
+			cr.Metadata = map[string]string{}
+		}
+		cr.Metadata[k] = *v
+	}
+	err = h.create(w, r, p, cr)
+	if errors.Is(err, artifact.ErrSlugTaken) {
+		if _, _, gerr := h.d.Artifacts.Get(r.Context(), present.Actor(p), slug); gerr == nil {
+			// Created by a concurrent request since the check above.
+			return false, nil
+		}
+	}
+	return true, err
+}
+
+// mirror adds a delete for every file of the base version the request does
+// not carry. It also expects the latest version it read, so a version added
+// meanwhile fails with version_conflict instead of keeping files this
+// request was meant to remove.
+func (h *userAPI) mirror(r *http.Request, p auth.Principal, req *api.UpdateArtifactRequest, files []artifact.FileInput) ([]artifact.FileInput, error) {
+	a, versions, err := h.d.Artifacts.Get(r.Context(), present.Actor(p), r.PathValue("slug"))
+	if err != nil {
+		return nil, err
+	}
+	expected, err := expectedVersion(r, req.ExpectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	if expected == 0 {
+		req.ExpectedVersion = a.LatestVersion
+	}
+	base := req.BaseVersion
+	if base == 0 {
+		base = a.LatestVersion
+	}
+	if _, err := h.d.Artifacts.ListFiles(r.Context(), versions, base+1); err != nil {
+		return nil, err
+	}
+	keep := make(map[string]bool, len(files))
+	for _, f := range files {
+		if !f.Delete {
+			keep[f.Path] = true
+		}
+	}
+	for _, v := range versions {
+		if v.Number != base {
+			continue
+		}
+		for _, f := range v.Files {
+			if !keep[f.Path] {
+				files = append(files, artifact.FileInput{Path: f.Path, Delete: true})
+				keep[f.Path] = true
+			}
+		}
+	}
+	return files, nil
 }
 
 func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
@@ -397,7 +511,7 @@ func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.P
 	if err := decodeJSON(w, r, jsonLimit, &req, false); err != nil {
 		return err
 	}
-	if len(req.Files) > 0 || req.UploadID != "" {
+	if len(req.Files) > 0 || req.UploadID != "" || req.Mirror {
 		return invalid("PATCH changes fields only; use PUT to change files")
 	}
 	return h.update(w, r, p, req, nil)
