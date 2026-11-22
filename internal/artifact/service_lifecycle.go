@@ -94,15 +94,126 @@ func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version
 		span.SetAttributes(versionKey.Int(version))
 		endSpan(span, err)
 	}()
-	return s.modify(ctx, actor, slug, false, audit.ArtifactPublish, func(a *Artifact) (map[string]string, error) {
-		// Only a purge removes versions, all at once, so 1..LatestVersion
-		// has no gaps.
+	a, err := s.modify(ctx, actor, slug, false, audit.ArtifactPublish, func(a *Artifact) (map[string]string, error) {
 		if version < 1 || version > a.LatestVersion {
 			return nil, Errorf(ErrVersionNotFound, "version %d does not exist", version)
 		}
 		a.PublishedVersion = version
 		return map[string]string{"version": strconv.Itoa(version)}, nil
 	})
+	if errors.Is(err, ErrVersionNotFound) && version >= 1 {
+		return nil, Errorf(ErrVersionNotFound, "version %d of %s does not exist or was deleted", version, slug)
+	}
+	return a, err
+}
+
+// DeleteVersion deletes version n, which must be neither the published
+// version nor the latest. Its host answers 410 from then on, and its blobs
+// go at the next garbage collection unless another version holds them.
+func (s *Service) DeleteVersion(ctx context.Context, actor Actor, slug string, n int) (_ *Artifact, err error) {
+	ctx, span := s.span(ctx, "artifact.delete_version", slug)
+	defer func() { span.SetAttributes(versionKey.Int(n)); endSpan(span, err) }()
+	a, _, err := s.deleteVersions(ctx, actor, slug, nil, false, func(a *Artifact, vs []Version) ([]int, error) {
+		if !slices.ContainsFunc(vs, func(v Version) bool { return v.Number == n }) {
+			if n >= 1 && n < a.LatestVersion {
+				return nil, Errorf(ErrVersionNotFound, "version %d of %s was already deleted", n, slug)
+			}
+			return nil, Errorf(ErrVersionNotFound, "%s has no version %d; its latest is %d", slug, n, a.LatestVersion)
+		}
+		switch n {
+		case a.PublishedVersion:
+			return nil, Errorf(ErrInvalidArgument, "version %d of %s is published; publish another version before deleting it", n, slug)
+		case a.LatestVersion:
+			return nil, Errorf(ErrInvalidArgument, "version %d of %s is the latest, which is kept so that its number "+
+				"never names other content", n, slug)
+		}
+		return []int{n}, nil
+	})
+	return a, err
+}
+
+// PruneVersions deletes every version but the keep newest, the published
+// version and the staged versions newer than it, which wait for review, and
+// returns the numbers deleted, oldest first. With dryRun it deletes nothing
+// and returns the numbers it would delete.
+func (s *Service) PruneVersions(ctx context.Context, actor Actor, slug string, keep int, dryRun bool) (_ *Artifact, _ []int, err error) {
+	ctx, span := s.span(ctx, "artifact.prune_versions", slug)
+	defer func() { endSpan(span, err) }()
+	if keep < 1 || keep > MaxKeepVersions {
+		return nil, nil, Errorf(ErrInvalidArgument, "keep must be a whole number from 1 to %d", MaxKeepVersions)
+	}
+	return s.deleteVersions(ctx, actor, slug, nil, dryRun, func(a *Artifact, vs []Version) ([]int, error) {
+		return prunable(a, vs, keep), nil
+	})
+}
+
+// prunable is what a prune that keeps keep versions deletes, oldest first;
+// vs is newest first.
+func prunable(a *Artifact, vs []Version, keep int) []int {
+	var out []int
+	for i := len(vs) - 1; i >= keep; i-- {
+		v := vs[i]
+		if v.Number == a.PublishedVersion || v.Number == a.LatestVersion || (v.Staged && v.Number > a.PublishedVersion) {
+			continue
+		}
+		out = append(out, v.Number)
+	}
+	return out
+}
+
+// errDryRun from a DeleteVersions func rolls the deletion back.
+var errDryRun = errors.New("artifact: dry run")
+
+// deleteVersions deletes the versions choose returns, after the checks of a
+// change and the rule MarkStale has: deleting for good takes the delete
+// scope on an artifact the actor does not own.
+func (s *Service) deleteVersions(ctx context.Context, actor Actor, slug string, details map[string]string, dryRun bool,
+	choose func(a *Artifact, vs []Version) ([]int, error)) (*Artifact, []int, error) {
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, nil, err
+	}
+	involved, err := s.involved(ctx, actor, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	var planned []int
+	deleted, err := s.store.DeleteVersions(ctx, slug, func(a *Artifact, vs []Version) ([]int, error) {
+		if err := s.checkWritable(actor, a, involved, false); err != nil {
+			return nil, err
+		}
+		if !actor.Admin && !actor.CanDelete && actor.Handle != a.OwnerHandle {
+			return nil, Errorf(ErrForbidden, "deleting versions of %q needs the artifacts:delete scope or ownership", slug)
+		}
+		ns, err := choose(a, vs)
+		if err != nil || !dryRun {
+			return ns, err
+		}
+		planned = ns
+		return nil, errDryRun
+	})
+	if errors.Is(err, errDryRun) {
+		deleted, err = planned, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if !dryRun && len(deleted) > 0 {
+		d := maps.Clone(details)
+		if d == nil {
+			d = map[string]string{}
+		}
+		parts := make([]string, len(deleted))
+		for i, n := range deleted {
+			parts[i] = strconv.Itoa(n)
+		}
+		d["versions"] = strings.Join(parts, ",")
+		s.record(ctx, actor, audit.ArtifactVersionDelete, slug, d)
+	}
+	a, err := s.store.Get(ctx, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, deleted, nil
 }
 
 // MarkStale starts the grace period after which Sweep soft-deletes the
@@ -415,6 +526,31 @@ func (s *Service) Sweep(ctx context.Context) (report SweepReport, err error) {
 		}
 		rep.SoftDeleted++
 		s.record(ctx, System, audit.ArtifactDelete, a.Slug, map[string]string{"reason": "expired"})
+	}
+
+	kept, err := s.store.ListKeepVersions(ctx)
+	if err != nil {
+		fail(err)
+	}
+	for _, a := range kept {
+		// Fewer versions than the number is nothing to prune.
+		if keep, err := ParseKeepVersions(a.Metadata[MetaKeepVersions]); err != nil || a.LatestVersion <= keep {
+			continue
+		}
+		_, n, err := s.deleteVersions(ctx, System, a.Slug, map[string]string{"reason": "keep_versions"}, false,
+			func(cur *Artifact, vs []Version) ([]int, error) {
+				// The number may have changed since the listing.
+				keep, err := ParseKeepVersions(cur.Metadata[MetaKeepVersions])
+				if err != nil || cur.DeletedAt != nil || cur.PurgedAt != nil {
+					return nil, nil
+				}
+				return prunable(cur, vs, keep), nil
+			})
+		if err != nil {
+			fail(fmt.Errorf("artifact: sweep prune %s: %w", a.Slug, err))
+			continue
+		}
+		rep.VersionsDeleted += len(n)
 	}
 
 	retained := now.Add(-s.opts.Retention)

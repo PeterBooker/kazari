@@ -483,6 +483,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	}
 	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Staged: req.Stage, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
+		// The base may have been deleted since it was read, and its blobs
+		// collected; from here on the collector waits for this hold.
+		if baseNumber > 0 {
+			if _, err := s.store.GetVersion(ctx, req.Slug, baseNumber); err != nil {
+				return err
+			}
+		}
 		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
 			return err

@@ -158,6 +158,7 @@ func sweepAttrs(span trace.Span, r SweepReport) {
 			attribute.Int("kazari.sweep.soft_deleted_count", r.SoftDeleted),
 			attribute.Int("kazari.sweep.purged_count", r.Purged),
 			attribute.Int("kazari.sweep.freed_count", r.Freed),
+			attribute.Int("kazari.sweep.versions_deleted_count", r.VersionsDeleted),
 		)
 	}
 }

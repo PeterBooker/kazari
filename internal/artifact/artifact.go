@@ -31,7 +31,13 @@ const (
 	MetaSPA       = "kazari.spa"       // "true" serves index.html for any extension-less miss
 	MetaIndexable = "kazari.indexable" // "true" drops the X-Robots-Tag: noindex header
 	MetaCSP       = "kazari.csp"       // adds sources to the instance Content-Security-Policy
+	// MetaKeepVersions, a whole number from 1 to MaxKeepVersions, has Sweep
+	// prune the artifact's versions as PruneVersions does.
+	MetaKeepVersions = "kazari.keep_versions"
 )
+
+// MaxKeepVersions bounds MetaKeepVersions and a prune's keep.
+const MaxKeepVersions = 10000
 
 // Artifact is the record behind a slug.
 type Artifact struct {
@@ -231,12 +237,17 @@ type Published struct {
 	VersionID     int64 // 0 when nothing is published
 	VersionNumber int
 	// Staged is set when the version is staged (Version.Staged).
-	Staged        bool
-	Visibility    Visibility
-	Metadata      map[string]string
-	UnpublishedAt *time.Time
-	DeletedAt     *time.Time
-	PurgedAt      *time.Time
+	Staged bool
+	// LatestVersion is the artifact's latest version number, and
+	// VersionDeleted is set by ResolveVersion for a number below it whose
+	// version was deleted.
+	LatestVersion  int
+	VersionDeleted bool
+	Visibility     Visibility
+	Metadata       map[string]string
+	UnpublishedAt  *time.Time
+	DeletedAt      *time.Time
+	PurgedAt       *time.Time
 
 	// Derived from Metadata by Service; the store leaves them zero.
 	SPA       bool
@@ -297,7 +308,8 @@ type RevokedShareLink struct {
 
 // SweepReport counts what one Sweep did.
 type SweepReport struct {
-	SoftDeleted int // stale past expiry
-	Purged      int // soft-deleted past retention
-	Freed       int // tombstones removed
+	SoftDeleted     int // stale past expiry
+	Purged          int // soft-deleted past retention
+	Freed           int // tombstones removed
+	VersionsDeleted int // past an artifact's MetaKeepVersions
 }

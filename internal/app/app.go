@@ -442,7 +442,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		{Name: "sweep", Every: cfg.Lifecycle.SweepInterval.Std(), Run: func(ctx context.Context) error {
 			rep, err := arts.Sweep(ctx)
 			if rep != (artifact.SweepReport{}) {
-				log.InfoContext(ctx, "sweep", "soft_deleted", rep.SoftDeleted, "purged", rep.Purged, "freed", rep.Freed)
+				log.InfoContext(ctx, "sweep", "soft_deleted", rep.SoftDeleted, "purged", rep.Purged, "freed", rep.Freed,
+					"versions_deleted", rep.VersionsDeleted)
 			}
 			return err
 		}},

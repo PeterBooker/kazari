@@ -214,7 +214,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !p.Servable() {
-		if p.PurgedAt != nil {
+		// An offline artifact is not found on every host, whatever became
+		// of the version.
+		if p.PurgedAt != nil || (p.VersionDeleted && p.UnpublishedAt == nil && p.DeletedAt == nil) {
 			h.miss(w, r, http.StatusGone)
 			return
 		}

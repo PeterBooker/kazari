@@ -9,25 +9,27 @@ import (
 )
 
 const (
-	ArtifactCreate     = "artifact.create"
-	ArtifactImport     = "artifact.import"
-	ArtifactUpdate     = "artifact.update"
-	ArtifactPublish    = "artifact.publish"
-	ArtifactStale      = "artifact.stale"
-	ArtifactUnstale    = "artifact.unstale"
-	ArtifactVisibility = "artifact.visibility"
-	ArtifactDelete     = "artifact.delete"
-	ArtifactRestore    = "artifact.restore"
-	ArtifactPurge      = "artifact.purge"
-	ArtifactFree       = "artifact.free" // tombstone removed
-	ArtifactTransfer   = "artifact.transfer"
-	ShareLinkCreate    = "share_link.create"
-	ShareLinkRevoke    = "share_link.revoke"
-	UserCreate         = "user.create"
-	UserUpdate         = "user.update"
-	KeyIssue           = "key.issue"
-	KeyRevoke          = "key.revoke"
-	KeyRotate          = "key.rotate"
+	ArtifactCreate  = "artifact.create"
+	ArtifactImport  = "artifact.import"
+	ArtifactUpdate  = "artifact.update"
+	ArtifactPublish = "artifact.publish"
+	// Details["versions"] lists the numbers deleted, comma-separated.
+	ArtifactVersionDelete = "artifact.version_delete"
+	ArtifactStale         = "artifact.stale"
+	ArtifactUnstale       = "artifact.unstale"
+	ArtifactVisibility    = "artifact.visibility"
+	ArtifactDelete        = "artifact.delete"
+	ArtifactRestore       = "artifact.restore"
+	ArtifactPurge         = "artifact.purge"
+	ArtifactFree          = "artifact.free" // tombstone removed
+	ArtifactTransfer      = "artifact.transfer"
+	ShareLinkCreate       = "share_link.create"
+	ShareLinkRevoke       = "share_link.revoke"
+	UserCreate            = "user.create"
+	UserUpdate            = "user.update"
+	KeyIssue              = "key.issue"
+	KeyRevoke             = "key.revoke"
+	KeyRotate             = "key.rotate"
 	// A link that sets a password: Details["purpose"] is invite, reset or
 	// setup.
 	InviteCreate    = "invite.create"

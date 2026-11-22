@@ -295,6 +295,13 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 		 WHERE artifact_id = ? AND number = ?`, aid, number).
 		Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged)
 	if errors.Is(err, sql.ErrNoRows) {
+		var latest int
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(number), 0) FROM version WHERE artifact_id = ?`, aid).Scan(&latest); err != nil {
+			return nil, artifactErr("get version", err)
+		}
+		if number >= 1 && number < latest {
+			return nil, artifact.Errorf(artifact.ErrVersionNotFound, "version %d of %s was deleted", number, slug)
+		}
 		return nil, artifact.ErrVersionNotFound
 	}
 	if err != nil {
@@ -334,11 +341,21 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []arti
 	if err != nil {
 		return nil, artifactErr("list versions", err)
 	}
-	rows, err := s.db.QueryContext(ctx,
+	out, err := listArtifactVersions(ctx, s.db, aid)
+	if err != nil {
+		return nil, artifactErr("list versions", err)
+	}
+	return out, nil
+}
+
+func listArtifactVersions(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, aid int64) ([]artifact.Version, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT id, number, label, created_by, created_at, size_bytes, staged FROM version
 		 WHERE artifact_id = ? ORDER BY number DESC`, aid)
 	if err != nil {
-		return nil, artifactErr("list versions", err)
+		return nil, err
 	}
 	defer rows.Close()
 	var out []artifact.Version
@@ -348,15 +365,59 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []arti
 			created int64
 		)
 		if err := rows.Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged); err != nil {
-			return nil, artifactErr("list versions", err)
+			return nil, err
 		}
 		v.CreatedAt = fromNanos(created)
 		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, artifactErr("list versions", err)
+	return out, rows.Err()
+}
+
+func (s *ArtifactStore) DeleteVersions(ctx context.Context, slug string,
+	fn func(a *artifact.Artifact, vs []artifact.Version) ([]int, error)) (_ []int, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteVersions")
+	defer func() { end(err) }()
+	var deleted []int
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		aid, a, err := readArtifactTx(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		vs, err := listArtifactVersions(ctx, tx, aid)
+		if err != nil {
+			return err
+		}
+		numbers, err := fn(a, vs)
+		if err != nil {
+			return err
+		}
+		for _, n := range numbers {
+			// The latest keeps its number from being used again, and the
+			// published one is what the page serves.
+			if n == a.PublishedVersion || n == a.LatestVersion {
+				return artifact.Errorf(artifact.ErrInvalidArgument, "version %d of %s is published or the latest, and is kept", n, slug)
+			}
+			res, err := tx.ExecContext(ctx, `DELETE FROM version_file WHERE version_id =
+				(SELECT id FROM version WHERE artifact_id = ? AND number = ?)`, aid, n)
+			if err != nil {
+				return err
+			}
+			if res, err = tx.ExecContext(ctx, `DELETE FROM version WHERE artifact_id = ? AND number = ?`, aid, n); err != nil {
+				return err
+			}
+			if gone, err := res.RowsAffected(); err != nil {
+				return err
+			} else if gone == 0 {
+				return artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d", slug, n)
+			}
+		}
+		deleted = numbers
+		return nil
+	})
+	if err != nil {
+		return nil, artifactErr("delete versions", err)
 	}
-	return out, nil
+	return deleted, nil
 }
 
 func readArtifactTx(ctx context.Context, tx *sql.Tx, slug string) (int64, *artifact.Artifact, error) {
@@ -716,6 +777,7 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 }
 
 const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), COALESCE(v.staged, 0),
+	COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0),
 	a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
 
 func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
@@ -724,7 +786,8 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 		vis, meta          string
 		unpub, del, purged sql.NullInt64
 	)
-	if err := row.Scan(&p.ArtifactID, &p.Slug, &p.VersionID, &p.VersionNumber, &p.Staged, &vis, &meta, &unpub, &del, &purged); err != nil {
+	if err := row.Scan(&p.ArtifactID, &p.Slug, &p.VersionID, &p.VersionNumber, &p.Staged, &p.LatestVersion,
+		&vis, &meta, &unpub, &del, &purged); err != nil {
 		return nil, err
 	}
 	var err error
@@ -768,7 +831,12 @@ func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number 
 		return nil, artifactErr("resolve version", err)
 	}
 	if p.VersionID == 0 && p.PurgedAt == nil {
-		return nil, artifact.ErrVersionNotFound
+		// Only the latest is never deleted, so a lower number without a row
+		// was deleted.
+		if number < 1 || number >= p.LatestVersion {
+			return nil, artifact.ErrVersionNotFound
+		}
+		p.VersionDeleted = true
 	}
 	return p, nil
 }
@@ -847,6 +915,14 @@ func (s *ArtifactStore) ListExpired(ctx context.Context, now time.Time) (_ []art
 	defer func() { end(err) }()
 	return s.listWhere(ctx, "list expired",
 		"a.expires_at <= ? AND a.deleted_at IS NULL AND a.purged_at IS NULL", "a.expires_at", toNanos(now))
+}
+
+func (s *ArtifactStore) ListKeepVersions(ctx context.Context) (_ []artifact.Artifact, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.ListKeepVersions")
+	defer func() { end(err) }()
+	return s.listWhere(ctx, "list keep versions",
+		"json_extract(a.metadata, '$.\"' || ? || '\"') IS NOT NULL AND a.deleted_at IS NULL AND a.purged_at IS NULL",
+		"a.id", artifact.MetaKeepVersions)
 }
 
 func (s *ArtifactStore) ListRetentionDue(ctx context.Context, before time.Time) (_ []artifact.Artifact, err error) {

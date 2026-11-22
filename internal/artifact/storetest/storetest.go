@@ -1012,7 +1012,7 @@ func testResolve(t *testing.T, h *harness) {
 	}
 
 	want := &artifact.Published{
-		Slug: "demo", VersionID: v2.ID, VersionNumber: 2, Visibility: artifact.Public,
+		Slug: "demo", VersionID: v2.ID, VersionNumber: 2, LatestVersion: 2, Visibility: artifact.Public,
 		Metadata: map[string]string{artifact.MetaSPA: "true", "x": "y"},
 	}
 	p, err := h.store.ResolvePublished(h.ctx, "demo")

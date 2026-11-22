@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -180,10 +181,24 @@ func ValidateMetadataPair(k, v string) error {
 		if err := csp.ValidateAddition(v); err != nil {
 			return Errorf(ErrInvalidMetadata, "metadata %s adds sources to the instance policy: %v", k, err)
 		}
+	case MetaKeepVersions:
+		if _, err := ParseKeepVersions(v); err != nil {
+			return Errorf(ErrInvalidMetadata, "metadata %s %v", k, err)
+		}
 	default:
 		return Errorf(ErrInvalidMetadata, "unknown server metadata key %q", k)
 	}
 	return nil
+}
+
+// ParseKeepVersions reads how many versions to keep: a whole number from 1
+// to MaxKeepVersions, written without a sign or leading zeros.
+func ParseKeepVersions(v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > MaxKeepVersions || strconv.Itoa(n) != v {
+		return 0, fmt.Errorf("must be a whole number from 1 to %d", MaxKeepVersions)
+	}
+	return n, nil
 }
 
 // ValidateMetadataKey checks a key alone, for list filters.

@@ -18,7 +18,8 @@ type Store interface {
 	// Get returns tombstones too, or ErrNotFound.
 	Get(ctx context.Context, slug string) (*Artifact, error)
 
-	// GetVersion returns the version with its Files, or ErrVersionNotFound.
+	// GetVersion returns the version with its Files, or ErrVersionNotFound,
+	// whose message says when the version was deleted.
 	GetVersion(ctx context.Context, slug string, number int) (*Version, error)
 
 	// ListVersions returns newest first, without Files.
@@ -33,6 +34,15 @@ type Store interface {
 	// error from fn (returned as is), on ErrVersionConflict when expected != 0
 	// is not the latest number, or on a quota failure as for Create.
 	AddVersion(ctx context.Context, slug string, v *Version, expected int, quota int64, fn func(a *Artifact) error) error
+
+	// DeleteVersions calls fn on the current row and its versions (newest
+	// first, without Files) and, when it returns nil, deletes the versions
+	// whose numbers fn returned with their file rows, in one transaction, and
+	// returns those numbers. The blobs stay for the garbage collector. The
+	// published and the latest version are never deleted: ErrInvalidArgument,
+	// and ErrVersionNotFound for a number without a version, with nothing
+	// written, as on an error from fn, which is returned as is.
+	DeleteVersions(ctx context.Context, slug string, fn func(a *Artifact, vs []Version) ([]int, error)) ([]int, error)
 
 	// Update calls fn on the current row and, when it returns nil, writes its
 	// mutable fields (including OwnerHandle and PublishedVersion), clears
@@ -60,8 +70,10 @@ type Store interface {
 	// between 404 and 410. ErrNotFound only when no row exists at all.
 	ResolvePublished(ctx context.Context, slug string) (*Published, error)
 
-	// ResolveVersion is ResolvePublished for one version number;
-	// ErrVersionNotFound when the artifact exists but the version does not.
+	// ResolveVersion is ResolvePublished for one version number, with
+	// LatestVersion set; a number below the latest without a version has
+	// VersionDeleted set. ErrVersionNotFound for any other number the
+	// artifact has no version for.
 	ResolveVersion(ctx context.Context, slug string, number int) (*Published, error)
 
 	Files(ctx context.Context, versionID int64) (map[string]File, error)
@@ -79,6 +91,10 @@ type Store interface {
 	ListExpired(ctx context.Context, now time.Time) ([]Artifact, error)          // expires_at <= now, not deleted
 	ListRetentionDue(ctx context.Context, before time.Time) ([]Artifact, error)  // deleted_at <= before, not purged
 	ListTombstonesDue(ctx context.Context, before time.Time) ([]Artifact, error) // purged_at <= before
+
+	// ListKeepVersions returns the artifacts whose metadata sets
+	// MetaKeepVersions, neither soft-deleted nor purged.
+	ListKeepVersions(ctx context.Context) ([]Artifact, error)
 
 	// Purge calls fn, when not nil, on the current row and, when it returns
 	// nil, deletes every version and file row, clears the published pointer
