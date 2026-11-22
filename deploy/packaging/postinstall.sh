@@ -13,9 +13,9 @@ fi
 
 cat <<'MSG'
 Kazari is installed. To start it:
-  1. Edit /etc/kazari/kazari.yaml (your domain, email and DNS provider)
+  1. Edit /etc/kazari/kazari.yaml (your domain and DNS provider)
      and /etc/kazari/kazari.env (the DNS provider's token).
-  2. sudo kazari check
+  2. sudo kazari check     (reads both files)
   3. sudo systemctl enable --now kazari
   4. sudo kazari admin setup-link
      and open the link it prints to create the first admin.

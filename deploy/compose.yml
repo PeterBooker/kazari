@@ -3,7 +3,7 @@
 # edit those, then start (https://kazari.io/docs/install/):
 #
 #   curl -fsSLO https://kazari.io/deploy/compose.yml
-#   curl -fsSLO https://kazari.io/deploy/kazari.yaml            # the domain, email and DNS provider
+#   curl -fsSLO https://kazari.io/deploy/kazari.yaml            # the domain and the DNS provider
 #   curl -fsSL  https://kazari.io/deploy/kazari.env.example -o .env   # the DNS provider's token
 #   docker compose up -d
 #   docker compose logs kazari        # prints the setup link for the first admin
@@ -13,6 +13,11 @@
 # commands run inside the container, over the socket, with no token:
 #
 #   docker compose exec kazari kazari admin setup-link
+#
+# Backups: kazari admin backup - streams one as tar, which needs no mount:
+#   docker compose exec -T kazari kazari admin backup - > kazari-$(date +%F).tar
+# or uncomment the ./backups mount below and write into it:
+#   docker compose exec kazari kazari admin backup /backup/$(date +%F)
 
 services:
   kazari:
@@ -24,6 +29,9 @@ services:
     volumes:
       - ./kazari.yaml:/etc/kazari/kazari.yaml:ro
       - data:/var/lib/kazari
+      # The server runs as UID 65532: create the directory first with
+      # mkdir backups && sudo chown 65532:65532 backups
+      # - ./backups:/backup
     env_file:
       - .env
     # To export traces to an OpenTelemetry collector or vendor, set its
