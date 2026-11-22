@@ -38,6 +38,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/theme"
+	"github.com/PeterBooker/kazari/internal/user"
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
@@ -49,13 +50,16 @@ const (
 	SignOutPath  = Prefix + "signout"
 )
 
-// Cookie names before the __Host- prefix: the visitor's access, and the
-// nonce that binds a sign-in to the browser that started it.
+// Cookie names before the __Host- prefix: the visitor's access, the nonce
+// that binds a sign-in to the browser that started it, and the token of a
+// share link whose password form is open, kept off the address bar.
 const (
 	viewCookie  = "kazari_view"
 	nonceCookie = "kazari_nonce"
 	nonceTTL    = 10 * time.Minute // as long as a sign-in may take
 	nonceLen    = 43               // 32 random bytes, base64url
+	shareCookie = "kazari_share"
+	shareTTL    = 10 * time.Minute // as long as typing a password may take
 )
 
 // pageCSP is the policy of the pages this package serves on an artifact
@@ -111,18 +115,20 @@ type Gate struct {
 	// takes, built once: every page view passes the gate, and a slice built
 	// per call would be allocated each time.
 	results map[string][]metric.AddOption
-	// linkDelay and ipDelay slow down guesses at a link's password, as the
-	// sign-in page slows guesses at an account's.
-	linkDelay, ipDelay *ratelimit.Backoff
+	// guessDelay slows down guesses at a link's password from one address,
+	// and linkDelay, which lets many more go first, those from every address
+	// together: one visitor's wrong guesses then hold up the link's other
+	// visitors only once they are many.
+	guessDelay, linkDelay *ratelimit.Backoff
 }
 
 // The waits between guesses at a share link's password: a few cost nothing,
 // then each failure doubles the wait, up to linkMaxDelay.
 const (
-	linkFreeFailures = 3
-	ipFreeFailures   = 10
-	linkBaseDelay    = time.Second
-	linkMaxDelay     = time.Minute
+	guessFreeFailures = 3
+	linkFreeFailures  = 30
+	linkBaseDelay     = time.Second
+	linkMaxDelay      = time.Minute
 )
 
 // Results of the gate, the values of kazari.gate.result.
@@ -163,7 +169,7 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 	return &Gate{sessions: sessions, links: links, opts: opts, log: log, results: results,
 		requests: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.gate.requests",
 			metric.WithUnit("{request}"), metric.WithDescription("Requests for artifact pages by what the gate decided."))),
-		linkDelay: backoff(linkFreeFailures, ratelimit.ScopeAccount), ipDelay: backoff(ipFreeFailures, ratelimit.ScopeIP)}
+		guessDelay: backoff(guessFreeFailures, ratelimit.ScopeIP), linkDelay: backoff(linkFreeFailures, ratelimit.ScopeAccount)}
 }
 
 // Allow reports whether r may be served p on host, the artifact host's
@@ -357,8 +363,9 @@ func (g *Gate) callback(w http.ResponseWriter, r *http.Request, host string) {
 
 // share opens a share link: the view cookie it gives lasts until the link
 // expires, and the browser goes on to the page without the token in its
-// address bar or history. A link with a password first shows a form, which
-// posts the token and the password back here.
+// address bar or history. A link with a password moves its token to a
+// short-lived cookie instead and comes back here without it, to a form that
+// posts the password.
 func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Published) {
 	if p.Staged {
 		g.page(w, r, http.StatusForbidden, page{Title: "Not published yet",
@@ -370,21 +377,29 @@ func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 		g.unlock(w, r, p)
 		return
 	}
-	token := r.URL.Query().Get("token")
+	token, fromAddress := r.URL.Query().Get("token"), true
+	if token == "" {
+		token, fromAddress = g.cookie(r, shareCookie), false
+	}
 	l, cookie, err := g.links.OpenShareLink(r.Context(), p.Slug, token)
-	if err != nil {
+	switch {
+	case err != nil:
+		g.setCookie(w, shareCookie, "", -1)
 		g.linkFailed(w, r, p, err)
-		return
+	case cookie != "":
+		g.opened(w, l, cookie)
+	case fromAddress:
+		g.setCookie(w, shareCookie, token, min(shareTTL, l.ExpiresAt.Sub(g.opts.Now())))
+		setNoStore(w.Header())
+		w.Header().Set("Location", SharePath)
+		w.WriteHeader(http.StatusSeeOther)
+	default:
+		g.page(w, r, http.StatusOK, passwordPage(""))
 	}
-	if cookie == "" {
-		g.page(w, r, http.StatusOK, passwordPage(token, ""))
-		return
-	}
-	g.opened(w, l, cookie)
 }
 
-// unlock checks the password posted for a link, as slowly as the guesses
-// before it make it wait.
+// unlock checks the password posted for the link whose token the share
+// cookie holds, as slowly as the guesses before it make it wait.
 func (g *Gate) unlock(w http.ResponseWriter, r *http.Request, p *artifact.Published) {
 	if !middleware.SameHost(r) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Request rejected", Message: "This form was not sent from this page."})
@@ -395,38 +410,58 @@ func (g *Gate) unlock(w http.ResponseWriter, r *http.Request, p *artifact.Publis
 		g.page(w, r, http.StatusBadRequest, page{Title: "Request rejected", Message: "The form could not be read."})
 		return
 	}
-	token, password := r.PostForm.Get("token"), r.PostForm.Get("password")
+	token, password := g.cookie(r, shareCookie), r.PostForm.Get("password")
 	if !artifact.IsLinkToken(token) {
-		g.linkFailed(w, r, p, artifact.ErrLinkNotFound)
+		g.page(w, r, http.StatusForbidden, page{Title: "Form expired",
+			Message: "This password form has expired. Open the link you were sent again."})
 		return
 	}
 	if password == "" {
-		g.page(w, r, http.StatusBadRequest, passwordPage(token, "Enter the password."))
+		g.page(w, r, http.StatusBadRequest, passwordPage("Enter the password."))
 		return
 	}
 	link := p.Slug + " " + strings.SplitN(token, "_", 3)[1]
-	attempt, wait := ratelimit.BeginPair(r.Context(), g.linkDelay, link, g.ipDelay, ratelimit.IPKey(r))
+	guess := link + " " + ratelimit.IPKey(r)
+	attempt, wait := ratelimit.BeginPair(r.Context(), g.guessDelay, guess, g.linkDelay, link)
 	if wait > 0 {
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
-		g.page(w, r, http.StatusTooManyRequests, passwordPage(token, "Too many tries. Try again in "+waitText(wait)+"."))
+		g.page(w, r, http.StatusTooManyRequests, passwordPage("Too many tries. Try again in "+ratelimit.WaitText(wait)+"."))
 		return
 	}
 	l, cookie, err := g.links.UnlockShareLink(r.Context(), p.Slug, token, password)
-	if errors.Is(err, artifact.ErrForbidden) {
+	switch {
+	case errors.Is(err, artifact.ErrForbidden):
 		attempt.Failed()
-		g.page(w, r, http.StatusForbidden, passwordPage(token, "That password is not right."))
-		return
-	}
-	attempt.Done()
-	if err != nil {
+		g.page(w, r, http.StatusForbidden, passwordPage("That password is not right."))
+	case errors.Is(err, user.ErrBusy):
+		attempt.Done()
+		w.Header().Set("Retry-After", "5")
+		g.page(w, r, http.StatusServiceUnavailable, passwordPage("The server is busy. Try again in a moment."))
+	case errors.Is(err, context.Canceled):
+		attempt.Done() // the visitor left; there is no one to answer
+	case err != nil:
+		attempt.Done()
+		g.setCookie(w, shareCookie, "", -1)
 		g.linkFailed(w, r, p, err)
-		return
+	default:
+		attempt.Done()
+		g.guessDelay.Reset(guess)
+		g.linkDelay.Reset(link)
+		g.setCookie(w, shareCookie, "", -1)
+		g.opened(w, l, cookie)
 	}
-	g.opened(w, l, cookie)
 }
 
-// maxUnlockBytes bounds the password form: a token and a password of at
-// most artifact.ShareLinkPasswordMax four-byte characters, encoded.
+// cookie returns the value of the host's cookie named base, "" for none.
+func (g *Gate) cookie(r *http.Request, base string) string {
+	if ck, err := r.Cookie(g.name(base)); err == nil {
+		return ck.Value
+	}
+	return ""
+}
+
+// maxUnlockBytes bounds the password form: a password of at most
+// artifact.ShareLinkPasswordMax four-byte characters, encoded.
 const maxUnlockBytes = 16 << 10
 
 // opened sets the view cookie of an opened link and goes on to the page.
@@ -447,21 +482,12 @@ func (g *Gate) linkFailed(w http.ResponseWriter, r *http.Request, p *artifact.Pu
 	g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
 }
 
-// passwordPage asks for a link's password, with the token in the form so
-// the address it posts to carries none.
-func passwordPage(token, problem string) page {
+// passwordPage asks for the password of the link whose token the share
+// cookie holds.
+func passwordPage(problem string) page {
 	return page{Title: "Enter the password",
 		Message: "This page needs the password that came with its link.",
-		Unlock:  &unlockForm{Action: SharePath, Token: token, Error: problem}}
-}
-
-// waitText is a wait in words, rounded up to whole seconds.
-func waitText(d time.Duration) string {
-	n := ratelimit.RetryAfter(d)
-	if n == "1" {
-		return "1 second"
-	}
-	return n + " seconds"
+		Unlock:  &unlockForm{Action: SharePath, Error: problem}}
 }
 
 // signOut shows a button (GET) or leaves this host (POST): its view session
@@ -536,8 +562,8 @@ type page struct {
 
 // unlockForm asks for a share link's password.
 type unlockForm struct {
-	Action, Token string
-	Error         string // why the last try failed, if it did
+	Action string
+	Error  string // why the last try failed, if it did
 }
 
 func (g *Gate) page(w http.ResponseWriter, r *http.Request, status int, p page) {

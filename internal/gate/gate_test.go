@@ -85,6 +85,7 @@ type fakeLinks struct {
 	opened   int
 	unlocked []string // the passwords UnlockShareLink was given
 	gone     bool     // the link was revoked
+	err      error    // returned by UnlockShareLink when set
 }
 
 // lockedToken is a second link of team's, which asks for lockedPassword;
@@ -121,6 +122,9 @@ func (f *fakeLinks) UnlockShareLink(_ context.Context, slug, token, password str
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.unlocked = append(f.unlocked, password)
+	if f.err != nil {
+		return nil, "", f.err
+	}
 	if slug != "team" || token != lockedToken || f.gone {
 		return nil, "", artifact.ErrLinkNotFound
 	}

@@ -198,8 +198,8 @@ func TestGatedEndToEnd(t *testing.T) {
 	wantStatus(t, guest.get("http://team.localhost/"), http.StatusFound, "guest after revoke")
 	wantStatus(t, guest.get(created.URL), http.StatusForbidden, "revoked share link")
 
-	// A link with a password opens a form; the URL alone opens nothing.
-	locked, err := user.CreateShareLink(ctx, "team", "client", "2d", "open sesame")
+	// A link with a password opens a form, and the URL alone opens nothing.
+	locked, err := user.CreateShareLink(ctx, "team", "client", "2d", "correct horse battery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,18 +207,22 @@ func TestGatedEndToEnd(t *testing.T) {
 		t.Fatalf("created link = %+v, want password true", locked.ShareLink)
 	}
 	visitor := newBrowser(t, addr)
-	asked := visitor.get(locked.URL)
+	moved := visitor.get(locked.URL)
+	wantStatus(t, moved, http.StatusSeeOther, "link with a password")
+	if loc := moved.header.Get("Location"); loc != "/.kazari/share" {
+		t.Fatalf("link with a password went on to %q, want the share path without the token", loc)
+	}
+	asked := visitor.get("http://team.localhost/.kazari/share")
 	if asked.status != http.StatusOK || !strings.Contains(asked.body, `name="password"`) {
-		t.Fatalf("link with a password: %d, want 200 and the form; body %q", asked.status, truncate(asked.body))
+		t.Fatalf("the password form: %d, want 200 and the form; body %q", asked.status, truncate(asked.body))
 	}
 	wantStatus(t, visitor.get("http://team.localhost/"), http.StatusFound, "page before the password")
-	token := strings.TrimPrefix(locked.URL[strings.Index(locked.URL, "token="):], "token=")
 	post := func(password string) response {
 		return visitor.send(http.MethodPost, "http://team.localhost/.kazari/share",
-			url.Values{"token": {token}, "password": {password}}, http.Header{"Origin": {"http://team.localhost"}})
+			url.Values{"password": {password}}, http.Header{"Origin": {"http://team.localhost"}})
 	}
-	wantStatus(t, post("open says me"), http.StatusForbidden, "wrong password")
-	if back := visitor.follow(post("open sesame"), "right password"); back != "/" {
+	wantStatus(t, post("open says me please"), http.StatusForbidden, "wrong password")
+	if back := visitor.follow(post("correct horse battery"), "right password"); back != "/" {
 		t.Fatalf("right password returned to %q", back)
 	}
 	if got := visitor.get("http://team.localhost/"); got.status != http.StatusOK || got.body != "team v2" {
