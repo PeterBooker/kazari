@@ -568,8 +568,6 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		details["key_prefix"] = a.keyPrefix
 	}
 	s.record(ctx, a.handle, ActionGrant, a.handle, details)
-	// RFC 9207: a client talking to several servers checks iss, so a response
-	// from another server cannot be passed off as this one's.
 	v := url.Values{"code": {code}, "iss": {s.opts.Issuer}}
 	if req.ClientState != "" {
 		v.Set("state", req.ClientState)

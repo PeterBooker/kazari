@@ -490,14 +490,62 @@ func TestAuthenticateUnknownTokens(t *testing.T) {
 	}
 }
 
+// Every response to the client's redirect URI names the issuer exactly as
+// the metadata does (RFC 9207), whatever the person decided.
+func TestAuthorizationResponseIss(t *testing.T) {
+	const redirect = "https://app.example/cb?tenant=a"
+	tests := []struct {
+		name      string
+		scope     string
+		action    string
+		wantError string
+	}{
+		{"approved", "", "approve", ""},
+		{"denied", "", "deny", "access_denied"},
+		{"no scope in common with the key", "artifacts:delete", "approve", "invalid_scope"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, envOptions{noIDP: true})
+			if _, err := e.users.CreateUser(t.Context(), user.CreateUserRequest{Handle: "carol"}); err != nil {
+				t.Fatal(err)
+			}
+			_, key, err := e.users.IssueKey(t.Context(), user.IssueKeyRequest{Handle: "carol", Label: "laptop", Scopes: []string{auth.ScopeRead}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, body := e.get("/.well-known/oauth-authorization-server")
+			var meta struct {
+				Issuer string `json:"issuer"`
+			}
+			if err := json.Unmarshal([]byte(body), &meta); err != nil || meta.Issuer == "" {
+				t.Fatalf("metadata %s: %v", body, err)
+			}
+
+			e.signIn(authorizeParams(e.register(redirect), redirect, tt.scope, newPKCE("iss")))
+			resp, _ := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {tt.action}, "api_key": {key}})
+			q := location(t, resp).Query()
+			if q.Get("iss") != meta.Issuer {
+				t.Errorf("iss = %q, want the metadata issuer %q (query %v)", q.Get("iss"), meta.Issuer, q)
+			}
+			if q.Get("error") != tt.wantError || (tt.wantError == "") == (q.Get("code") == "") {
+				t.Errorf("error = %q, code %q; want error %q", q.Get("error"), q.Get("code"), tt.wantError)
+			}
+			if q.Get("state") != "client-state" || q.Get("tenant") != "a" {
+				t.Errorf("state = %q, tenant = %q; want the client's state and the redirect URI's own query", q.Get("state"), q.Get("tenant"))
+			}
+		})
+	}
+}
+
 func TestDeny(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	clientID := e.register("https://app.example/cb")
 	e.signIn(authorizeParams(clientID, "https://app.example/cb", "", newPKCE("v")))
 	resp, _ := e.postForm("/oauth/consent", url.Values{"request_id": {e.requestCookie()}, "action": {"deny"}})
 	q := location(t, resp).Query()
-	if q.Get("error") != "access_denied" || q.Get("state") != "client-state" || q.Get("code") != "" || q.Get("iss") != e.srv.URL {
-		t.Errorf("deny redirect query = %v, want access_denied, client-state and iss %s", q, e.srv.URL)
+	if q.Get("error") != "access_denied" || q.Get("state") != "client-state" || q.Get("code") != "" {
+		t.Errorf("deny redirect query = %v", q)
 	}
 	if len(e.rec.actions(oauth.ActionGrant)) != 0 {
 		t.Error("deny recorded a grant")
