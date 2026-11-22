@@ -3,11 +3,11 @@ package artifact
 import (
 	"context"
 	"crypto/hmac"
-	"errors"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -61,8 +61,15 @@ func isBase32(s string) bool {
 // link sets: its token, followed for a link with a password by a dot and
 // the proof that the password was given.
 func IsLinkCookie(s string) bool {
-	token, _, _ := strings.Cut(s, ".")
+	token, _, _ := splitLinkCookie(s)
 	return IsLinkToken(token)
+}
+
+// splitLinkCookie splits a view cookie at its first dot into the token and
+// the proof, and says whether there was a dot: "token." holds an empty
+// proof, which is not the same as none.
+func splitLinkCookie(s string) (token, proof string, hasProof bool) {
+	return strings.Cut(s, ".")
 }
 
 // Share-link passwords are ShareLinkPasswordMin to ShareLinkPasswordMax
@@ -261,16 +268,15 @@ func (s *Service) activeLink(ctx context.Context, slug, token string) (*ShareLin
 // was given. Anything else (a malformed, unknown, revoked or expired token,
 // a missing or wrong proof, or another artifact's link) is ErrLinkNotFound.
 func (s *Service) CheckShareLink(ctx context.Context, slug, cookie string) (*ShareLink, error) {
-	token, proof, _ := strings.Cut(cookie, ".")
+	token, proof, hasProof := splitLinkCookie(cookie)
 	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
 		return nil, err
 	}
-	want := ""
-	if passwordHash != "" {
-		want = linkProof(passwordHash, token)
+	if hasProof != (passwordHash != "") {
+		return nil, ErrLinkNotFound
 	}
-	if !hmac.Equal([]byte(proof), []byte(want)) {
+	if hasProof && !hmac.Equal([]byte(proof), []byte(linkProof(passwordHash, token))) {
 		return nil, ErrLinkNotFound
 	}
 	return l, nil

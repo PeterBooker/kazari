@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,8 +102,10 @@ func TestShareLinks(t *testing.T) {
 	if got.Uses != 1 || got.LastUsedAt == nil || cookie != token {
 		t.Fatalf("after one open: %+v, cookie %q; want one use and the token as the cookie", got, cookie)
 	}
-	_, err = e.svc.CheckShareLink(e.ctx, "demo", token+".proof")
-	wantErr(t, "CheckShareLink of a link without a password, with a proof", err, artifact.ErrLinkNotFound)
+	for _, suffix := range []string{".proof", "."} {
+		_, err = e.svc.CheckShareLink(e.ctx, "demo", token+suffix)
+		wantErr(t, "CheckShareLink of a link without a password, with the proof "+strconv.Quote(suffix), err, artifact.ErrLinkNotFound)
+	}
 	for _, tc := range []struct{ name, slug, token string }{
 		{"other artifact", "other", token},
 		{"malformed", "demo", "kzs_short"},
