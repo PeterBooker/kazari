@@ -102,7 +102,8 @@ func TestEditFile(t *testing.T) {
 		t.Errorf("stale anchor = %q", msg)
 	}
 	if msg := fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
-		"edits": []map[string]any{{"old_text": "Q4", "start": start, "new_text": "x"}}}); !strings.Contains(msg, "oneOf") {
+		"edits": []map[string]any{{"old_text": "Q4", "start": start, "new_text": "x"}}}); !strings.HasPrefix(msg, "invalid_argument: ") ||
+		!strings.Contains(msg, "each edit needs one of old_text, start, after or before") {
 		t.Errorf("edit with both kinds = %q", msg)
 	}
 

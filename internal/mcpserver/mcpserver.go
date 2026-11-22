@@ -204,6 +204,8 @@ func (b *builder) server(p auth.Principal) *mcp.Server {
 			SchemaCache:  b.schema,
 		},
 	)
+	// Added first, so the observer outside it records the code it gives.
+	s.AddReceivingMiddleware(b.argsMiddleware())
 	if b.obs.enabled {
 		s.AddReceivingMiddleware(b.obs.middleware(p))
 	}
