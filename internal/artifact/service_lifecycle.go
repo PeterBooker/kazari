@@ -161,6 +161,12 @@ func prunable(a *Artifact, vs []Version, keep int) []int {
 	return out
 }
 
+// keepVersions is the artifact's MetaKeepVersions, if it sets a valid one.
+func keepVersions(a *Artifact) (int, bool) {
+	keep, err := ParseKeepVersions(a.Metadata[MetaKeepVersions])
+	return keep, err == nil
+}
+
 // errDryRun from a DeleteVersions func rolls the deletion back.
 var errDryRun = errors.New("artifact: dry run")
 
@@ -534,14 +540,14 @@ func (s *Service) Sweep(ctx context.Context) (report SweepReport, err error) {
 	}
 	for _, a := range kept {
 		// Fewer versions than the number is nothing to prune.
-		if keep, err := ParseKeepVersions(a.Metadata[MetaKeepVersions]); err != nil || a.LatestVersion <= keep {
+		if keep, ok := keepVersions(&a); !ok || a.LatestVersion <= keep {
 			continue
 		}
 		_, n, err := s.deleteVersions(ctx, System, a.Slug, map[string]string{"reason": "keep_versions"}, false,
 			func(cur *Artifact, vs []Version) ([]int, error) {
-				// The number may have changed since the listing.
-				keep, err := ParseKeepVersions(cur.Metadata[MetaKeepVersions])
-				if err != nil || cur.DeletedAt != nil || cur.PurgedAt != nil {
+				// The row may have changed since the listing.
+				keep, ok := keepVersions(cur)
+				if !ok || cur.DeletedAt != nil || cur.PurgedAt != nil {
 					return nil, nil
 				}
 				return prunable(cur, vs, keep), nil

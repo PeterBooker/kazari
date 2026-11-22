@@ -397,12 +397,12 @@ func (s *ArtifactStore) DeleteVersions(ctx context.Context, slug string,
 			if n == a.PublishedVersion || n == a.LatestVersion {
 				return artifact.Errorf(artifact.ErrInvalidArgument, "version %d of %s is published or the latest, and is kept", n, slug)
 			}
-			res, err := tx.ExecContext(ctx, `DELETE FROM version_file WHERE version_id =
-				(SELECT id FROM version WHERE artifact_id = ? AND number = ?)`, aid, n)
-			if err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM version_file WHERE version_id =
+				(SELECT id FROM version WHERE artifact_id = ? AND number = ?)`, aid, n); err != nil {
 				return err
 			}
-			if res, err = tx.ExecContext(ctx, `DELETE FROM version WHERE artifact_id = ? AND number = ?`, aid, n); err != nil {
+			res, err := tx.ExecContext(ctx, `DELETE FROM version WHERE artifact_id = ? AND number = ?`, aid, n)
+			if err != nil {
 				return err
 			}
 			if gone, err := res.RowsAffected(); err != nil {
