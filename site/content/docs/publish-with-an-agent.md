@@ -150,6 +150,8 @@ A share link opens a members page for someone who cannot sign in, such as a clie
 
 Ask your agent for one, or make it yourself: **Manage** beside the page on your account page opens its own page, where **Make a share link** shows the link once. Make the page members-only first; a public or unlisted page needs no link.
 
+A link can also ask for a password before it opens the page, in case the message with the link is forwarded. Ask your agent for a link with a password, or fill in the password field on the page's own page, then send the password apart from the link, such as by phone or in another message.
+
 Anyone who has the link can open the page until it expires or is revoked, so send it only to the people it is for.
 
 ## Tidying up

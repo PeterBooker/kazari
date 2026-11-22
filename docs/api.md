@@ -680,6 +680,14 @@ The body is optional. To name the link and set how long it lasts, send `label` a
 
 `expires_in` is a duration such as `72h`, `14d` or `2w`. It defaults to 7 days, and can be at most `serve.share_link_max_ttl`, which is 90 days by default. `label` follows the version label rules.
 
+To have the link ask for a password before it opens the page, add `password`, 8 to 256 characters:
+
+```json
+{ "label": "Acme review", "expires_in": "14d", "password": "correct horse battery" }
+```
+
+Only a hash of the password is stored, and the link's `password` field is `true` from then on. Send the password to the person apart from the link, so that the link alone opens nothing.
+
 The response is the only time the link's URL, which holds its token, is returned:
 
 ```json
@@ -695,9 +703,11 @@ The response is the only time the link's URL, which holds its token, is returned
 
 The token is `kzs_<8-character prefix>_<52-character secret>`, and only its SHA-256 is stored. Opening the URL stores the token in a cookie on that host and redirects to `/`, so the token leaves the address bar.
 
+A link with a password opens a form on the artifact host instead. The right password sets the cookie and redirects to `/`, and a wrong one shows the form again. After a few wrong passwords, each further try for the link waits longer, up to a minute, and a try that comes too soon answers `429` with `Retry-After`.
+
 #### List share links: `GET /artifacts/{slug}/share-links`
 
-Lists the artifact's links, newest first, without their tokens, as `{ "items": [ ... ] }`. Each item has `prefix`, `label`, `created_by`, `created_at`, `expires_at`, `revoked_at`, `last_used_at`, `uses` and `active`.
+Lists the artifact's links, newest first, without their tokens, as `{ "items": [ ... ] }`. Each item has `prefix`, `label`, `created_by`, `created_at`, `expires_at`, `revoked_at`, `last_used_at`, `uses` and `active`, and `password: true` for a link with a password.
 
 `uses` counts openings of the URL, not page views.
 

@@ -237,7 +237,9 @@ Visitors to public and unlisted pages are not signed in, so those pages count vi
 
 #### Share links
 
-The share links of a page are listed with their label, creator, expiry and how often they were opened. **Create a share link** shows the new link once, and **Revoke link** ends one after a confirmation (`kazari share create`, `kazari share revoke`).
+The share links of a page are listed with their label, creator, expiry and how often they were opened, and those with a password are marked. **Create a share link** shows the new link once, and **Revoke link** ends one after a confirmation (`kazari share create`, `kazari share revoke`).
+
+A password is optional. With one, the link asks for it before it opens the page; send it to the person apart from the link (`kazari share create --password`).
 
 The form is offered on a published members-only page alone: anyone with the address opens a public or unlisted page already, and a hidden page opens for nobody. On those pages the section says why, with a button that makes the page members-only.
 

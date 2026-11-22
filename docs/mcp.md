@@ -191,7 +191,7 @@ The server offers nineteen tools. The six with more to know have their own secti
 | `unmark_stale` | Cancel a pending expiry. |
 | `set_visibility` | Make the artifact `public`, `unlisted`, `members` or `unpublished`. Needs `artifacts:share`. |
 | `create_share_link` | Create a URL that opens a `members` artifact without signing in, and with `version` one that opens that version, unless it is staged. Needs `artifacts:share`. |
-| `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active), without their URLs. |
+| `list_share_links` | An artifact's share links (prefix, label, expiry, uses, whether active, whether it has a password), without their URLs. |
 | `revoke_share_link` | End a share link by its prefix; browsers that opened it lose access on their next request. Needs `artifacts:share`. |
 | `delete_artifact` | Soft-delete, which `update_artifact` with `restore: true` undoes, or purge now with `hard: true` after the user confirms ([Confirmation before a purge](#confirmation-before-a-purge)). |
 | `get_guide` | The instance's skill as Markdown, for clients that do not load skills over MCP. |
@@ -304,6 +304,8 @@ q3-report is now members-only: people who sign in to this instance, or who hold 
 Returns a URL that opens a `members` artifact without signing in. The link works until `expires_in` passes or it is revoked, and disabling the user who created it revokes it; by default it lasts 7 days, and at most `serve.share_link_max_ttl`.
 
 The result holds the `url`, the link's `prefix`, `label` and `expires_at`, and the artifact's `slug` and `visibility`. With `version`, it adds `version_url`, the same link on that version's address. The URLs are returned only this once. `list_share_links` shows the links without their URLs.
+
+With `password`, 8 to 256 characters, the page asks for it before it opens, and the result has `password: true`. The agent tells the user to send the password apart from the link.
 
 ### Results
 

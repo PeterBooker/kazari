@@ -569,7 +569,7 @@ The command prints `q3-report is now members`.
 ### share
 
 ```text
-kazari share create <slug> [--label L] [--expires 7d]
+kazari share create <slug> [--label L] [--expires 7d] [--password]
 kazari share list <slug>
 kazari share revoke <slug> <prefix>
 ```
@@ -578,7 +578,9 @@ kazari share revoke <slug> <prefix>
 
 The URL holds the link's secret and is printed only this once. It goes to stdout while the prefix and expiry go to stderr, so `kazari share create q3-report --label "Acme" | pbcopy` copies only the URL.
 
-`list` shows each link's prefix, label, creator, expiry, uses and state (`active`, `expired` or `revoked`), never its URL. `revoke` ends a link at once.
+To have the link ask for a password before it opens the page, add `--password`. On a terminal the command asks for it twice without showing it; otherwise it reads the first line of stdin, as in `kazari share create q3-report --password < password.txt`. The password is never an argument, so it stays out of the shell's history.
+
+`list` shows each link's prefix, label, creator, expiry, uses, whether it has a password and its state (`active`, `expired` or `revoked`), never its URL. `revoke` ends a link at once.
 
 To make a page members-only, share it with a reviewer for two weeks, then end the link:
 
