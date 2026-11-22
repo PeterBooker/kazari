@@ -289,6 +289,22 @@ type StaleResult struct {
 	Artifact  Artifact  `json:"artifact"`
 }
 
+// PruneRequest is the body of POST /artifacts/{slug}/versions/prune: keep
+// the Keep newest versions, the published one and the staged ones newer
+// than it, and delete the rest.
+type PruneRequest struct {
+	Keep   int  `json:"keep"`
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// DeletedVersions answers a version deletion or a prune: the numbers
+// deleted, oldest first, or with DryRun the ones a prune would delete.
+type DeletedVersions struct {
+	Deleted  []int    `json:"deleted"`
+	DryRun   bool     `json:"dry_run,omitempty"`
+	Artifact Artifact `json:"artifact"`
+}
+
 // VisibilityRequest sets visibility (public, unlisted, members, unpublished).
 type VisibilityRequest struct {
 	Visibility string `json:"visibility"`
