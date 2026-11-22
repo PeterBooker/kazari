@@ -35,7 +35,7 @@ func (c *PublishCmd) Run(r *runner) error {
 	if c.Base != 0 && !c.Update {
 		return usagef("publish: --base needs --update; a new artifact has no versions")
 	}
-	return r.publish("publish", c.Dir, c.Slug, &c.artifactFlags, c.Update, c.Base, c.DryRun)
+	return r.publish("publish", c.Dir, c.Slug, &c.artifactFlags, c.Update, c.Base, false, c.DryRun)
 }
 
 // DeployCmd makes an artifact match a directory.
@@ -44,16 +44,17 @@ type DeployCmd struct {
 	Slug string `help:"Artifact slug (default: the directory's or file's name)." placeholder:"SLUG"`
 	artifactFlags
 	Base   int  `help:"The version to build on and delete from; needed when an earlier version is published." placeholder:"N"`
+	Stage  bool `help:"Add the version without publishing it, for review at its version URL; kazari rollback SLUG N publishes it."`
 	DryRun bool `name:"dry-run" help:"List what would be sent, skipped and removed, and send nothing."`
 }
 
 func (c *DeployCmd) Run(r *runner) error {
-	return r.publish("deploy", c.Dir, c.Slug, &c.artifactFlags, true, c.Base, c.DryRun)
+	return r.publish("deploy", c.Dir, c.Slug, &c.artifactFlags, true, c.Base, c.Stage, c.DryRun)
 }
 
 // publish creates the artifact, or with mirror adds a version holding
 // exactly the plan's files when the slug exists.
-func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, base int, dryRun bool) error {
+func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, base int, stage, dryRun bool) error {
 	switch f.Visibility {
 	case "", "public", "unlisted", "members":
 	default:
@@ -102,7 +103,7 @@ func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, b
 			return nil, true, r.printPlan(plan)
 		}
 		m := api.UpdateArtifactRequest{Label: f.Label, ExpectedVersion: cur.Artifact.LatestVersion, BaseVersion: base,
-			Name: f.Name, Description: f.Description, Metadata: metaPatch(f.Meta)}
+			Stage: stage, Name: f.Name, Description: f.Description, Metadata: metaPatch(f.Meta)}
 		if f.Visibility != "" {
 			m.Visibility = &f.Visibility
 		}
@@ -127,6 +128,8 @@ func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, b
 		switch {
 		case done:
 			return err
+		case IsCode(err, api.CodeNotFound) && stage:
+			return usagef("%s: --stage needs an existing artifact; %s does not exist, and a new one is published as version 1", cmd, slug)
 		case IsCode(err, api.CodeNotFound):
 			if dryRun {
 				fmt.Fprintf(r.stderr, "%s does not exist yet and would be created\n", slug)
@@ -181,6 +184,7 @@ type UpdateCmd struct {
 	Expected    int               `help:"Fail unless the latest version is N." placeholder:"N"`
 	Base        int               `help:"The version to build on; needed when an earlier version is published." placeholder:"N"`
 	KeepStale   bool              `name:"keep-stale" help:"Keep the stale mark."`
+	Stage       bool              `help:"Add the version without publishing it, for review at its version URL; kazari rollback SLUG N publishes it."`
 	Name        *string           `help:"Display name." placeholder:"NAME"`
 	Description *string           `help:"Description." placeholder:"TEXT"`
 	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
@@ -190,7 +194,7 @@ type UpdateCmd struct {
 
 func (c *UpdateCmd) Run(r *runner) error {
 	m := api.UpdateArtifactRequest{Label: c.Label, ExpectedVersion: c.Expected, BaseVersion: c.Base, KeepStale: c.KeepStale,
-		Name: c.Name, Description: c.Description}
+		Stage: c.Stage, Name: c.Name, Description: c.Description}
 	m.Metadata = metaPatch(c.Meta)
 	for _, p := range c.Delete {
 		m.Files = append(m.Files, api.FileInput{Path: p, Delete: true})
@@ -244,7 +248,8 @@ func (r *runner) baseHint(err error, cl *Client, slug string) error {
 	cmd := r.commandLine()
 	return withHints(err,
 		fmt.Sprintf("to change the published version %d: %s --base %d", a.PublishedVersion, cmd, a.PublishedVersion),
-		fmt.Sprintf("to build on the latest version %d: %s --base %d", a.LatestVersion, cmd, a.LatestVersion))
+		fmt.Sprintf("to build on the latest version %d and publish it: %s --base %d", a.LatestVersion, cmd, a.LatestVersion),
+		fmt.Sprintf("to add to the latest version %d without publishing: %s --stage", a.LatestVersion, cmd))
 }
 
 // commandLine is the command as typed, without the key.
@@ -317,12 +322,22 @@ func (r *runner) printPublished(slug string, res *api.PublishResult, plan *bundl
 		fmt.Fprintf(out, "%s → %s\n", slug, res.URL)
 		return nil
 	}
-	line := fmt.Sprintf("%s v%d → %s", slug, res.Version, res.URL)
-	if res.VersionURL != "" {
-		line += " (pinned: " + res.VersionURL + ")"
-	}
-	fmt.Fprintln(out, line)
+	fmt.Fprintln(out, versionLine(slug, res.Version, res.URL, res.VersionURL, res.Staged, res.Artifact.PublishedVersion))
 	return nil
+}
+
+// versionLine names the version a change made and where it opens; a staged
+// one opens only at its pinned URL.
+func versionLine(slug string, version int, url, versionURL string, staged bool, published int) string {
+	if staged {
+		return fmt.Sprintf("%s v%d staged → %s (members only; %s serves v%d until kazari rollback %s %d)",
+			slug, version, versionURL, url, published, slug, version)
+	}
+	line := fmt.Sprintf("%s v%d → %s", slug, version, url)
+	if versionURL != "" {
+		line += " (pinned: " + versionURL + ")"
+	}
+	return line
 }
 
 func deref(s *string) string {

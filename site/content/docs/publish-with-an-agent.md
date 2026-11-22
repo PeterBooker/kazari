@@ -88,6 +88,8 @@ Some requests, and what the agent does with each:
 | "Copy www.example.com, put a full-width photo and a donation form at the top, and publish it as `fundraiser`." | Calls `import_page`, which fetches the page with its styles, fonts and images, then `edit_file` to add the hero, and tells you what it could not copy. |
 | "Put the photo at https://www.example.com/team.jpg on `fundraiser`." | Names the photo's address in `update_artifact`; the server downloads it. |
 | "What versions of `signup-flow` are there?" | Calls `get_artifact` and lists them with their addresses. |
+| "Make the headline bigger on `signup-flow`, but let me see it before anyone else does." | Calls `edit_file` with `stage: true` and gives you the staged version's address, which only signed-in members can open. |
+| "Publish the staged version of `signup-flow`." | Calls `publish_version` with its number, and the change goes live. |
 | "Roll `signup-flow` back to version 2." | Calls `publish_version`. Version 3 is kept. |
 | "Make `signup-flow` unlisted." | Calls `set_visibility`. |
 | "Make `signup-flow` members-only and give me a link for the client that lasts two weeks." | Calls `set_visibility` with `members`, then `create_share_link` with `expires_in: 14d`, and gives you the link. |
@@ -123,7 +125,9 @@ Every publish creates a new version, and old versions are never changed or throw
 
 Share the main address with people who should see the latest work. Put a version address in feedback, sign-off or a ticket when it matters exactly what someone looked at.
 
-To roll back, ask your agent to publish an earlier version. While an earlier version is published, a change has to say which version it builds on, so it does not quietly bring back the version you rolled away from: the agent asks you whether to fix the published version or carry on from the newest.
+To review a change before it goes live, ask your agent to stage it. A staged version is added without being published: the main address keeps showing the published version, and the staged one opens at its version address only for people who sign in to the instance, not for share links. Ask the agent to publish it when it is ready.
+
+To roll back, ask your agent to publish an earlier version. While an earlier version is published, or a version is staged, a change has to say which version it builds on, so it does not quietly publish the newest version's content: the agent asks you whether to fix the published version or carry on from the newest.
 
 ## Sharing safely
 
@@ -172,7 +176,7 @@ Your agent reports a problem as a short code or message. Find it here:
 | `forbidden` | Your key or sign-in lacks the permission for that action, is limited to other pages, or the instance lets only owners change their pages. The message says which. Ask your administrator. |
 | `quota_exceeded` | You have used your storage allowance. Retire old pages or ask for more. |
 | `version_conflict` | Someone else published in between. When the agent's edits still apply, it sends them again; otherwise it reads the latest version and redoes them. |
-| `published_not_latest` | An earlier version is published, usually after a rollback. Tell the agent whether to change the published version or the newest. |
+| `published_not_latest` | An earlier version is published, after a rollback or while a version is staged. Tell the agent whether to change the published version or the newest, or to stage the change. |
 | `anchor_mismatch`, `edit_not_found` | The page changed since the agent read it, or the text to change was not found. The agent reads the page again and redoes the edit. |
 | `rate_limited` | Too many changes in a minute: 60 by default, counted across MCP and the API. Wait for the time the message names. |
 | The page says "not found" | It is unpublished or deleted, or the address has a typo. |

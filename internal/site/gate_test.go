@@ -30,7 +30,7 @@ func (g *fakeGate) Allow(w http.ResponseWriter, _ *http.Request, p *artifact.Pub
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.allowed = append(g.allowed, host)
-	if !p.Visibility.Gated() {
+	if !p.Gated() {
 		return views.Access{Via: views.ViaPublic}, true
 	}
 	if !g.allow {
@@ -122,6 +122,41 @@ func TestGatedAsksTheGate(t *testing.T) {
 // so a members host must answer with the same opener policy whatever the
 // gate decides and wherever the request ends. The sign-in page has one, so
 // a response without it would tell an opener that the visitor has access.
+// A staged version of a public page passes the gate like a members page,
+// and no shared cache keeps it, while the page's own host stays public.
+func TestStagedVersionIsGated(t *testing.T) {
+	fx := newFixture(t)
+	published := fx.res.latest["demo"]
+	fx.add(t, "demo", 50, 3, nil, []testFile{{"index.html", "text/html", "demo v3 staged"}})
+	fx.res.versions["demo"][3].Staged = true
+	fx.res.latest["demo"] = published
+
+	if rec := do(t, fx.handler(Options{}), http.MethodGet, "demo--v3.art.test", "/", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("staged version without a gate: status %d, body %q; want 404", rec.Code, rec.Body.String())
+	}
+
+	g := &fakeGate{}
+	h := fx.handler(Options{Gate: g})
+	rec := do(t, h, http.MethodGet, "demo--v3.art.test", "/", nil)
+	if rec.Code != http.StatusUnauthorized || rec.Body.String() != "gate says no to demo" {
+		t.Errorf("staged version, gate refuses: status %d, body %q; want 401 from the gate", rec.Code, rec.Body.String())
+	}
+	checkHeaders(t, rec, map[string]string{"Cross-Origin-Resource-Policy": "same-origin", "Cross-Origin-Opener-Policy": "same-origin"})
+
+	g.allow = true
+	for _, tc := range []struct{ host, body, cache string }{
+		{"demo--v3.art.test", "demo v3 staged", "private, no-cache"},
+		{"demo.art.test", "demo v2 index", "no-cache"},
+		{"demo--v2.art.test", "demo v2 index", "public, max-age=31536000, immutable"},
+	} {
+		rec := do(t, h, http.MethodGet, tc.host, "/", nil)
+		if rec.Code != http.StatusOK || rec.Body.String() != tc.body {
+			t.Errorf("%s: status %d, body %q; want 200, %q", tc.host, rec.Code, rec.Body.String(), tc.body)
+		}
+		checkHeaders(t, rec, map[string]string{"Cache-Control": tc.cache})
+	}
+}
+
 func TestGatedOpenerPolicy(t *testing.T) {
 	const coop = "Cross-Origin-Opener-Policy"
 	fx := newFixture(t)

@@ -33,6 +33,7 @@ type WriteResult struct {
 	// page from rendering as published.
 	VersionURL       string     `json:"version_url,omitempty"`
 	Unchanged        bool       `json:"unchanged,omitempty"`
+	Staged           bool       `json:"staged,omitempty"`
 	Warnings         []string   `json:"warnings,omitempty"`
 	Slug             string     `json:"slug"`
 	Name             string     `json:"name"`
@@ -101,6 +102,7 @@ func writeResult(r api.PublishResult) WriteResult {
 		Version:          r.Version,
 		VersionURL:       r.VersionURL,
 		Unchanged:        r.Unchanged,
+		Staged:           r.Staged,
 		Warnings:         r.Warnings,
 		Slug:             a.Slug,
 		Name:             a.Name,
@@ -125,7 +127,7 @@ func writeResult(r api.PublishResult) WriteResult {
 func editFileResult(r api.EditResult) EditFileResult {
 	return EditFileResult{
 		WriteResult: writeResult(api.PublishResult{URL: r.URL, Version: r.Version, VersionURL: r.VersionURL,
-			Warnings: r.Warnings, Artifact: r.Artifact}),
+			Staged: r.Staged, Warnings: r.Warnings, Artifact: r.Artifact}),
 		Path:  r.Path,
 		Edits: r.Edits,
 	}

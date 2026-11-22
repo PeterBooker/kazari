@@ -70,7 +70,7 @@
 <thead><tr><th>Version</th><th>Added</th><th>By</th><th class="num">Content</th><th>Its own address</th><th><span class="sr-only">Actions</span></th></tr></thead>
 <tbody>
 {{range .Versions}}<tr>
-<td data-label="Version"><span class="status tone-version">Version {{.Number}}</span>{{if .Published}} <span class="status tone-ok">Published</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Version"><span class="status tone-version">Version {{.Number}}</span>{{if .Published}} <span class="status tone-ok">Published</span>{{else if .Staged}} <span class="status tone-note">Staged</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="Added" class="nowrap">{{when .CreatedAt}}</td>
 <td data-label="By">{{if .CreatedBy}}<a class="mono" href="/people/{{.CreatedBy}}">{{.CreatedBy}}</a>{{else}}<span class="soft">unknown</span>{{end}}</td>
 <td class="num" data-label="Content">{{bytes .SizeBytes}}</td>

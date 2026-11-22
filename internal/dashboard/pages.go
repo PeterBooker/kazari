@@ -487,23 +487,28 @@ func (s *server) pagesHandOver(w http.ResponseWriter, r *http.Request, c *reques
 }
 
 // version reads the version number of the path and checks the page has it.
-func (s *server) version(r *http.Request, c *request) (*artifact.Artifact, int, error) {
-	a, _, err := s.load(r.Context(), c, r.PathValue("slug"))
+func (s *server) version(r *http.Request, c *request) (*artifact.Artifact, artifact.Version, error) {
+	a, vs, err := s.load(r.Context(), c, r.PathValue("slug"))
 	if err != nil {
-		return nil, 0, err
+		return nil, artifact.Version{}, err
 	}
 	n, err := strconv.Atoi(r.PathValue("n"))
-	if err != nil || n < 1 || n > a.LatestVersion {
-		return nil, 0, notFound("The page has no such version.")
+	if err == nil {
+		for _, v := range vs {
+			if v.Number == n {
+				return a, v, nil
+			}
+		}
 	}
-	return a, n, nil
+	return nil, artifact.Version{}, notFound("The page has no such version.")
 }
 
 func (s *server) pagesPublishConfirm(w http.ResponseWriter, r *http.Request, c *request) error {
-	a, n, err := s.version(r, c)
+	a, v, err := s.version(r, c)
 	if err != nil {
 		return err
 	}
+	n := v.Number
 	if a.DeletedAt != nil {
 		return refused("The page is in the bin. Restore it first.")
 	}
@@ -526,6 +531,10 @@ func (s *server) pagesPublishConfirm(w http.ResponseWriter, r *http.Request, c *
 	if a.PublishedVersion != 0 {
 		d.Ends[0] = "The address " + host + " shows version " + version + " from now on, in place of version " + strconv.Itoa(a.PublishedVersion) + "."
 	}
+	if v.Staged {
+		d.Ends = append(d.Ends, "Version "+version+" is staged, open only to people signed in here. Once published, "+
+			"everyone who can open the page sees it, share links included.")
+	}
 	// Choosing a version does not show a hidden page, and must not say so.
 	if a.UnpublishedAt != nil {
 		d.Ends = []string{"Version " + version + " becomes the published version."}
@@ -535,11 +544,11 @@ func (s *server) pagesPublishConfirm(w http.ResponseWriter, r *http.Request, c *
 }
 
 func (s *server) pagesPublish(w http.ResponseWriter, r *http.Request, c *request) error {
-	a, n, err := s.version(r, c)
+	a, v, err := s.version(r, c)
 	if err != nil {
 		return err
 	}
-	if _, err := s.d.Artifacts.Publish(r.Context(), c.actor, a.Slug, n); err != nil {
+	if _, err := s.d.Artifacts.Publish(r.Context(), c.actor, a.Slug, v.Number); err != nil {
 		return pageErr(err)
 	}
 	if a.UnpublishedAt != nil {

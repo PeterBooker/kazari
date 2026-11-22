@@ -67,7 +67,10 @@ type Version struct {
 	CreatedBy string // handle
 	CreatedAt time.Time
 	SizeBytes int64
-	Files     []File // sorted by Path; empty unless requested
+	// Staged is a version added without being published that has not been
+	// published since. Its host is served only to signed-in members.
+	Staged bool
+	Files  []File // sorted by Path; empty unless requested
 
 	// Unchanged, Warnings and Edited describe the publish that returned the
 	// version and are never stored. Unchanged means the files matched the
@@ -152,7 +155,9 @@ type UpdateRequest struct {
 	BaseVersion int
 	KeepStale   bool // a new version or a restore normally clears stale_at/expires_at
 	Restore     bool
-	Files       []FileInput
+	// Stage adds the version without publishing it; it needs Files.
+	Stage bool
+	Files []FileInput
 }
 
 // ListQuery filters a listing. Viewer sees public artifacts plus any it
@@ -225,6 +230,8 @@ type Published struct {
 	Slug          string
 	VersionID     int64 // 0 when nothing is published
 	VersionNumber int
+	// Staged is set when the version is staged (Version.Staged).
+	Staged        bool
 	Visibility    Visibility
 	Metadata      map[string]string
 	UnpublishedAt *time.Time
@@ -243,6 +250,10 @@ func (p *Published) DeriveFlags() {
 	p.Indexable = p.Metadata[MetaIndexable] == "true"
 	p.CSP = p.Metadata[MetaCSP]
 }
+
+// Gated reports whether serving needs a signed-in viewer: a members
+// artifact, or a staged version, which a share link does not open either.
+func (p *Published) Gated() bool { return p.Visibility.Gated() || p.Staged }
 
 // Servable reports whether the artifact is in a state to be served.
 func (p *Published) Servable() bool {

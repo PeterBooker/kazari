@@ -219,9 +219,9 @@ Opening a page shows its address, owner and visibility, its lifecycle in dates, 
 
 #### Publishing an earlier version
 
-The version list shows each version's number, date, author and size, marks the published one, and links to each version's own address. **Publish this version** asks for confirmation, then makes that version the one at the page's address (`kazari rollback <slug> <version>`).
+The version list shows each version's number, date, author and size, marks the published one and any [staged ones](api.md#staging-a-version), and links to each version's own address. **Publish this version** asks for confirmation, then makes that version the one at the page's address (`kazari rollback <slug> <version>`).
 
-Nothing is deleted, and the next publish from an agent goes live as usual.
+A staged version opens only for people signed in to the instance until it is published, so publishing one is how a reviewed change goes live. The confirmation says so. Nothing is deleted, and the next publish from an agent goes live as usual.
 
 #### Views and readers
 

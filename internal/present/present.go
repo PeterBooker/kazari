@@ -91,6 +91,7 @@ func (l Links) Version(slug string, v artifact.Version) api.Version {
 		CreatedBy: v.CreatedBy,
 		CreatedAt: v.CreatedAt,
 		SizeBytes: v.SizeBytes,
+		Staged:    v.Staged,
 		URL:       l.VersionURL(slug, v.Number),
 	}
 	for _, f := range v.Files {
@@ -128,6 +129,7 @@ func (l Links) Result(a *artifact.Artifact, version int) api.PublishResult {
 func (l Links) Published(a *artifact.Artifact, v *artifact.Version) api.PublishResult {
 	res := l.Result(a, v.Number)
 	res.Unchanged = v.Unchanged
+	res.Staged = v.Staged
 	res.Warnings = v.Warnings
 	return res
 }
@@ -270,7 +272,8 @@ func RequireShare(p auth.Principal, visibility string) error {
 
 // Edit converts the outcome of an edit of path that produced version.
 func (l Links) Edit(a *artifact.Artifact, v *artifact.Version, path string, outs []artifact.EditOutcome) api.EditResult {
-	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: v.Number, VersionURL: l.VersionURL(a.Slug, v.Number), Path: path,
+	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: v.Number, VersionURL: l.VersionURL(a.Slug, v.Number),
+		Staged: v.Staged, Path: path,
 		Edits: make([]api.EditOutcome, 0, len(outs)), Warnings: v.Warnings, Artifact: l.Artifact(a)}
 	for _, o := range outs {
 		r.Edits = append(r.Edits, api.EditOutcome(o))

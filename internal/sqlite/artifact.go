@@ -124,9 +124,9 @@ func lookupArtifactID(ctx context.Context, q interface {
 
 func insertArtifactVersion(ctx context.Context, tx *sql.Tx, aid int64, number int, v *artifact.Version) (int64, error) {
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO version (artifact_id, number, label, created_by, created_at, size_bytes)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		aid, number, v.Label, v.CreatedBy, toNanos(v.CreatedAt), v.SizeBytes)
+		`INSERT INTO version (artifact_id, number, label, created_by, created_at, size_bytes, staged)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		aid, number, v.Label, v.CreatedBy, toNanos(v.CreatedAt), v.SizeBytes, v.Staged)
 	if err != nil {
 		if artifactIsUnique(err) {
 			return 0, artifact.ErrVersionConflict
@@ -291,9 +291,9 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 		created int64
 	)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT id, number, label, created_by, created_at, size_bytes FROM version
+		`SELECT id, number, label, created_by, created_at, size_bytes, staged FROM version
 		 WHERE artifact_id = ? AND number = ?`, aid, number).
-		Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes)
+		Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrVersionNotFound
 	}
@@ -335,7 +335,7 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []arti
 		return nil, artifactErr("list versions", err)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, number, label, created_by, created_at, size_bytes FROM version
+		`SELECT id, number, label, created_by, created_at, size_bytes, staged FROM version
 		 WHERE artifact_id = ? ORDER BY number DESC`, aid)
 	if err != nil {
 		return nil, artifactErr("list versions", err)
@@ -347,7 +347,7 @@ func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []arti
 			v       artifact.Version
 			created int64
 		)
-		if err := rows.Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes); err != nil {
+		if err := rows.Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged); err != nil {
 			return nil, artifactErr("list versions", err)
 		}
 		v.CreatedAt = fromNanos(created)
@@ -397,14 +397,15 @@ func (s *ArtifactStore) AddVersion(ctx context.Context, slug string, v *artifact
 		if err != nil {
 			return err
 		}
+		publish := sql.NullInt64{Int64: vid, Valid: !v.Staged}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE artifact SET name = ?, description = ?, visibility = ?, metadata = ?,
 			   stale_at = ?, expires_at = ?, unpublished_at = ?, deleted_at = ?, updated_at = ?,
-			   published_version_id = ?
+			   published_version_id = COALESCE(?, published_version_id)
 			 WHERE id = ?`,
 			a.Name, a.Description, string(a.Visibility), meta,
 			nullNanos(a.StaleAt), nullNanos(a.ExpiresAt), nullNanos(a.UnpublishedAt), nullNanos(a.DeletedAt),
-			toNanos(a.UpdatedAt), vid, aid)
+			toNanos(a.UpdatedAt), publish, aid)
 		if err != nil {
 			return err
 		}
@@ -464,6 +465,11 @@ func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *
 			toNanos(a.UpdatedAt), aid)
 		if err != nil {
 			return err
+		}
+		if published.Valid {
+			if _, err := tx.ExecContext(ctx, `UPDATE version SET staged = 0 WHERE id = ? AND staged`, published.Int64); err != nil {
+				return err
+			}
 		}
 		if by != "" {
 			return markArtifactActor(ctx, tx, aid, by, false, a.UpdatedAt)
@@ -709,8 +715,8 @@ func (s *ArtifactStore) List(ctx context.Context, q artifact.ListQuery) (_ artif
 	return page, nil
 }
 
-const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), a.visibility, a.metadata,
-	a.unpublished_at, a.deleted_at, a.purged_at`
+const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(v.number, 0), COALESCE(v.staged, 0),
+	a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
 
 func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
 	var (
@@ -718,7 +724,7 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 		vis, meta          string
 		unpub, del, purged sql.NullInt64
 	)
-	if err := row.Scan(&p.ArtifactID, &p.Slug, &p.VersionID, &p.VersionNumber, &vis, &meta, &unpub, &del, &purged); err != nil {
+	if err := row.Scan(&p.ArtifactID, &p.Slug, &p.VersionID, &p.VersionNumber, &p.Staged, &vis, &meta, &unpub, &del, &purged); err != nil {
 		return nil, err
 	}
 	var err error

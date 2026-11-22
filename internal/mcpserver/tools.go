@@ -9,6 +9,7 @@ import (
 	"io"
 	pathpkg "path"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,6 +70,7 @@ type UpdateInput struct {
 	BaseVersion     int                `json:"base_version,omitempty" jsonschema:"version the new one builds on; default the latest, required while an earlier version is published"`
 	KeepStale       bool               `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
 	Restore         bool               `json:"restore,omitempty" jsonschema:"bring back a soft-deleted artifact (get_artifact shows deleted_at) before applying the other changes"`
+	Stage           bool               `json:"stage,omitempty" jsonschema:"add the version without publishing it; publish_version makes it live"`
 }
 
 // EditInput is one edit of edit_file: a text edit or an anchor edit.
@@ -91,6 +93,7 @@ type EditFileInput struct {
 	BaseVersion     int         `json:"base_version,omitempty" jsonschema:"version whose file to edit; default the latest, required while an earlier version is published"`
 	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
 	KeepStale       bool        `json:"keep_stale,omitempty" jsonschema:"keep a pending stale mark instead of clearing it"`
+	Stage           bool        `json:"stage,omitempty" jsonschema:"add the version without publishing it; publish_version makes it live"`
 }
 
 // editFileSchema constrains each edit to exactly one of a non-empty old_text, start, after and before.
@@ -431,6 +434,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
 				Restore:         in.Restore,
+				Stage:           in.Stage,
 				Files:           files,
 			}, vis)
 			done(err == nil)
@@ -469,6 +473,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				ExpectedVersion: in.ExpectedVersion,
 				BaseVersion:     in.BaseVersion,
 				KeepStale:       in.KeepStale,
+				Stage:           in.Stage,
 			})
 			if err != nil {
 				return EditFileResult{}, "", err
@@ -606,13 +611,18 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return ShareLinkResult{}, "", err
 			}
-			a, _, err := arts.Get(ctx, actor, in.Slug)
+			a, vs, err := arts.Get(ctx, actor, in.Slug)
 			if err != nil {
 				return ShareLinkResult{}, "", err
 			}
 			if in.Version < 0 || in.Version > a.LatestVersion {
 				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d; its latest is %d",
 					a.Slug, in.Version, a.LatestVersion)
+			}
+			if slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == in.Version && v.Staged }) {
+				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,
+					"version %d of %s is staged, and a share link does not open a staged version; publish it with "+
+						"publish_version first, or leave out version", in.Version, a.Slug)
 			}
 			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
 			if err != nil {
@@ -727,7 +737,16 @@ func confirmed(answer mcp.InputResponse) bool {
 
 // editLine names each edit's match so a fuzzy match is never silent.
 func editLine(r EditFileResult) string {
+	if r.Staged {
+		return fmt.Sprintf("%s: edited %s; %s.", stagedLine(r.WriteResult), r.Path, editParts(r.Edits))
+	}
 	return fmt.Sprintf("Published %s (version %d): edited %s; %s.", r.URL, r.Version, r.Path, editParts(r.Edits))
+}
+
+// stagedLine says where a staged version opens, and who can open it.
+func stagedLine(r WriteResult) string {
+	return fmt.Sprintf("Staged version %d at %s, which only people signed in to this instance can open; %s still "+
+		"serves version %d until publish_version %d", r.Version, r.VersionURL, r.URL, r.PublishedVersion, r.Version)
 }
 
 func editParts(edits []api.EditOutcome) string {
@@ -768,6 +787,9 @@ func publishedLine(r WriteResult) string {
 			r.Version, r.URL, r.PublishedVersion)
 	}
 	line := fmt.Sprintf("Published %s (version %d)", r.URL, r.Version)
+	if r.Staged {
+		line = stagedLine(r)
+	}
 	switch {
 	case r.DeletedAt != nil:
 		line += "; the artifact is deleted, so the URL is offline"

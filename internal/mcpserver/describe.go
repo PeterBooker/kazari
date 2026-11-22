@@ -149,8 +149,10 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 	const sameAsCreate = "Slug rules, limits, Content-Security-Policy, metadata, files and text fields: as in the " +
 		"create_artifact description."
 	const baseVersion = "base_version: the version the change builds on; omitted, the latest. While an earlier version " +
-		"is published (after a rollback) it is required, and the call fails with published_not_latest without it: ask " +
-		"the user whether to change the published version or the latest."
+		"is published (after a rollback, or with a staged version) it is required, and the call fails with " +
+		"published_not_latest without it: ask the user whether to change the published version or the latest. " +
+		"stage: true adds the version unpublished, on the latest: url keeps serving published_version, and " +
+		"version_url opens only to signed-in members until publish_version."
 	return map[string]string{
 		"create_artifact": strings.Join([]string{
 			fmt.Sprintf("Create a new artifact (a static web page or site) and publish it as version 1 at %s. "+
@@ -292,7 +294,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"update_artifact with restore: true brings back. limit defaults to 50, at most 200; when next_cursor is set, " +
 			"pass it as cursor for the next page.",
 
-		"publish_version": fmt.Sprintf("Point %s at an existing version, to roll back or forward. Versions are numbered "+
+		"publish_version": fmt.Sprintf("Point %s at an existing version: roll back or forward, or make a staged version live. Versions are numbered "+
 			"from 1 to latest_version (get_artifact lists them); nothing is copied or deleted, and the version keeps its "+
 			"own URL %s. While an earlier version than the latest is published, edit_file and update_artifact need "+
 			"base_version.", t.pageURL, t.versionURL),

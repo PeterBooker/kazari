@@ -25,7 +25,8 @@ type Store interface {
 	ListVersions(ctx context.Context, slug string) ([]Version, error)
 
 	// AddVersion calls fn on the current row and, when it returns nil, inserts
-	// v (setting v.ID and v.Number = latest+1), publishes it, writes what fn
+	// v (setting v.ID and v.Number = latest+1), publishes it unless v.Staged,
+	// writes what fn
 	// may change (name, description, visibility, metadata, the stale, expires,
 	// unpublished and deleted times, updated_at), records the blobs and marks
 	// v.CreatedBy an updater, in one transaction. Nothing is written on an
@@ -34,9 +35,10 @@ type Store interface {
 	AddVersion(ctx context.Context, slug string, v *Version, expected int, quota int64, fn func(a *Artifact) error) error
 
 	// Update calls fn on the current row and, when it returns nil, writes its
-	// mutable fields (including OwnerHandle and PublishedVersion) and marks
-	// `by` an updater unless empty, in one transaction, so fields fn leaves
-	// alone keep concurrent changes. An error from fn writes nothing.
+	// mutable fields (including OwnerHandle and PublishedVersion), clears
+	// Staged on the published version and marks `by` an updater unless
+	// empty, in one transaction, so fields fn leaves alone keep concurrent
+	// changes. An error from fn writes nothing.
 	Update(ctx context.Context, slug, by string, fn func(a *Artifact) error) error
 
 	// TransferOwned gives every artifact from owns, soft-deleted ones

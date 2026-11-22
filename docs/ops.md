@@ -867,7 +867,7 @@ kazari admin jobs run gc
 Blobs written in the last hour survive one more `gc` run.
 
 > [!WARNING]
-> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long; purge them there if needed.
+> Version hosts are served with `Cache-Control: public, max-age=<lifecycle.tombstone, at most a year>, immutable`, 90 days by default. Browsers and any CDN in front can keep copies of a pinned version for that long; purge them there if needed. A [staged version](api.md#staging-a-version) is `private, no-cache` until it is published.
 
 ## Audit log
 
@@ -882,7 +882,7 @@ The actions, with the details each records:
 | Action                | When                                                                 |
 | --------------------- | -------------------------------------------------------------------- |
 | `artifact.create`     | Created (details: `version`, `size`)                                 |
-| `artifact.update`     | Fields changed or version added (`version`, `size` when a version)   |
+| `artifact.update`     | Fields changed or version added (`version`, `size` when a version; `staged` when not published) |
 | `artifact.publish`    | Published version changed (`version`)                                |
 | `artifact.stale`      | Marked stale (`expires_at`)                                          |
 | `artifact.unstale`    | Stale mark cleared                                                   |

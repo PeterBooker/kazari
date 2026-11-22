@@ -196,3 +196,74 @@ func TestCSPOverrideRefusedWhenOff(t *testing.T) {
 		}
 	}
 }
+
+func TestStagedVersion(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo", "index.html", "v1")
+
+	a, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Stage: true, Files: files("index.html", "v2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Staged || v.Number != 2 || a.PublishedVersion != 1 || a.LatestVersion != 2 {
+		t.Fatalf("staged Update = version %d (staged %t), published %d, latest %d; want 2, staged, 1, 2",
+			v.Number, v.Staged, a.PublishedVersion, a.LatestVersion)
+	}
+	if got := e.rec.Events[len(e.rec.Events)-1].Details["staged"]; got != "true" {
+		t.Errorf("staged Update audit detail staged = %q, want %q", got, "true")
+	}
+
+	_, v, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Stage: true, Files: files("a.txt", "a")})
+	if err != nil {
+		t.Fatalf("second staged Update without base_version: %v", err)
+	}
+	if got := e.read(t, alice, "demo", "index.html", v.Number); !v.Staged || got != "v2" {
+		t.Errorf("second staged Update = version %d (staged %t) with index.html %q; want staged, built on the staged %q",
+			v.Number, v.Staged, got, "v2")
+	}
+	_, v, _, err = e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", Stage: true,
+		Edits: []artifact.Edit{{OldText: "v2", NewText: "v4"}}})
+	if err != nil {
+		t.Fatalf("staged Edit without base_version: %v", err)
+	}
+	if !v.Staged || v.Number != 4 {
+		t.Errorf("staged Edit = version %d (staged %t), want 4, staged", v.Number, v.Staged)
+	}
+
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: files("b.txt", "b")})
+	wantErr(t, "publishing Update over a staged version without base_version", err, artifact.ErrPublishedNotLatest)
+	_, _, _, err = e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html",
+		Edits: []artifact.Edit{{OldText: "v4", NewText: "v5"}}})
+	wantErr(t, "publishing Edit over a staged version without base_version", err, artifact.ErrPublishedNotLatest)
+
+	a, err = e.svc.Publish(e.ctx, alice, "demo", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, vs, err := e.svc.Get(e.ctx, alice, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var staged []int
+	for _, v := range vs {
+		if v.Staged {
+			staged = append(staged, v.Number)
+		}
+	}
+	if a.PublishedVersion != 4 || !cmp.Equal(staged, []int{3, 2}) {
+		t.Errorf("after publishing version 4: published %d, staged %v; want 4 and [3 2]", a.PublishedVersion, staged)
+	}
+}
+
+func TestStageNeedsFiles(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo", "index.html", "v1")
+
+	_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Stage: true, Name: new("Demo")})
+	wantErr(t, "staged Update without files", err, artifact.ErrInvalidArgument)
+	if a, _, _ := e.svc.Get(e.ctx, alice, "demo"); a.Name == "Demo" {
+		t.Errorf("a refused staged Update changed the name to %q", a.Name)
+	}
+}

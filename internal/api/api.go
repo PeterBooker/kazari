@@ -91,13 +91,15 @@ type Artifact struct {
 	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
-// Version is one immutable snapshot.
+// Version is one immutable snapshot. Staged means it was added without
+// being published and has not been published since.
 type Version struct {
 	Number    int       `json:"number"`
 	Label     string    `json:"label,omitempty"`
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	SizeBytes int64     `json:"size_bytes"`
+	Staged    bool      `json:"staged,omitempty"`
 	URL       string    `json:"url"`
 	Files     []File    `json:"files,omitempty"`
 }
@@ -121,13 +123,15 @@ type ArtifactDetail struct {
 
 // PublishResult is returned by create, update and publish. VersionURL pins
 // Version. Unchanged means the files matched the latest version and no
-// version was added; Warnings say what will stop the version rendering as
-// published.
+// version was added; Staged that Version is not published, so URL still
+// serves Artifact.PublishedVersion; Warnings say what will stop the version
+// rendering as published.
 type PublishResult struct {
 	URL        string        `json:"url"`
 	Version    int           `json:"version"`
 	VersionURL string        `json:"version_url"`
 	Unchanged  bool          `json:"unchanged,omitempty"`
+	Staged     bool          `json:"staged,omitempty"`
 	Warnings   []string      `json:"warnings,omitempty"`
 	Artifact   Artifact      `json:"artifact"`
 	Import     *ImportReport `json:"import,omitempty"`
@@ -201,15 +205,17 @@ type UpdateArtifactRequest struct {
 	BaseVersion     int                `json:"base_version,omitempty"`
 	KeepStale       bool               `json:"keep_stale,omitempty"`
 	Restore         bool               `json:"restore,omitempty"`
-	Files           []FileInput        `json:"files,omitempty"`
-	UploadID        string             `json:"upload_id,omitempty"`
+	// Stage adds the version without publishing it.
+	Stage    bool        `json:"stage,omitempty"`
+	Files    []FileInput `json:"files,omitempty"`
+	UploadID string      `json:"upload_id,omitempty"`
 	// Mirror deletes the base version's files that the request does not
 	// carry, so the new version holds exactly what was sent. REST only.
 	Mirror bool `json:"mirror,omitempty"`
 }
 
 // EditRequest is the JSON body of POST /artifacts/{slug}/edit: edits to one
-// text file of the latest version, published as a new version.
+// text file of the latest version, published as a new version unless Stage.
 type EditRequest struct {
 	Path            string `json:"path"`
 	Edits           []Edit `json:"edits"`
@@ -217,6 +223,7 @@ type EditRequest struct {
 	ExpectedVersion int    `json:"expected_version,omitempty"`
 	BaseVersion     int    `json:"base_version,omitempty"`
 	KeepStale       bool   `json:"keep_stale,omitempty"`
+	Stage           bool   `json:"stage,omitempty"`
 }
 
 // Edit replaces old_text, or the lines from anchor start to end, with
@@ -236,6 +243,7 @@ type EditResult struct {
 	URL        string        `json:"url"`
 	Version    int           `json:"version"`
 	VersionURL string        `json:"version_url"`
+	Staged     bool          `json:"staged,omitempty"`
 	Path       string        `json:"path"`
 	Edits      []EditOutcome `json:"edits"`
 	Warnings   []string      `json:"warnings,omitempty"`

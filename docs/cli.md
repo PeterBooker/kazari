@@ -281,7 +281,7 @@ It prints one line per file sent or skipped and needs no URL or key. With `--jso
 ### deploy
 
 ```text
-kazari deploy <dir|file> [--slug <slug>] [--base N] [--name N] [--description D] [--label L]
+kazari deploy <dir|file> [--slug <slug>] [--base N] [--stage] [--name N] [--description D] [--label L]
               [--visibility public|unlisted|members] [--meta key=value ...] [--dry-run]
 ```
 
@@ -297,7 +297,18 @@ It prints the same summary as `publish`, with the files it removed, such as `14 
 
 The slug, what is sent, `.kazariignore` and `--dry-run` work as for [`publish`](#publish). With `--dry-run`, the lines also list the files the new version would delete.
 
-`deploy` fails with `version_conflict` if someone else published between its read and its write. After a [rollback](#rollback), it needs `--base` to say which version to build on, and the error prints both commands to choose from.
+`deploy` fails with `version_conflict` if someone else published between its read and its write. After a [rollback](#rollback), or while a version is staged, it needs `--base` or `--stage` to say which version to build on, and the error prints the commands to choose from.
+
+#### Staging a deploy
+
+To put a build where reviewers who sign in can see it, without changing the page everyone else sees, add `--stage`:
+
+```sh
+kazari deploy ./dist --slug q3-report --stage
+# prints q3-report v6 staged → https://q3-report--v6.art.example.com/ (members only; https://q3-report.art.example.com/ serves v5 until kazari rollback q3-report 6)
+```
+
+The version opens at its pinned address only for people signed in to the instance, not for share links. A staged deploy builds on the latest version, so the next `--stage` carries on from it, and [`kazari rollback`](#rollback) with its number makes it live. `--stage` needs an existing artifact: a new one is always published as version 1. [Staging a version](api.md#staging-a-version) has the full rules.
 
 `publish --update` is the same command under its old name.
 
@@ -323,7 +334,7 @@ A page behind a login or bot protection fails with `fetch_failed`. Save it from 
 ### update
 
 ```text
-kazari update <slug> [dir] [--label L] [--expected N] [--base N] [--keep-stale] [--dry-run]
+kazari update <slug> [dir] [--label L] [--expected N] [--base N] [--stage] [--keep-stale] [--dry-run]
               [--name N] [--description D] [--meta key=value ...] [--delete path ...]
 ```
 
@@ -331,7 +342,7 @@ Adds files from a directory as a new version, changes fields, or both.
 
 Files in `dir` are added, or replace the files at the same paths. Files you do not send are **kept**: remove them with `--delete path`, or use [`kazari deploy`](#deploy) to make the artifact match the directory. Without a directory, `update` changes only the fields you name.
 
-`--expected N` fails with `version_conflict` unless `N` is the latest version. After a [rollback](#rollback), `--base N` names the version to build on. A new version clears the stale mark unless you give `--keep-stale`. `--dry-run` lists what would be sent and deleted.
+`--expected N` fails with `version_conflict` unless `N` is the latest version. After a [rollback](#rollback), `--base N` names the version to build on. `--stage` adds the version without publishing it, as [`deploy --stage`](#staging-a-deploy) does. A new version clears the stale mark unless you give `--keep-stale`. `--dry-run` lists what would be sent and deleted.
 
 To add files, change fields or delete a file:
 
@@ -379,13 +390,13 @@ kazari files cat q3-report index.html --version 1 > old-index.html
 ### edit
 
 ```text
-kazari edit <slug> <path> --old TEXT --new TEXT [--all] [--expected N] [--label L] [--keep-stale]
+kazari edit <slug> <path> --old TEXT --new TEXT [--all] [--expected N] [--label L] [--stage] [--keep-stale]
 kazari edit <slug> <path> --start ANCHOR [--end ANCHOR] --new TEXT [flags]
 kazari edit <slug> <path> --after ANCHOR | --before ANCHOR --new TEXT [flags]
 kazari edit <slug> <path> --edits FILE [flags]
 ```
 
-Changes text in one file of the latest version and publishes the result as a new version. Every other file carries over. After a [rollback](#rollback), `--base N` names the version whose file to change. The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`edit_file`](mcp.md#editing-files) over MCP.
+Changes text in one file of the latest version and publishes the result as a new version. Every other file carries over. After a [rollback](#rollback), `--base N` names the version whose file to change, and `--stage` adds the new version without publishing it, as [`deploy --stage`](#staging-a-deploy) does. The same operation is [`POST /artifacts/{slug}/edit`](api.md#edit-a-file-post-artifactsslugedit) in the REST API and [`edit_file`](mcp.md#editing-files) over MCP.
 
 `--expected N` fails unless the latest version is `N`. The command prints the new version and its address, then one line per edit with where it landed and how it matched.
 
@@ -462,7 +473,7 @@ edit 1: lines 22-22 (anchor)
 kazari get <slug> [--files]
 ```
 
-Shows the record and its versions, with the published one marked `*`. `--files` adds file lists for the newest versions, up to 5,000 files, and says where it stopped; older ones are on the API's [next page](api.md#get-an-artifact-get-artifactsslug).
+Shows the record and its versions, with the published one marked `*` and [staged ones](#staging-a-deploy) marked `staged`. `--files` adds file lists for the newest versions, up to 5,000 files, and says where it stopped; older ones are on the API's [next page](api.md#get-an-artifact-get-artifactsslug).
 
 To see the newest versions' files:
 
@@ -497,7 +508,7 @@ kazari list --meta team=finance --all
 kazari rollback <slug> <version>
 ```
 
-Serves an existing version again. It moves a pointer rather than copying anything, so it can also move forward to a newer version.
+Serves an existing version again. It moves a pointer rather than copying anything, so it can also move forward to a newer version, such as a [staged one](#staging-a-deploy).
 
 To serve version 1 again:
 
@@ -507,7 +518,7 @@ kazari rollback q3-report 1
 
 The command prints `q3-report now serves version 1:` and the address.
 
-While an earlier version is published, `update`, `deploy` and `edit` need `--base` to say which version they build on: the published one, to change what is served, or the latest, to carry on from it. Without it they fail with `published_not_latest`, so the next change does not quietly undo the rollback. Publishing the latest version again lifts this.
+While an earlier version is published, `update`, `deploy` and `edit` need `--base` to say which version they build on: the published one, to change what is served, or the latest, to carry on from it. Without it they fail with `published_not_latest`, so the next change does not quietly undo the rollback, unless it is staged with `--stage`. Publishing the latest version again lifts this.
 
 ```text
 kazari visibility <slug> public|unlisted|members|unpublished

@@ -94,17 +94,18 @@ These commands change an artifact after its first publish:
 | Command | Effect |
 | ------- | ------ |
 | `kazari deploy ./dist --slug q3-report` | Adds a version that **mirrors** the directory: files missing from it are removed. Creates the artifact if it does not exist. |
+| `kazari deploy ./dist --slug q3-report --stage` | Adds the mirrored version without publishing it. It opens at its version address for people who sign in, until `kazari rollback` publishes it. |
 | `kazari update q3-report ./dist --label "fix chart"` | Adds a version. Files you send replace the same paths; files you leave out are **kept**. |
 | `kazari update q3-report --delete drafts/notes.html` | Removes one file in a new version. |
 | `kazari update q3-report --name "Q3 report (final)"` | Changes fields only; no new version. |
-| `kazari rollback q3-report 2` | Serves version 2 again. Nothing is deleted. |
+| `kazari rollback q3-report 2` | Serves version 2 again, or makes a staged version 2 live. Nothing is deleted. |
 | `kazari visibility q3-report unlisted` | Hides it from other people's listings. `unpublished` takes it offline. |
 | `kazari visibility q3-report members` | Opens it only for people who sign in to the instance. |
 | `kazari share create q3-report --expires 14d` | Prints a link that opens a members page for someone outside, for two weeks. `kazari share revoke` ends it. |
 | `kazari stale q3-report --grace 3d` | Retires it after three days. `kazari unstale` cancels. |
 | `kazari rm q3-report` | Soft-deletes it now; `--hard` purges it. |
 
-After `kazari rollback`, the next `deploy`, `update` or `edit` needs `--base` to say whether it builds on the version now served or on the latest one. Without it the command fails and prints both choices.
+After `kazari rollback`, or while a version is staged, the next `deploy`, `update` or `edit` needs `--base` to say whether it builds on the version now served or on the latest one, or `--stage` to stage it too. Without either the command fails and prints the choices.
 
 ### Preventing overwrites
 

@@ -53,7 +53,8 @@ func TestRunDeploy(t *testing.T) {
 	r := runCLI(t, nil, append(base, "deploy", site)...)
 	wantErr := "kazari: published_not_latest: version 1 of hello is published but the latest is 3\n" +
 		"to change the published version 1: kazari --url " + srv.URL + " deploy " + site + " --base 1\n" +
-		"to build on the latest version 3: kazari --url " + srv.URL + " deploy " + site + " --base 3\n"
+		"to build on the latest version 3 and publish it: kazari --url " + srv.URL + " deploy " + site + " --base 3\n" +
+		"to add to the latest version 3 without publishing: kazari --url " + srv.URL + " deploy " + site + " --stage\n"
 	if r.code != exitConflict || r.stderr != wantErr || r.stdout != "" {
 		t.Errorf("deploy after a rollback: %+v\nwant exit %d and stderr\n%s", r, exitConflict, wantErr)
 	}
@@ -94,6 +95,46 @@ func TestRunDeploy(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"bad.html"}, plan.Removed); diff != "" || len(plan.Files) != 2 {
 		t.Errorf("deploy --dry-run --json = %+v (removed -want +got):\n%s", plan, diff)
+	}
+}
+
+func TestRunDeployStage(t *testing.T) {
+	dir := writeTree(t, map[string]string{"hello/index.html": "new"})
+	site := filepath.Join(dir, "hello")
+	cur := demo
+	cur.Slug, cur.PublishedVersion, cur.LatestVersion = "hello", 2, 2
+	staged := cur
+	staged.LatestVersion = 3
+	var put bundleRequest
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+		"GET /v1/artifacts/hello": func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, api.ArtifactDetail{Artifact: cur, Versions: []api.Version{
+				{Number: 2, Files: []api.File{{Path: "index.html"}}}, {Number: 1}}})
+		},
+		"PUT /v1/artifacts/hello": func(w http.ResponseWriter, r *http.Request) {
+			put = decodeBundleRequest(t, r)
+			reply(w, 200, api.PublishResult{URL: "https://hello.art.test/", Version: 3, VersionURL: "https://hello--v3.art.test/",
+				Staged: true, Artifact: staged})
+		},
+		"GET /v1/artifacts/fresh": func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 404, api.ErrorResponse{Error: api.Error{Code: api.CodeNotFound, Message: "artifact not found"}})
+		},
+	})
+	base := []string{"--url", srv.URL, "--token", "secret-key"}
+
+	r := runCLI(t, nil, append(base, "deploy", site, "--stage")...)
+	want := "hello v3 staged → https://hello--v3.art.test/ (members only; https://hello.art.test/ serves v2 until kazari rollback hello 3)\n"
+	if r.code != 0 || r.stdout != want {
+		t.Fatalf("deploy --stage: %+v, want stdout %q", r, want)
+	}
+	if put.manifest["stage"] != true {
+		t.Errorf("deploy --stage sent manifest %v, want stage: true", put.manifest)
+	}
+
+	r = runCLI(t, nil, append(base, "deploy", site, "--slug", "fresh", "--stage")...)
+	wantErr := "kazari: deploy: --stage needs an existing artifact; fresh does not exist, and a new one is published as version 1\n"
+	if r.code != exitUsage || r.stderr != wantErr {
+		t.Errorf("deploy --stage of a new slug: %+v, want exit %d and stderr %q", r, exitUsage, wantErr)
 	}
 }
 

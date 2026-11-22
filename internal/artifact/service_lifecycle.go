@@ -85,7 +85,8 @@ func (s *Service) List(ctx context.Context, actor Actor, q ListQuery) (_ ListPag
 	return s.store.List(ctx, q)
 }
 
-// Publish serves an existing version, for rollback or roll-forward.
+// Publish serves an existing version: a rollback, a roll-forward, or a
+// staged version going live.
 func (s *Service) Publish(ctx context.Context, actor Actor, slug string, version int) (_ *Artifact, err error) {
 	ctx, span := s.span(ctx, "artifact.publish", slug)
 	defer func() {

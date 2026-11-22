@@ -26,12 +26,15 @@ const (
 	signInURL  = "https://mcp.art.test/oauth/signin"
 	signOutURL = "https://mcp.art.test/oauth/signout"
 	viewToken  = "view-token-of-alice-on-team"
+	// stagedToken is alice's view session on team--v2.
+	stagedToken = "view-token-of-alice-on-team--v2"
 )
 
 // linkToken is a well-formed share link token.
 var linkToken = artifact.LinkTokenPrefix + "aaaaaaaa_" + strings.Repeat("b", 52)
 
-// fakeSessions knows one view session: viewToken on host "team".
+// fakeSessions knows two view sessions: viewToken on host "team" and
+// stagedToken on "team--v2".
 type fakeSessions struct {
 	mu       sync.Mutex
 	redeemed []string // code host nonce
@@ -63,7 +66,7 @@ func (f *fakeSessions) Viewer(_ context.Context, host, token string) (string, er
 	if f.err != nil {
 		return "", f.err
 	}
-	if host == "team" && token == viewToken {
+	if host == "team" && token == viewToken || host == "team--v2" && token == stagedToken {
 		return "alice", nil
 	}
 	return "", oauth.ErrNotFound
@@ -359,6 +362,41 @@ func TestShare(t *testing.T) {
 	rec = fx.reserved(request(http.MethodGet, gate.SharePath+"?token="+linkToken, navigate), public, "demo")
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Link not valid") {
 		t.Fatalf("another artifact's link: status %d, body %q", rec.Code, rec.Body.String())
+	}
+}
+
+// A staged version opens for a member's sign-in, whatever the page's
+// visibility, and never for a share link, which is for the published page.
+func TestStagedVersion(t *testing.T) {
+	fx := newFixture()
+	staged := &artifact.Published{Slug: "team", VersionID: 3, VersionNumber: 2, Visibility: artifact.Public, Staged: true}
+
+	ok, rec := fx.allow(request(http.MethodGet, "/", navigate), staged, "team--v2")
+	if ok || rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), signInURL+"?") {
+		t.Errorf("staged, no cookie, navigation: ok %v, status %d, Location %q; want a redirect to sign in",
+			ok, rec.Code, rec.Header().Get("Location"))
+	}
+	ok, rec = fx.allow(request(http.MethodGet, "/app.js", nil), staged, "team--v2")
+	if ok || rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "not published yet") {
+		t.Errorf("staged, no cookie, fetch: ok %v, status %d, body %q; want 401 saying it is not published yet",
+			ok, rec.Code, rec.Body.String())
+	}
+
+	link := &http.Cookie{Name: "__Host-kazari_view", Value: linkToken}
+	if ok, _ := fx.allow(request(http.MethodGet, "/", nil, link), staged, "team--v2"); ok {
+		t.Error("a share link opened a staged version")
+	}
+	view := &http.Cookie{Name: "__Host-kazari_view", Value: stagedToken}
+	a, ok := fx.g.Allow(httptest.NewRecorder(), request(http.MethodGet, "/", nil, view), staged, "team--v2")
+	if !ok || a.Via != views.ViaMember || a.Handle != "alice" {
+		t.Errorf("staged, member's view session: ok %v, access %+v; want alice as a member", ok, a)
+	}
+
+	rec = fx.reserved(request(http.MethodGet, gate.SharePath+"?token="+linkToken, navigate), staged, "team--v2")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Not published yet") ||
+		cookie(rec, "__Host-kazari_view") != nil || fx.links.opened != 0 {
+		t.Errorf("share path on a staged version: status %d, opened %d, body %q; want 403, no cookie, not counted",
+			rec.Code, fx.links.opened, rec.Body.String())
 	}
 }
 

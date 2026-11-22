@@ -99,8 +99,9 @@ Taking a page offline sets `unpublished_at` and keeps `visibility` for when the 
 
 ### Versions
 
-A version has the fields `number`, `label`, `created_by`, `created_at`, `size_bytes`, `url` and `files`:
+A version has the fields `number`, `label`, `created_by`, `created_at`, `size_bytes`, `staged`, `url` and `files`:
 
+- `staged` is `true` for a version added without being published that has not been published since ([staging a version](#staging-a-version)). It is left out otherwise.
 - `url` is the version's pinned address, `https://<slug>--v<N>.<base>/`.
 - `files` is included only on request. It lists `{ "path", "hash", "size", "content_type" }` for each file, where `hash` is the hex SHA-256.
 
@@ -121,6 +122,7 @@ The fields say what happened:
 
 - `version` is the version the call created or moved to, and `version_url` is its pinned address. For a change to fields only, it is the published version.
 - `unchanged` is `true` when an update sent files that match the latest version exactly. No version is added, and `version` is the latest.
+- `staged` is `true` when `version` is staged: `url` still serves the published version, and `version_url` opens only for people signed in to the instance.
 - `warnings` lists what will stop the version rendering as it should. The version is published anyway. The checks cover a missing root `index.html`, files a page or stylesheet refers to that are not in the version, and scripts, stylesheets, fonts, images, frames and media from origins the page's Content-Security-Policy blocks.
 - A create with `source_url` adds an `import` field ([Importing a web page](#importing-a-web-page)).
 
@@ -360,12 +362,25 @@ Sending no files changes fields only and creates no version, and so do files tha
 
 A slug with no artifact is `404 not_found`, unless the request adds `?create=true` ([creating on the first deploy](#creating-on-the-first-deploy)).
 
+#### Staging a version
+
+A staged version is added without being published, so a change can be reviewed before it goes live. To stage one, send `"stage": true` with the files:
+
+```json
+{ "stage": true, "files": [{ "path": "index.html", "content": "<!doctype html>..." }] }
+```
+
+The page keeps serving the published version, and the result says `staged`. Its `version_url` opens only for people signed in to the instance: a browser is sent to sign in first, whatever the page's visibility, and a [share link](#share-links) does not open it.
+
+A staged change builds on the latest version, so further staged changes carry on from the first. To make the version live, [publish it](#roll-back-or-forward-post-artifactsslugpublish). Staging needs files: `stage` without them is `422 invalid_argument`. A new artifact cannot be staged, because its first version is always published.
+
 #### After a rollback
 
-When an earlier version is published, as after a [rollback](#roll-back-or-forward-post-artifactsslugpublish), a change built on the latest version would publish it again and undo the rollback. Such a change is `409 published_not_latest` until it names its base with `base_version`:
+When an earlier version is published, as after a [rollback](#roll-back-or-forward-post-artifactsslugpublish) or while a version is [staged](#staging-a-version), a change built on the latest version would publish the latest version's content. Such a change is `409 published_not_latest` until it names its base with `base_version`, or sets `stage`:
 
 - The published version's number changes the page people see now.
-- The latest version's number carries on from it.
+- The latest version's number carries on from it, and publishes both.
+- `"stage": true` adds to the latest version without publishing.
 
 #### JSON body
 
@@ -397,6 +412,7 @@ These fields work differently from create, or exist only here:
 | `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else. Needs `artifacts:share` |
 | `expected_version` | Fails with `412 version_conflict` unless this is the latest version             |
 | `base_version`     | The version the new one is built on; needed while an earlier version is published ([after a rollback](#after-a-rollback)) |
+| `stage`            | `true` adds the version without publishing it ([staging a version](#staging-a-version)) |
 | `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version or a `restore` otherwise clears |
 | `restore`          | Clears `deleted_at` on a soft-deleted artifact, which is `404` without it       |
 | `mirror`           | `true` deletes every file of the base version that the request does not carry ([mirroring a directory](#mirroring-a-directory)) |
@@ -523,6 +539,7 @@ These rules apply to both kinds of edit:
 
 - `expected_version` (or `If-Match`) fails the request with `412 version_conflict` if someone published since. Without it, edits apply to the newest content.
 - While an earlier version is published, an edit needs `base_version`, as an [update does](#after-a-rollback). The edits apply to that version's file.
+- `"stage": true` adds the edited version without publishing it, as an [update does](#staging-a-version).
 - A binary file is `422 invalid_argument`.
 - A result larger than `limits.max_file_bytes` is `413 too_large`.
 
@@ -555,13 +572,13 @@ The result also carries `warnings`, as a [publish result](#the-publish-result) d
 
 ### Roll back or forward: `POST /artifacts/{slug}/publish`
 
-Serves an existing version, older or newer than the one served now. The body names the version:
+Serves an existing version, older or newer than the one served now, or a staged version. The body names the version:
 
 ```json
 { "version": 2 }
 ```
 
-The response is a publish result. A version that does not exist is `404 version_not_found`.
+The response is a publish result. A version that does not exist is `404 version_not_found`. Publishing a staged version ends its staging for good: a later rollback leaves it open to everyone who can open the page.
 
 ### Stale: `POST` and `DELETE /artifacts/{slug}/stale`
 
@@ -612,7 +629,7 @@ Files of an unpublished or soft-deleted artifact are readable only by admins, it
 
 A share link opens one `members` artifact in a browser without signing in. It is for people who cannot sign in to the instance: a client, an outside reviewer, a headless browser. It works until it expires or is revoked, and disabling the user who created it revokes it.
 
-The link's URL opens the latest host. The cookie it sets is per host, so to open a pinned version, open `https://<slug>--v<N>.<base>/.kazari/share?token=...` with the same token.
+The link's URL opens the latest host. The cookie it sets is per host, so to open a pinned version, open `https://<slug>--v<N>.<base>/.kazari/share?token=...` with the same token. A link never opens a [staged version](#staging-a-version).
 
 Creating and revoking links needs `artifacts:share`, and the same rights as changing the artifact, so the write policy applies. An offline artifact's links can be managed only by the people who can see the artifact.
 
@@ -1173,7 +1190,7 @@ These are the codes, with their HTTP status and meaning:
 | `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period). The message says when the slug is in the bin, and the day a purged one is free again |
 | `upload_offset_mismatch` | 409    | Chunk offset does not match the staged size                                        |
 | `anchor_mismatch`        | 409    | Edit: an anchor's line changed since it was read, or is past the end of the file   |
-| `published_not_latest`   | 409    | An earlier version is published; send `base_version` ([after a rollback](#after-a-rollback)) |
+| `published_not_latest`   | 409    | The latest version is staged or rolled back from; send `base_version` or `stage` ([after a rollback](#after-a-rollback)) |
 | `handle_taken`           | 409    | Admin API: handle exists                                                           |
 | `email_taken`            | 409    | Admin API: another user has the email                                              |
 | `job_running`            | 409    | Admin API: the job is already running                                              |

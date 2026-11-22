@@ -116,9 +116,14 @@ func (t texts) skillText(o Options) string {
 			"file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
 			"`deleted`, `cursor`).",
+		"**Review before it goes live:** `stage: true` on `edit_file` or `update_artifact` adds a version without " +
+			"publishing it. The page keeps serving the published version, and the staged one opens at its `version_url` " +
+			"for people signed in to this instance only, not for share links. Further staged changes build on it; " +
+			"`publish_version` makes it live. Stage when the user wants to see a change before others do.",
 		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again. While an earlier " +
-			"version than the latest is published, `edit_file` and `update_artifact` need `base_version`: the published " +
-			"version to fix the page people see, or the latest to carry on from it. Ask the user which, unless they said.",
+			"version than the latest is published, after a rollback or with a staged version, `edit_file` and " +
+			"`update_artifact` need `base_version` to publish: the published version to fix the page people see, or the " +
+			"latest to carry on from it. Ask the user which, unless they said.",
 		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
 			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
 			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",
@@ -329,9 +334,10 @@ func (t texts) nextSteps(o Options) map[string]string {
 			"set to the number it gives. Otherwise someone published since you read it: read the artifact again (get_artifact, " +
 			"or read_file for the file), redo your change on the new content and retry with expected_version set to the new " +
 			"latest_version.",
-		api.CodePublishedNotLatest: "An earlier version was published again, usually a rollback. Ask the user which version " +
-			"to change unless they already said: set base_version to the published version to fix the page people see, or " +
-			"to the latest to carry on from it, then call again.",
+		api.CodePublishedNotLatest: "The latest version is not the published one: it is staged, or a rollback published an " +
+			"earlier one. Ask the user which version to change unless they already said: set base_version to the published " +
+			"version to fix the page people see, or to the latest to carry on from it and publish it too, or set stage: true " +
+			"to add to the latest without publishing, then call again.",
 		api.CodeAnchorMismatch: "The file changed since you read it: call read_file with anchors: true for fresh anchors " +
 			"(start_line and end_line around the change are enough), then redo the edit.",
 		api.CodeEditNotFound: "Copy old_text exactly from the current file (read_file shows it; the error names the closest " +
