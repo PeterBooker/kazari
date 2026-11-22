@@ -532,6 +532,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	// every request, so the grant is never wider than the key is now.
 	return auth.Principal{
 		Handle:     u.Handle,
+		Role:       string(u.Role),
 		Scopes:     intersect(intersect(t.Scopes, s.opts.Scopes), user.ScopesFor(u)),
 		Source:     auth.SourceOAuth,
 		KeyID:      fmt.Sprintf("oauth:%d", t.FamilyID),

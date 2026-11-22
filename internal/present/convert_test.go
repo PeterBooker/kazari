@@ -231,9 +231,9 @@ func TestConversions(t *testing.T) {
 		},
 		{
 			name: "Me",
-			got: present.Me(auth.Principal{Handle: "ana", Admin: true, Scopes: []string{auth.ScopeRead}, Source: auth.SourceAPIKey,
+			got: present.Me(auth.Principal{Handle: "ana", Admin: true, Role: "admin", Scopes: []string{auth.ScopeRead}, Source: auth.SourceAPIKey,
 				KeyID: "kzk_ab12", QuotaBytes: 1 << 20, ClientID: "client", Slugs: []string{"docs-*"}, ExpiresAt: new(day(9))}, 512),
-			want: api.Me{Handle: "ana", Admin: true, Scopes: []string{auth.ScopeRead}, Source: "api_key", Slugs: []string{"docs-*"},
+			want: api.Me{Handle: "ana", Admin: true, Role: "admin", Scopes: []string{auth.ScopeRead}, Source: "api_key", Slugs: []string{"docs-*"},
 				ExpiresAt: new(day(9)), QuotaBytes: 1 << 20, UsedBytes: 512},
 		},
 		{

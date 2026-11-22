@@ -165,7 +165,7 @@ func RequireAdmin(token string, fallback Authenticator, opts Options) func(http.
 			if token != "" {
 				got := sha256.Sum256([]byte(t))
 				if subtle.ConstantTimeCompare(got[:], want[:]) == 1 {
-					p := Principal{Handle: "admin", Admin: true, Scopes: AllScopes, Source: SourceAdminToken}
+					p := Principal{Handle: "admin", Admin: true, Role: "admin", Scopes: AllScopes, Source: SourceAdminToken}
 					rec.record(r.Context(), p.Source, resultOK, &p)
 					next.ServeHTTP(w, r.WithContext(ContextWithPrincipal(r.Context(), p)))
 					return
@@ -216,7 +216,7 @@ func AsLocalAdmin(opts Options) func(http.Handler) http.Handler {
 	rec := newRecorder(opts.Telemetry)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := Principal{Handle: "admin", Admin: true, Scopes: AllScopes, Source: SourceLocal}
+			p := Principal{Handle: "admin", Admin: true, Role: "admin", Scopes: AllScopes, Source: SourceLocal}
 			rec.record(r.Context(), p.Source, resultOK, &p)
 			next.ServeHTTP(w, r.WithContext(ContextWithPrincipal(r.Context(), p)))
 		})

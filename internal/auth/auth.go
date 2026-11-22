@@ -42,8 +42,11 @@ var ErrInvalidToken = errors.New("auth: invalid token")
 
 // Principal is the authenticated caller.
 type Principal struct {
-	Handle     string
+	Handle string
+	// Admin is the admin role with a credential that carries the admin
+	// scope; Role is the person's role whatever the credential carries.
 	Admin      bool
+	Role       string
 	Scopes     []string
 	Source     string // SourceAPIKey | SourceOAuth | SourceAdminToken | SourceLocal | SourceSession
 	KeyID      string // key prefix or token id, for audit and rate limiting

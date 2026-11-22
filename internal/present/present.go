@@ -403,7 +403,7 @@ func Me(p auth.Principal, used int64) api.Me {
 	if scopes == nil {
 		scopes = []string{}
 	}
-	return api.Me{Handle: p.Handle, Admin: p.Admin, Scopes: scopes, Source: p.Source, Slugs: p.Slugs, ExpiresAt: p.ExpiresAt,
+	return api.Me{Handle: p.Handle, Admin: p.Admin, Role: p.Role, Scopes: scopes, Source: p.Source, Slugs: p.Slugs, ExpiresAt: p.ExpiresAt,
 		QuotaBytes: p.QuotaBytes, UsedBytes: used}
 }
 
