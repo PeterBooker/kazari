@@ -393,11 +393,9 @@ func TestOAuthStoreReissue(t *testing.T) {
 			errs = make([]error, n)
 		)
 		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, _, errs[i] = reissue(s, r1.ID, at, 10+i)
-			}()
+			})
 		}
 		wg.Wait()
 		ok := 0

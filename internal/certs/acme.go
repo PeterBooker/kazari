@@ -78,13 +78,11 @@ func NewACME(cfg ACMEConfig, dns certmagic.DNSProvider) (*ACME, error) {
 		OnEvent: certEvents(logger),
 	})
 	issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{
-		CA:     ca,
-		Email:  cfg.Email,
-		Agreed: true,
-		DNS01Solver: &certmagic.DNS01Solver{
-			DNSManager: certmagic.DNSManager{DNSProvider: dns, Logger: zl},
-		},
-		Logger: zl,
+		CA:          ca,
+		Email:       cfg.Email,
+		Agreed:      true,
+		DNS01Solver: &certmagic.DNS01Solver{DNSProvider: dns, Logger: zl},
+		Logger:      zl,
 	})
 	magic.Issuers = []certmagic.Issuer{issuer}
 	current.Store(magic)

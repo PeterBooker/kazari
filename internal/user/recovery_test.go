@@ -132,7 +132,7 @@ func TestRecoverRefusals(t *testing.T) {
 		}
 	}
 
-	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.Recover(ctx, "ana", anas[1], "a brand new password"); !errors.Is(err, user.ErrBadRecoveryCode) {

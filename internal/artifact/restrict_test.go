@@ -150,7 +150,7 @@ var slugOps = []struct {
 		return err
 	}},
 	{"Update fields", false, func(e *env, actor artifact.Actor, slug string) error {
-		_, _, err := e.svc.Update(e.ctx, actor, artifact.UpdateRequest{Slug: slug, Name: ptr("renamed")})
+		_, _, err := e.svc.Update(e.ctx, actor, artifact.UpdateRequest{Slug: slug, Name: new("renamed")})
 		return err
 	}},
 	{"Update files", false, func(e *env, actor artifact.Actor, slug string) error {
@@ -263,7 +263,7 @@ func TestRestrictionNarrowsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "weekly-report", Name: ptr("mine now")})
+	_, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "weekly-report", Name: new("mine now")})
 	if !errors.Is(err, artifact.ErrForbidden) || restricted(err) {
 		t.Errorf("update of another's artifact under the owner policy: err = %v, want the policy's forbidden", err)
 	}

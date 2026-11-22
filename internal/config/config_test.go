@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -511,8 +512,7 @@ func TestEnvNamesUnique(t *testing.T) {
 	seen := map[string]bool{}
 	var walk func(reflect.Type, string)
 	walk = func(rt reflect.Type, prefix string) {
-		for i := range rt.NumField() {
-			f := rt.Field(i)
+		for f := range rt.Fields() {
 			name := keyName(f)
 			if name == "" {
 				continue
@@ -1007,9 +1007,7 @@ func TestAdminPublicURLEnv(t *testing.T) {
 	withEnv := func(k, v string) Config {
 		t.Helper()
 		m := map[string]string{k: v}
-		for bk, bv := range base {
-			m[bk] = bv
-		}
+		maps.Copy(m, base)
 		c, err := LoadWith("", EnvLookup(m))
 		if err != nil {
 			t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1365,9 +1366,7 @@ func (h *mcpHost) consent(id, cookie string, header http.Header) *http.Response 
 	form := url.Values{"request_id": {id}, "action": {"approve"}, "api_key": {h.key}}
 	req := httptest.NewRequest(http.MethodPost, mcpOrigin+"/oauth/consent", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for k, vs := range header {
-		req.Header[k] = vs
-	}
+	maps.Copy(req.Header, header)
 	req.AddCookie(&http.Cookie{Name: cookie, Value: id})
 	return h.serve(req)
 }

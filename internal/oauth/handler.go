@@ -139,8 +139,7 @@ func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request) {
 	var m clientMetadata
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err := dec.Decode(&m); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeOAuthError(w, r, http.StatusRequestEntityTooLarge, "invalid_client_metadata", "request body is too large")
 			return
 		}

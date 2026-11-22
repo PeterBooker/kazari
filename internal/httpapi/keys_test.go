@@ -35,7 +35,7 @@ func TestIssueOwnKey(t *testing.T) {
 	e.call(http.MethodPost, e.u("/v1/me/keys"), laptopKey, api.IssueKeyRequest{Label: "weekly report",
 		Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Slugs: []string{"weekly-*"}, ExpiresIn: "90d"}, http.StatusCreated, &issued)
 	want := api.APIKey{Prefix: issued.APIKey.Prefix, Label: "weekly report", Scopes: []string{auth.ScopeRead, auth.ScopeWrite},
-		Slugs: []string{"weekly-*"}, IssuedBy: laptop.Prefix, ExpiresAt: ptr(t0.Add(90 * day)), CreatedAt: t0}
+		Slugs: []string{"weekly-*"}, IssuedBy: laptop.Prefix, ExpiresAt: new(t0.Add(90 * day)), CreatedAt: t0}
 	if diff := cmp.Diff(want, issued.APIKey); diff != "" {
 		t.Errorf("issued key (-want +got):\n%s", diff)
 	}
@@ -165,7 +165,7 @@ func TestRotateOwnKey(t *testing.T) {
 	var rotated api.IssuedKey
 	e.call(http.MethodPost, e.u("/v1/me/keys/"+agent.Prefix+"/rotate"), laptopKey, nil, http.StatusCreated, &rotated)
 	want := api.APIKey{Prefix: rotated.APIKey.Prefix, Label: "weekly", Scopes: []string{auth.ScopeRead, auth.ScopeWrite},
-		Slugs: []string{"weekly-*"}, ExpiresAt: ptr(t0.Add(30 * day)), CreatedAt: t0}
+		Slugs: []string{"weekly-*"}, ExpiresAt: new(t0.Add(30 * day)), CreatedAt: t0}
 	if diff := cmp.Diff(want, rotated.APIKey); diff != "" {
 		t.Errorf("new key (-want +got):\n%s", diff)
 	}
@@ -228,7 +228,7 @@ func TestAdminIssuesRestrictedKey(t *testing.T) {
 	e.call(http.MethodPost, e.a("/v1/users/alice/keys"), adminToken, api.IssueKeyRequest{Label: "weekly-report",
 		Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Slugs: []string{"weekly-*"}, ExpiresIn: "90d"}, http.StatusCreated, &issued)
 	want := api.APIKey{Prefix: issued.APIKey.Prefix, Label: "weekly-report", Scopes: []string{auth.ScopeRead, auth.ScopeWrite},
-		Slugs: []string{"weekly-*"}, ExpiresAt: ptr(t0.Add(90 * day)), CreatedAt: t0}
+		Slugs: []string{"weekly-*"}, ExpiresAt: new(t0.Add(90 * day)), CreatedAt: t0}
 	if diff := cmp.Diff(want, issued.APIKey); diff != "" {
 		t.Errorf("issued key (-want +got):\n%s", diff)
 	}

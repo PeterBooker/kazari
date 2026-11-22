@@ -147,7 +147,7 @@ func TestOverviewCounts(t *testing.T) {
 	if _, _, _, err := e.users.Invite(asAdmin(), user.InviteRequest{Handle: "invitee"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	e.publish("ana", "report")
@@ -156,7 +156,7 @@ func TestOverviewCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One byte of quota, long since passed.
-	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: ptr(int64(1))}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: new(int64(1))}); err != nil {
 		t.Fatal(err)
 	}
 

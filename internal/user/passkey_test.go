@@ -89,7 +89,7 @@ func TestPasskeysOfAnAccount(t *testing.T) {
 		t.Errorf("a sign-in with a passkey removed meanwhile: %v", err)
 	}
 
-	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := f.svc.PasskeyByCredential(ctx, []byte{2}); !errors.Is(err, user.ErrPasskeyNotFound) {
@@ -171,7 +171,7 @@ func TestChangePasswordConfirmed(t *testing.T) {
 	if err := f.svc.ChangePasswordConfirmed(ctx, "nobody", next, 0); !errors.Is(err, user.ErrNotFound) {
 		t.Errorf("unknown person: err = %v", err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", next, 0); !errors.Is(err, user.ErrDisabled) {

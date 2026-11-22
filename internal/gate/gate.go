@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -283,10 +284,8 @@ func (g *Gate) ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact
 // method answers 405 unless r uses one of allowed. HEAD is not implied:
 // these paths change state, and a link scanner's HEAD must not.
 func (g *Gate) method(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
-	for _, m := range allowed {
-		if r.Method == m {
-			return true
-		}
+	if slices.Contains(allowed, r.Method) {
+		return true
 	}
 	w.Header().Set("Allow", strings.Join(allowed, ", "))
 	g.page(w, r, http.StatusMethodNotAllowed, page{Title: "Method not allowed", Message: "This address only opens in a browser."})

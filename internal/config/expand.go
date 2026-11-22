@@ -145,9 +145,9 @@ func checkKeysIn(n *yaml.Node, t reflect.Type, prefix string, merged map[*yaml.N
 		return // a type mismatch, left to the decoder
 	}
 	fields := map[string]reflect.Type{}
-	for i := range t.NumField() {
-		if name := keyName(t.Field(i)); name != "" {
-			fields[name] = t.Field(i).Type
+	for field := range t.Fields() {
+		if name := keyName(field); name != "" {
+			fields[name] = field.Type
 		}
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {

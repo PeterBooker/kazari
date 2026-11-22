@@ -314,7 +314,8 @@ func (b base) Door(title string) theme.Page {
 // nav its one destination.
 func (b base) Shell(title, label, nav string) theme.Shell {
 	return theme.Shell{
-		Page:    theme.Page{Title: title, Assets: b.Assets},
+		Title:   title,
+		Assets:  b.Assets,
 		Home:    Prefix,
 		Host:    b.Host,
 		Label:   label,

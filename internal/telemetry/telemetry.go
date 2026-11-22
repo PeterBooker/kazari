@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -142,8 +143,8 @@ func (t *Telemetry) MetricsHandler() http.Handler { return t.metrics }
 // connection; it is not safe to record afterwards.
 func (t *Telemetry) Shutdown(ctx context.Context) error {
 	var errs []error
-	for i := len(t.shutdown) - 1; i >= 0; i-- {
-		if err := t.shutdown[i](ctx); err != nil {
+	for _, v := range slices.Backward(t.shutdown) {
+		if err := v(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}

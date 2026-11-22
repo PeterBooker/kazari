@@ -28,7 +28,7 @@ func TestAdminUsersAndKeys(t *testing.T) {
 
 	var u api.User
 	e.call(http.MethodPost, e.a("/v1/users"), adminToken, api.CreateUserRequest{
-		Handle: "carol", Email: "Carol@Example.com", QuotaBytes: ptr[int64](1 << 20),
+		Handle: "carol", Email: "Carol@Example.com", QuotaBytes: new(int64(1 << 20)),
 	}, http.StatusCreated, &u)
 	if u.Handle != "carol" || u.Email != "carol@example.com" || u.Role != "member" || u.QuotaBytes != 1<<20 {
 		t.Errorf("created user = %+v", u)
@@ -104,7 +104,7 @@ func TestAdminUsersAndKeys(t *testing.T) {
 		t.Errorf("unlinking from an unknown user: %q", nobody.Message)
 	}
 
-	e.call(http.MethodPatch, e.a("/v1/users/carol"), adminToken, api.UpdateUserRequest{Disabled: ptr(true), DisplayName: ptr("Carol")}, http.StatusOK, &u)
+	e.call(http.MethodPatch, e.a("/v1/users/carol"), adminToken, api.UpdateUserRequest{Disabled: new(true), DisplayName: new("Carol")}, http.StatusOK, &u)
 	if u.DisabledAt == nil || u.DisplayName != "Carol" {
 		t.Errorf("disabled user = %+v", u)
 	}

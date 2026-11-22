@@ -4,12 +4,15 @@
 // request id, the client IP and the 500 Recover writes after a panic.
 package middleware
 
-import "net/http"
+import (
+	"net/http"
+	"slices"
+)
 
 // Chain wraps h in mws, the first outermost.
 func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
-	for i := len(mws) - 1; i >= 0; i-- {
-		h = mws[i](h)
+	for _, mw := range slices.Backward(mws) {
+		h = mw(h)
 	}
 	return h
 }

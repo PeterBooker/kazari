@@ -346,7 +346,7 @@ func TestUpdate(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: bytes.NewReader(mustJSON(t, stale)),
 		contentType: "application/json"}), 412, api.CodeVersionConflict)
 
-	manifest := api.UpdateArtifactRequest{Name: ptr("Renamed"), Files: []api.FileInput{{Path: "new.txt", Delete: true}}}
+	manifest := api.UpdateArtifactRequest{Name: new("Renamed"), Files: []api.FileInput{{Path: "new.txt", Delete: true}}}
 	body, ct := multipartBody(t, part{"manifest", mustJSON(t, manifest)},
 		part{"bundle", tarGz(t, tarEntry{name: "./about.html", body: "about"})})
 	e.expect(e.send(req{method: http.MethodPut, url: url, token: e.alice, body: body, contentType: ct,
@@ -376,8 +376,8 @@ func TestPatch(t *testing.T) {
 
 	var res api.PublishResult
 	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{
-		Name:     ptr("New name"),
-		Metadata: map[string]*string{"a": nil, "c": ptr("3")},
+		Name:     new("New name"),
+		Metadata: map[string]*string{"a": nil, "c": new("3")},
 	}, http.StatusOK, &res)
 	if res.Artifact.Name != "New name" || res.Version != 1 || res.Artifact.LatestVersion != 1 {
 		t.Errorf("patch = %+v", res)
@@ -393,11 +393,11 @@ func TestPatch(t *testing.T) {
 	e.apiErr(e.send(req{method: http.MethodPatch, url: url, token: e.alice,
 		body: strings.NewReader(`{"visibility":"secret"}`), contentType: "application/json"}), 422, api.CodeInvalidArgument)
 
-	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: ptr("unpublished")}, http.StatusOK, &res)
+	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: new("unpublished")}, http.StatusOK, &res)
 	if res.Artifact.UnpublishedAt == nil || !res.Artifact.UnpublishedAt.Equal(t0) {
 		t.Errorf("unpublished_at = %v", res.Artifact.UnpublishedAt)
 	}
-	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: ptr("unlisted")}, http.StatusOK, &res)
+	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: new("unlisted")}, http.StatusOK, &res)
 	if res.Artifact.UnpublishedAt != nil || res.Artifact.Visibility != "unlisted" {
 		t.Errorf("after unlisted: %+v", res.Artifact)
 	}

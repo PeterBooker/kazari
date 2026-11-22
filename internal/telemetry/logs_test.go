@@ -34,7 +34,7 @@ func TestLoggerUnwrappedWhenOff(t *testing.T) {
 
 func TestLoggerCorrelates(t *testing.T) {
 	var buf bytes.Buffer
-	tel := newTelemetry(t, Options{SpanExporter: newSink(), Traces: Traces{SampleRatio: ratio(1)}})
+	tel := newTelemetry(t, Options{SpanExporter: newSink(), Traces: Traces{SampleRatio: new(float64(1))}})
 	l := tel.Logger(jsonLogger(&buf)).With("component", "test")
 	ctx, span := tel.Providers().Tracer("test").Start(context.Background(), "GET /")
 	l.InfoContext(ctx, "inside")
@@ -70,7 +70,7 @@ func TestLogExport(t *testing.T) {
 	var buf bytes.Buffer
 	tel := newTelemetry(t, Options{
 		OTLP:   OTLP{Endpoint: srv.URL, Protocol: ProtocolHTTP},
-		Traces: Traces{OTLP: true, SampleRatio: ratio(1)},
+		Traces: Traces{OTLP: true, SampleRatio: new(float64(1))},
 		Logs:   Logs{OTLP: true, Level: slog.LevelInfo},
 	})
 	l := tel.Logger(jsonLogger(&buf)).With("handle", "peter")

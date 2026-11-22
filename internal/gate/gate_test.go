@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -121,9 +122,7 @@ var navigate = http.Header{"Sec-Fetch-Mode": {"navigate"}, "Sec-Fetch-Dest": {"d
 func request(method, target string, header http.Header, cookies ...*http.Cookie) *http.Request {
 	r := httptest.NewRequest(method, target, nil)
 	r.Host = "team.art.test"
-	for k, v := range header {
-		r.Header[k] = v
-	}
+	maps.Copy(r.Header, header)
 	for _, c := range cookies {
 		r.AddCookie(c)
 	}

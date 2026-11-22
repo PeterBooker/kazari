@@ -54,7 +54,7 @@ func TestRunAdminAccounts(t *testing.T) {
 		"GET /v1/invites":               record(200, []api.Link{reset, invite, {ID: 9, Purpose: "setup", CreatedBy: "admin", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}}),
 		"DELETE /v1/invites/7":          record(204, nil),
 		"POST /v1/setup-link": record(201, api.CreatedLink{URL: setupURL,
-			Link: api.Link{ID: 9, Purpose: "setup", CreatedBy: "admin", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}}),
+			ID: 9, Purpose: "setup", CreatedBy: "admin", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}),
 	})
 	tests := []struct {
 		args       []string

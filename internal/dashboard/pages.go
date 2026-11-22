@@ -262,8 +262,7 @@ func pageErr(err error) error {
 		return &problem{status: http.StatusGone, title: "Removed for good",
 			message: "That page was removed for good. Its slug stays taken until the copies browsers hold have expired."}
 	}
-	var ae *artifact.Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		status, _ := present.Error(err)
 		return &problem{status: status, title: "That did not work", message: asSentence(strings.ReplaceAll(ae.Message, "artifact", "page"))}
 	}

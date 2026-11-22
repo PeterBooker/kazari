@@ -28,8 +28,8 @@ func BenchmarkSiteServe(b *testing.B) {
 		ratio *float64
 	}{
 		{"off", nil},
-		{"traced-1pct", ptr(0.01)},
-		{"traced-100pct", ptr(1.0)},
+		{"traced-1pct", new(0.01)},
+		{"traced-100pct", new(1.0)},
 	} {
 		b.Run(bc.name, func(b *testing.B) {
 			cfg := testConfig(b)
@@ -42,8 +42,6 @@ func BenchmarkSiteServe(b *testing.B) {
 		})
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 func benchSite(b *testing.B, in *instance) {
 	hc := client(in.app.Addrs().HTTP)

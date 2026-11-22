@@ -31,9 +31,7 @@ func diskUsage(free, total uint64) func(string) (uint64, uint64, error) {
 // a half-empty disk.
 func readyOptions(dns *fakeDNS) ReadyOptions {
 	return ReadyOptions{
-		Options: Options{
-			Lookup: lookupAll("203.0.113.10"), LocalAddrs: localAddrs("203.0.113.10"), DNSProvider: dns, Zone: "example.com.",
-		},
+		Lookup: lookupAll("203.0.113.10"), LocalAddrs: localAddrs("203.0.113.10"), DNSProvider: dns, Zone: "example.com.",
 		CertNotAfter: func() time.Time { return readyNow.Add(60 * 24 * time.Hour) },
 		DiskUsage:    diskUsage(50<<30, 100<<30),
 		Now:          func() time.Time { return readyNow },

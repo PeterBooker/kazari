@@ -194,9 +194,7 @@ func testConcurrentPut(t *testing.T, s blob.Store) {
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			hash, _, err := s.Put(context.Background(), bytes.NewReader(content))
 			if err != nil {
 				errs <- err
@@ -205,7 +203,7 @@ func testConcurrentPut(t *testing.T, s blob.Store) {
 			if hash != want {
 				errs <- errors.New("hash mismatch: " + hash)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

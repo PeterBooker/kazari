@@ -535,7 +535,7 @@ func TestAdminChecksEveryRequest(t *testing.T) {
 	if r := b.navigate("/x"); r.StatusCode != http.StatusNotFound {
 		t.Errorf("after being made an admin again: status %d", r.StatusCode)
 	}
-	if _, err := e.users.UpdateUser(asAdmin(), "second", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "second", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if r := b.navigate("/x"); r.StatusCode != http.StatusFound {
@@ -543,7 +543,8 @@ func TestAdminChecksEveryRequest(t *testing.T) {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func TestExpiredSession(t *testing.T) {
 	e := newEnv(t, nil)

@@ -608,7 +608,7 @@ func hostilePages(t *testing.T) (*env, *browser) {
 	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{DisplayName: ptr(hostileScript)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{DisplayName: new(hostileScript)}); err != nil {
 		t.Fatal(err)
 	}
 	for _, ev := range []audit.Event{

@@ -693,7 +693,7 @@ func TestDiscardUpload(t *testing.T) {
 	e := newEnv(t)
 	cs := e.connect(t, member)
 	var ids []string
-	for i := 0; i < upload.DefaultMaxOpenPerOwner; i++ {
+	for range upload.DefaultMaxOpenPerOwner {
 		up, _ := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
 		ids = append(ids, up.UploadID)
 	}

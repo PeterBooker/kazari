@@ -386,8 +386,6 @@ func sha(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func ptr[T any](v T) *T { return &v }
-
 var readOnly = []string{auth.ScopeRead}
 
 func httptestServer(t *testing.T, h http.Handler) string {

@@ -248,8 +248,7 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 			}
 		}
 		out, summary, err := h(ctx, req, in)
-		var ir *inputRequired
-		if errors.As(err, &ir) {
+		if ir, ok := errors.AsType[*inputRequired](err); ok {
 			return &mcp.CallToolResult{InputRequests: ir.requests}, zero, nil
 		}
 		if err != nil {
@@ -309,8 +308,7 @@ func (e *toolError) Unwrap() error { return e.cause }
 // present.Error hides their message.
 func (b *builder) toolError(ctx context.Context, tool string, err error) error {
 	var e api.Error
-	var wire *api.Error
-	if errors.As(err, &wire) {
+	if wire, ok := errors.AsType[*api.Error](err); ok {
 		e = *wire
 	} else {
 		_, e = present.Error(err)
@@ -322,13 +320,11 @@ func (b *builder) toolError(ctx context.Context, tool string, err error) error {
 	return &toolError{e: e, next: b.text.next[e.Code], cause: err}
 }
 
-func boolPtr(v bool) *bool { return &v }
-
 // annotations builds tool hints; every tool works on a closed world.
 func annotations(title string, readOnly, destructive, idempotent bool) *mcp.ToolAnnotations {
-	a := &mcp.ToolAnnotations{Title: title, ReadOnlyHint: readOnly, IdempotentHint: idempotent, OpenWorldHint: boolPtr(false)}
+	a := &mcp.ToolAnnotations{Title: title, ReadOnlyHint: readOnly, IdempotentHint: idempotent, OpenWorldHint: new(false)}
 	if !readOnly {
-		a.DestructiveHint = boolPtr(destructive)
+		a.DestructiveHint = new(destructive)
 	}
 	return a
 }

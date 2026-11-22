@@ -59,7 +59,7 @@ func linkToken(t *testing.T, raw, purpose string) string {
 func TestAdminGuards(t *testing.T) {
 	e := newEnv(t, config{})
 	boss := e.admin("boss")
-	disable, demote := api.UpdateUserRequest{Disabled: ptr(true)}, api.UpdateUserRequest{Role: ptr("member")}
+	disable, demote := api.UpdateUserRequest{Disabled: new(true)}, api.UpdateUserRequest{Role: new("member")}
 
 	// The last admin stays one, whoever asks.
 	for _, token := range []string{adminToken, boss} {

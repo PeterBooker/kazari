@@ -137,7 +137,7 @@ func TestCheckPasswordRefusals(t *testing.T) {
 	f.mustCreate(t, "keyonly", "keys@example.com", "")
 	f.invite(t, "gone", "")
 	f.mustCreate(t, "boss", "", user.RoleAdmin)
-	if _, err := f.svc.UpdateUser(ctx, "gone", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "gone", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	for name, tt := range map[string]struct{ login, password string }{
@@ -320,7 +320,7 @@ func TestLinkOfDisabledPerson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := f.svc.Link(ctx, token); !errors.Is(err, user.ErrLinkNotFound) {
@@ -561,7 +561,7 @@ func TestLastAdminGuard(t *testing.T) {
 	f.mustCreate(t, "boss", "", user.RoleAdmin)
 	f.mustCreate(t, "ana", "", "")
 	for name, req := range map[string]user.UpdateUserRequest{
-		"disable": {Disabled: ptr(true)},
+		"disable": {Disabled: new(true)},
 		"demote":  {Role: ptr(user.RoleMember)},
 	} {
 		if _, err := f.svc.UpdateUser(ctx, "boss", req); !errors.Is(err, user.ErrLastAdmin) {
@@ -573,22 +573,22 @@ func TestLastAdminGuard(t *testing.T) {
 		t.Fatalf("the last admin after refused changes = %+v, %v", u, err)
 	}
 	// What leaves them an admin is not guarded.
-	if _, err := f.svc.UpdateUser(ctx, "boss", user.UpdateUserRequest{QuotaBytes: ptr(int64(5)), Role: ptr(user.RoleAdmin)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "boss", user.UpdateUserRequest{QuotaBytes: new(int64(5)), Role: ptr(user.RoleAdmin)}); err != nil {
 		t.Errorf("changing the last admin's quota: %v", err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Errorf("disabling a member: %v", err)
 	}
 
 	// A disabled admin does not count as one.
 	f.mustCreate(t, "second", "", user.RoleAdmin)
-	if _, err := f.svc.UpdateUser(ctx, "second", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "second", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.UpdateUser(ctx, "boss", user.UpdateUserRequest{Role: ptr(user.RoleMember)}); !errors.Is(err, user.ErrLastAdmin) {
 		t.Errorf("demoting the only enabled admin: err = %v, want ErrLastAdmin", err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "second", user.UpdateUserRequest{Disabled: ptr(false)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "second", user.UpdateUserRequest{Disabled: new(false)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.UpdateUser(ctx, "boss", user.UpdateUserRequest{Role: ptr(user.RoleMember)}); err != nil {
@@ -603,14 +603,14 @@ func TestSelfGuard(t *testing.T) {
 	f.mustCreate(t, "second", "", user.RoleAdmin)
 	self := asAdmin(ctx, "boss")
 	for name, req := range map[string]user.UpdateUserRequest{
-		"disable": {Disabled: ptr(true)},
+		"disable": {Disabled: new(true)},
 		"demote":  {Role: ptr(user.RoleMember)},
 	} {
 		if _, err := f.svc.UpdateUser(self, "boss", req); !errors.Is(err, user.ErrSelf) {
 			t.Errorf("%s oneself: err = %v, want ErrSelf", name, err)
 		}
 	}
-	if _, err := f.svc.UpdateUser(self, "boss", user.UpdateUserRequest{DisplayName: ptr("Boss"), Role: ptr(user.RoleAdmin), Disabled: ptr(false)}); err != nil {
+	if _, err := f.svc.UpdateUser(self, "boss", user.UpdateUserRequest{DisplayName: new("Boss"), Role: ptr(user.RoleAdmin), Disabled: new(false)}); err != nil {
 		t.Errorf("changing one's own name: %v", err)
 	}
 	if _, err := f.svc.UpdateUser(self, "second", user.UpdateUserRequest{Role: ptr(user.RoleMember)}); err != nil {
@@ -621,7 +621,7 @@ func TestSelfGuard(t *testing.T) {
 	if _, err := f.svc.UpdateUser(local, "second", user.UpdateUserRequest{Role: ptr(user.RoleAdmin)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.UpdateUser(local, "boss", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(local, "boss", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Errorf("the socket disabling one of two admins: %v", err)
 	}
 }
@@ -768,7 +768,7 @@ func TestDisableRevokesLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, disabled := range []bool{true, false} {
-		if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(disabled)}); err != nil {
+		if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(disabled)}); err != nil {
 			t.Fatal(err)
 		}
 	}

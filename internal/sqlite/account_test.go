@@ -148,13 +148,11 @@ func TestUserStorePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []user.Account{{Handle: "ana", HasPassword: true, PasswordLoginAt: ptrTo(later.UTC())}}
+	want := []user.Account{{Handle: "ana", HasPassword: true, PasswordLoginAt: new(later.UTC())}}
 	if diff := cmp.Diff(want, accounts); diff != "" {
 		t.Errorf("ListAccounts (-want +got):\n%s", diff)
 	}
 }
-
-func ptrTo[T any](v T) *T { return &v }
 
 func TestUserStoreLinks(t *testing.T) {
 	ctx := context.Background()

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -87,9 +88,7 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build %s %s: %w", r.method, r.path, err)
 	}
-	for k, vs := range r.header {
-		req.Header[k] = vs
-	}
+	maps.Copy(req.Header, r.header)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

@@ -263,8 +263,7 @@ func (o *observer) end(c *call, res mcp.Result, err error, elapsed time.Duration
 // toolErrorCode is the Kazari code of a failed tool call; an error that is
 // not Kazari's comes from the SDK's validation of the arguments.
 func toolErrorCode(err error) string {
-	var te *toolError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*toolError](err); ok {
 		return instrument.OneOf(te.e.Code, api.ErrorCodes...)
 	}
 	if err != nil {
