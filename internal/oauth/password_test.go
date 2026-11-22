@@ -299,15 +299,13 @@ func TestControlHosts(t *testing.T) {
 
 	// A disabled person's session is gone on the next request.
 	e.person("second", "", user.RoleAdmin)
-	if _, err := e.users.UpdateUser(ctx, "boss", user.UpdateUserRequest{Disabled: ptrTo(true)}); err != nil {
+	if _, err := e.users.UpdateUser(ctx, "boss", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token); !errors.Is(err, oauth.ErrNotFound) {
 		t.Errorf("ControlSession of a disabled person: err = %v, want ErrNotFound", err)
 	}
 }
-
-func ptrTo[T any](v T) *T { return &v }
 
 func TestSignInRejectsUnknownControlHosts(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})

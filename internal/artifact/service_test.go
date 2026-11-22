@@ -125,7 +125,8 @@ func sha(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func (e *env) create(t *testing.T, actor artifact.Actor, slug string, pairs ...string) *artifact.Artifact {
 	t.Helper()
@@ -518,7 +519,7 @@ func TestUpdateExpectedVersion(t *testing.T) {
 
 	_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 5, Files: files("x", "x")})
 	wantErr(t, "files with stale expectation", err, artifact.ErrVersionConflict)
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 2, Name: ptr("n")})
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 2, Name: new("n")})
 	wantErr(t, "fields with stale expectation", err, artifact.ErrVersionConflict)
 	a, _, _ := e.svc.Get(e.ctx, alice, "demo")
 	if a.LatestVersion != 1 || a.Name != "" {
@@ -528,7 +529,7 @@ func TestUpdateExpectedVersion(t *testing.T) {
 	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 1, Files: files("x", "x")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 2, Name: ptr("n")}); err != nil {
+	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 2, Name: new("n")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -536,13 +537,11 @@ func TestUpdateExpectedVersion(t *testing.T) {
 	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _, errs[i] = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
 				Slug: "demo", ExpectedVersion: 2, Files: files("race.txt", strings.Repeat("r", i+1)),
 			})
-		}()
+		})
 	}
 	wg.Wait()
 	wins := 0
@@ -565,7 +564,7 @@ func TestFieldsOnlyUpdate(t *testing.T) {
 	e.clock.Advance(time.Hour)
 
 	a, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
-		Slug: "demo", Name: ptr("New"), Description: ptr("Desc"), Visibility: ptr(artifact.Unlisted),
+		Slug: "demo", Name: new("New"), Description: new("Desc"), Visibility: ptr(artifact.Unlisted),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +576,7 @@ func TestFieldsOnlyUpdate(t *testing.T) {
 		a.LatestVersion != 1 || !a.UpdatedAt.Equal(e.clock.Now()) {
 		t.Fatalf("after fields-only update: %+v", a)
 	}
-	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("")})
+	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: new("")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +585,7 @@ func TestFieldsOnlyUpdate(t *testing.T) {
 	}
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Visibility: ptr(artifact.Visibility("secret"))})
 	wantErr(t, "bad visibility", err, artifact.ErrInvalidArgument)
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "missing", Name: ptr("x")})
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "missing", Name: new("x")})
 	wantErr(t, "missing artifact", err, artifact.ErrNotFound)
 }
 
@@ -599,7 +598,7 @@ func TestMetadataMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
-		Slug: "demo", Metadata: map[string]*string{"b": nil, "c": ptr("3"), "missing": nil},
+		Slug: "demo", Metadata: map[string]*string{"b": nil, "c": new("3"), "missing": nil},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -607,9 +606,9 @@ func TestMetadataMerge(t *testing.T) {
 	if diff := cmp.Diff(map[string]string{"a": "1", "c": "3"}, a.Metadata); diff != "" {
 		t.Fatalf("merged metadata (-want +got):\n%s", diff)
 	}
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"kazari.x": ptr("1")}})
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"kazari.x": new("1")}})
 	wantErr(t, "unknown kazari key", err, artifact.ErrInvalidMetadata)
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"d": ptr("4"), "e": ptr("5")}})
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Metadata: map[string]*string{"d": new("4"), "e": new("5")}})
 	wantErr(t, "pair cap", err, artifact.ErrInvalidMetadata)
 	a, _, _ = e.svc.Get(e.ctx, alice, "demo")
 	if diff := cmp.Diff(map[string]string{"a": "1", "c": "3"}, a.Metadata); diff != "" {
@@ -644,7 +643,7 @@ func TestWritePolicy(t *testing.T) {
 				fn   func() error
 			}{
 				{"update", func() error {
-					_, _, err := e.svc.Update(e.ctx, tt.actor, artifact.UpdateRequest{Slug: "demo", Name: ptr("x")})
+					_, _, err := e.svc.Update(e.ctx, tt.actor, artifact.UpdateRequest{Slug: "demo", Name: new("x")})
 					return err
 				}},
 				{"update files", func() error {
@@ -753,7 +752,7 @@ func TestOfflineWritesNeedInvolvement(t *testing.T) {
 				t.Fatal(err)
 			}
 			if policy == artifact.WriteShared {
-				if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("bob was here")}); err != nil {
+				if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: new("bob was here")}); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := e.store.Update(e.ctx, "demo", "bob", func(*artifact.Artifact) error { return nil }); err != nil {
@@ -770,7 +769,7 @@ func TestOfflineWritesNeedInvolvement(t *testing.T) {
 				{"publish", func(a artifact.Actor) error { _, err := e.svc.Publish(e.ctx, a, "demo", 1); return err }},
 				{"visibility", func(a artifact.Actor) error { _, err := e.svc.SetVisibility(e.ctx, a, "demo", "public"); return err }},
 				{"update", func(a artifact.Actor) error {
-					_, _, err := e.svc.Update(e.ctx, a, artifact.UpdateRequest{Slug: "demo", Name: ptr("x")})
+					_, _, err := e.svc.Update(e.ctx, a, artifact.UpdateRequest{Slug: "demo", Name: new("x")})
 					return err
 				}},
 				{"update files", func(a artifact.Actor) error {
@@ -843,7 +842,7 @@ func TestStale(t *testing.T) {
 	if a.StaleAt == nil || a.ExpiresAt == nil {
 		t.Fatalf("KeepStale cleared the timer")
 	}
-	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("n")})
+	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: new("n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +885,7 @@ func TestMarkStaleOthersArtifactNeedsDelete(t *testing.T) {
 	e.create(t, alice, "open")
 	e.create(t, bob, "preview")
 	// Having updated an artifact does not make it bob's.
-	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("bob was here")}); err != nil {
+	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: new("bob was here")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1048,7 +1047,7 @@ func TestDeleteAndRestore(t *testing.T) {
 		t.Fatalf("second soft delete moved DeletedAt to %v", a.DeletedAt)
 	}
 
-	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("x")})
+	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: new("x")})
 	wantErr(t, "update deleted", err, artifact.ErrNotFound)
 	_, err = e.svc.MarkStale(e.ctx, alice, "demo", 0)
 	wantErr(t, "stale deleted", err, artifact.ErrNotFound)
@@ -1072,7 +1071,7 @@ func TestDeleteAndRestore(t *testing.T) {
 		t.Fatalf("deleted artifact resolves as servable: %+v", p)
 	}
 
-	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true, Name: ptr("back")})
+	a, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true, Name: new("back")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1993,9 +1992,9 @@ func TestTextFieldLimits(t *testing.T) {
 	}
 
 	updates := map[string]artifact.UpdateRequest{
-		"name":               {Slug: "demo", Name: ptr(longName)},
-		"description":        {Slug: "demo", Description: ptr(longDesc)},
-		"name with files":    {Slug: "demo", Name: ptr("a\nb"), Files: files("x.txt", "x")},
+		"name":               {Slug: "demo", Name: new(longName)},
+		"description":        {Slug: "demo", Description: new(longDesc)},
+		"name with files":    {Slug: "demo", Name: new("a\nb"), Files: files("x.txt", "x")},
 		"label":              {Slug: "demo", Label: longLabel, Files: files("x.txt", "x")},
 		"label, fields only": {Slug: "demo", Label: "v2\x00"},
 	}
@@ -2013,7 +2012,7 @@ func TestTextFieldLimits(t *testing.T) {
 
 	desc := strings.Repeat("d", artifact.DescriptionMaxBytes-2) + "\n\t"
 	a, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{
-		Slug: "demo", Name: ptr(longName[1:]), Description: ptr(desc), Label: longLabel[1:], Files: files("x.txt", "x"),
+		Slug: "demo", Name: new(longName[1:]), Description: new(desc), Label: longLabel[1:], Files: files("x.txt", "x"),
 	})
 	if err != nil {
 		t.Fatalf("Update at the limits: %v", err)
@@ -2028,7 +2027,7 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 	alice, bob, carol, dave := e.user(t, "alice"), e.user(t, "bob"), e.user(t, "carol"), e.user(t, "dave")
 	root := artifact.Actor{Handle: "root", Admin: true}
 	e.create(t, alice, "demo", "index.html", "hi")
-	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: ptr("by bob")}); err != nil {
+	if _, _, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{Slug: "demo", Name: new("by bob")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2101,7 +2100,7 @@ func TestAuditRecordsCredential(t *testing.T) {
 			return err
 		},
 		func() error {
-			_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: ptr("n")})
+			_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Name: new("n")})
 			return err
 		},
 		func() error { _, err := e.svc.Publish(e.ctx, alice, "demo", 1); return err },

@@ -58,8 +58,7 @@ func Errorf(sentinel *Error, format string, args ...any) error {
 
 // CodeOf returns err's code, or "" if it is not an *Error.
 func CodeOf(err error) string {
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e.Code
 	}
 	return ""

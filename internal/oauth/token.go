@@ -290,10 +290,11 @@ func (s *Service) newPair(grant Token, notAfter *time.Time, now time.Time) (acce
 		if notAfter != nil && notAfter.Before(expires) {
 			expires = *notAfter
 		}
-		return issued{secret: secret, Token: Token{
-			Hash: hashSecret(secret), Kind: kind, ClientID: grant.ClientID, UserHandle: grant.UserHandle,
+		return issued{
+			secret: secret,
+			Hash:   hashSecret(secret), Kind: kind, ClientID: grant.ClientID, UserHandle: grant.UserHandle,
 			Scopes: scopes, Resource: grant.Resource, KeyPrefix: grant.KeyPrefix, CreatedAt: now, ExpiresAt: expires,
-		}}
+		}
 	}
 	return mk(KindAccess, s.opts.AccessTTL), mk(KindRefresh, s.opts.RefreshTTL)
 }

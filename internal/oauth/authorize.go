@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -309,9 +310,7 @@ func withQuery(raw string, v url.Values) string {
 		return raw
 	}
 	q := u.Query()
-	for k, vs := range v {
-		q[k] = vs
-	}
+	maps.Copy(q, v)
 	u.RawQuery = q.Encode()
 	return u.String()
 }

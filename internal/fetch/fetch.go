@@ -278,8 +278,7 @@ var errNonPublic = errors.New("not a public address")
 // failed keeps what the resolver and the dial learned out of the message,
 // so a member cannot map the server's network through error texts.
 func failed(u string, err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
 		err = ue.Err
 	}
 	var dns *net.DNSError

@@ -192,11 +192,9 @@ func TestRefreshReuseWindow(t *testing.T) {
 			got [2]tokenResult
 		)
 		for i := range got {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				got[i] = e.refresh(clientID, first.RefreshToken, "")
-			}()
+			})
 		}
 		wg.Wait()
 		for i, tr := range got {

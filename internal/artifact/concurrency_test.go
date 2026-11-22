@@ -235,7 +235,7 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 				_, err := e.svc.Transfer(e.ctx, root, "demo", "bob")
 				return err
 			},
-			update: artifact.UpdateRequest{Slug: "demo", Name: ptr("renamed")},
+			update: artifact.UpdateRequest{Slug: "demo", Name: new("renamed")},
 			check: func(t *testing.T, a *artifact.Artifact) {
 				if a.OwnerHandle != "bob" || a.Name != "renamed" {
 					t.Errorf("owner %q name %q, want bob and renamed", a.OwnerHandle, a.Name)
@@ -258,7 +258,7 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 		{
 			name:    "rename does not undo a delete",
 			landing: func(e *env, alice artifact.Actor) error { return e.svc.Delete(e.ctx, alice, "demo", false) },
-			update:  artifact.UpdateRequest{Slug: "demo", Name: ptr("renamed")},
+			update:  artifact.UpdateRequest{Slug: "demo", Name: new("renamed")},
 			wantErr: artifact.ErrNotFound,
 			check: func(t *testing.T, a *artifact.Artifact) {
 				if a.DeletedAt == nil || a.Name != "" {

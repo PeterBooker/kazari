@@ -400,13 +400,11 @@ func AuditEvent(e audit.Event) api.AuditEvent {
 // Error maps a domain error to an HTTP status and wire error. Unknown
 // errors become 500 internal with a generic message so nothing leaks.
 func Error(err error) (int, api.Error) {
-	var om *upload.OffsetMismatchError
-	if errors.As(err, &om) {
+	if om, ok := errors.AsType[*upload.OffsetMismatchError](err); ok {
 		cur := om.Current
 		return http.StatusConflict, api.Error{Code: api.CodeOffsetMismatch, Message: om.Error(), Current: &cur}
 	}
-	var ae *artifact.Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		return statusFor(ae.Code), api.Error{Code: ae.Code, Message: ae.Message}
 	}
 	switch {
@@ -451,8 +449,7 @@ func Error(err error) (int, api.Error) {
 	case errors.Is(err, user.ErrBadPassword):
 		return http.StatusUnauthorized, api.Error{Code: api.CodeUnauthorized, Message: "wrong name or password"}
 	}
-	var mbe *http.MaxBytesError
-	if errors.As(err, &mbe) {
+	if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: fmt.Sprintf("request body exceeds %d bytes", mbe.Limit)}
 	}
 	return http.StatusInternalServerError, api.Error{Code: api.CodeInternal, Message: "internal error"}

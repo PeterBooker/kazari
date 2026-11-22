@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -72,9 +73,7 @@ func (b *browser) setPassword(link string, extra url.Values) response {
 		b.t.Fatalf("the link's form carries no token: %s", truncate(shown.body))
 	}
 	form := url.Values{"password": {testPassword}, "confirm": {testPassword}, "form_token": {token[1]}}
-	for k, v := range extra {
-		form[k] = v
-	}
+	maps.Copy(form, extra)
 	return b.send(http.MethodPost, page, form, origin(page))
 }
 

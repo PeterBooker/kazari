@@ -20,7 +20,7 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 
 func sampleShell(prefix string) Shell {
 	return Shell{
-		Page:  Page{Title: "Overview", Assets: URLs(prefix)},
+		Title: "Overview", Assets: URLs(prefix),
 		Home:  "/",
 		Host:  "art.example.com",
 		Label: "Dashboard",

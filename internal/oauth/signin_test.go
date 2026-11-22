@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -561,9 +562,7 @@ func (e *env) keySignIn(host, key string, header http.Header) (*http.Response, s
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", e.srv.URL)
-	for k, vs := range header {
-		req.Header[k] = vs
-	}
+	maps.Copy(req.Header, header)
 	return e.do(req)
 }
 

@@ -69,8 +69,7 @@ func TestSelfSignedHandshake(t *testing.T) {
 					conn.Close()
 					t.Fatal("handshake succeeded, want verification error")
 				}
-				var verr *tls.CertificateVerificationError
-				if !errors.As(err, &verr) {
+				if _, ok := errors.AsType[*tls.CertificateVerificationError](err); !ok {
 					t.Fatalf("err = %v, want certificate verification error", err)
 				}
 				return

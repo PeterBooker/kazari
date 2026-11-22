@@ -61,7 +61,7 @@ func TestIssueRestrictedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := auth.Principal{Handle: "ana", Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Source: auth.SourceAPIKey,
-		KeyID: k.Prefix, Slugs: []string{"weekly-*", "report"}, ExpiresAt: ptr(t0.Add(90 * day))}
+		KeyID: k.Prefix, Slugs: []string{"weekly-*", "report"}, ExpiresAt: new(t0.Add(90 * day))}
 	if diff := cmp.Diff(want, p); diff != "" {
 		t.Errorf("Principal (-want +got):\n%s", diff)
 	}
@@ -357,7 +357,7 @@ func TestRotateKey(t *testing.T) {
 	}
 	want := &user.APIKey{ID: k.ID, UserHandle: "ana", Prefix: k.Prefix, Hash: user.HashKey(secret), Label: "weekly",
 		Scopes: []string{auth.ScopeRead, auth.ScopeWrite}, Slugs: []string{"weekly-*"},
-		ExpiresAt: ptr(now.Add(90 * day)), CreatedAt: now}
+		ExpiresAt: new(now.Add(90 * day)), CreatedAt: now}
 	if diff := cmp.Diff(want, k); diff != "" {
 		t.Errorf("new key (-want +got):\n%s", diff)
 	}

@@ -84,8 +84,8 @@ func TestMembersVisibility(t *testing.T) {
 	}
 	url := e.u("/v1/artifacts/demo")
 	var out api.PublishResult
-	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: ptr("public")}, http.StatusOK, &out)
-	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: ptr("members")}, http.StatusOK, &out)
+	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: new("public")}, http.StatusOK, &out)
+	e.call(http.MethodPatch, url, e.alice, api.UpdateArtifactRequest{Visibility: new("members")}, http.StatusOK, &out)
 	if out.Artifact.Visibility != "members" {
 		t.Fatalf("after PATCH: %q", out.Artifact.Visibility)
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -255,9 +256,7 @@ func do(t *testing.T, h http.Handler, method, host, target string, header http.H
 	t.Helper()
 	req := httptest.NewRequest(method, target, nil)
 	req.Host = host
-	for k, v := range header {
-		req.Header[k] = v
-	}
+	maps.Copy(req.Header, header)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

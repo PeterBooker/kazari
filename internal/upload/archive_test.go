@@ -250,11 +250,9 @@ func TestReceiveArchiveOnce(t *testing.T) {
 	errs := make([]error, 4)
 	var wg sync.WaitGroup
 	for i := range errs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, errs[i] = e.svc.ReceiveArchive(ctx, u.ID, token, inputs(map[string]string{"index.html": "x"}))
-		}()
+		})
 	}
 	wg.Wait()
 	received := 0

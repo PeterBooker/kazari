@@ -83,7 +83,7 @@ func ValidatePath(p string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", Errorf(ErrInvalidPath, "path %q escapes the bundle", p)
 	}
-	for _, seg := range strings.Split(clean, "/") {
+	for seg := range strings.SplitSeq(clean, "/") {
 		if seg == ".." {
 			return "", Errorf(ErrInvalidPath, "path %q escapes the bundle", p)
 		}

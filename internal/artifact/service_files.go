@@ -161,8 +161,7 @@ func (s *Service) dropBlob(ctx context.Context, hash string) error {
 // domainErr unwraps an *Error the blob store wrapped, so callers see the
 // domain error itself.
 func domainErr(err error) error {
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e
 	}
 	return err

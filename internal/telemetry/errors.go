@@ -66,8 +66,7 @@ func installErrorHandler(l *limitedLog) {
 	handlerLog.Store(l)
 	handlerOnce.Do(func() {
 		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-			var logged *exportError
-			if errors.As(err, &logged) {
+			if _, ok := errors.AsType[*exportError](err); ok {
 				return
 			}
 			if l := handlerLog.Load(); l != nil {

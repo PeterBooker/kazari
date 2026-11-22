@@ -131,7 +131,7 @@ func TestAnchoredReadAbortsOnFailedRead(t *testing.T) {
 			t.Errorf("recovered %v, want http.ErrAbortHandler", v)
 		}
 	}()
-	_ = writeAnchored(httptest.NewRecorder(), artifact.File{Path: "a.txt"}, &brokenFile{lineFile: lineFile{size: 100, lineLen: 8}})
+	_ = writeAnchored(httptest.NewRecorder(), artifact.File{Path: "a.txt"}, &brokenFile{size: 100, lineLen: 8})
 }
 
 func TestAnchoredReadRefusesBinary(t *testing.T) {

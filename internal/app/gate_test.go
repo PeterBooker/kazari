@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -46,9 +47,7 @@ func (b *browser) send(method, rawURL string, form url.Values, header http.Heade
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	for k, v := range header {
-		req.Header[k] = v
-	}
+	maps.Copy(req.Header, header)
 	resp, err := b.hc.Do(req)
 	if err != nil {
 		b.t.Fatalf("%s %s: %v", method, rawURL, err)

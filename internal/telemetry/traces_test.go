@@ -16,8 +16,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
-func ratio(r float64) *float64 { return &r }
-
 func TestTracesOffWithoutEndpoint(t *testing.T) {
 	tel := newTelemetry(t, Options{Traces: Traces{OTLP: true}, Metrics: Metrics{Prometheus: true}})
 	if tel.Providers().Tracing() {

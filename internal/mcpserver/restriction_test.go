@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,9 +57,7 @@ func slugTools(pageURL string) map[string]slugTool {
 
 func withSlug(args map[string]any, slug string) map[string]any {
 	out := map[string]any{"slug": slug}
-	for k, v := range args {
-		out[k] = v
-	}
+	maps.Copy(out, args)
 	return out
 }
 

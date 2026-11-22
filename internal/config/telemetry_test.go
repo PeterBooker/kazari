@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -16,8 +17,6 @@ import (
 	"testing"
 	"time"
 )
-
-func ptr[T any](v T) *T { return &v }
 
 func TestTelemetryDefaults(t *testing.T) {
 	got := Default().Telemetry
@@ -70,7 +69,7 @@ telemetry:
 			Compression: "none",
 			Timeout:     Duration(5 * time.Second),
 		},
-		Traces:  Traces{OTLP: true, SampleRatio: ptr(0.5), SiteSampleRatio: ptr(0.0)},
+		Traces:  Traces{OTLP: true, SampleRatio: new(0.5), SiteSampleRatio: new(0.0)},
 		Metrics: Metrics{Prometheus: true, Token: testAdminToken, OTLP: true, Interval: Duration(30 * time.Second)},
 		Logs:    LogExport{OTLP: true, Level: "warn"},
 	}
@@ -103,9 +102,7 @@ func TestTelemetryEnv(t *testing.T) {
 				"KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO": "0.25",
 				"KAZARI_TELEMETRY_METRICS_TOKEN":            testAdminToken,
 			}
-			for k, v := range tt.vars {
-				vars[k] = v
-			}
+			maps.Copy(vars, tt.vars)
 			c, err := LoadWith("", env(vars))
 			if err != nil {
 				t.Fatalf("LoadWith: %v", err)
@@ -232,8 +229,8 @@ func TestValidateTelemetry(t *testing.T) {
 		{"cert alone", func(t *Telemetry) { t.OTLP.CertFile = certFile }, "telemetry.otlp.cert_file: cert_file and key_file must be set together"},
 		{"key alone", func(t *Telemetry) { t.OTLP.KeyFile = keyFile }, "telemetry.otlp.cert_file: cert_file and key_file must be set together"},
 		{"cert junk", func(t *Telemetry) { t.OTLP.CertFile, t.OTLP.KeyFile = junk, keyFile }, "telemetry.otlp.cert_file:"},
-		{"sample ratio", func(t *Telemetry) { t.Traces.SampleRatio = ptr(1.5) }, "telemetry.traces.sample_ratio: must be between 0 and 1"},
-		{"site sample ratio", func(t *Telemetry) { t.Traces.SiteSampleRatio = ptr(-0.1) }, "telemetry.traces.site_sample_ratio: must be between 0 and 1"},
+		{"sample ratio", func(t *Telemetry) { t.Traces.SampleRatio = new(1.5) }, "telemetry.traces.sample_ratio: must be between 0 and 1"},
+		{"site sample ratio", func(t *Telemetry) { t.Traces.SiteSampleRatio = new(-0.1) }, "telemetry.traces.site_sample_ratio: must be between 0 and 1"},
 		{"metrics token", func(t *Telemetry) { t.Metrics.Token = "short" }, "telemetry.metrics.token: must be at least 32 characters"},
 		{"metrics interval", func(t *Telemetry) { t.Metrics.Interval = Duration(time.Second) }, "telemetry.metrics.interval: must be 0 or at least 5s"},
 		{"logs level", func(t *Telemetry) { t.Logs.Level = "trace" }, "telemetry.logs.level: must be one of debug, info, warn, error"},
@@ -262,7 +259,7 @@ func TestValidateTelemetry(t *testing.T) {
 		"short token on localhost": func(c *Config) { c.BaseDomain = "localhost"; c.Telemetry.Metrics.Token = "dev" },
 		"logs level":               func(c *Config) { c.Telemetry.Logs.Level = "debug" },
 		"ratio bounds": func(c *Config) {
-			c.Telemetry.Traces.SampleRatio, c.Telemetry.Traces.SiteSampleRatio = ptr(0.0), ptr(1.0)
+			c.Telemetry.Traces.SampleRatio, c.Telemetry.Traces.SiteSampleRatio = new(0.0), new(1.0)
 		},
 		"explicit settings": func(c *Config) {
 			c.Telemetry.OTLP.Protocol, c.Telemetry.OTLP.Compression = "grpc", "none"

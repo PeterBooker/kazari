@@ -27,7 +27,7 @@ type ImportInput struct {
 
 func (b *builder) addImport(s *mcp.Server, p auth.Principal, actor artifact.Actor) {
 	a := annotations("Import page", false, false, false)
-	a.OpenWorldHint = boolPtr(true)
+	a.OpenWorldHint = new(true)
 	register(b, s, p, &mcp.Tool{Name: "import_page", Annotations: a, Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in ImportInput) (api.PublishResult, string, error) {
 			if err := present.RequireShare(p, in.Visibility); err != nil {

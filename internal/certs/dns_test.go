@@ -185,8 +185,7 @@ func TestDuckDNSErrorsOmitToken(t *testing.T) {
 			if deleteErr == nil || !strings.Contains(deleteErr.Error(), tt.reason) {
 				t.Errorf("delete error = %v, want the reason %q", deleteErr, tt.reason)
 			}
-			var raw *url.Error
-			if errors.As(appendErr, &raw) {
+			if raw, ok := errors.AsType[*url.Error](appendErr); ok {
 				t.Errorf("the original error is reachable: %v", raw)
 			}
 		})

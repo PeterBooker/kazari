@@ -137,7 +137,7 @@ func (s *surfaceObserver) serve(next http.Handler, w http.ResponseWriter, r *htt
 	if s.traced && !slices.Contains(s.opts.Skip, r.URL.Path) {
 		ctx, span = s.startSpan(ctx, r, method, scheme)
 	}
-	st := &requestState{responseWriter: responseWriter{ResponseWriter: w}, surface: s.surface}
+	st := &requestState{ResponseWriter: w, surface: s.surface}
 	r = r.WithContext(context.WithValue(ctx, instrument.SurfaceKey{}, st))
 	defer func() {
 		status := st.Status()

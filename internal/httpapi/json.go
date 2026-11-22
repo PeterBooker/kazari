@@ -108,8 +108,7 @@ func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func errorResponse(err error) (int, api.Error, time.Duration) {
-	var se *statusError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*statusError](err); ok {
 		return se.status, api.Error{Code: se.code, Message: se.msg}, se.retryAfter
 	}
 	switch {
@@ -174,8 +173,7 @@ func bodyErr(what string, err error) error {
 }
 
 func maxBytesErr(err error) error {
-	var mbe *http.MaxBytesError
-	if errors.As(err, &mbe) {
+	if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return mbe
 	}
 	return nil

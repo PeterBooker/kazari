@@ -114,7 +114,7 @@ func TestKazariKeysWin(t *testing.T) {
 			Endpoint: kzSrv.URL + "/kz", Protocol: ProtocolHTTP, Compression: "none",
 			Headers: map[string]string{"x-kazari": "1"},
 		},
-		Traces:  Traces{OTLP: true, SampleRatio: ratio(1)},
+		Traces:  Traces{OTLP: true, SampleRatio: new(float64(1))},
 		Metrics: Metrics{OTLP: true},
 	}))
 

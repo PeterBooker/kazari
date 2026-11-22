@@ -101,8 +101,7 @@ func (h *userAPI) dropArchive(ctx context.Context, u *upload.Upload, err error) 
 // removedArchive tells the sender that the upload is gone with the error that
 // ended it, so the next step is a new begin_upload rather than a retry.
 func removedArchive(err error) error {
-	var ae *artifact.Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		return &artifact.Error{Code: ae.Code, Message: ae.Message + "; the upload is removed, begin a new one"}
 	}
 	return err
@@ -201,8 +200,7 @@ func (e *zipEntry) Read(p []byte) (int, error) {
 // zipErr reports a failure to read the spill as the server's fault and
 // anything else as a bad archive.
 func zipErr(name string, err error) error {
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
+	if _, ok := errors.AsType[*fs.PathError](err); ok {
 		return fmt.Errorf("httpapi: read archive spill: %w", err)
 	}
 	return invalid("the zip entry %q cannot be read: %v", name, err)

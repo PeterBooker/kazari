@@ -71,8 +71,6 @@ var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 
 func at(d time.Duration) time.Time { return t0.Add(d) }
 
-func ptr(t time.Time) *time.Time { return &t }
-
 // cmpOpts lets a store return nil or empty maps and slices interchangeably.
 var cmpOpts = []cmp.Option{cmpopts.EquateEmpty()}
 
@@ -163,8 +161,8 @@ func testCreateGet(t *testing.T, h *harness) {
 	a := newArtifact("demo", "alice", at(0))
 	a.Visibility = artifact.Unlisted
 	a.Metadata = map[string]string{"team": "core", artifact.MetaSPA: "true"}
-	a.StaleAt = ptr(at(time.Hour))
-	a.ExpiresAt = ptr(at(2 * time.Hour))
+	a.StaleAt = new(at(time.Hour))
+	a.ExpiresAt = new(at(2 * time.Hour))
 	v := h.create(t, a, file("b.txt", "bee"), file("a.txt", "a"))
 	if v.ID == 0 || v.Number != 1 {
 		t.Fatalf("Create set ID=%d Number=%d, want non-zero and 1", v.ID, v.Number)
@@ -180,8 +178,8 @@ func testCreateGet(t *testing.T, h *harness) {
 		PublishedVersion: 1,
 		LatestVersion:    1,
 		SizeBytes:        4,
-		StaleAt:          ptr(at(time.Hour)),
-		ExpiresAt:        ptr(at(2 * time.Hour)),
+		StaleAt:          new(at(time.Hour)),
+		ExpiresAt:        new(at(2 * time.Hour)),
 		CreatedAt:        at(0),
 		UpdatedAt:        at(0),
 	}
@@ -284,7 +282,7 @@ func testAddVersion(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	h.mkUser("bob")
 	a := newArtifact("demo", "alice", at(0))
-	a.StaleAt, a.ExpiresAt = ptr(at(time.Minute)), ptr(at(time.Hour))
+	a.StaleAt, a.ExpiresAt = new(at(time.Minute)), new(at(time.Hour))
 	h.create(t, a)
 
 	for n := 2; n <= 3; n++ {
@@ -322,7 +320,7 @@ func testAddVersion(t *testing.T, h *harness) {
 	}
 
 	cur := h.get(t, "demo")
-	cur.DeletedAt = ptr(at(4 * time.Hour))
+	cur.DeletedAt = new(at(4 * time.Hour))
 	h.update(t, cur, "")
 	cur.DeletedAt = nil
 	if err := h.addVersion(cur, newVersion("alice", at(5*time.Hour), file("x", "x")), 0); err != nil {
@@ -382,14 +380,12 @@ func testAddVersionConcurrent(t *testing.T, h *harness) {
 	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			a := newArtifact("demo", "alice", at(0))
 			a.UpdatedAt = at(time.Hour)
 			v := newVersion("alice", at(time.Hour), file("f.txt", fmt.Sprint(i)))
 			errs[i] = h.addVersion(a, v, 1)
-		}()
+		})
 	}
 	wg.Wait()
 	wins := 0
@@ -426,10 +422,10 @@ func testUpdate(t *testing.T, h *harness) {
 	got.Visibility = artifact.Unlisted
 	got.Metadata = map[string]string{"k": "v", "kazari.indexable": "true"}
 	got.PublishedVersion = 1
-	got.StaleAt = ptr(at(time.Hour))
-	got.ExpiresAt = ptr(at(2 * time.Hour))
-	got.UnpublishedAt = ptr(at(3 * time.Hour))
-	got.DeletedAt = ptr(at(4 * time.Hour))
+	got.StaleAt = new(at(time.Hour))
+	got.ExpiresAt = new(at(2 * time.Hour))
+	got.UnpublishedAt = new(at(3 * time.Hour))
+	got.DeletedAt = new(at(4 * time.Hour))
 	got.UpdatedAt = at(5 * time.Hour)
 	h.update(t, got, "bob")
 
@@ -494,7 +490,7 @@ func testUpdateCurrentRow(t *testing.T, h *harness) {
 
 	moved := h.get(t, "demo")
 	moved.OwnerHandle = "bob"
-	moved.DeletedAt = ptr(at(time.Hour))
+	moved.DeletedAt = new(at(time.Hour))
 	h.update(t, moved, "")
 	err := h.store.Update(h.ctx, "demo", "alice", func(a *artifact.Artifact) error {
 		a.Name = "renamed"
@@ -630,7 +626,7 @@ func testTransferOwned(t *testing.T, h *harness) {
 	}
 	h.create(t, newArtifact("live", "alice", at(0)))
 	deleted := newArtifact("deleted", "alice", at(0))
-	deleted.DeletedAt = ptr(at(time.Hour))
+	deleted.DeletedAt = new(at(time.Hour))
 	h.create(t, deleted)
 	h.create(t, newArtifact("tomb", "alice", at(0)))
 	if err := h.store.Purge(h.ctx, "tomb", at(time.Hour), nil); err != nil {
@@ -744,13 +740,13 @@ func testListFilters(t *testing.T, h *harness) {
 		{"pub-alice", "alice", nil},
 		{"unl-alice", "alice", func(a *artifact.Artifact) { a.Visibility = artifact.Unlisted }},
 		{"unl-bob", "bob", func(a *artifact.Artifact) { a.Visibility = artifact.Unlisted }},
-		{"stale-bob", "bob", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = ptr(t0), ptr(t0.Add(time.Hour)) }},
-		{"deleted-bob", "bob", func(a *artifact.Artifact) { a.DeletedAt = ptr(t0) }},
+		{"stale-bob", "bob", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = new(t0), new(t0.Add(time.Hour)) }},
+		{"deleted-bob", "bob", func(a *artifact.Artifact) { a.DeletedAt = new(t0) }},
 		{"meta-carol", "carol", func(a *artifact.Artifact) {
 			a.Name = "Q3 100%_Report"
 			a.Metadata = map[string]string{"team": "x", artifact.MetaSPA: "true"}
 		}},
-		{"unpub-carol", "carol", func(a *artifact.Artifact) { a.UnpublishedAt = ptr(t0) }},
+		{"unpub-carol", "carol", func(a *artifact.Artifact) { a.UnpublishedAt = new(t0) }},
 		{"tomb-carol", "carol", nil},
 	}
 	for i, s := range setups {
@@ -983,7 +979,7 @@ func testResolve(t *testing.T, h *harness) {
 	wantErr(t, "ResolveVersion missing", err, artifact.ErrNotFound)
 
 	got := h.get(t, "demo")
-	got.UnpublishedAt = ptr(at(2 * time.Hour))
+	got.UnpublishedAt = new(at(2 * time.Hour))
 	h.update(t, got, "")
 	p, err = h.store.ResolvePublished(h.ctx, "demo")
 	if err != nil {
@@ -993,7 +989,7 @@ func testResolve(t *testing.T, h *harness) {
 		t.Fatalf("unpublished resolve: %+v", p)
 	}
 	got.UnpublishedAt = nil
-	got.DeletedAt = ptr(at(3 * time.Hour))
+	got.DeletedAt = new(at(3 * time.Hour))
 	h.update(t, got, "")
 	p, err = h.store.ResolveVersion(h.ctx, "demo", 1)
 	if err != nil {
@@ -1148,17 +1144,17 @@ func testLifecycleQueries(t *testing.T, h *harness) {
 		mutate(a)
 		h.create(t, a)
 	}
-	mk("exp-2", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = ptr(t0), ptr(at(2*time.Hour)) })
-	mk("exp-1", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = ptr(t0), ptr(at(1*time.Hour)) })
-	mk("exp-3", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = ptr(t0), ptr(at(3*time.Hour)) })
+	mk("exp-2", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = new(t0), new(at(2*time.Hour)) })
+	mk("exp-1", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = new(t0), new(at(1*time.Hour)) })
+	mk("exp-3", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = new(t0), new(at(3*time.Hour)) })
 	mk("exp-deleted", func(a *artifact.Artifact) {
-		a.StaleAt, a.ExpiresAt, a.DeletedAt = ptr(t0), ptr(at(time.Hour)), ptr(at(time.Hour))
+		a.StaleAt, a.ExpiresAt, a.DeletedAt = new(t0), new(at(time.Hour)), new(at(time.Hour))
 	})
-	mk("del-2", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(20 * time.Hour)) })
-	mk("del-1", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(10 * time.Hour)) })
-	mk("del-3", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(30 * time.Hour)) })
-	mk("purged-1", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(time.Hour)) })
-	mk("purged-2", func(a *artifact.Artifact) { a.DeletedAt = ptr(at(time.Hour)) })
+	mk("del-2", func(a *artifact.Artifact) { a.DeletedAt = new(at(20 * time.Hour)) })
+	mk("del-1", func(a *artifact.Artifact) { a.DeletedAt = new(at(10 * time.Hour)) })
+	mk("del-3", func(a *artifact.Artifact) { a.DeletedAt = new(at(30 * time.Hour)) })
+	mk("purged-1", func(a *artifact.Artifact) { a.DeletedAt = new(at(time.Hour)) })
+	mk("purged-2", func(a *artifact.Artifact) { a.DeletedAt = new(at(time.Hour)) })
 	mk("live", func(a *artifact.Artifact) {})
 	if err := h.store.Purge(h.ctx, "purged-2", at(200*time.Hour), nil); err != nil {
 		t.Fatal(err)
@@ -1353,7 +1349,7 @@ func testListMembers(t *testing.T, h *harness) {
 		h.create(t, a)
 	}
 	draft := h.get(t, "team-draft")
-	draft.UnpublishedAt = ptr(at(3 * time.Hour))
+	draft.UnpublishedAt = new(at(3 * time.Hour))
 	h.update(t, draft, "alice")
 
 	page, err := h.store.List(h.ctx, artifact.ListQuery{Viewer: "dave"})
@@ -1536,7 +1532,7 @@ func testUserShareLinks(t *testing.T, h *harness) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("RevokeUserShareLinks (-want +got):\n%s", diff)
 	}
-	for i, wantAt := range []*time.Time{ptr(at(2 * time.Minute)), ptr(at(2 * time.Minute)), ptr(at(time.Minute)), nil} {
+	for i, wantAt := range []*time.Time{new(at(2 * time.Minute)), new(at(2 * time.Minute)), new(at(time.Minute)), nil} {
 		slug := "demo"
 		if i == 1 {
 			slug = "other"
@@ -1603,11 +1599,11 @@ func testCensus(t *testing.T, h *harness) {
 	}
 	mk("live", artifact.Public, nil)
 	mk("team", artifact.Members, nil)
-	mk("old", artifact.Public, func(a *artifact.Artifact) { a.StaleAt = ptr(at(time.Hour)) })
-	mk("hidden", artifact.Unlisted, func(a *artifact.Artifact) { a.UnpublishedAt = ptr(at(time.Hour)) })
+	mk("old", artifact.Public, func(a *artifact.Artifact) { a.StaleAt = new(at(time.Hour)) })
+	mk("hidden", artifact.Unlisted, func(a *artifact.Artifact) { a.UnpublishedAt = new(at(time.Hour)) })
 	mk("gone", artifact.Public, func(a *artifact.Artifact) {
-		a.StaleAt = ptr(at(time.Hour))
-		a.DeletedAt = ptr(at(2 * time.Hour))
+		a.StaleAt = new(at(time.Hour))
+		a.DeletedAt = new(at(2 * time.Hour))
 	})
 	mk("tomb", artifact.Public, nil)
 	if err := h.store.Purge(h.ctx, "tomb", at(3*time.Hour), nil); err != nil {

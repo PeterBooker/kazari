@@ -249,7 +249,8 @@ func (b *builder) addSkill(s *mcp.Server, p auth.Principal) {
 	must(mcp.AddReceivingCustomMethod(s, "skills/list",
 		func(context.Context, *mcp.ServerSession, *skillsListParams) (*skillsListResult, error) {
 			return &skillsListResult{
-				Cacheable:  mcp.Cacheable{TTLMs: int(skillsTTL / time.Millisecond), CacheScope: "private"},
+				TTLMs:      int(skillsTTL / time.Millisecond),
+				CacheScope: "private",
 				ResultType: "complete",
 				Skills:     []skillEntry{entry},
 			}, nil

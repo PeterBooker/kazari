@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestEditFile(t *testing.T) {
 	}
 
 	var start string
-	for _, l := range strings.Split(out.Edits[0].Excerpt, "\n") {
+	for l := range strings.SplitSeq(out.Edits[0].Excerpt, "\n") {
 		if strings.HasPrefix(l, "5:") {
 			start, _, _ = strings.Cut(l, "|")
 		}
@@ -367,7 +368,7 @@ func TestReadFileWindowEdges(t *testing.T) {
 	line := "a\u20ac\U0001F600 fits"
 	long := strings.Repeat("\u20ac", limit)
 	var many strings.Builder
-	for i := 0; i < 20000; i++ {
+	for range 20000 {
 		many.WriteString(line + "\n")
 	}
 
@@ -405,9 +406,7 @@ func TestReadFileWindowEdges(t *testing.T) {
 			ok[api.PublishResult](t, cs, "create_artifact", map[string]any{"slug": "demo", "name": "Demo", "description": "d",
 				"files": []map[string]any{{"path": "index.html", "content": b64([]byte(c.content)), "encoding": "base64"}}})
 			args := map[string]any{"slug": "demo", "path": "index.html"}
-			for k, v := range c.args {
-				args[k] = v
-			}
+			maps.Copy(args, c.args)
 			if c.fails != "" {
 				if msg := fails(t, cs, "read_file", args); !strings.HasPrefix(msg, c.fails) {
 					t.Errorf("error %q, want prefix %q", msg, c.fails)

@@ -68,8 +68,6 @@ func jsonEqual(t *testing.T, got []byte, want string) {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
-
 var t0 = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
 func TestClientEndpoints(t *testing.T) {
@@ -104,7 +102,7 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name: "update json with expected version",
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.Update(ctx, "demo", api.UpdateArtifactRequest{Name: ptr("New"), ExpectedVersion: 1})
+				return c.Update(ctx, "demo", api.UpdateArtifactRequest{Name: new("New"), ExpectedVersion: 1})
 			},
 			reply:   mustJSON(t, pub),
 			method:  "PUT",
@@ -116,7 +114,7 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name: "patch",
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.Patch(ctx, "demo", api.UpdateArtifactRequest{Metadata: map[string]*string{"a": ptr("1"), "b": nil}})
+				return c.Patch(ctx, "demo", api.UpdateArtifactRequest{Metadata: map[string]*string{"a": new("1"), "b": nil}})
 			},
 			reply:   mustJSON(t, pub),
 			method:  "PATCH",
@@ -251,7 +249,7 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name: "create user",
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.CreateUser(ctx, api.CreateUserRequest{Handle: "ann", QuotaBytes: ptr(int64(1024))})
+				return c.CreateUser(ctx, api.CreateUserRequest{Handle: "ann", QuotaBytes: new(int64(1024))})
 			},
 			reply:   `{"handle":"ann","role":"member","quota_bytes":1024,"created_at":"2026-10-01T12:00:00Z"}`,
 			method:  "POST",
@@ -262,7 +260,7 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name: "update user",
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.UpdateUser(ctx, "ann", api.UpdateUserRequest{Disabled: ptr(true)})
+				return c.UpdateUser(ctx, "ann", api.UpdateUserRequest{Disabled: new(true)})
 			},
 			reply:   `{"handle":"ann","role":"member","quota_bytes":0,"created_at":"2026-10-01T12:00:00Z"}`,
 			method:  "PATCH",
@@ -484,7 +482,7 @@ func TestClientErrors(t *testing.T) {
 		{"api error", 409, `{"error":{"code":"slug_taken","message":"slug demo is taken"}}`,
 			HTTPError{Status: 409, Err: api.Error{Code: "slug_taken", Message: "slug demo is taken"}}},
 		{"offset mismatch", 409, `{"error":{"code":"upload_offset_mismatch","message":"bad offset","current":12}}`,
-			HTTPError{Status: 409, Err: api.Error{Code: "upload_offset_mismatch", Message: "bad offset", Current: ptr(int64(12))}}},
+			HTTPError{Status: 409, Err: api.Error{Code: "upload_offset_mismatch", Message: "bad offset", Current: new(int64(12))}}},
 		{"plain text", 502, "  bad gateway\n", HTTPError{Status: 502, Err: api.Error{Code: "http_502", Message: "bad gateway"}}},
 		{"empty", 503, "", HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "Service Unavailable"}}},
 		{"json without code", 400, `{"oops":1}`, HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `{"oops":1}`}}},

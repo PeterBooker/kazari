@@ -262,7 +262,7 @@ func TestDeadLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(asAdmin, "cy", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin, "cy", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	dead("a disabled person's link", "reset", reset)
@@ -287,8 +287,6 @@ func TestDeadLinks(t *testing.T) {
 		t.Errorf("the form without a link: status %d", resp.StatusCode)
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 func TestLinkBackoff(t *testing.T) {
 	e := newEnv(t, envOptions{})

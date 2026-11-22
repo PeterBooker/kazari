@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -180,9 +181,7 @@ admin_token: file-admin
 				writeConfig(t, xdg, tt.config)
 			}
 			env := map[string]string{"XDG_CONFIG_HOME": xdg}
-			for k, v := range tt.env {
-				env[k] = v
-			}
+			maps.Copy(env, tt.env)
 			r := &runner{lookupEnv: envMap(env), g: &tt.flags}
 			got, err := r.settings()
 			if tt.wantErr != "" {

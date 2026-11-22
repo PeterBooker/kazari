@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -349,10 +350,8 @@ func peopleParseSize(text string) (n int64, problem string) {
 func peopleFieldError(err error, handle string) (field, message string) {
 	switch {
 	case errors.Is(err, user.ErrInvalidHandle):
-		for _, reserved := range user.ReservedHandles {
-			if handle == reserved {
-				return "handle", "That handle is reserved. Choose another."
-			}
+		if slices.Contains(user.ReservedHandles, handle) {
+			return "handle", "That handle is reserved. Choose another."
 		}
 		return "handle", fmt.Sprintf("Use %d to %d characters of a-z, 0-9, _ and -, starting with a letter or a digit.",
 			user.MinHandleLen, user.MaxHandleLen)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -376,17 +377,13 @@ func (e *env) approve(extra url.Values) string {
 func (e *env) approveWith(header http.Header, extra url.Values) string {
 	e.t.Helper()
 	v := url.Values{"request_id": {e.requestCookie()}, "action": {"approve"}}
-	for k, vs := range extra {
-		v[k] = vs
-	}
+	maps.Copy(v, extra)
 	req, err := http.NewRequest(http.MethodPost, e.url("/oauth/consent"), strings.NewReader(v.Encode()))
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for k, vs := range header {
-		req.Header[k] = vs
-	}
+	maps.Copy(req.Header, header)
 	resp, body := e.do(req)
 	if resp.StatusCode != http.StatusFound {
 		e.t.Fatalf("consent: status %d: %s", resp.StatusCode, body)

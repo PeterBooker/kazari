@@ -92,7 +92,8 @@ func (f *fixture) lastEvent(t *testing.T) audit.Event {
 	return f.audit.Events[len(f.audit.Events)-1]
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func TestValidateHandle(t *testing.T) {
 	tests := []struct {
@@ -156,7 +157,7 @@ func TestCreateUser(t *testing.T) {
 	}
 
 	pctx := auth.ContextWithPrincipal(ctx, auth.Principal{Handle: "root", Admin: true})
-	b, err := f.svc.CreateUser(pctx, user.CreateUserRequest{Handle: "bob", Role: user.RoleAdmin, QuotaBytes: ptr(int64(0))})
+	b, err := f.svc.CreateUser(pctx, user.CreateUserRequest{Handle: "bob", Role: user.RoleAdmin, QuotaBytes: new(int64(0))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestCreateUserErrors(t *testing.T) {
 func TestQuotaBytes(t *testing.T) {
 	f := newFixture(t, user.Options{DefaultQuota: 1024})
 	f.mustCreate(t, "alice", "alice@example.com", user.RoleMember)
-	if _, err := f.svc.CreateUser(context.Background(), user.CreateUserRequest{Handle: "bob", QuotaBytes: ptr(int64(0))}); err != nil {
+	if _, err := f.svc.CreateUser(context.Background(), user.CreateUserRequest{Handle: "bob", QuotaBytes: new(int64(0))}); err != nil {
 		t.Fatal(err)
 	}
 	for handle, want := range map[string]int64{"alice": 1024, "bob": 0} {
@@ -229,7 +230,7 @@ func TestUpdateUser(t *testing.T) {
 	f.mustCreate(t, "bob", "bob@example.com", "")
 
 	u, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{
-		Email: ptr(" NEW@example.com"), DisplayName: ptr("Alice A"), Role: ptr(user.RoleAdmin), QuotaBytes: ptr(int64(5)),
+		Email: new(" NEW@example.com"), DisplayName: new("Alice A"), Role: ptr(user.RoleAdmin), QuotaBytes: new(int64(5)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +254,7 @@ func TestUpdateUser(t *testing.T) {
 	}{
 		{"unknown user", "nobody", user.UpdateUserRequest{}, user.ErrNotFound},
 		{"bad role", "alice", user.UpdateUserRequest{Role: ptr(user.Role("root"))}, user.ErrInvalidRole},
-		{"taken email", "alice", user.UpdateUserRequest{Email: ptr("Bob@example.com")}, user.ErrEmailTaken},
+		{"taken email", "alice", user.UpdateUserRequest{Email: new("Bob@example.com")}, user.ErrEmailTaken},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -275,7 +276,7 @@ func TestDisableRevokesKeys(t *testing.T) {
 	}
 
 	f.clock.Advance(time.Hour)
-	u, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)})
+	u, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +301,7 @@ func TestDisableRevokesKeys(t *testing.T) {
 		t.Errorf("IssueKey for disabled user = %v, want ErrDisabled", err)
 	}
 
-	u, err = f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(false)})
+	u, err = f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: new(false)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,13 +327,13 @@ func TestDisableRunsOnDisable(t *testing.T) {
 	}})
 	f.mustCreate(t, "alice", "", "")
 
-	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{DisplayName: ptr("Alice")}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{DisplayName: new("Alice")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(false)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: new(false)}); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff([]string{"alice"}, calls); diff != "" {
@@ -340,7 +341,7 @@ func TestDisableRunsOnDisable(t *testing.T) {
 	}
 
 	fail = errors.New("grants unavailable")
-	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: ptr(true)}); !errors.Is(err, fail) {
+	if _, err := f.svc.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: new(true)}); !errors.Is(err, fail) {
 		t.Errorf("UpdateUser with failing OnDisable = %v, want its error", err)
 	}
 	if u, _ := f.svc.GetUser(ctx, "alice"); u.DisabledAt == nil {
@@ -361,7 +362,7 @@ func TestKeyStatus(t *testing.T) {
 	}
 	// Disabled in the store so bob's key stays unrevoked.
 	bobs, _ := f.mustIssue(t, "bob", nil, 0)
-	if _, err := f.store.UpdateUser(ctx, "bob", func(u *user.User) error { u.DisabledAt = ptr(t0); return nil }); err != nil {
+	if _, err := f.store.UpdateUser(ctx, "bob", func(u *user.User) error { u.DisabledAt = new(t0); return nil }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -514,7 +515,7 @@ func TestScopesFor(t *testing.T) {
 func TestAuthenticate(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})
-	if _, err := f.svc.CreateUser(ctx, user.CreateUserRequest{Handle: "boss", Role: user.RoleAdmin, QuotaBytes: ptr(int64(99))}); err != nil {
+	if _, err := f.svc.CreateUser(ctx, user.CreateUserRequest{Handle: "boss", Role: user.RoleAdmin, QuotaBytes: new(int64(99))}); err != nil {
 		t.Fatal(err)
 	}
 	k, secret := f.mustIssue(t, "boss", []string{auth.ScopeRead, auth.ScopeAdmin}, 0)
@@ -576,7 +577,7 @@ func TestAuthenticateFailures(t *testing.T) {
 	}
 	_, expiringKey := f.mustIssue(t, "alice", nil, time.Hour)
 	_, bobKey := f.mustIssue(t, "bob", nil, 0)
-	if _, err := f.svc.UpdateUser(ctx, "bob", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := f.svc.UpdateUser(ctx, "bob", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	f.clock.Advance(time.Hour) // the expiring key expires exactly now
@@ -763,7 +764,7 @@ func TestResolveIdentity(t *testing.T) {
 	disabled := func(handle, email string) setup {
 		return func(t *testing.T, f *fixture) {
 			f.mustCreate(t, handle, email, "")
-			if _, err := f.svc.UpdateUser(context.Background(), handle, user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+			if _, err := f.svc.UpdateUser(context.Background(), handle, user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 				t.Fatal(err)
 			}
 		}

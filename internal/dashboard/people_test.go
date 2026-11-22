@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -126,13 +127,13 @@ func TestPeopleList(t *testing.T) {
 	e.person("ana", "")
 	e.person("ben", "")
 	ctx := asAdmin()
-	if _, err := e.users.UpdateUser(ctx, "ana", user.UpdateUserRequest{DisplayName: ptr("Ana Sousa"), Email: ptr("ana@example.org"), QuotaBytes: ptr(int64(1 << 20))}); err != nil {
+	if _, err := e.users.UpdateUser(ctx, "ana", user.UpdateUserRequest{DisplayName: new("Ana Sousa"), Email: new("ana@example.org"), QuotaBytes: new(int64(1 << 20))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := e.users.Invite(ctx, user.InviteRequest{Handle: "cara"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(ctx, "ben", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(ctx, "ben", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	e.publish("ana", "report")
@@ -286,7 +287,7 @@ func TestInviteShowsLinkOnce(t *testing.T) {
 func TestInviteFormErrors(t *testing.T) {
 	e := newEnv(t, nil)
 	e.person("boss", user.RoleAdmin)
-	if _, err := e.users.UpdateUser(asAdmin(), "boss", user.UpdateUserRequest{Email: ptr("boss@example.org")}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "boss", user.UpdateUserRequest{Email: new("boss@example.org")}); err != nil {
 		t.Fatal(err)
 	}
 	b := e.signedIn("boss")
@@ -686,10 +687,10 @@ func TestPersonEdit(t *testing.T) {
 	e.person("boss", user.RoleAdmin)
 	e.person("ana", "")
 	e.person("ben", "")
-	if _, err := e.users.UpdateUser(asAdmin(), "ben", user.UpdateUserRequest{Email: ptr("ben@example.org")}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "ben", user.UpdateUserRequest{Email: new("ben@example.org")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: ptr(int64(1234567))}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: new(int64(1234567))}); err != nil {
 		t.Fatal(err)
 	}
 	b := e.signedIn("boss")
@@ -752,7 +753,7 @@ func TestPersonDisableAndEnable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	b := e.signedIn("boss")
@@ -900,9 +901,7 @@ func TestPeopleRefusedChanges(t *testing.T) {
 	for path, form := range changes {
 		for name, bad := range map[string]string{"no form token": "", "a made-up form token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"} {
 			f := url.Values{"form_token": {bad}}
-			for k, v := range form {
-				f[k] = v
-			}
+			maps.Copy(f, form)
 			r := b.postRaw(path, f, e.admin.URL)
 			if r.StatusCode != http.StatusForbidden || !strings.Contains(r.body, "This form has expired") || peopleLinkRE.MatchString(r.body) || peopleKeyRE.MatchString(r.body) {
 				t.Errorf("POST %s with %s: status %d", path, name, r.StatusCode)
@@ -910,9 +909,7 @@ func TestPeopleRefusedChanges(t *testing.T) {
 			unchanged("POST " + path + " with " + name)
 		}
 		f := url.Values{"form_token": {token}}
-		for k, v := range form {
-			f[k] = v
-		}
+		maps.Copy(f, form)
 		if r := b.postRaw(path, f, "https://report.art.test"); r.StatusCode != http.StatusForbidden {
 			t.Errorf("POST %s from a page of an artifact: status %d, want 403", path, r.StatusCode)
 		}
@@ -935,9 +932,7 @@ func TestPeopleRefusedChanges(t *testing.T) {
 	}
 	for path, form := range changes {
 		f := url.Values{"form_token": {token}}
-		for k, v := range form {
-			f[k] = v
-		}
+		maps.Copy(f, form)
 		r := b.postRaw(path, f, e.admin.URL)
 		if r.StatusCode != http.StatusForbidden || !strings.Contains(r.body, "Not an admin") || peopleLinkRE.MatchString(r.body) || peopleKeyRE.MatchString(r.body) {
 			t.Errorf("POST %s after a demotion: status %d: %s", path, r.StatusCode, r.body)
@@ -953,7 +948,7 @@ func TestPeopleHostileNames(t *testing.T) {
 	for i, hostile := range peopleHostile {
 		handle := "mallory" + strconv.Itoa(i)
 		e.person(handle, "")
-		if _, err := e.users.UpdateUser(asAdmin(), handle, user.UpdateUserRequest{DisplayName: &hostile, Email: ptr(hostile + "@example.org")}); err != nil {
+		if _, err := e.users.UpdateUser(asAdmin(), handle, user.UpdateUserRequest{DisplayName: &hostile, Email: new(hostile + "@example.org")}); err != nil {
 			t.Fatal(err)
 		}
 		k, _, err := e.users.IssueKey(ctx, user.IssueKeyRequest{Handle: handle, Label: hostile})
@@ -1103,7 +1098,7 @@ func TestPersonPageReadsOnePerson(t *testing.T) {
 	e.person("boss", user.RoleAdmin)
 	e.person("ana", "")
 	e.publish("ana", "report")
-	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: ptr(int64(1 << 30))}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{QuotaBytes: new(int64(1 << 30))}); err != nil {
 		t.Fatal(err)
 	}
 	b := e.signedIn("boss")
@@ -1184,7 +1179,7 @@ func TestPersonHandOverAsksFirst(t *testing.T) {
 	e.person("ben", "")
 	e.person("gone", "")
 	e.person("idle", "")
-	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+	if _, err := e.users.UpdateUser(asAdmin(), "gone", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()

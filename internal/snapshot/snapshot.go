@@ -323,8 +323,7 @@ func (w *walker) rewriteStylesheet(f *fetch.File, depth int) error {
 
 func reason(err error, u string) string {
 	msg := err.Error()
-	var ae *artifact.Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		msg = ae.Message
 	}
 	return strings.TrimLeft(strings.TrimPrefix(msg, u), ": ")
