@@ -69,6 +69,7 @@
 <dl class="kv">
 {{if .Data.Local}}<dt>Password</dt><dd>{{if .Data.HasPassword}}Set{{else if eq $p.Status "invited"}}Not set yet: they are invited{{else}}Not set{{end}}
 {{if ne $p.Status "disabled"}}<br>{{if .Data.HasPassword}}<a class="link" href="/people/{{$h}}/reset">Create a reset link</a>{{else if eq $p.Status "invited"}}<a class="link" href="/people/{{$h}}/invite">Make a new invite link</a>{{else}}<a class="link" href="/people/{{$h}}/reset">Create a reset link, so they can set one</a>{{end}}{{end}}</dd>
+<dt>Recovery codes</dt><dd>{{if .Data.RecoveryCodes}}{{.Data.RecoveryCodes}} unused{{else}}<span class="soft">None. They make their own on their account page.</span>{{end}}</dd>
 {{range .Data.Pending}}<dt>{{if eq .Purpose "reset"}}Reset link{{else}}Invite link{{end}}</dt><dd>Waiting to be used until {{when .ExpiresAt}} <a class="link link-danger" href="/invites/{{.ID}}/revoke?from=person">Revoke</a></dd>
 {{end}}{{end}}
 <dt>Provider sign-in</dt><dd>{{if .Data.Identities}}<ul class="dash">{{range .Data.Identities}}<li><span class="mono">{{.Subject}}</span> at <span class="mono">{{.Issuer}}</span>{{with .EmailAtLogin}}, as {{.}}{{end}}, last used {{when .LastLoginAt}}

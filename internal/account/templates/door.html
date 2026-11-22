@@ -54,6 +54,32 @@
 {{- end}}
 {{template "theme/door-close" .Host}}{{end}}
 
+{{define "recover"}}{{template "theme/door" (.Door "Use a recovery code")}}
+<h1 class="title">Use a <b>recovery code</b></h1>
+<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.</p>
+{{if eq .Err "wrong"}}<p class="error" role="alert">{{template "icon/alert"}}<span>That name or recovery code was not accepted. A code works once.</span></p>
+{{else if eq .Err "missing"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Enter your handle or email, and a recovery code.</span></p>
+{{else if eq .Err "wait"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
+{{end}}<form class="form" method="post" action="/account/recover">
+<div class="field"><label for="login">Handle or email</label>
+<input class="input" id="login" name="login" type="text" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+<div class="field"><label for="code">Recovery code</label>
+<input class="input input-mono" id="code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="abcd-efgh-ijkl-mnop"></div>
+<div class="field"><label for="password">New password</label>
+<input class="input" id="password" name="password" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="password-help{{if eq .Err "weak"}} password-err{{end}}"{{if eq .Err "weak"}} aria-invalid="true"{{end}}>
+{{if eq .Err "weak"}}<p class="error" id="password-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and {{.MaxLength}} characters.</span></p>
+{{end}}<p class="help" id="password-help">At least {{.MinLength}} characters. Length is the only rule.</p></div>
+<div class="field"><label for="confirm">The same password again</label>
+<input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if eq .Err "mismatch"}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
+{{if eq .Err "mismatch"}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two passwords are not the same. Enter both again.</span></p>
+{{end}}</div>
+<div class="actions"><button type="submit" class="btn btn-primary">Set the password</button></div>
+</form>
+<div class="door-alt">
+<p class="help">No codes left? Ask an admin of this instance for a reset link. Kazari sends no email.</p>
+</div>
+{{template "theme/door-close" .Host}}{{end}}
+
 {{define "link"}}
 {{- if eq .Purpose "setup"}}{{template "theme/door" (.Door "Set up this instance")}}
 <h1 class="title">Set up <b>this instance</b></h1>

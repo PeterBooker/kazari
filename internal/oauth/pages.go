@@ -87,6 +87,7 @@ type signInPage struct {
 	Site     string // origin of an artifact host, in place of Lede
 	Password bool   // the password form; else the API-key form
 	Switch   string // the address of the other form, "" when there is none
+	Recover  string // the recovery-code page, "" when there is none
 	Lifetime string // of a session, e.g. "12 hours"
 	Host     string
 	Path     string

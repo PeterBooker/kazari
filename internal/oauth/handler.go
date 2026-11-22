@@ -49,6 +49,12 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathSignIn, s.serveSignInForm)
 	mux.HandleFunc("GET "+PathSignOut, s.serveSignOutPage)
 	mux.HandleFunc("POST "+PathSignOut, s.serveSignOut)
+	if s.opts.RecoverURL != "" {
+		// The sign-in page links here, so it names no other origin.
+		mux.HandleFunc("GET "+PathRecover, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, s.opts.RecoverURL, http.StatusSeeOther)
+		})
+	}
 	return middleware.Routed(mux)
 }
 

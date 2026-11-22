@@ -219,11 +219,21 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 		}
 	},
 	audit.PasswordSet: func(s *eventLine, e audit.Event) {
-		if e.Details["via"] == "change" {
+		switch e.Details["via"] {
+		case "change":
 			s.words("changed their password")
-			return
+		case "recovery":
+			s.words("set a new password with a recovery code")
+		default:
+			s.words("set a password")
 		}
-		s.words("set a password")
+	},
+	audit.RecoveryCreate: func(s *eventLine, e audit.Event) { s.words("made new recovery codes") },
+	audit.RecoveryUse: func(s *eventLine, e audit.Event) {
+		s.words("used a recovery code")
+		if n := e.Details["left"]; n != "" {
+			s.words(", " + n + " left")
+		}
 	},
 	audit.SessionRevoke: func(s *eventLine, e audit.Event) {
 		n := e.Details["sessions"]

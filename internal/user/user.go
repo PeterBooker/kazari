@@ -63,6 +63,9 @@ var (
 	// ErrLocalOff is a password or a link asked of an instance whose people
 	// sign in elsewhere (Options.LocalAccounts is off).
 	ErrLocalOff = errors.New("user: built-in accounts are off on this instance")
+	// ErrBadRecoveryCode is a refused recovery: an unknown name, a disabled
+	// account, or a code that is wrong or used, never told apart.
+	ErrBadRecoveryCode = errors.New("user: wrong name or recovery code")
 )
 
 // Purpose is what a Link is for.
@@ -101,9 +104,11 @@ type Account struct {
 	Handle      string
 	HasPassword bool
 	// Invited is a person who was sent an invite and has not set a password.
-	Invited         bool
-	Identities      int
-	LiveKeys        int
+	Invited    bool
+	Identities int
+	LiveKeys   int
+	// RecoveryCodes is how many unused recovery codes the person holds.
+	RecoveryCodes   int
 	PasswordLoginAt *time.Time
 	IdentityLoginAt *time.Time
 	KeyUsedAt       *time.Time
@@ -268,6 +273,21 @@ type Store interface {
 	// two people racing for a fresh instance one becomes its admin.
 	// ErrHandleTaken and ErrEmailTaken cannot occur on an empty table.
 	UseLink(ctx context.Context, hash string, at time.Time, passwordHash string, first *User) (*Link, *User, error)
+
+	// ReplaceRecoveryCodes deletes the user's recovery codes and stores
+	// hashes as the new set. ErrNotFound.
+	ReplaceRecoveryCodes(ctx context.Context, handle string, hashes []string, at time.Time) error
+	// HasRecoveryCode reports whether the user holds an unused code with
+	// hash. An unknown user holds none.
+	HasRecoveryCode(ctx context.Context, handle, hash string) (bool, error)
+	// UseRecoveryCode marks the user's unused code with hash used, stores
+	// passwordHash and revokes the user's unused links, in one transaction,
+	// and returns how many unused codes are left. ErrBadRecoveryCode, with
+	// nothing written, for an unknown or disabled user or a code that is
+	// not theirs or is used.
+	UseRecoveryCode(ctx context.Context, handle, hash string, at time.Time, passwordHash string) (left int, err error)
+	// DeleteRecoveryCodes deletes every recovery code of the user.
+	DeleteRecoveryCodes(ctx context.Context, handle string) error
 
 	// ListAccounts returns every user's Account, ordered by handle, with
 	// keys counted as live at now.

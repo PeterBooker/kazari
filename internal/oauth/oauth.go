@@ -337,6 +337,9 @@ type Options struct {
 	// identity provider, turns the password form off; the pages then ask
 	// for an API key.
 	Passwords Passwords
+	// RecoverURL is the page that sets a new password with a recovery code,
+	// which the password form links to; "" leaves the link out.
+	RecoverURL string
 	// ViewCallback returns the URL on an artifact host where a browser
 	// sign-in ends (https://demo.art.example.com/.kazari/callback), given
 	// the host's label, and whether the label names an artifact host. Nil

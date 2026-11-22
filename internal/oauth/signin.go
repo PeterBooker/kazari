@@ -33,6 +33,8 @@ import (
 const (
 	PathSignIn  = "/oauth/signin"
 	PathSignOut = "/oauth/signout"
+	// PathRecover sends a browser on to Options.RecoverURL.
+	PathRecover = "/oauth/recover"
 
 	// The labels of the control hosts. "@" is in no artifact label, so
 	// neither can be mistaken for an artifact host.
@@ -207,6 +209,9 @@ const withKey = "key"
 func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, byKey bool, errMsg string) {
 	p.Password = s.passwords != nil && !(byKey && s.keys != nil)
 	p.Lifetime = lifetime(s.opts.SessionTTL)
+	if s.opts.RecoverURL != "" {
+		p.Recover = PathRecover
+	}
 	p.Error = errMsg
 	if s.passwords != nil && s.keys != nil && p.RequestID == "" {
 		q := url.Values{"host": {p.Host}, "path": {p.Path}, "nonce": {p.Nonce}}

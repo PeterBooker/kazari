@@ -66,6 +66,7 @@
 {{if or .Password .Switch}}<div class="door-alt">
 {{if .Switch}}<a class="link" href="{{.Switch}}">{{if .Password}}Use an API key instead{{else}}Use your password instead{{end}}</a>
 {{end}}{{if and .RequestID .KeyConsent}}<a class="link" href="/oauth/consent?with=key">Use an API key instead</a>
-{{end}}{{if .Password}}<p class="help">No password yet, or lost it? Ask an admin of this instance for a link. Kazari sends no email.</p>
+{{end}}{{if and .Password .Recover}}<a class="link" href="{{.Recover}}">Lost your password? Use a recovery code</a>
+{{end}}{{if .Password}}<p class="help">No password yet, or no recovery code? Ask an admin of this instance for a link. Kazari sends no email.</p>
 {{end}}</div>
 {{end}}{{end}}{{template "theme/door-close" .Foot}}{{end}}

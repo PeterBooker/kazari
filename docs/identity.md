@@ -69,6 +69,8 @@ A built-in account is a user with a password. Built-in accounts are on by defaul
 
 Kazari sends no email. Every step that another product would do by email is a link that an admin copies and sends: an invite for a new person, a reset for a lost password, and the setup link that creates the first admin of a fresh instance ([creating the first admin](install.md#creating-the-first-admin)).
 
+A person who keeps [recovery codes](#recovery-codes) sets a new password themselves, with no admin and no link.
+
 ### Inviting a person
 
 An invite creates the user and a link that lets them choose a password. Invite a person from the dashboard's People page, or with the CLI:
@@ -130,7 +132,7 @@ kazari admin users reset-password ana
 
 Using a reset link sets the new password and signs the person out of every browser. Their API keys and connected apps keep working.
 
-To end those as well, for example when someone else may have used the account, add `--revoke-all`. Using the link then also revokes every API key of the person and disconnects every app:
+To end those as well, for example when someone else may have used the account, add `--revoke-all`. Using the link then also revokes every API key of the person, deletes their recovery codes and disconnects every app:
 
 ```sh
 kazari admin users reset-password ana --revoke-all
@@ -138,18 +140,34 @@ kazari admin users reset-password ana --revoke-all
 
 An instance that used API keys before built-in accounts existed keeps working after an upgrade. The People page and `kazari admin users list` show who has no password yet, and a reset link gives each of them one.
 
+### Recovery codes
+
+Recovery codes let a person set a new password without asking an admin. Each is a single-use code such as `abcd-efgh-ijkl-mnop`, and a set holds 10.
+
+To make a set, open the [account page](#the-account-page), enter the current password under **Recovery codes** and choose **Make recovery codes**. The next page shows the codes once: keep them in a password manager or on paper, apart from the password. Kazari keeps only a hash of each.
+
+Making a new set ends the codes held before. The account page says how many unused codes are left, and so do the person's page in the dashboard and `kazari admin users show`.
+
+#### Using a recovery code
+
+A person who has lost their password opens **Lost your password? Use a recovery code** under the sign-in form, or `https://<base>/account/recover`. The page asks for the handle or email, one code and the new password twice.
+
+Using a code sets the new password and signs the person out of every browser, as a reset link does. The code is used up, and their API keys and connected apps keep working.
+
+Wrong codes slow the next attempt as wrong passwords do, a second at first and never more than a minute. A person with no codes left asks an admin for a [reset link](#resetting-a-password).
+
 ### The account page
 
 Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows:
 
 - their profile: handle, name, email and role, which only an admin changes;
 - their recent sign-ins and the recent security events of the account, such as a changed password, a new key or a reset link an admin made for them, each with who acted, since nobody is told of these by email;
-- the password form, on an instance with built-in accounts;
+- the password form and recovery codes, on an instance with built-in accounts;
 - their API keys, with issue, rotate and revoke;
 - their connected apps, each of which they can disconnect;
 - the pages they own.
 
-On an instance with an identity provider the page has no password form, and everything else is the same.
+On an instance with an identity provider the page has no password form and no recovery codes, and everything else is the same.
 
 #### Changing a password
 
@@ -172,7 +190,7 @@ A person can hold 50 live keys at most, however they are issued. Revoked and exp
 
 ### Moving to an identity provider, or back
 
-To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords stop signing anyone in, and the invite, reset and setup pages answer `404`.
+To move an instance from built-in accounts to an identity provider, add the `auth.oidc` section and restart ([Adding the provider to Kazari](#adding-the-provider-to-kazari)). Built-in accounts then turn off: passwords stop signing anyone in, and the invite, reset, setup and recovery pages answer `404`.
 
 Users, their pages, keys and connected apps stay. A person whose email at the provider is the one on their Kazari user links to it at their first sign-in ([Provisioning policy](#provisioning-policy)).
 

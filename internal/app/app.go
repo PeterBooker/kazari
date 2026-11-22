@@ -329,12 +329,17 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		idp = p
 		a.oidcOn = true
 	}
-	var passwords oauth.Passwords
+	var (
+		passwords  oauth.Passwords
+		recoverURL string
+	)
 	if cfg.LocalAccounts() {
 		passwords = users
+		recoverURL = cfg.ExternalURL("") + "account/recover"
 	}
 	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauth.Options{
 		Passwords:          passwords,
+		RecoverURL:         recoverURL,
 		ControlCallback:    controlCallback(cfg),
 		Issuer:             strings.TrimSuffix(mcpURL, "/"),
 		Resource:           mcpURL,

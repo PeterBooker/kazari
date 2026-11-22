@@ -851,6 +851,7 @@ On `GET /users` and `GET /users/{handle}`, a user also carries how they sign in:
 | ---------------- | -------------------------------------------------------------------------- |
 | `password`       | `true` when the user has set a password                                    |
 | `invited`        | `true` when an invite was made for the user and no password is set yet     |
+| `recovery_codes` | How many unused recovery codes the user holds                              |
 | `keys`           | The number of live API keys                                                |
 | `last_active_at` | The latest of the last password sign-in, sign-in at the identity provider and key use. An identity an admin linked counts from its first sign-in |
 | `sessions`       | The number of browser sessions, on `GET /users/{handle}` only              |
@@ -882,7 +883,7 @@ On an instance with [built-in accounts](identity.md#built-in-accounts), a person
 }
 ```
 
-`POST /users/{handle}/links` makes a link for a user who exists. `purpose` is `invite`, to replace an invite that was lost or has lapsed, or `reset`, for a new password. With `"revoke_all": true`, using a reset link also revokes the user's API keys and OAuth grants. Any other `purpose` is `422`, and a disabled user is `403`.
+`POST /users/{handle}/links` makes a link for a user who exists. `purpose` is `invite`, to replace an invite that was lost or has lapsed, or `reset`, for a new password. With `"revoke_all": true`, using a reset link also revokes the user's API keys and OAuth grants, and deletes their recovery codes. Any other `purpose` is `422`, and a disabled user is `403`.
 
 An invite is for a user who has no password yet. For one who has, `"purpose": "invite"` is `422 invalid_argument`, and the message names the reset link.
 

@@ -40,8 +40,9 @@ type peoplePersonData struct {
 	Local bool
 	Form  peopleForm
 
-	HasPassword bool
-	Pending     []peopleLink // their links that can still be used
+	HasPassword   bool
+	RecoveryCodes int          // unused
+	Pending       []peopleLink // their links that can still be used
 
 	Keys, PastKeys []peopleKey
 	KeyForm        peopleKeyForm
@@ -102,7 +103,7 @@ func (s *server) peoplePersonData(ctx context.Context, c *request, u *user.User)
 		Form:        peopleForm{Name: u.DisplayName, Email: u.Email, Role: string(u.Role), Quota: peopleQuotaText(u.QuotaBytes)},
 		KeyForm:     newPeopleKeyForm(u),
 		MaxKeyDays:  s.maxKeyDays(),
-		HasPassword: acc.HasPassword,
+		HasPassword: acc.HasPassword, RecoveryCodes: acc.RecoveryCodes,
 	}
 	links, err := s.peopleLinks(ctx)
 	if err != nil {

@@ -806,7 +806,9 @@ The actions, with the details each records:
 | `invite.create`       | Invite, reset or setup link made (`id`, `purpose`, `expires_at`; `handle` unless `setup`; `revoke_all` when set) |
 | `invite.use`          | Link used to set a password (the same details)                       |
 | `invite.revoke`       | Link revoked before it was used (the same details)                   |
-| `password.set`        | Password set (`handle`, `via: invite`, `reset`, `setup` or `change`) |
+| `password.set`        | Password set (`handle`, `via: invite`, `reset`, `setup`, `change` or `recovery`) |
+| `recovery.create`     | A new set of recovery codes made, ending the old one (`handle`, `codes`) |
+| `recovery.use`        | A recovery code used to set a password (`handle`, `left`)            |
 | `backup.create`       | Backup written (`files`, `bytes`; `certificates` is `true` when the archive holds `certmagic/`) |
 | `audit.export`        | The log exported as CSV from the dashboard                           |
 | `share_link.create`   | Share link created (`prefix`, `expires_at`)                          |

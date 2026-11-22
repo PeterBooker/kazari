@@ -1,14 +1,16 @@
 // Package account serves the pages a person opens for themselves, on the
 // apex under /account/: the three link pages that set a password (the
-// first-run setup, an invite, a reset) and the account page with its
-// password, API keys and connected apps.
+// first-run setup, an invite, a reset), the page that sets one with a
+// recovery code, and the account page with its password, recovery codes,
+// API keys and connected apps.
 //
 // A link page needs no session: the link is the credential. Opening one
 // consumes nothing; the token moves from the address into a short-lived
 // cookie, and the form's POST uses it up. The account page needs the
 // session of the apex, which the sign-in host opens as it does for any
 // other host, and every form of it carries the session's token. A new key
-// is the one thing rendered in the answer to a POST, once.
+// and a new set of recovery codes are the things rendered in the answer to a
+// POST, once.
 package account
 
 import (
@@ -127,8 +129,9 @@ type server struct {
 	assets theme.Assets
 	host   string // of Options.URL, shown at the foot of a page
 	// linkCSP is the policy of a link's form, whose submission goes on to
-	// the sign-in host or the dashboard.
-	linkCSP string
+	// the sign-in host or the dashboard; recoverCSP that of the recovery
+	// form, whose submission goes on to the sign-in host.
+	linkCSP, recoverCSP string
 
 	// linkDelay counts wrong link tokens per client address; the other two
 	// count wrong current passwords per account and per address.
@@ -165,6 +168,7 @@ func New(d Deps, o Options) http.Handler {
 		s.host = u.Host
 	}
 	s.linkCSP = formAction(middleware.PageCSP, o.SignInURL, o.AdminURL)
+	s.recoverCSP = formAction(middleware.PageCSP, o.SignInURL)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET "+assetPrefix, theme.Handler(assetPrefix))
@@ -178,6 +182,9 @@ func New(d Deps, o Options) http.Handler {
 			handle("POST "+Prefix+string(p), s.redeemLink(p))
 		}
 		handle("POST "+Prefix+"password", s.signedIn(s.changePassword))
+		handle("POST "+Prefix+"recovery-codes", s.signedIn(s.once(s.newRecoveryCodes)))
+		handle("GET "+Prefix+"recover", s.recoverPage)
+		handle("POST "+Prefix+"recover", s.recover)
 	}
 	handle("POST "+Prefix+"sessions/end", s.signedIn(s.endSessions))
 	handle("GET "+CallbackPath, s.callback)

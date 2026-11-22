@@ -20,7 +20,7 @@ import (
 // lists, theirs and an admin's alike: nobody is told of them by email, so
 // here is where they show.
 var securityActions = []string{
-	oauth.ActionSignIn, audit.PasswordSet, "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
+	oauth.ActionSignIn, audit.PasswordSet, "recovery.", "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
 	"invite.", audit.UserCreate, audit.UserUpdate,
 }
 
@@ -70,12 +70,14 @@ type accountPageData struct {
 	KeyPrefix  string
 	MinLength  int
 	MaxKeyDays int // 0 = no limit
-	SignIns    []audit.Event
-	Events     []audit.Event
-	Keys       []keyRow // live
-	OldKeys    []keyRow // revoked or expired
-	Apps       []appRow
-	Pages      []pageRow
+	// RecoveryCodes is how many unused recovery codes the person holds.
+	RecoveryCodes int
+	SignIns       []audit.Event
+	Events        []audit.Event
+	Keys          []keyRow // live
+	OldKeys       []keyRow // revoked or expired
+	Apps          []appRow
+	Pages         []pageRow
 	// Err names what is wrong with a field; Seconds is the wait of
 	// Err["current"] == "wait".
 	Err     map[string]string
@@ -99,6 +101,14 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 	d.MinLength = s.d.Users.MinPasswordLength()
 	d.MaxKeyDays = int(s.o.MaxKeyTTL / (24 * time.Hour))
 
+	if d.Local {
+		acc, err := s.d.Users.Account(ctx, v.user.Handle)
+		if err != nil {
+			s.fail(w, r, "load account", err)
+			return
+		}
+		d.RecoveryCodes = acc.RecoveryCodes
+	}
 	keys, err := s.keys(ctx, v.user.Handle)
 	if err != nil {
 		s.fail(w, r, "list keys", err)

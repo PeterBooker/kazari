@@ -316,7 +316,8 @@ const accountSelect = `SELECT u.handle, p.user_id IS NOT NULL, p.last_login_at,
 		(SELECT MAX(k.last_used_at) FROM api_key k WHERE k.user_id = u.id),
 		(SELECT COUNT(*) FROM api_key k WHERE k.user_id = u.id AND k.revoked_at IS NULL
 			AND (k.expires_at IS NULL OR k.expires_at > ?)),
-		EXISTS (SELECT 1 FROM invite v WHERE v.user_id = u.id AND v.purpose = 'invite' AND v.used_at IS NULL)
+		EXISTS (SELECT 1 FROM invite v WHERE v.user_id = u.id AND v.purpose = 'invite' AND v.used_at IS NULL),
+		(SELECT COUNT(*) FROM recovery_code c WHERE c.user_id = u.id AND c.used_at IS NULL)
 	FROM user u LEFT JOIN user_password p ON p.user_id = u.id`
 
 func scanAccount(row userRowScanner, a *user.Account) error {
@@ -324,7 +325,7 @@ func scanAccount(row userRowScanner, a *user.Account) error {
 		password, identity, key sql.NullInt64
 		invited                 bool
 	)
-	if err := row.Scan(&a.Handle, &a.HasPassword, &password, &identity, &a.Identities, &key, &a.LiveKeys, &invited); err != nil {
+	if err := row.Scan(&a.Handle, &a.HasPassword, &password, &identity, &a.Identities, &key, &a.LiveKeys, &invited, &a.RecoveryCodes); err != nil {
 		return err
 	}
 	a.Invited = invited && !a.HasPassword

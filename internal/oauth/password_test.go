@@ -59,7 +59,8 @@ func TestSignInWithPassword(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `name="password"`) || strings.Contains(body, `name="api_key"`) {
 		t.Fatalf("sign-in page: status %d: %s", resp.StatusCode, body)
 	}
-	for _, want := range []string{`autocomplete="current-password"`, `autocomplete="username"`, "Use an API key instead", "with=key", "https://demo.art.test"} {
+	for _, want := range []string{`autocomplete="current-password"`, `autocomplete="username"`, "Use an API key instead", "with=key", "https://demo.art.test",
+		`href="/oauth/recover"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sign-in page lacks %q", want)
 		}
@@ -85,6 +86,9 @@ func TestSignInWithPassword(t *testing.T) {
 	ev := e.rec.actions(oauth.ActionSignIn)
 	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != "password" || ev[0].Details["key_prefix"] != "" {
 		t.Fatalf("sign-in audit = %+v", ev)
+	}
+	if resp, _ := e.get(oauth.PathRecover); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "https://art.test/account/recover" {
+		t.Errorf("recovery link: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	// The browser is signed in: the next host needs no form.
 	resp, _ = e.get(signInQuery("other", "/"))

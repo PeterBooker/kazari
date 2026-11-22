@@ -519,7 +519,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 | Command                                                                 | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `admin users list`                                                      | List users with usage, quota, state (`active`, `invited` or `disabled`) and last activity |
-| `admin users show <handle>`                                             | One user: whether a password is set, live keys, browser sessions and last activity |
+| `admin users show <handle>`                                             | One user: whether a password is set, unused recovery codes, live keys, browser sessions and last activity |
 | `admin users create <handle> [--email E] [--name N] [--role member\|admin] [--quota 500MiB]` | Create a user                        |
 | `admin users invite <handle> [--email E] [--name N] [--role R] [--quota Q] [--replace]` | Create a user and print the link that lets them set a password; `--replace` prints a new link for an existing user |
 | `admin users reset-password <handle> [--revoke-all]`                    | Print a link that lets a user set a new password            |
@@ -597,7 +597,7 @@ Each prints the link alone on stdout, and on stderr a line saying it works once 
 
 - `invite` creates the user and their invite link. The flags are those of `users create`.
 - `invite --replace` is for a user who has not set a password yet. For a user who has one it fails with `invalid_argument`, and `reset-password` is the command to use.
-- `reset-password` is for a user who exists. With `--revoke-all`, using the link also revokes the user's API keys and disconnects their apps.
+- `reset-password` is for a user who exists. With `--revoke-all`, using the link also revokes the user's API keys, deletes their recovery codes and disconnects their apps.
 - `setup-link` works only while the instance has no user, and fails with `setup_done` afterwards.
 
 To see the links that still work, or end one before it is used:

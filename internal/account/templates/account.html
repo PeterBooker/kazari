@@ -3,7 +3,9 @@
 {{define "event"}}
 {{- $d := .Details -}}
 {{- if eq .Action "oauth.signin"}}Signed in {{if eq (index $d "via") "password"}}with the password{{else if eq (index $d "via") "api_key"}}with the API key <span class="mono">{{index $d "key_prefix"}}</span>{{else}}at the identity provider{{end}}
-{{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Password changed{{else if eq (index $d "via") "reset"}}New password set through a reset link{{else}}First password set{{end}}
+{{- else if eq .Action "password.set"}}{{if eq (index $d "via") "change"}}Password changed{{else if eq (index $d "via") "reset"}}New password set through a reset link{{else if eq (index $d "via") "recovery"}}New password set with a recovery code{{else}}First password set{{end}}
+{{- else if eq .Action "recovery.create"}}New recovery codes made; earlier ones stopped working
+{{- else if eq .Action "recovery.use"}}Recovery code used; {{if eq (index $d "left") "1"}}one is{{else}}{{index $d "left"}} are{{end}} left
 {{- else if eq .Action "invite.use"}}{{if eq (index $d "purpose") "reset"}}Reset link used{{else if eq (index $d "purpose") "setup"}}Setup link used{{else}}Invite link used{{end}}
 {{- else if eq .Action "invite.create"}}{{if eq (index $d "purpose") "reset"}}Password reset link made{{if index $d "revoke_all"}}; using it also ends every key and app{{end}}{{else}}Invite link made{{end}}
 {{- else if eq .Action "invite.revoke"}}{{if eq (index $d "purpose") "reset"}}Password reset link revoked{{else}}Invite link revoked{{end}}
@@ -31,6 +33,7 @@
 </header>
 
 {{if eq .Flash "password-set"}}<p class="flash status tone-ok" role="status">Your password is set.</p>
+{{else if eq .Flash "password-recovered"}}<p class="flash status tone-ok" role="status">Your new password is set, and the recovery code is used up. Every other browser was signed out.</p>
 {{else if eq .Flash "password-changed"}}<p class="flash status tone-ok" role="status">Your password is changed. Every other browser was signed out.</p>
 {{else if eq .Flash "sessions-ended"}}<p class="flash status tone-ok" role="status">Every other browser is signed out. This one stays signed in.</p>
 {{else if eq .Flash "key-revoked"}}<p class="flash status tone-ok" role="status">The key is revoked, with every key issued with it and every app approved with one of them.</p>
@@ -92,8 +95,27 @@
 </form>
 <ul class="dash soft">
 <li>Changing it signs you out of every other browser. Your API keys and connected apps keep working.</li>
-<li>Lost it? An admin of this instance makes a reset link. Kazari sends no email.</li>
+<li>Lost it? Use one of your recovery codes, or ask an admin of this instance for a reset link. Kazari sends no email.</li>
 </ul>
+</section>
+
+<section class="box section" aria-labelledby="recovery-h">
+<h2 class="h2" id="recovery-h">Recovery codes</h2>
+<p>{{if eq .RecoveryCodes 0}}You hold no recovery codes.{{else if eq .RecoveryCodes 1}}You hold one unused recovery code.{{else}}You hold {{.RecoveryCodes}} unused recovery codes.{{end}} A code sets a new password when you have lost yours, without asking an admin. Each works once.</p>
+<form class="form-grid" method="post" action="/account/recovery-codes">
+<input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="once" value="{{.Once}}">
+<input type="text" name="username" value="{{.User.Handle}}" autocomplete="username" hidden>
+<div class="field span-2"><label for="recovery-current">Current password</label>
+<input class="input" id="recovery-current" name="current" type="password" autocomplete="current-password" required aria-describedby="recovery-help{{if .Err.recovery}} recovery-err{{end}}"{{if .Err.recovery}} aria-invalid="true"{{end}}>
+{{if eq .Err.recovery "wrong"}}<p class="error" id="recovery-err">{{template "icon/alert"}}<span>That is not your current password. No codes were made.</span></p>
+{{else if eq .Err.recovery "wait"}}<p class="error" id="recovery-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
+{{end}}<p class="help" id="recovery-help">Making codes asks for your password again, so a browser left signed in cannot make them.</p></div>
+<div class="actions"><button type="submit" class="btn">{{if .RecoveryCodes}}Make new recovery codes{{else}}Make recovery codes{{end}}</button></div>
+</form>
+<ul class="dash soft">
+<li>You see the codes once. Keep them in a password manager or on paper, apart from your password.</li>
+{{if .RecoveryCodes}}<li>New codes replace the ones you hold, which stop working.</li>
+{{end}}</ul>
 </section>
 {{end}}
 
@@ -265,6 +287,33 @@ kazari me</code></pre>
 </section>
 
 <div class="actions"><a class="btn" href="/account/">I have copied it</a></div>
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "recovery"}}{{template "theme/shell" (.Shell "Recovery codes" "Account" "Your account")}}
+<div class="page page-narrow">
+
+<header class="head">
+<p class="crumb"><a href="/account/">Account</a> / Recovery codes</p>
+<div class="head-row">
+<h1 class="title">Your <b>recovery codes</b></h1>
+</div>
+<p class="lede">Save them now. Kazari keeps no copy, and after you leave this page they cannot be shown again. Any codes you held before have stopped working.</p>
+</header>
+
+<section class="box section" aria-labelledby="codes-h">
+<h2 class="h2" id="codes-h">The codes, shown once</h2>
+<div class="snippet"><pre><code id="codes">{{range $i, $c := .Codes}}{{if $i}}
+{{end}}{{$c}}{{end}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="codes" hidden>Copy the codes</button></div>
+<ul class="dash soft">
+<li>Each code works once. With one, the page <a class="link" href="/account/recover">Use a recovery code</a> sets a new password for you, and signs you out of every browser.</li>
+<li>Keep them apart from your password: in a password manager's notes, or printed.</li>
+</ul>
+</section>
+
+<div class="actions"><a class="btn" href="/account/">I have saved them</a></div>
 
 </div>
 {{template "theme/shell-close"}}{{end}}

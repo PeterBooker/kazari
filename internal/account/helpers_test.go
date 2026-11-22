@@ -415,6 +415,7 @@ var (
 	inlineScript = regexp.MustCompile(`<script(?:\s[^>]*)?>\s*[^<\s]`)
 	assetRef     = regexp.MustCompile(`<(?:link|script|img)\b[^>]*\b(?:href|src)="([^"]*)"`)
 	linkPath     = regexp.MustCompile(`^/account/(invite|reset|setup)$`)
+	recoverPath  = regexp.MustCompile(`^/account/recover$`)
 )
 
 // checkPage holds every response of the apex to the rules of its pages: the
@@ -447,6 +448,10 @@ func checkPage(e *env, resp *http.Response, body string) {
 	}
 	csp := resp.Header.Get("Content-Security-Policy")
 	want := middleware.PageCSP
+	if recoverPath.MatchString(resp.Request.URL.Path) && strings.Contains(body, "<form") {
+		// The recovery form ends on the sign-in host.
+		want = strings.Replace(want, "form-action 'self'", "form-action 'self' "+e.mcp.URL, 1)
+	}
 	if linkPath.MatchString(resp.Request.URL.Path) && strings.Contains(body, "<form") && strings.Contains(body, `name="password"`) {
 		// A link's form ends on the sign-in host or the dashboard, and only
 		// form-action is widened for it.

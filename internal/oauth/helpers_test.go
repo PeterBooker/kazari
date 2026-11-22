@@ -192,6 +192,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		ViewCallback:       viewCallback,
 		ControlCallback:    controlCallback,
 		Passwords:          passwords,
+		RecoverURL:         recoverURL(passwords),
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()
@@ -203,6 +204,14 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return e
+}
+
+// recoverURL is the recovery page of an instance with built-in accounts.
+func recoverURL(p oauth.Passwords) string {
+	if p == nil {
+		return ""
+	}
+	return "https://art.test/account/recover"
 }
 
 // viewCallback knows the artifact hosts demo, demo--v2 and other under
