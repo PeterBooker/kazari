@@ -61,14 +61,17 @@ func newTexts(links present.Links, o Options) texts {
 		"or links to the latest URL. Only static files are served: no server-side code runs.",
 		t.pageURL, t.versionURL)
 
-	t.csp = describeCSP(o.CSP)
+	t.csp = describeCSP(o.CSP, o.AllowCSPOverride)
 
-	t.metadata = fmt.Sprintf("Metadata is a string map. Keys the server interprets: %s=\"true\" serves index.html for any "+
-		"missing path without a file extension (client-side routing); %s=\"true\" lets search engines index the page "+
-		"(the default sends X-Robots-Tag: noindex); %s replaces the Content-Security-Policy for this artifact when the "+
-		"instance allows overrides. Any other key (letters, digits, \"_\", \".\", \"-\", at most 64 characters) is a "+
+	cspKey := ""
+	if o.AllowCSPOverride {
+		cspKey = fmt.Sprintf("; %s adds sources to the policy (see Content-Security-Policy)", artifact.MetaCSP)
+	}
+	t.metadata = fmt.Sprintf("Metadata is a string map. Server keys: %s=\"true\" serves index.html for any missing path "+
+		"without a file extension (client-side routing); %s=\"true\" lets search engines index the page (the default "+
+		"sends X-Robots-Tag: noindex)%s. Any other key (letters, digits, \"_\", \".\", \"-\", at most 64 characters) is a "+
 		"free-form label that list_artifacts can filter on.",
-		artifact.MetaSPA, artifact.MetaIndexable, artifact.MetaCSP)
+		artifact.MetaSPA, artifact.MetaIndexable, cspKey)
 
 	t.visibility = fmt.Sprintf("visibility is \"public\" (served to anyone, listed), \"unlisted\" (served to anyone "+
 		"with the URL, not listed) or \"members\" (only people who sign in to this Kazari instance, and holders of a "+
@@ -76,24 +79,24 @@ func newTexts(links present.Links, o Options) texts {
 		"by its URL alone, so use \"members\" for anything not meant for the open web. Giving visibility needs the "+
 		"artifacts:share scope; a connection without it leaves visibility out.", o.DefaultVisibility)
 
-	t.inline = fmt.Sprintf("Inline files: give each file in files[] as {path, content, encoding, content_type}; encoding is "+
-		"\"utf8\" (default, for text) or \"base64\" (for binary). When any single file or all files together exceed %s, "+
-		"do not inline them: call begin_upload, stage the content (upload_chunk, or an archive sent to archive_url), "+
-		"then pass upload_id here. Inline files[] given in the same call are merged with the staged files and win on a "+
-		"path clash. Only a call that succeeds consumes the upload: after an error, fix the call and send it again with "+
-		"the same upload_id.",
-		size(o.InlineGuidanceBytes))
-
-	t.archive = fmt.Sprintf("With a shell: 1) From inside the page's directory, zip -r ../site.zip . (or tar czf "+
-		"../site.tar.gz .), so paths start at the page root. 2) begin_upload with archive_sha256 (sha256sum site.zip) "+
-		"and archive_bytes (wc -c < site.zip); the archive may be at most %s. 3) curl --fail-with-body -T site.zip "+
-		"'<archive_url>': the URL needs no credential, accepts only a body with that digest, and is spent by the first "+
-		"one that matches; after %d bodies that do not, the upload is removed. 4) create_artifact or update_artifact "+
-		"with upload_id. If curl cannot reach the host, the sandbox's network policy blocks it: tell the user, and "+
-		"fall back to upload_chunk.", size(o.MaxTotalBytes), upload.MaxArchiveAttempts)
+	t.inline = fmt.Sprintf("Files: each files[] entry is {path, content, encoding, content_type}; encoding is \"utf8\" "+
+		"(default) or \"base64\" for binary files (a data: URL prefix is stripped; base64 sent without encoding is "+
+		"refused for image, font, PDF, archive and media files). Inline content is for text you write yourself. A file "+
+		"already on disk goes through begin_upload and archive_url whatever its size; without a shell, content above %s "+
+		"goes through begin_upload and upload_chunk. Then pass upload_id here; inline files[] in the same call win on a "+
+		"path clash. Only a call that succeeds consumes the upload: after an error, fix the call and resend it with the "+
+		"same upload_id.", size(o.InlineGuidanceBytes))
 	if o.Fetch {
 		t.inline += " " + urlFile
 	}
+
+	t.archive = fmt.Sprintf("With a shell: 1) From inside the page's directory, zip -r ../site.zip . (or tar czf "+
+		"../site.tar.gz .), so paths start at the page root; a single file goes the same way (zip ../logo.zip logo.png). "+
+		"2) begin_upload with archive_sha256 (sha256sum site.zip) and archive_bytes (wc -c < site.zip); the archive may "+
+		"be at most %s. 3) curl --fail-with-body -T site.zip '<archive_url>': the URL needs no credential, accepts only "+
+		"a body with that digest, and is spent by the first one that matches; after %d bodies that do not, the upload "+
+		"is removed. 4) create_artifact or update_artifact with upload_id. If curl cannot reach the host, the sandbox's "+
+		"network policy blocks it: tell the user, and fall back to upload_chunk.", size(o.MaxTotalBytes), upload.MaxArchiveAttempts)
 
 	t.chunks = fmt.Sprintf("Offset rule: the first chunk of each path has offset 0; every next chunk's offset is the "+
 		"bytes_received returned by the previous chunk of that path. Each chunk is at most %s after base64 decoding "+
@@ -111,15 +114,18 @@ func newTexts(links present.Links, o Options) texts {
 	// How the tools fit together; each tool's own description says what it does.
 	t.instructions = fmt.Sprintf("Kazari hosts static web pages at %s (the published version) and %s (version N). "+
 		"Work in this order:\n"+
-		"- New page: create_artifact, then report the url from the result to the user.\n"+
+		"- New page: create_artifact, then report the url from the result to the user. If the result has warnings, "+
+		"the page will not render as written: fix them.\n"+
 		"%s"+
 		"- Change a page: edit_file with text edits (old_text copied from the file) and expected_version set to the "+
 		"latest_version you last saw, from the create, edit or read result. Read first only when you have not seen the "+
 		"current text, and once you know where the change is, read just that window with start_line and end_line; ask "+
-		"for anchors only for anchor edits. On version_conflict or anchor_mismatch, read again and redo the edit; never "+
-		"resend it unchanged. update_artifact adds, replaces or deletes whole files.\n"+
-		"- Content above %s: begin_upload, then upload_chunk for each file or, with a shell, one archive sent to "+
-		"archive_url; then create_artifact or update_artifact with upload_id.\n"+
+		"for anchors only for anchor edits. Send every edit to one file in one call, and never call edit_file in "+
+		"parallel on one artifact. A change across files is one update_artifact call, with files[].edits or whole files. "+
+		"On version_conflict or anchor_mismatch, follow the error: resend as it says, or read again and redo the edit. "+
+		"After a rollback, a change needs base_version.\n"+
+		"- Files on disk, or content above %s: begin_upload, then one archive sent to archive_url with a shell, or "+
+		"upload_chunk for each file; then create_artifact or update_artifact with upload_id.\n"+
 		"- Taking a page down: prefer set_visibility \"unpublished\" or mark_stale to delete_artifact, and ask the user "+
 		"before delete_artifact with hard: true. update_artifact with restore: true undoes a soft delete.\n"+
 		"- Sharing a \"members\" page with someone who cannot sign in to this instance: create_share_link, then give "+
@@ -140,10 +146,17 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 	if o.APIBaseURL != "" {
 		dl = o.APIBaseURL + "/artifacts/<slug>/files/<path>?version=N"
 	}
+	const sameAsCreate = "Slug rules, limits, Content-Security-Policy, metadata, files and text fields: as in the " +
+		"create_artifact description."
+	const baseVersion = "base_version: the version the change builds on; omitted, the latest. While an earlier version " +
+		"is published (after a rollback) it is required, and the call fails with published_not_latest without it: ask " +
+		"the user whether to change the published version or the latest."
 	return map[string]string{
 		"create_artifact": strings.Join([]string{
 			fmt.Sprintf("Create a new artifact (a static web page or site) and publish it as version 1 at %s. "+
-				"Returns url, version, latest_version and the artifact's state; report the url to the user.", t.pageURL),
+				"Returns url, version, version_url, latest_version and the artifact's state; report the url to the user. "+
+				"warnings, when present, name what will stop the page from rendering as published (no index.html, "+
+				"a missing file, an origin the policy blocks): fix them with update_artifact.", t.pageURL),
 			t.slugRules, t.limits, t.serving, t.csp, t.metadata, t.inline,
 			t.visibility,
 			"label is an optional note on the version.",
@@ -170,60 +183,58 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 				"around the landmark's line with read_file start_line and end_line first.",
 			"A page behind a login, a CAPTCHA or bot protection fails with fetch_failed: ask the user to save it from " +
 				"their browser and publish the files instead.",
-			t.slugRules, t.visibility, t.limits,
-			"label is an optional note on the version.",
-			t.text,
+			"Slug rules, visibility, limits and text fields: as in the create_artifact description. label is an " +
+				"optional note on the version.",
 		}, "\n\n"),
 
 		"update_artifact": strings.Join([]string{
-			fmt.Sprintf("Update an existing artifact. With files (or upload_id) it adds a new version that is published "+
-				"at once at %s: files[] entries add or replace paths, {path, delete: true} removes a path, and every file "+
-				"not mentioned carries over from the latest version. Without files only the fields change and no version "+
-				"is added.", t.pageURL),
-			"name, description and visibility (\"public\", \"unlisted\" or \"members\") replace the stored values when " +
-				"given; visibility needs the artifacts:share scope. metadata is merged into the stored map; a key set to " +
-				"null is deleted.",
-			"expected_version: pass the latest_version you last saw (from a previous result, or get_artifact). If " +
-				"someone published since, the call fails with version_conflict and changes nothing; fetch the artifact " +
-				"again, re-apply your change and retry. Omit it to skip the check.",
+			fmt.Sprintf("Update an existing artifact. With files (or upload_id) it adds one new version, published at "+
+				"once at %s: a files[] entry with content (or url) adds or replaces a path, {path, edits} changes a text "+
+				"file with edits as in edit_file, and {path, delete: true} removes a path; every file not mentioned "+
+				"carries over. Use edits per file for a change across files, so one call makes one version. Without files "+
+				"only the fields change and no version is added; when the files match the latest version, the result says "+
+				"unchanged and no version is added.", t.pageURL),
+			"name, description and visibility (\"public\", \"unlisted\", \"members\" or \"unpublished\", as in " +
+				"set_visibility) replace the stored values when given; visibility needs the artifacts:share scope. " +
+				"metadata is merged into the stored map; a key set to null is deleted.",
+			"expected_version: pass the latest_version you last saw. If someone published since, the call fails with " +
+				"version_conflict and changes nothing. Omit it to skip the check. " + baseVersion,
 			"restore: true brings back a soft-deleted artifact (get_artifact shows deleted_at) and then applies the " +
-				"other changes; without it a soft-deleted artifact is not_found. It also clears a stale mark unless keep_stale " +
-				"is true.",
+				"other changes; without it a soft-deleted artifact is not_found. A new version, or a restore, clears a " +
+				"pending stale mark unless keep_stale is true.",
 			"To make the new version hold exactly a set of files, list the latest version's paths with get_artifact " +
-				"and include_files, and add {path, delete: true} for each path not in the set. A change that spans " +
-				"several files is atomic only in one update_artifact call with the whole files; edit_file publishes " +
-				"each file as its own version.",
-			"A new version clears a pending stale mark unless keep_stale is true.",
-			t.text, t.limits, t.csp, t.metadata, t.inline,
+				"and include_files, and add {path, delete: true} for each path not in the set.",
+			sameAsCreate,
 		}, "\n\n"),
 
 		"edit_file": strings.Join([]string{
 			fmt.Sprintf("Change one text file of an artifact with edits and publish the result as a new version at %s; "+
-				"every other file carries over from the latest version. Prefer it to update_artifact for a change inside "+
-				"a file: only the changed text is sent.", t.pageURL),
+				"every other file carries over. Prefer it to update_artifact for a change inside one file: only the "+
+				"changed text is sent. Send every edit to the file in one call, and never call edit_file in parallel on "+
+				"one artifact: each call makes a version, and the next one fails with version_conflict. For several "+
+				"files, use update_artifact with edits per file.", t.pageURL),
 			"Text edits (the default): {old_text, new_text}. old_text is copied exactly from the file and must match once (add " +
 				"surrounding lines, or set replace_all). If it does not match exactly, whole lines are compared ignoring " +
 				"trailing whitespace, then ignoring indentation (new_text is re-indented to fit); each edit's match in the " +
-				"result says which was used. Edits apply in order. A miss names the closest lines with their anchors.",
+				"result says which was used. Edits apply in order. new_text omitted or empty deletes. A miss names the " +
+				"closest lines with their anchors.",
 			"Anchor edits: {start, end, new_text} with anchors (\"12:3fa0\") from read_file with anchors: true or from an " +
 				"earlier edit's excerpt. The lines from start to end (inclusive; end defaults to start) are replaced by " +
-				"new_text; empty new_text deletes them. {after, new_text} or {before, new_text} inserts new_text as new " +
-				"lines after or before the anchored line, which stays as it is. All anchors in a call refer to the file " +
-				"as read and must not overlap; a line that changed fails with anchor_mismatch and nothing is written. " +
-				"Anchors cost a read and pay off only when you do not have the exact text of a long block you replace, " +
-				"when the text repeats in the file, or after a text edit missed; otherwise text edits are cheaper and as " +
-				"safe, since expected_version already stops an edit against changed content.",
+				"new_text. {after, new_text} or {before, new_text} inserts new_text as new lines after or before the " +
+				"anchored line. All anchors in a call refer to the file as read and must not overlap; a line that changed " +
+				"fails with anchor_mismatch and nothing is written. Anchors cost a read and pay off only when you do not " +
+				"have the exact text of a long block, when the text repeats in the file, or after a text edit missed.",
 			fmt.Sprintf("One call takes text edits or anchor edits, not both, at most %d. expected_version: the "+
-				"latest_version you last saw, from the create, edit or read result; if someone published since, the call "+
-				"fails with version_conflict and changes nothing. Without it, edits that still apply are applied to the "+
-				"newest content.", artifact.MaxEdits),
-			fmt.Sprintf("The result has the new version and latest_version and, per edit, start_line, end_line and an "+
-				"anchored excerpt of the new text with %d lines around it, so a follow-up anchor edit needs no new read. "+
-				"In a new text of more than %d lines that you sent as is, the lines between its first and last are bare "+
-				"anchors (\"9:395c\"), since you have their text. Edits whose excerpts would overlap share one: "+
-				"excerpt_of names the edit that holds it. A new version clears a pending stale mark unless keep_stale "+
-				"is true.", artifact.ExcerptContext, artifact.ExcerptFullLines),
-			t.limits,
+				"latest_version you last saw; if someone published since, the call fails with version_conflict, which "+
+				"says whether every edit still applies to the newer version and the number to resend with. Without it, "+
+				"edits that still apply are applied to the newest content. %s", artifact.MaxEdits, baseVersion),
+			fmt.Sprintf("The result has the new version, version_url, latest_version, warnings when the page will not "+
+				"render as written and, per edit, start_line, end_line and an anchored excerpt of the new text with %d "+
+				"lines around it, so a follow-up anchor edit needs no new read. In a new text of more than %d lines that "+
+				"you sent as is, the lines between its first and last are bare anchors (\"9:395c\"). Edits whose excerpts "+
+				"would overlap share one: excerpt_of names the edit that holds it. A new version clears a pending stale "+
+				"mark unless keep_stale is true. Limits: as in the create_artifact description.",
+				artifact.ExcerptContext, artifact.ExcerptFullLines),
 		}, "\n\n"),
 
 		"get_guide": "Return the guide to this Kazari instance: the workflow, how to edit files, the authoring " +
@@ -232,16 +243,14 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"if your client has not loaded that skill.",
 
 		"begin_upload": strings.Join([]string{
-			fmt.Sprintf("Start an upload, for content too large to inline (any file, or all files together, above %s). "+
-				"Returns upload_id, expires_at, max_chunk_bytes and max_total_bytes, and with archive_sha256 and "+
-				"archive_bytes also archive_url.", size(o.InlineGuidanceBytes)),
-			"Without a shell: 1) begin_upload. 2) For each file call upload_chunk with offset 0, then with offset = the " +
-				"bytes_received of the previous chunk, until the whole file is sent. 3) Call create_artifact or " +
-				"update_artifact with upload_id (plus any small inline files or delete entries).",
+			fmt.Sprintf("Start an upload, for files already on disk (any size) and content too large to inline (any "+
+				"file, or all files together, above %s). Returns upload_id, expires_at, max_chunk_bytes and "+
+				"max_total_bytes, and with archive_sha256 and archive_bytes also archive_url.", size(o.InlineGuidanceBytes)),
 			t.archive,
+			"Without a shell: 1) begin_upload. 2) upload_chunk for each file, following its offset rule. 3) " +
+				"create_artifact or update_artifact with upload_id (plus any small inline files or delete entries).",
 			"Only a publishing call that succeeds consumes the upload; after an error, correct the call and send it " +
 				"again with the same upload_id. discard_upload drops an upload you no longer need; unused ones expire at expires_at.",
-			t.chunks,
 		}, "\n\n"),
 
 		"discard_upload": "Discard an upload started with begin_upload that you no longer need, removing its staged " +
@@ -263,17 +272,17 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"Use latest_version as expected_version for update_artifact and edit_file; their results, and "+
 			"create_artifact's, carry it too.", artifact.MaxListedFiles),
 
-		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. Text files up "+
-			"to %s come back inline as text; other files up to %s come back as a base64 blob resource; anything larger "+
-			"returns a download URL on the REST API (%s, bearer authentication). anchors: true prefixes every line of a "+
-			"text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for edit_file's anchor edits; text edits "+
-			"need no anchors. start_line and end_line (1-based, inclusive; end_line defaults to the end) read only those "+
-			"lines of any text file, up to %s, with the same anchors when asked; use them when an earlier read, an edit "+
-			"result or an import outline already says where the change is. The result states start_line, end_line and total_lines, "+
-			"holds as many whole lines as fit %s, and says where to continue when it was cut short. The "+
-			"structured result always carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
-			"version (the version read) and latest_version, and for text the file's content (anchored when asked). "+
-			"edit_file edits the latest version: when the two differ, read version = latest_version before editing.",
+		"read_file": fmt.Sprintf("Read one file of an artifact. version defaults to the published version. The text "+
+			"starts with a line naming the path, the version read and, when it is not the one an edit changes by "+
+			"default, the base_version an edit of it needs. Text files up to %s come back inline; other files up to %s "+
+			"as a base64 blob resource; anything larger as a download URL on the REST API (%s, bearer authentication). "+
+			"anchors: true prefixes every line of a text file with its anchor and \"|\" (\"12:3fa0|<h1>Title</h1>\") for "+
+			"edit_file's anchor edits; text edits need no anchors. start_line and end_line (1-based, inclusive; "+
+			"end_line defaults to the end) read only those lines of any text file up to %s, with the same anchors when "+
+			"asked; use them when an earlier read, an edit result or an import outline already says where the change "+
+			"is. A window holds as many whole lines as fit %s and says where to continue when it was cut short. The "+
+			"structured result carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
+			"version, latest_version, the window's lines and total_lines, and for text the content.",
 			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl, size(o.MaxFileBytes), size(o.MaxInlineReadBytes)),
 
 		"list_artifacts": "List artifacts visible to you: every public and members artifact plus unlisted ones you " +
@@ -285,11 +294,12 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 
 		"publish_version": fmt.Sprintf("Point %s at an existing version, to roll back or forward. Versions are numbered "+
 			"from 1 to latest_version (get_artifact lists them); nothing is copied or deleted, and the version keeps its "+
-			"own URL %s.", t.pageURL, t.versionURL),
+			"own URL %s. While an earlier version than the latest is published, edit_file and update_artifact need "+
+			"base_version.", t.pageURL, t.versionURL),
 
 		"mark_stale": "Mark an artifact stale. The page keeps serving, but unless it is updated or unmarked before " +
-			"expires_at it is soft-deleted, then purged after the retention period. grace is a duration such as \"72h\" " +
-			"or \"14d\"; omit it for the instance default. On an artifact you do not own it needs the artifacts:delete scope.",
+			"expires_at it is soft-deleted, then purged after the retention period. grace is a duration such as \"72h\", " +
+			"\"14d\" or \"2w\"; omit it for the instance default. On an artifact you do not own it needs the artifacts:delete scope.",
 
 		"unmark_stale": "Cancel a pending stale expiry, keeping the artifact indefinitely. Publishing a new version " +
 			"also cancels it unless keep_stale is set.",
@@ -299,17 +309,18 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"in to this Kazari instance (a browser is sent to sign in first) and to holders of a share link "+
 			"(create_share_link), on the latest URL and every version URL; listed to members. \"unpublished\": takes "+
 			"the page offline (%s answers 404) while keeping every version; setting \"public\", \"unlisted\" or "+
-			"\"members\" brings it back online. A page is never secret by its URL alone: slugs are easy to guess, so "+
-			"use \"members\" for anything not meant for the open web. Needs the artifacts:share scope.", t.pageURL),
+			"\"members\" brings it back online. There is no \"private\": use \"members\". A page is never secret by "+
+			"its URL alone: slugs are easy to guess, so use \"members\" for anything not meant for the open web. The "+
+			"result says who can open the page now. Needs the artifacts:share scope.", t.pageURL),
 
 		"create_share_link": fmt.Sprintf("Create a share link: a URL that opens an artifact in a browser without "+
 			"signing in, for someone outside this instance (a client, a reviewer, a headless browser). It matters for "+
 			"\"members\" artifacts; public and unlisted ones open for anyone anyway. The url opens the published version "+
-			"until expires_in has passed (a duration such as \"72h\" or \"14d\"; default 7 days, at most %s) or the "+
-			"link is revoked; for a pinned version, give the same url with the host changed to %s. label is a "+
-			"note such as who the link is for. The url in the result holds the link's secret and is returned only "+
-			"this once: give it to the user. Anyone who has the url can open the page, so it is for the people it is "+
-			"meant for only. Needs the artifacts:share scope.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
+			"until expires_in has passed (a duration such as \"72h\", \"14d\" or \"2w\"; default 7 days, at most %s) "+
+			"or the link is revoked; with version, version_url opens that version (%s). label is a note such as who "+
+			"the link is for. The URLs hold the link's secret and are returned only this once: give them to the user. "+
+			"Anyone who has one can open the page, so it is for the people it is meant for only. Needs the "+
+			"artifacts:share scope.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
 
 		"list_share_links": "List an artifact's share links, newest first: prefix, label, created_by, expires_at, " +
 			"revoked_at, uses, last_used_at and whether each is active. Their URLs are never shown again; revoke a link " +
@@ -385,10 +396,10 @@ var cspDirectives = []struct {
 	{"img-src", "images", false},
 	{"connect-src", "fetch/XHR/WebSocket", false},
 	{"media-src", "audio and video", true},
-	{"frame-src", "frames", true},
+	{"frame-src", "frames", false},
 }
 
-func describeCSP(csp string) string {
+func describeCSP(csp string, override bool) string {
 	csp = strings.TrimSpace(csp)
 	if csp == "" {
 		return "Content-Security-Policy: none is sent, so pages may load resources from anywhere."
@@ -416,8 +427,14 @@ func describeCSP(csp string) string {
 	if fa, ok := dirs["frame-ancestors"]; ok && len(fa) == 1 && fa[0] == "'none'" {
 		b.WriteString(" Pages cannot be embedded in frames.")
 	}
-	b.WriteString(" Anything else is blocked by the browser: inline your code or ship libraries as files. Policy: ")
-	b.WriteString(csp)
+	b.WriteString(" The browser blocks anything else: inline your code or ship libraries as files")
+	if override {
+		fmt.Fprintf(&b, ", or add origins with metadata %s, which adds sources to the fetch directives above and "+
+			"never removes any (e.g. \"frame-src https://www.youtube.com\")", artifact.MetaCSP)
+	} else {
+		fmt.Fprintf(&b, "; this instance does not take %s metadata", artifact.MetaCSP)
+	}
+	b.WriteString(". A publish's warnings name blocked origins and missing files.")
 	return b.String()
 }
 

@@ -83,22 +83,28 @@ func (t texts) skillText(o Options) string {
 	b.WriteString("## Workflow\n\n")
 	steps := []string{
 		"**Publish a page:** `create_artifact` with `slug`, `name`, `description` and `files`. Report the " +
-			"`url` from the result to the user.",
+			"`url` from the result to the user. When the result has `warnings` (no `index.html`, a file the page links " +
+			"to that is missing, an origin the policy blocks), the page will not render as written: fix them.",
 		"**Change a page:** `edit_file` with text edits and `expected_version` set to the `latest_version` you last " +
 			"saw, from the create, edit or read result. Read first only when you have not seen the current text, and " +
 			"once you know where the change is, read just that window with `start_line` and `end_line`; ask for " +
-			"`anchors` only for anchor edits. `update_artifact` adds or replaces whole files and removes them with " +
-			"`{path, delete: true}`, with `expected_version` too; every file not mentioned carries over. To make a version " +
-			"hold exactly a set of files, list the latest version's paths with `get_artifact` and `include_files` and send " +
-			"a delete entry for each path not in the set. A change that spans several files is atomic only as one " +
-			"`update_artifact` call with the whole files; `edit_file` publishes each file as its own version.",
-		"**On `version_conflict` or `anchor_mismatch`:** read the file again and redo the edit against the new text. " +
-			"Never resend a failed edit unchanged.",
-		fmt.Sprintf("**Large content** (any file, or all files together, above %s): `begin_upload`, stage the files, then "+
-			"`create_artifact` or `update_artifact` with `upload_id`. Without a shell, stage with `upload_chunk` for each "+
+			"`anchors` only for anchor edits. Send every edit to one file in one call, and never call `edit_file` in " +
+			"parallel on one artifact: each call makes a version, and the next fails with `version_conflict`. " +
+			"`update_artifact` changes several files in one version: `{path, edits}` edits a text file as `edit_file` " +
+			"does, `{path, content}` adds or replaces one, and `{path, delete: true}` removes one; every file not " +
+			"mentioned carries over. To make a version hold exactly a set of files, list the latest version's paths with " +
+			"`get_artifact` and `include_files` and send a delete entry for each path not in the set. A call whose files " +
+			"match the latest version adds none and says `unchanged`.",
+		"**On `version_conflict`:** the error says whether every edit still applies to the newer version. If it does, " +
+			"resend the same call with the `expected_version` it gives; otherwise read the file again and redo the edit " +
+			"against the new text. **On `anchor_mismatch`:** read again and redo the edit. Never resend a failed edit unchanged.",
+		fmt.Sprintf("**Files on disk and large content:** inline `files` are for text you write yourself. Files already "+
+			"on disk, whatever their size, and content above %s (any file, or all files together) go through `begin_upload`: "+
+			"stage the files, then `create_artifact` or `update_artifact` with `upload_id`. Binary files sent inline need "+
+			"`encoding: \"base64\"`; a `data:` URL prefix is stripped. Without a shell, stage with `upload_chunk` for each "+
 			"file, `offset: 0` first and the `bytes_received` of the previous chunk after that. With a shell, archive the "+
 			"files from inside the page's directory (`zip -r ../site.zip .` or `tar czf ../site.tar.gz .`, so paths start "+
-			"at the page root), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
+			"at the page root; a single file goes the same way), call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` "+
 			"(`wc -c < site.zip`), and send it with `curl --fail-with-body -T site.zip '<archive_url>'`: the URL needs no "+
 			"credential, accepts only that digest and is spent by the first body that matches; the archive may be at most "+
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
@@ -110,7 +116,9 @@ func (t texts) skillText(o Options) string {
 			"file, small " +
 			"binaries as base64, larger files as a download URL) and `list_artifacts` (`mine`, `metadata`, `stale`, " +
 			"`deleted`, `cursor`).",
-		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again.",
+		"**Roll back:** `get_artifact` lists the versions; `publish_version` serves one again. While an earlier " +
+			"version than the latest is published, `edit_file` and `update_artifact` need `base_version`: the published " +
+			"version to fix the page people see, or the latest to carry on from it. Ask the user which, unless they said.",
 		"**Share privately:** `visibility: \"members\"` serves a page only to people who sign in to this instance. " +
 			"For someone who cannot, `create_share_link` returns a URL that opens it until it expires; give the user that " +
 			"`url`, and `revoke_share_link` ends it. Slugs are easy to guess, so a page is never private by its URL alone.",
@@ -153,9 +161,9 @@ func (t texts) skillText(o Options) string {
 		"without `|` and content (`9:395c`): you have their text, and the anchor is all an anchor edit needs. Edits "+
 		"whose excerpts would overlap share one, and `excerpt_of` names the edit that holds it. Lines longer than 160 "+
 		"bytes are clipped in excerpts (\"…[+N bytes]\"): read the file before rewriting such a line whole.\n"+
-		"- `edit_file` edits the latest version. `read_file` reads the published version unless given `version`; when "+
-		"its `latest_version` differs from its `version` (after a rollback), read `version: latest_version` before "+
-		"editing.\n"+
+		"- `edit_file` edits the latest version, or `base_version`. `read_file` reads the published version unless given "+
+		"`version`, and its first line names the version read and, when it is not the one an edit changes by default, "+
+		"the `base_version` an edit of that text needs.\n"+
 		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
 		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
 		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, artifact.ExcerptContext,

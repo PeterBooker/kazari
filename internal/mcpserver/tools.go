@@ -26,20 +26,20 @@ import (
 // entry that leaves it out is told apart from an empty file.
 type FileInput struct {
 	Path        string  `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
-	Content     *string `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64; \"\" for an empty file"`
-	Encoding    string  `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string  `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string  `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
+	Content     *string `json:"content,omitempty" jsonschema:"UTF-8 text, or base64 with encoding base64; \"\" for an empty file"`
+	Encoding    string  `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
+	ContentType string  `json:"content_type,omitempty" jsonschema:"MIME type; default from the extension"`
+	URL         string  `json:"url,omitempty" jsonschema:"address the server downloads as the content"`
 }
 
 // UpdateFileInput is an inline file, an edit or a deletion of update_artifact.
 type UpdateFileInput struct {
 	Path        string      `json:"path" jsonschema:"path inside the artifact, e.g. index.html or assets/app.js"`
-	Content     *string     `json:"content,omitempty" jsonschema:"file content: UTF-8 text, or base64 when encoding is base64; \"\" for an empty file"`
-	Encoding    string      `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
-	ContentType string      `json:"content_type,omitempty" jsonschema:"MIME type; derived from the file extension when omitted"`
-	URL         string      `json:"url,omitempty" jsonschema:"http or https address the server downloads as the file's content, instead of content"`
-	Edits       []EditInput `json:"edits,omitempty" jsonschema:"edits to this text file of the base version, as in edit_file, instead of content"`
+	Content     *string     `json:"content,omitempty" jsonschema:"UTF-8 text, or base64 with encoding base64; \"\" for an empty file"`
+	Encoding    string      `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
+	ContentType string      `json:"content_type,omitempty" jsonschema:"MIME type; default from the extension"`
+	URL         string      `json:"url,omitempty" jsonschema:"address the server downloads as the content"`
+	Edits       []EditInput `json:"edits,omitempty" jsonschema:"edits to this text file, as in edit_file, instead of content"`
 	Delete      bool        `json:"delete,omitempty" jsonschema:"true removes this path from the new version"`
 }
 
@@ -73,20 +73,20 @@ type UpdateInput struct {
 
 // EditInput is one edit of edit_file: a text edit or an anchor edit.
 type EditInput struct {
-	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: the exact text to replace, copied from the file; it must match once unless replace_all"`
-	NewText    string `json:"new_text,omitempty" jsonschema:"the replacement; empty or omitted deletes the text or lines"`
-	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"text edit: replace every match of old_text"`
-	Start      string `json:"start,omitempty" jsonschema:"anchor edit: anchor of the first line to replace, e.g. 12:3fa0, from read_file with anchors: true"`
-	End        string `json:"end,omitempty" jsonschema:"anchor edit: anchor of the last line to replace, inclusive; default start"`
-	After      string `json:"after,omitempty" jsonschema:"insert: anchor of the line new_text goes after, as new lines"`
-	Before     string `json:"before,omitempty" jsonschema:"insert: anchor of the line new_text goes before, as new lines"`
+	OldText    string `json:"old_text,omitempty" jsonschema:"text edit: exact text to replace, copied from the file"`
+	NewText    string `json:"new_text,omitempty" jsonschema:"replacement; omitted or empty deletes"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every match of old_text"`
+	Start      string `json:"start,omitempty" jsonschema:"anchor edit: first line to replace, e.g. 12:3fa0"`
+	End        string `json:"end,omitempty" jsonschema:"anchor edit: last line to replace; default start"`
+	After      string `json:"after,omitempty" jsonschema:"insert new_text after this anchored line"`
+	Before     string `json:"before,omitempty" jsonschema:"insert new_text before this anchored line"`
 }
 
 // EditFileInput is the input of edit_file.
 type EditFileInput struct {
 	Slug            string      `json:"slug" jsonschema:"artifact to change"`
 	Path            string      `json:"path" jsonschema:"text file to edit, e.g. index.html"`
-	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits (start, after, before), not both, applied to the latest version"`
+	Edits           []EditInput `json:"edits" jsonschema:"text edits or anchor edits, not both"`
 	ExpectedVersion int         `json:"expected_version,omitempty" jsonschema:"latest_version you last saw; a newer one fails with version_conflict"`
 	BaseVersion     int         `json:"base_version,omitempty" jsonschema:"version whose file to edit; default the latest, required while an earlier version is published"`
 	Label           string      `json:"label,omitempty" jsonschema:"optional note on the new version"`
@@ -110,6 +110,17 @@ func editFileSchema() *jsonschema.Schema {
 	return s
 }
 
+func updateSchema() *jsonschema.Schema {
+	s, err := jsonschema.For[UpdateInput](nil)
+	if err != nil {
+		panic(err) // a fixed struct always infers
+	}
+	for _, p := range s.Properties["files"].Items.Properties["edits"].Items.Properties {
+		p.Description = ""
+	}
+	return s
+}
+
 // BeginUploadInput is the input of begin_upload. Without the archive fields
 // the upload takes chunks; with both it also takes one archive at archive_url.
 type BeginUploadInput struct {
@@ -123,7 +134,7 @@ type ChunkInput struct {
 	Path        string `json:"path" jsonschema:"path of the file in the artifact"`
 	Offset      int64  `json:"offset" jsonschema:"0 for the first chunk of a path, then the bytes_received of the previous chunk"`
 	Content     string `json:"content" jsonschema:"chunk content in the given encoding"`
-	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default, for text) or base64 (for binary)"`
+	Encoding    string `json:"encoding,omitempty" jsonschema:"utf8 (default) or base64"`
 	ContentType string `json:"content_type,omitempty" jsonschema:"MIME type of the file, read from the first chunk"`
 }
 
@@ -389,7 +400,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		b.addImport(s, p, actor)
 	}
 
-	register(b, s, p, &mcp.Tool{Name: "update_artifact", Annotations: annotations("Update artifact", false, false, false),
+	register(b, s, p, &mcp.Tool{Name: "update_artifact", InputSchema: b.updateSchema, Annotations: annotations("Update artifact", false, false, false),
 		Meta: previewToolMeta()},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
 			// Models fill optional fields with "": that leaves the

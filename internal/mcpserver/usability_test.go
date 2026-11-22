@@ -154,3 +154,41 @@ func TestSlugErrorsSuggest(t *testing.T) {
 		}
 	}
 }
+
+// The guidance keeps edits to one file in one call and off parallel calls,
+// which conflict with each other.
+func TestGuidanceSerializesEdits(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	skill := mcpserver.Skill(e.deps.Links, e.opts)
+	for name, s := range map[string]string{"instructions": cs.InitializeResult().Instructions, "skill": skill} {
+		flat := strings.ReplaceAll(s, "`", "")
+		if !strings.Contains(flat, "Send every edit to one file in one call, and never call edit_file in parallel on one artifact") {
+			t.Errorf("the %s do not keep edits to one file in one call", name)
+		}
+	}
+}
+
+// The descriptions offer kazari.csp only where the instance takes it.
+func TestDescriptionsStateCSPOverride(t *testing.T) {
+	for _, allow := range []bool{true, false} {
+		e := newEnv(t)
+		e.opts.AllowCSPOverride = allow
+		cs := e.connect(t, member)
+		res, err := cs.ListTools(e.ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range res.Tools {
+			if tool.Name != "create_artifact" {
+				continue
+			}
+			if got := strings.Contains(tool.Description, "add origins with metadata kazari.csp"); got != allow {
+				t.Errorf("overrides %v: create_artifact offers kazari.csp = %v", allow, got)
+			}
+			if got := strings.Contains(tool.Description, "does not take kazari.csp"); got == allow {
+				t.Errorf("overrides %v: create_artifact says kazari.csp is not taken = %v", allow, got)
+			}
+		}
+	}
+}

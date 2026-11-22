@@ -61,17 +61,21 @@ func TestParseFileURI(t *testing.T) {
 }
 
 func TestDescribeCSP(t *testing.T) {
-	got := describeCSP("default-src 'none'; script-src 'self' https://cdn.example.com; frame-ancestors 'none'")
+	policy := "default-src 'none'; script-src 'self' https://cdn.example.com; frame-ancestors 'none'"
+	got := describeCSP(policy, true)
 	for _, s := range []string{"scripts from own files, https://cdn.example.com", "styles from nowhere",
-		"cannot be embedded", "Policy: default-src 'none'"} {
+		"frames from nowhere", "cannot be embedded", "add origins with metadata kazari.csp", "warnings name blocked origins"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("describeCSP lacks %q: %s", s, got)
 		}
 	}
-	if strings.Contains(got, "frames from") {
-		t.Errorf("describeCSP mentions frame-src the policy does not set: %s", got)
+	if strings.Contains(got, "media") || strings.Contains(got, policy) {
+		t.Errorf("describeCSP names media-src the policy does not set, or repeats the raw policy: %s", got)
 	}
-	if got := describeCSP(""); !strings.Contains(got, "none is sent") {
+	if got := describeCSP(policy, false); strings.Contains(got, "add origins") || !strings.Contains(got, "does not take kazari.csp") {
+		t.Errorf("describeCSP without overrides = %s", got)
+	}
+	if got := describeCSP("", true); !strings.Contains(got, "none is sent") {
 		t.Errorf("empty CSP = %q", got)
 	}
 }

@@ -141,9 +141,12 @@ type builder struct {
 	text       texts
 	schema     *mcp.SchemaCache
 	editSchema *jsonschema.Schema
-	preview    string
-	previewUI  map[string]any
-	obs        *observer
+	// updateSchema leaves out the descriptions of the edit fields, which
+	// edit_file's schema states already.
+	updateSchema *jsonschema.Schema
+	preview      string
+	previewUI    map[string]any
+	obs          *observer
 }
 
 func newBuilder(d Deps, o Options) *builder {
@@ -155,16 +158,17 @@ func newBuilder(d Deps, o Options) *builder {
 	text := newTexts(d.Links, o)
 	preview, ui := newPreview(text, o.CSP)
 	return &builder{
-		d:          d,
-		o:          o,
-		log:        log,
-		sdkLog:     slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
-		text:       text,
-		schema:     mcp.NewSchemaCache(),
-		editSchema: editFileSchema(),
-		preview:    preview,
-		previewUI:  ui,
-		obs:        newObserver(o.Telemetry, toolNames(text, o)),
+		d:            d,
+		o:            o,
+		log:          log,
+		sdkLog:       slog.New(instrument.MinLevel(log.Handler(), slog.LevelWarn)),
+		text:         text,
+		schema:       mcp.NewSchemaCache(),
+		editSchema:   editFileSchema(),
+		updateSchema: updateSchema(),
+		preview:      preview,
+		previewUI:    ui,
+		obs:          newObserver(o.Telemetry, toolNames(text, o)),
 	}
 }
 
