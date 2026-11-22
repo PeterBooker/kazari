@@ -122,7 +122,7 @@ GitHub Actions runs five workflows from `.github/workflows/`:
 
 ### Releasing
 
-To release, push a tag named for the version without a `v`, such as `0.3.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
+To release, push a tag named for the version without a `v`, such as `0.3.0`. `release.yml` refuses a tag that is not a version, runs `ci.yml` on the tagged commit, then runs goreleaser, which publishes the archives with SBOMs and a cosign-signed `checksums.txt`, the `.deb` and `.rpm` packages, and the signed image at `ghcr.io/peterbooker/kazari`, one image for `linux/amd64` and `linux/arm64` with an SBOM attached. It records a [build provenance attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for every file in `checksums.txt`.
 
 Two builds of one commit give the same archives and packages: the binary and every file carry the commit's time, not the time of the build.
 
