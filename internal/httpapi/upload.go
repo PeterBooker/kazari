@@ -113,7 +113,7 @@ func readManifest(mr *multipart.Reader, v any) error {
 		return bodyErr("reading the manifest", err)
 	}
 	if len(raw) > manifestLimit {
-		return artifact.Errorf(artifact.ErrTooLarge, "the manifest exceeds %d bytes", manifestLimit)
+		return artifact.Errorf(artifact.ErrTooLarge, "the manifest exceeds %s", artifact.FormatBytes(manifestLimit))
 	}
 	return decodeStrict(bytes.NewReader(raw), v, false)
 }

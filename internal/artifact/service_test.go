@@ -342,6 +342,9 @@ func TestSizeLimits(t *testing.T) {
 	}
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "big", Files: files("noext", ten+"z")})
 	wantErr(t, "sniffed file over limit", err, artifact.ErrTooLarge)
+	if want := `file "noext" is 11 B, over the 10 B file limit`; !strings.Contains(err.Error(), want) {
+		t.Errorf("inline file over limit: err = %v, want it to say %q", err, want)
+	}
 
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "wide", Files: files("a.txt", ten, "b.txt", ten, "c.txt", ten),
