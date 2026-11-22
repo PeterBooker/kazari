@@ -243,7 +243,7 @@ func (r *runner) run(args []string) (err error) {
 		kong.Writers(r.stdout, r.stderr),
 		kong.Exit(func(code int) { panic(exitRequest(code)) }),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true, NoExpandSubcommands: true}),
-		kong.Help(serverHelp),
+		kong.Help(focusedHelp),
 		kong.Bind(r),
 	)
 	if err != nil {
@@ -256,12 +256,25 @@ func (r *runner) run(args []string) (err error) {
 	return ctx.Run()
 }
 
-// serverHelp leaves the client's flags out of the help of serve and
-// check, which do not read them.
-func serverHelp(options kong.HelpOptions, ctx *kong.Context) error {
-	if n := ctx.Selected(); n != nil && n.Parent == ctx.Model.Node && (n.Name == "serve" || n.Name == "check") {
+// focusedHelp leaves out of a command's help the global flags it does not
+// read: every client flag for serve and check, and the user API's for the
+// admin commands, whose own flags say when they fall back to those.
+func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
+	top := ctx.Selected()
+	for top != nil && top.Parent != ctx.Model.Node {
+		top = top.Parent
+	}
+	var hide func(name string) bool
+	switch {
+	case top == nil:
+	case top.Name == "serve" || top.Name == "check":
+		hide = func(name string) bool { return name != "help" }
+	case top.Name == "admin":
+		hide = func(name string) bool { return name == "url" || name == "token" }
+	}
+	if hide != nil {
 		for _, f := range ctx.Model.Flags {
-			if !f.Hidden && f.Name != "help" {
+			if !f.Hidden && hide(f.Name) {
 				f.Hidden = true
 				defer func() { f.Hidden = false }()
 			}

@@ -348,6 +348,20 @@ func TestServerHelpLeavesOutClientFlags(t *testing.T) {
 	}
 }
 
+func TestAdminHelpLeavesOutUserFlags(t *testing.T) {
+	for _, args := range [][]string{{"admin", "--help"}, {"admin", "users", "list", "--help"}} {
+		r := runCLI(t, nil, args...)
+		if r.code != 0 || !strings.Contains(r.stdout, "--admin-token=TOKEN") || !strings.Contains(r.stdout, "--json") {
+			t.Fatalf("%v: %+v, want the admin flags", args, r)
+		}
+		for _, flag := range []string{"--url=", "--token="} {
+			if strings.Contains(r.stdout, flag) {
+				t.Errorf("%v shows the user API flag %s:\n%s", args, flag, r.stdout)
+			}
+		}
+	}
+}
+
 func TestRunHTTPError(t *testing.T) {
 	notFound := replyWith(404, api.ErrorResponse{Error: api.Error{Code: "not_found", Message: "no artifact demo"}})
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
