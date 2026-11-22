@@ -38,6 +38,7 @@ const (
 const artifactSelect = `SELECT a.id, a.slug, a.name, a.description, u.handle, a.visibility,
 	COALESCE((SELECT pv.number FROM version pv WHERE pv.id = a.published_version_id), 0),
 	COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0),
+	(SELECT COUNT(*) FROM version cv WHERE cv.artifact_id = a.id),
 	COALESCE((SELECT SUM(sv.size_bytes) FROM version sv WHERE sv.artifact_id = a.id), 0),
 	a.metadata, a.stale_at, a.expires_at, a.unpublished_at, a.deleted_at, a.purged_at,
 	a.created_at, a.updated_at
@@ -56,7 +57,7 @@ func scanArtifact(row artifactRowScanner) (int64, *artifact.Artifact, error) {
 		created, updated                  int64
 	)
 	err := row.Scan(&id, &a.Slug, &a.Name, &a.Description, &a.OwnerHandle, &vis,
-		&a.PublishedVersion, &a.LatestVersion, &a.SizeBytes,
+		&a.PublishedVersion, &a.LatestVersion, &a.VersionCount, &a.SizeBytes,
 		&meta, &stale, &expires, &unpub, &del, &purge, &created, &updated)
 	if err != nil {
 		return 0, nil, err

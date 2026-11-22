@@ -51,6 +51,9 @@ type Artifact struct {
 	// PublishedVersion is 0 when nothing is published (a purged artifact).
 	PublishedVersion int
 	LatestVersion    int
+	// VersionCount is how many versions there are, fewer than LatestVersion
+	// once some were deleted.
+	VersionCount int
 	// SizeBytes is the sum over every version.
 	SizeBytes int64
 

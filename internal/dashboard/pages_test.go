@@ -364,7 +364,8 @@ func TestPageDeleteVersion(t *testing.T) {
 		}
 	}
 	r = b.submit("/pages/live-one/versions/1/delete", nil)
-	if !strings.Contains(r.body, "That version is deleted.") || strings.Contains(r.body, "live-one--v1.art.test") {
+	if !strings.Contains(r.body, "That version is deleted.") || strings.Contains(r.body, "live-one--v1.art.test") ||
+		!strings.Contains(r.body, "over 2 versions") {
 		t.Errorf("after deleting version 1 the page should say so and list it no more:\n%s", r.body)
 	}
 	if ev := e.events(audit.ArtifactVersionDelete); len(ev) != 1 || ev[0].Actor != "boss" || ev[0].Details["versions"] != "1" {

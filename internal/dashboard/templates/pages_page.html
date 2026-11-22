@@ -20,7 +20,7 @@
 <dt>Versions</dt><dd class="soft">Each version also has an address of its own, listed below.</dd>
 <dt>Owner</dt><dd><a class="mono" href="/people/{{.Page.OwnerHandle}}">{{.Page.OwnerHandle}}</a></dd>
 {{if eq .Page.State.Key "bin"}}<dt>Open to</dt><dd>{{.Page.Open}} <span class="soft">once it is restored</span></dd>
-{{end}}<dt>Size</dt><dd>{{bytes .Page.SizeBytes}} of content over {{.Page.LatestVersion}} {{if eq .Page.LatestVersion 1}}version{{else}}versions{{end}}, every version in full</dd>
+{{end}}<dt>Size</dt><dd>{{bytes .Page.SizeBytes}} of content over {{.Page.VersionCount}} {{if eq .Page.VersionCount 1}}version{{else}}versions{{end}}, every version in full</dd>
 </dl>
 {{if ne .Page.State.Key "bin"}}
 <form class="form" method="post" action="/pages/{{.Page.Slug}}/visibility">
@@ -176,7 +176,7 @@
 <div class="box section"><h2 class="h3">What is deleted</h2>
 <ul class="dash">
 <li>The page at <span class="mono">{{.Host}}</span></li>
-<li>{{if eq .Page.LatestVersion 1}}Its one version and that version's address{{else}}All {{.Page.LatestVersion}} versions and the address of each{{end}}</li>
+<li>{{if eq .Page.VersionCount 1}}Its one version and that version's address{{else}}All {{.Page.VersionCount}} versions and the address of each{{end}}</li>
 <li>Its share links</li>
 </ul></div>
 <div class="box section"><h2 class="h3">What stays for a while</h2>

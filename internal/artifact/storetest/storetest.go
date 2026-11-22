@@ -189,6 +189,7 @@ func testCreateGet(t *testing.T, h *harness) {
 		Metadata:         map[string]string{"team": "core", artifact.MetaSPA: "true"},
 		PublishedVersion: 1,
 		LatestVersion:    1,
+		VersionCount:     1,
 		SizeBytes:        4,
 		StaleAt:          new(at(time.Hour)),
 		ExpiresAt:        new(at(2 * time.Hour)),
@@ -315,7 +316,7 @@ func testAddVersion(t *testing.T, h *harness) {
 	want := &artifact.Artifact{
 		Slug: "demo", Name: "rev", Description: "changed", OwnerHandle: "alice",
 		Visibility: artifact.Unlisted, Metadata: map[string]string{"rev": "x"},
-		PublishedVersion: 3, LatestVersion: 3,
+		PublishedVersion: 3, LatestVersion: 3, VersionCount: 3,
 		SizeBytes: int64(len("<h1>demo</h1>")) + 2 + 3,
 		CreatedAt: at(0), UpdatedAt: at(3 * time.Hour),
 	}
@@ -441,8 +442,8 @@ func testDeleteVersions(t *testing.T, h *harness) {
 		t.Errorf("DeleteVersions(1, 2) = %v after seeing %v; want [1 2] after [4 3 2 1]", deleted, seen)
 	}
 	got := h.get(t, "demo")
-	if got.PublishedVersion != 3 || got.LatestVersion != 4 {
-		t.Errorf("after deleting: published %d, latest %d; want 3 and 4", got.PublishedVersion, got.LatestVersion)
+	if got.PublishedVersion != 3 || got.LatestVersion != 4 || got.VersionCount != 2 {
+		t.Errorf("after deleting: published %d, latest %d, count %d; want 3, 4 and 2", got.PublishedVersion, got.LatestVersion, got.VersionCount)
 	}
 	vs, err := h.store.ListVersions(h.ctx, "demo")
 	if err != nil {

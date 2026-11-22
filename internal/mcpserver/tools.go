@@ -619,6 +619,10 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "%s has no version %d; its latest is %d",
 					a.Slug, in.Version, a.LatestVersion)
 			}
+			if in.Version > 0 && !slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == in.Version }) {
+				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrVersionNotFound, "version %d of %s was deleted",
+					in.Version, a.Slug)
+			}
 			if slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == in.Version && v.Staged }) {
 				return ShareLinkResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument,
 					"version %d of %s is staged, and a share link does not open a staged version; publish it with "+

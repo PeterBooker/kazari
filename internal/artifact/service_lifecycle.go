@@ -540,18 +540,22 @@ func (s *Service) Sweep(ctx context.Context) (report SweepReport, err error) {
 	}
 	for _, a := range kept {
 		// Fewer versions than the number is nothing to prune.
-		if keep, ok := keepVersions(&a); !ok || a.LatestVersion <= keep {
+		if keep, ok := keepVersions(&a); !ok || a.VersionCount <= keep {
 			continue
 		}
 		_, n, err := s.deleteVersions(ctx, System, a.Slug, map[string]string{"reason": "keep_versions"}, false,
 			func(cur *Artifact, vs []Version) ([]int, error) {
 				// The row may have changed since the listing.
 				keep, ok := keepVersions(cur)
-				if !ok || cur.DeletedAt != nil || cur.PurgedAt != nil {
+				if !ok {
 					return nil, nil
 				}
 				return prunable(cur, vs, keep), nil
 			})
+		// Deleted, purged or freed since the listing: nothing left to prune.
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrGone) {
+			continue
+		}
 		if err != nil {
 			fail(fmt.Errorf("artifact: sweep prune %s: %w", a.Slug, err))
 			continue

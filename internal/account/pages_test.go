@@ -246,3 +246,28 @@ func TestRecoveryReturnsToTheSignIn(t *testing.T) {
 		t.Errorf("recovered for an authorization: to %q, want %q", resp.Header.Get("Location"), want)
 	}
 }
+
+func TestOwnPageDeletedVersion(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	ctx := t.Context()
+	e.person("ana", "")
+	e.page("ana", "notes", "Notes", artifact.Members)
+	ana := artifact.Actor{Handle: "ana"}
+	for _, body := range []string{"<p>two</p>", "<p>three</p>"} {
+		if _, _, err := e.arts.Update(ctx, ana, artifact.UpdateRequest{Slug: "notes",
+			Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader(body)}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.arts.DeleteVersion(ctx, ana, "notes", 2); err != nil {
+		t.Fatal(err)
+	}
+	b := e.browser()
+	b.signIn("ana", password)
+	if resp, _ := b.get("/account/pages/notes/versions/2/publish"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("publish confirmation for a deleted version: status %d, want 404", resp.StatusCode)
+	}
+	if resp, _ := b.get("/account/pages/notes/versions/1/publish"); resp.StatusCode != http.StatusOK {
+		t.Errorf("publish confirmation for a kept version: status %d, want 200", resp.StatusCode)
+	}
+}

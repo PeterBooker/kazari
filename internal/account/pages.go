@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -333,12 +334,12 @@ func (s *server) revokeLink(w http.ResponseWriter, r *http.Request, _ visit, act
 
 // version reads the version of the path, which the page must have.
 func (s *server) version(r *http.Request, actor artifact.Actor) (*artifact.Artifact, int, error) {
-	a, _, err := s.d.Artifacts.Get(r.Context(), actor, r.PathValue("slug"))
+	a, vs, err := s.d.Artifacts.Get(r.Context(), actor, r.PathValue("slug"))
 	if err != nil {
 		return nil, 0, err
 	}
 	n, err := strconv.Atoi(r.PathValue("n"))
-	if err != nil || n < 1 || n > a.LatestVersion {
+	if err != nil || !slices.ContainsFunc(vs, func(v artifact.Version) bool { return v.Number == n }) {
 		return nil, 0, artifact.ErrVersionNotFound
 	}
 	return a, n, nil

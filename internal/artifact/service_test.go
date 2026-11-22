@@ -187,7 +187,7 @@ func TestCreateAndGet(t *testing.T) {
 	want := &artifact.Artifact{
 		Slug: "demo", Name: "Demo", Description: "A demo", OwnerHandle: "alice",
 		Visibility: artifact.Unlisted, Metadata: map[string]string{"team": "core"},
-		PublishedVersion: 1, LatestVersion: 1, SizeBytes: 15,
+		PublishedVersion: 1, LatestVersion: 1, VersionCount: 1, SizeBytes: 15,
 		CreatedAt: start, UpdatedAt: start,
 	}
 	if diff := cmp.Diff(want, a); diff != "" {
