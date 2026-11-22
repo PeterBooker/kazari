@@ -2,7 +2,7 @@
 
 {{define "people-status"}}<span class="status {{.Tone}}">{{.StatusWord}}</span>{{end}}
 
-{{define "people-usage"}}<div class="usage">{{if .Quota}}<span>{{bytes .Used}} of {{bytes .Quota}}{{if ge .Percent 75}} <span class="{{if ge .Percent 90}}tone-danger{{else}}tone-warn{{end}}">({{.Percent}}%)</span>{{end}}</span><meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Percent}}">{{.Percent}}%</meter>{{else}}<span>{{bytes .Used}}, <span class="soft">no limit</span></span>{{end}}</div>{{end}}
+{{define "people-usage"}}<div class="usage">{{if .Quota}}<span>{{bytes .Used}} of {{bytes .Quota}}{{if ge .Percent 75}} <span class="{{if ge .Percent 90}}tone-danger{{else}}tone-warn{{end}}">({{.Percent}}%)</span>{{end}}</span><meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Percent}}" aria-label="Quota used">{{.Percent}}%</meter>{{else}}<span>{{bytes .Used}}, <span class="soft">no limit</span></span>{{end}}</div>{{end}}
 
 {{define "people"}}{{template "theme/shell" .Shell}}<div class="page">
 <header class="head">

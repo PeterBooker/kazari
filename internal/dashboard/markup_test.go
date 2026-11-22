@@ -28,13 +28,15 @@ const (
 var (
 	reScriptTag    = regexp.MustCompile(`(?i)<script\b[^>]*>`)
 	reInlineScript = regexp.MustCompile(`(?is)<script[^>]*>(.*?)</script>`)
+	reMeter        = regexp.MustCompile(`<meter\b[^>]*>`)
 	reForeignAsset = regexp.MustCompile(`(?i)<(?:link|script|img|source|iframe)[^>]+(?:href|src)="(?:https?:)?//`)
 )
 
 // strictMarkup fails the test unless body is a page of the dashboard that
 // the strict policy lets run: the theme's stylesheet, nothing inline, every
 // asset from this origin, no hostile value unescaped, and every table cell
-// labelled for the narrow layout. Every group of pages is checked with it.
+// labelled for the narrow layout, and every meter named. Every group of
+// pages is checked with it.
 func strictMarkup(t *testing.T, what, body string) {
 	t.Helper()
 	lower := strings.ToLower(body)
@@ -64,6 +66,11 @@ func strictMarkup(t *testing.T, what, body string) {
 	}
 	if strings.Contains(body, "<td>") || strings.Contains(body, `<td class="num">`) {
 		t.Errorf("%s has a table cell without a data-label", what)
+	}
+	for _, tag := range reMeter.FindAllString(body, -1) {
+		if !strings.Contains(tag, ` aria-label="`) {
+			t.Errorf("%s has a meter without a name: %s", what, tag)
+		}
 	}
 }
 
