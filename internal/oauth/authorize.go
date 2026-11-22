@@ -115,6 +115,9 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		ClientState:   q.Get("state"),
 		ExpiresAt:     s.now().Add(s.opts.RequestTTL),
 	}
+	if s.idp != nil && s.idpUnavailable(w, r) {
+		return
+	}
 	var verifier string
 	if s.idp != nil {
 		verifier = oauth2.GenerateVerifier()

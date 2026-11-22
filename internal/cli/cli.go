@@ -42,7 +42,7 @@ type CLI struct {
 	JSON         bool   `help:"Print the JSON response instead of text."`
 
 	Serve      ServeCmd      `cmd:"" help:"Run the server."`
-	Check      CheckCmd      `cmd:"" help:"Check the configuration, the DNS records, the DNS token and the ports."`
+	Check      CheckCmd      `cmd:"" help:"Check the configuration and what the server needs before it starts: data directory, DNS records, DNS token, certificate files, ports, identity provider."`
 	Publish    PublishCmd    `cmd:"" help:"Publish a directory as a new artifact, or mirror it as a new version with --update."`
 	Import     ImportCmd     `cmd:"" help:"Copy a web page into a new artifact."`
 	Update     UpdateCmd     `cmd:"" help:"Add a version from a directory and/or change fields."`
@@ -60,7 +60,7 @@ type CLI struct {
 	Skill      SkillCmd      `cmd:"" help:"Print the instance's Agent Skill (SKILL.md)."`
 	Me         MeCmd         `cmd:"" help:"Show the caller's identity."`
 	Keys       KeysCmd       `cmd:"" help:"List, issue, rotate and revoke the caller's API keys."`
-	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, invites, keys, identities, grants, artifacts, jobs, audit, views, backup, readiness."`
+	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, invites, keys, identities, grants, artifacts, jobs, audit, views, backup and restore, readiness."`
 	Version    VersionCmd    `cmd:"" help:"Print the version."`
 	Help       HelpCmd       `cmd:"" help:"Show help for a command."`
 }
@@ -145,6 +145,7 @@ func (r *runner) run(args []string) (err error) {
 		kong.Writers(r.stdout, r.stderr),
 		kong.Exit(func(code int) { panic(exitRequest(code)) }),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true, NoExpandSubcommands: true}),
+		kong.Help(serverHelp),
 		kong.Bind(r),
 	)
 	if err != nil {
@@ -155,6 +156,20 @@ func (r *runner) run(args []string) (err error) {
 		return err
 	}
 	return ctx.Run()
+}
+
+// serverHelp leaves the client's flags out of the help of serve and
+// check, which do not read them.
+func serverHelp(options kong.HelpOptions, ctx *kong.Context) error {
+	if n := ctx.Selected(); n != nil && n.Parent == ctx.Model.Node && (n.Name == "serve" || n.Name == "check") {
+		for _, f := range ctx.Model.Flags {
+			if !f.Hidden && f.Name != "help" {
+				f.Hidden = true
+				defer func() { f.Hidden = false }()
+			}
+		}
+	}
+	return kong.DefaultHelpPrinter(options, ctx)
 }
 
 func (r *runner) exit(err error) int {
@@ -311,19 +326,42 @@ func (r *runner) adminClient(needToken bool) (*Client, error) {
 	return nil, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
 }
 
-// discoverSocket finds the admin socket of a server on this host from its
-// configuration: $KAZARI_CONFIG, /etc/kazari/kazari.yaml, $KAZARI_DATA_DIR,
-// else the --local preset's data directory. It returns "" unless a socket
-// file is there.
-func (r *runner) discoverSocket() string {
+// serverConfig reads, without validating it, the configuration of a server
+// on this host: $KAZARI_CONFIG, else /etc/kazari/kazari.yaml, with the
+// kazari.env beside it when this user can read it, under the KAZARI_*
+// variables of the environment.
+func (r *runner) serverConfig() (config.Config, error) {
 	path := r.env("KAZARI_CONFIG")
 	if path == "" {
 		if _, err := os.Stat(defaultConfigPath); err == nil {
 			path = defaultConfigPath
 		}
 	}
+	lookup := r.lookupEnv
+	if lookup == nil {
+		lookup = func(string) (string, bool) { return "", false }
+	}
+	if path != "" {
+		if dotenv, err := config.LoadEnvFile(filepath.Join(filepath.Dir(path), config.EnvFileName)); err == nil {
+			env := lookup
+			lookup = func(key string) (string, bool) {
+				if v, ok := env(key); ok {
+					return v, true
+				}
+				v, ok := dotenv[key]
+				return v, ok
+			}
+		}
+	}
+	return config.Peek(path, lookup)
+}
+
+// discoverSocket finds the admin socket of a server on this host from its
+// configuration, as serverConfig reads it, else the --local preset's data
+// directory. It returns "" unless a socket file is there.
+func (r *runner) discoverSocket() string {
 	var candidates []string
-	if cfg, err := config.Peek(path, r.lookupEnv); err == nil && cfg.DataDir != "" {
+	if cfg, err := r.serverConfig(); err == nil && cfg.DataDir != "" {
 		candidates = append(candidates, cfg.AdminSocketPath())
 	}
 	candidates = append(candidates, config.Local().AdminSocketPath())

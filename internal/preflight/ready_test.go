@@ -3,6 +3,7 @@ package preflight
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -80,7 +81,7 @@ func TestReadyPassing(t *testing.T) {
 		"disk":        "50.0 GiB free of 100.0 GiB on the disk holding " + cfg.DataDir + " (50%)",
 		"database":    "3.0 MiB in " + cfg.DBPath(),
 		"blobs":       "2.0 KiB in " + cfg.BlobDir(),
-		"dashboard":   "https://admin.art.example.com",
+		"dashboard":   "https://admin.art.example.test",
 	} {
 		if f := one(t, findings, check); !strings.Contains(f.Detail, want) {
 			t.Errorf("%s = %q, want it to contain %q", check, f.Detail, want)
@@ -109,9 +110,27 @@ func TestReadyProblems(t *testing.T) {
 			c.TLS.Mode, c.TLS.CertFile, c.TLS.KeyFile = "files", "/etc/kazari/tls.crt", "/etc/kazari/tls.key"
 			o.CertNotAfter = func() time.Time { return readyNow.Add(-time.Hour) }
 		}, "certificate", Fail, []string{"replace tls.cert_file and tls.key_file"}},
-		{"no certificate yet", func(_ *config.Config, o *ReadyOptions) {
+		{"certificate being obtained", func(_ *config.Config, o *ReadyOptions) {
 			o.CertNotAfter = func() time.Time { return time.Time{} }
-		}, "certificate", Skip, []string{"no certificate is loaded yet"}},
+			o.Started = readyNow.Add(-time.Minute)
+		}, "certificate", Skip, []string{"being obtained since the start 1m0s ago"}},
+		{"no certificate after a while", func(_ *config.Config, o *ReadyOptions) {
+			o.CertNotAfter = func() time.Time { return time.Time{} }
+			o.Started = readyNow.Add(-CertGrace)
+		}, "certificate", Warn, []string{"no certificate yet", "check the log for certificate errors"}},
+		{"certificate order failed", func(_ *config.Config, o *ReadyOptions) {
+			o.CertNotAfter = func() time.Time { return time.Time{} }
+			o.Started = readyNow.Add(-time.Minute)
+			o.CertError = func() error {
+				return errors.New(`Get "https://acme-v02.api.letsencrypt.org/directory": dial tcp: i/o timeout`)
+			}
+		}, "certificate", Fail, []string{"not obtained: Get \"https://acme-v02", "the CA cannot be reached"}},
+		{"oidc unreachable", func(c *config.Config, o *ReadyOptions) {
+			c.Auth.OIDC = &config.OIDC{Issuer: "https://idp.invalid", ClientID: "id", ClientSecret: "s"}
+			o.HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("connection refused")
+			})}
+		}, "oidc", Fail, []string{"cannot reach https://idp.invalid/.well-known/openid-configuration", "check auth.oidc.issuer"}},
 		{"proxy mode", func(c *config.Config, o *ReadyOptions) {
 			c.Listen = config.Listen{HTTP: "127.0.0.1:0", ProxyMode: true}
 			o.CertNotAfter = nil
@@ -164,7 +183,7 @@ func TestDashboardAddress(t *testing.T) {
 		status Status // "" for no finding
 		want   string
 	}{
-		{"default", func(*config.Config) {}, OK, "https://admin.art.example.com"},
+		{"default", func(*config.Config) {}, OK, "https://admin.art.example.test"},
 		{"private listener without an address", func(c *config.Config) { c.Admin.Listen = "127.0.0.1:9443" },
 			Warn, "off: admin.listen is set and admin.public_url is not; set admin.public_url"},
 		{"private listener through a tunnel", func(c *config.Config) {
@@ -174,7 +193,7 @@ func TestDashboardAddress(t *testing.T) {
 			c.Admin.Listen, c.Admin.PublicURL = "10.0.0.5:9443", "https://kazari-admin.vpn.example.com/"
 		}, OK, "https://kazari-admin.vpn.example.com"},
 		{"plain http across the network", func(c *config.Config) { c.ExternalScheme = "http" },
-			Fail, "http://admin.art.example.com is plain http"},
+			Fail, "http://admin.art.example.test is plain http"},
 		{"plain http address", func(c *config.Config) { c.Admin.PublicURL = "http://10.0.0.5:9443" },
 			Fail, "http://10.0.0.5:9443 is plain http"},
 		{"dashboard off", func(c *config.Config) { c.Admin.Dashboard = false; c.Admin.Listen = "127.0.0.1:9443" }, "", ""},
@@ -368,3 +387,7 @@ func TestCheckerTelemetry(t *testing.T) {
 		}
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -293,6 +293,7 @@ func TestRunHelp(t *testing.T) {
 		{"help admin", []string{"help", "admin"}, "admin keys"},
 		{"help admin keys", []string{"help", "admin", "keys"}, "admin keys issue"},
 		{"subcommand -h", []string{"admin", "keys", "issue", "-h"}, "<handle>"},
+		{"check --local", []string{"check", "-h"}, "Check the --local preset of kazari serve"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +302,24 @@ func TestRunHelp(t *testing.T) {
 				t.Errorf("%v: exit %d, stdout %q, stderr %q; want 0, stdout containing %q", tt.args, r.code, r.stdout, r.stderr, tt.wantStdout)
 			}
 		})
+	}
+}
+
+func TestServerHelpLeavesOutClientFlags(t *testing.T) {
+	for _, cmd := range []string{"serve", "check"} {
+		r := runCLI(t, nil, cmd, "--help")
+		if r.code != 0 || !strings.Contains(r.stdout, "--config=PATH") {
+			t.Fatalf("%s --help: %+v", cmd, r)
+		}
+		for _, flag := range []string{"--url", "--token", "--admin-url", "--admin-token", "--admin-socket", "--client-config", "--json"} {
+			if strings.Contains(r.stdout, flag) {
+				t.Errorf("%s --help shows the client flag %s:\n%s", cmd, flag, r.stdout)
+			}
+		}
+	}
+	// The flags stay for the commands that read them.
+	if r := runCLI(t, nil, "list", "--help"); !strings.Contains(r.stdout, "--token=KEY") {
+		t.Errorf("list --help lacks --token:\n%s", r.stdout)
 	}
 }
 
@@ -709,6 +728,7 @@ func TestRunAdmin(t *testing.T) {
 		"POST /v1/artifacts/demo/transfer": record(demo),
 		"POST /v1/artifacts/demo/hide":     record(demo),
 		"GET /v1/settings":                 record(map[string]any{"server": map[string]any{"base_domain": "art.test", "listen": []string{":443"}}, "auth": map[string]any{"admin_token": "[redacted]"}, "debug": false}),
+		"GET /v1/settings/sources":         record(map[string]string{"server.base_domain": "KAZARI_BASE_DOMAIN in the environment"}),
 		"GET /v1/jobs":                     record([]api.JobStatus{{Name: "gc", Every: "1h0m0s", LastRun: &disabled, LastError: "disk full"}}),
 		"POST /v1/jobs/gc/run":             record(api.OK{OK: true}),
 		"GET /v1/audit": record(api.AuditList{NextCursor: "c2", Events: []api.AuditEvent{
@@ -753,7 +773,7 @@ func TestRunAdmin(t *testing.T) {
 		{args: []string{"transfer", "demo", "bob"}, wantOut: "demo now belongs to bob\n", wantBody: `{"owner":"bob"}`},
 		{args: []string{"hide", "demo"}, wantOut: "demo is hidden (unpublished)\n"},
 		{args: []string{"settings"}, wantOut: "auth.admin_token   = \"[redacted]\"\ndebug              = false\n" +
-			"server.base_domain = \"art.test\"\nserver.listen      = [\":443\"]\n"},
+			"server.base_domain = \"art.test\" (KAZARI_BASE_DOMAIN in the environment)\nserver.listen      = [\":443\"]\n"},
 		{args: []string{"jobs", "list"}, wantOut: "NAME  EVERY   RUNNING  LAST RUN                   NEXT RUN  LAST ERROR\n" +
 			"gc    1h0m0s  false    2026-10-01T14:00:00+02:00  -         disk full\n"},
 		{args: []string{"jobs", "run", "gc"}, wantOut: "triggered gc\n"},

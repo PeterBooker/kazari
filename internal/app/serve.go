@@ -59,6 +59,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	addrs := a.Addrs()
 	a.log.Info("kazari started",
 		"version", buildinfo.Get().Version,
+		"config", a.origin.Summary(),
 		"base_domain", a.cfg.BaseDomain,
 		"mode", a.mode,
 		"https", addrs.HTTPS,
@@ -83,6 +84,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		a.log.Warn("the dashboard is off: its address is plain http on a host that is not this machine",
 			"address", a.cfg.AdminURL(), "next", "serve the admin host over https, or set admin.public_url to an https address")
 	}
+	a.originHints()
 	a.firstRunHint(context.WithoutCancel(ctx))
 	// After the hint, so whoever waits for the listeners can read it.
 	close(a.started)
@@ -156,6 +158,19 @@ func (a *App) flushViews(ctx context.Context) {
 	}
 }
 
+// originHints warns about settings that did not apply: a dotenv file that
+// could not be read and variables an unnamed one held for nothing.
+func (a *App) originHints() {
+	if a.origin.Unreadable != "" {
+		a.log.Warn("dotenv file skipped", "file", a.origin.Unreadable,
+			"next", "the variables it holds apply only if the environment has them, as under systemd's EnvironmentFile")
+	}
+	if len(a.origin.Ignored) > 0 {
+		a.log.Warn("variables in .env changed nothing", "variables", strings.Join(a.origin.Ignored, ","),
+			"next", "beside a configuration file an unnamed .env only fills ${NAME} references; name it with --env-file, or move them to kazari.env beside the configuration file")
+	}
+}
+
 // firstRunHint tells an operator watching a fresh instance how to create
 // the first admin. With built-in accounts that is a setup link, written
 // straight to stderr: a log line may be exported to a collector, and the
@@ -178,6 +193,10 @@ func (a *App) firstRunHint(ctx context.Context) {
 			link, l.ExpiresAt.UTC().Format("15:04 UTC"))
 		a.log.WarnContext(ctx, "no users yet", "next", "open the setup link printed on stderr, or run kazari admin setup-link")
 		return
+	}
+	if o := a.cfg.Auth.OIDC; o != nil && len(o.AdminEmails) == 0 && (len(o.AllowedDomains) == 0 || !o.AutoProvision) {
+		a.log.WarnContext(ctx, "no users yet, and nobody can sign in at the identity provider: auth.oidc names no admin_emails, and allowed_domains with auto_provision creates nobody",
+			"next", "list your address under auth.oidc.admin_emails and restart, or create a user and link the identity with kazari admin identities link")
 	}
 	how := "set KAZARI_AUTH_ADMIN_TOKEN and run it with KAZARI_ADMIN_URL=" + strings.TrimSuffix(a.cfg.ExternalURL("admin"), "/")
 	if socket := a.Addrs().Socket; socket != "" {
@@ -242,9 +261,14 @@ func (a *App) listen(ctx context.Context) (servers []server, err error) {
 
 // bindSocket serves the credential-free admin API on the Unix socket at
 // path, readable and writable by the service user alone. A socket file a
-// previous run left behind is replaced; the listener removes its own on
-// close.
+// previous run left behind is replaced, one a live server answers on is
+// not, and the listener removes the file on close only while it is still
+// its own.
 func (a *App) bindSocket(ctx context.Context, path string, servers *[]server) (string, error) {
+	if conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", path); err == nil {
+		conn.Close()
+		return "", fmt.Errorf("app: another server answers on the admin socket %s; stop it, or set admin.socket to another path", path)
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("app: remove stale admin socket %s: %w", path, err)
 	}
@@ -256,8 +280,32 @@ func (a *App) bindSocket(ctx context.Context, path string, servers *[]server) (s
 		ln.Close()
 		return "", fmt.Errorf("app: admin socket %s: %w", path, err)
 	}
-	*servers = append(*servers, server{name: "admin socket", srv: a.newServer(a.adminLocal), ln: ln})
+	own, err := os.Stat(path)
+	if err != nil {
+		ln.Close()
+		return "", fmt.Errorf("app: admin socket %s: %w", path, err)
+	}
+	if ul, ok := ln.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
+	*servers = append(*servers, server{name: "admin socket", srv: a.newServer(a.adminLocal), ln: ownedSocket{Listener: ln, path: path, own: own}})
 	return path, nil
+}
+
+// ownedSocket removes its file on Close only if it is still the socket this
+// listener created, not one another process put in its place.
+type ownedSocket struct {
+	net.Listener
+	path string
+	own  os.FileInfo
+}
+
+func (s ownedSocket) Close() error {
+	err := s.Listener.Close()
+	if fi, serr := os.Stat(s.path); serr == nil && os.SameFile(fi, s.own) {
+		os.Remove(s.path)
+	}
+	return err
 }
 
 func (a *App) newServer(h http.Handler) *http.Server {

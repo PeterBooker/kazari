@@ -217,6 +217,16 @@ func (c *Client) Settings(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
+// SettingSources names where each setting not at its default came from,
+// such as "KAZARI_LISTEN_HTTP in the environment".
+func (c *Client) SettingSources(ctx context.Context) (map[string]string, error) {
+	var out map[string]string
+	if err := c.doJSON(ctx, http.MethodGet, "/settings/sources", nil, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Jobs returns the scheduler status.
 func (c *Client) Jobs(ctx context.Context) ([]api.JobStatus, error) {
 	return decodeSlice[api.JobStatus](c, ctx, "/jobs", nil)

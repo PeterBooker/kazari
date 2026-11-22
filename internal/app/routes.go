@@ -34,7 +34,25 @@ func (a *App) routes(h hosts) http.Handler {
 	mux.Handle(a.cfg.Host("")+"/account/", h.account)
 	mux.Handle(a.cfg.Host("")+"/", h.apex)
 	mux.Handle("/", h.site)
-	return normalizeHost(mux)
+	if !a.cfg.Listen.ProxyMode {
+		return normalizeHost(mux)
+	}
+	// A probe that targets the backend by its address, as load balancers
+	// and container platforms do, names no host of the instance.
+	return normalizeHost(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" && !a.underBase(r.Host) {
+			h.apex.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
+}
+
+// underBase reports whether host, with or without a port, is the base
+// domain or a name under it.
+func (a *App) underBase(host string) bool {
+	name := hostname(host)
+	return name == a.cfg.BaseDomain || strings.HasSuffix(name, "."+a.cfg.BaseDomain)
 }
 
 // probePaths are counted but never traced, and log at debug when they

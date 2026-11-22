@@ -29,7 +29,7 @@ type GrantStore interface {
 }
 
 // AdminDeps are the collaborators of the admin API. Jobs, Grants, Audit,
-// Sessions, Backup, Ready, Settings and Metrics may be nil; their routes are
+// Sessions, Backup, Ready, Settings, Sources and Metrics may be nil; their routes are
 // then absent. Views is nil with analytics off; its routes then say so.
 type AdminDeps struct {
 	Artifacts *artifact.Service
@@ -43,10 +43,12 @@ type AdminDeps struct {
 	Ready     ReadyChecker
 	Updates   Updates               // the update check's answer, on GET /v1/ready
 	Settings  func() map[string]any // effective config, secrets redacted
-	Metrics   http.Handler          // mounted at /metrics, behind AdminOptions.MetricsToken
-	Views     *views.Service
-	Links     present.Links
-	Logger    *slog.Logger
+	// Sources names where each setting not at its default came from.
+	Sources func() map[string]string
+	Metrics http.Handler // mounted at /metrics, behind AdminOptions.MetricsToken
+	Views   *views.Service
+	Links   present.Links
+	Logger  *slog.Logger
 }
 
 // AdminOptions tunes the admin API.
@@ -128,6 +130,9 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	handle("GET /v1/artifacts/{slug}/views", h.artifactViews)
 	if d.Settings != nil {
 		handle("GET /v1/settings", h.settings)
+	}
+	if d.Sources != nil {
+		handle("GET /v1/settings/sources", h.settingSources)
 	}
 	if d.Jobs != nil {
 		handle("GET /v1/jobs", h.listJobs)
@@ -445,6 +450,15 @@ func (h *adminAPI) settings(w http.ResponseWriter, _ *http.Request, _ auth.Princ
 	s := h.d.Settings()
 	if s == nil {
 		s = map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, s)
+	return nil
+}
+
+func (h *adminAPI) settingSources(w http.ResponseWriter, _ *http.Request, _ auth.Principal) error {
+	s := h.d.Sources()
+	if s == nil {
+		s = map[string]string{}
 	}
 	writeJSON(w, http.StatusOK, s)
 	return nil

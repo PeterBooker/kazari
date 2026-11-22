@@ -49,15 +49,15 @@ func writeYAML(t *testing.T, content string) string {
 
 func TestDefaultValid(t *testing.T) {
 	tests := map[string]func(*Config){
-		"acme":        func(*Config) {},
-		"proxy mode":  func(c *Config) { c.Listen.ProxyMode = true; c.TLS.Email = ""; c.TLS.DNS.APIToken = "" },
-		"self-signed": func(c *Config) { c.TLS.Mode = "self-signed"; c.TLS.Email = "" },
-		"acme without email":   func(c *Config) { c.TLS.Email = "" },
+		"acme":                  func(*Config) {},
+		"proxy mode":            func(c *Config) { c.Listen.ProxyMode = true; c.TLS.Email = ""; c.TLS.DNS.APIToken = "" },
+		"self-signed":           func(c *Config) { c.TLS.Mode = "self-signed"; c.TLS.Email = "" },
+		"acme without email":    func(c *Config) { c.TLS.Email = "" },
 		"placeholder-like name": func(c *Config) { c.BaseDomain = "art.myexample.com" },
-		"route53":     func(c *Config) { c.TLS.DNSProvider = "route53"; c.TLS.DNS.APIToken = "" },
-		"ovh":         func(c *Config) { c.TLS.DNSProvider = "ovh"; c.TLS.DNS.APIToken = "a:b:c" },
-		"namecheap":   func(c *Config) { c.TLS.DNSProvider = "namecheap"; c.TLS.DNS.User = "ann" },
-		"duckdns":     func(c *Config) { c.TLS.DNSProvider = "duckdns" },
+		"route53":               func(c *Config) { c.TLS.DNSProvider = "route53"; c.TLS.DNS.APIToken = "" },
+		"ovh":                   func(c *Config) { c.TLS.DNSProvider = "ovh"; c.TLS.DNS.APIToken = "a:b:c" },
+		"namecheap":             func(c *Config) { c.TLS.DNSProvider = "namecheap"; c.TLS.DNS.User = "ann" },
+		"duckdns":               func(c *Config) { c.TLS.DNSProvider = "duckdns" },
 		"no admin token or http listener": func(c *Config) {
 			c.Auth.AdminToken = ""
 			c.Listen.HTTP = ""

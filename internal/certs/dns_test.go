@@ -153,7 +153,7 @@ func TestDuckDNSErrorsOmitToken(t *testing.T) {
 			checkErr := CheckDNSProvider(ctx, p, "kz.duckdns.org.", "kz.duckdns.org")
 
 			h := &recordHandler{}
-			certEvents(slog.New(h))(ctx, "cert_failed", map[string]any{"identifier": "kz.duckdns.org", "error": appendErr})
+			(&ACME{}).certEvents(slog.New(h), "duckdns")(ctx, "cert_failed", map[string]any{"identifier": "kz.duckdns.org", "error": appendErr})
 			newZapLogger(slog.New(h)).Error("could not get certificate from issuer", zap.Error(fmt.Errorf("solving: %w", appendErr)))
 
 			texts := map[string]string{"append": fmt.Sprint(appendErr), "delete": fmt.Sprint(deleteErr), "check": fmt.Sprint(checkErr)}

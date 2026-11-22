@@ -52,12 +52,13 @@ type Options struct {
 	// DefaultQuota is the quota of users created without one (0 = unlimited).
 	DefaultQuota int64
 	// AllowedDomains are the verified email domains that may sign in. Empty
-	// means any verified email may link to an existing user, and nobody is
-	// auto-provisioned.
+	// means any verified email may link to an existing user, and nobody
+	// outside AdminEmails is auto-provisioned.
 	AllowedDomains []string
 	// AutoProvision creates a member on first sign-in from an allowed domain.
 	AutoProvision bool
-	// AdminEmails are provisioned as admins.
+	// AdminEmails are provisioned as admins on first sign-in, whatever
+	// AllowedDomains and AutoProvision say: the operator named each.
 	AdminEmails []string
 	// MaxKeyTTL, when set, is the longest a key may live: one issued without
 	// an expiry gets it, and a longer one is refused. Keys issued before it
@@ -807,9 +808,10 @@ func (s *Service) touch(ctx context.Context, k *APIKey, now time.Time) {
 
 // ResolveIdentity maps an upstream identity to, in order: the user linked to
 // (issuer, subject); the user with its verified email, if the domain is
-// allowed (any domain when AllowedDomains is empty) and, for an admin, the
-// email is in AdminEmails; a new user, an admin if in AdminEmails, when
-// AutoProvision is on and the domain is listed; else ErrNotProvisioned. A
+// allowed (any domain when AllowedDomains is empty) or the email is in
+// AdminEmails and, for an admin, the email is in AdminEmails; a new admin
+// when the email is in AdminEmails; a new member when AutoProvision is on
+// and the domain is listed; else ErrNotProvisioned. A
 // disabled user yields ErrDisabled. Success refreshes the link's
 // last_login_at.
 func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (_ *User, err error) {
@@ -835,7 +837,8 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (_ *Use
 		return strings.EqualFold(strings.TrimSpace(d), domain)
 	})
 
-	if len(s.opts.AllowedDomains) == 0 || domainListed {
+	listedAdmin := s.adminEmail(email)
+	if len(s.opts.AllowedDomains) == 0 || domainListed || listedAdmin {
 		u, err := s.store.GetUserByEmail(ctx, email)
 		switch {
 		case err == nil:
@@ -852,12 +855,12 @@ func (s *Service) ResolveIdentity(ctx context.Context, id auth.Identity) (_ *Use
 		}
 	}
 
-	if !s.opts.AutoProvision || !domainListed {
-		return nil, ErrNotProvisioned
-	}
 	role := RoleMember
-	if s.adminEmail(email) {
+	switch {
+	case listedAdmin:
 		role = RoleAdmin
+	case !s.opts.AutoProvision || !domainListed:
+		return nil, ErrNotProvisioned
 	}
 	u, err = s.provision(ctx, email, strings.TrimSpace(id.Name), role)
 	if err != nil {

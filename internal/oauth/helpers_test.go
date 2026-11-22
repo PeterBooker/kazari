@@ -76,6 +76,19 @@ type fakeIDP struct {
 	mu       sync.Mutex
 	identity auth.Identity
 	flows    map[string]string // nonce -> PKCE challenge
+	down     error             // what Ready returns
+}
+
+func (f *fakeIDP) Ready() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.down
+}
+
+func (f *fakeIDP) setDown(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.down = err
 }
 
 func (f *fakeIDP) AuthURL(state, nonce, challenge string) string {

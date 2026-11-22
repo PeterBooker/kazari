@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ type fakeOP struct {
 
 	mu              sync.Mutex
 	discoveryIssuer string // "" = the server URL
+	down            bool   // discovery answers 503
 	claims          map[string]any
 	signer          *rsa.PrivateKey
 }
@@ -49,8 +51,12 @@ func newFakeOP(t *testing.T) *fakeOP {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		op.mu.Lock()
-		iss := op.discoveryIssuer
+		iss, down := op.discoveryIssuer, op.down
 		op.mu.Unlock()
+		if down {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
 		if iss == "" {
 			iss = op.srv.URL
 		}
@@ -306,5 +312,44 @@ func TestNew(t *testing.T) {
 				t.Errorf("New err = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLazy(t *testing.T) {
+	op := newFakeOP(t)
+	op.mu.Lock()
+	op.down = true
+	op.mu.Unlock()
+	l, err := oidc.NewLazy(oidc.Config{Issuer: op.srv.URL, ClientID: clientID, RedirectURL: "https://x/cb", HTTPClient: op.srv.Client()})
+	if err != nil {
+		t.Fatalf("NewLazy: %v", err)
+	}
+	if err := l.Ready(); !errors.Is(err, oidc.ErrUnavailable) {
+		t.Errorf("Ready before discovery = %v, want ErrUnavailable", err)
+	}
+	if err := l.Discover(t.Context()); err == nil {
+		t.Fatal("Discover with the provider down = nil, want an error")
+	}
+	if err := l.Ready(); !errors.Is(err, oidc.ErrUnavailable) || !strings.Contains(err.Error(), "503") {
+		t.Errorf("Ready after a failed discovery = %v, want ErrUnavailable with the cause", err)
+	}
+	if got := l.AuthURL("s", "n", "c"); got != "" {
+		t.Errorf("AuthURL before discovery = %q, want empty", got)
+	}
+	if _, err := l.Exchange(t.Context(), "good-code", nonce, verifier); !errors.Is(err, oidc.ErrUnavailable) {
+		t.Errorf("Exchange before discovery = %v, want ErrUnavailable", err)
+	}
+
+	op.mu.Lock()
+	op.down = false
+	op.mu.Unlock()
+	if err := l.Discover(t.Context()); err != nil {
+		t.Fatalf("Discover with the provider up: %v", err)
+	}
+	if err := l.Ready(); err != nil {
+		t.Errorf("Ready after discovery = %v", err)
+	}
+	if got := l.AuthURL("s", "n", "c"); !strings.HasPrefix(got, op.srv.URL+"/authorize?") {
+		t.Errorf("AuthURL after discovery = %q", got)
 	}
 }
