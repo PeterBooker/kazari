@@ -756,11 +756,12 @@ func (s *Service) checkWritable(actor Actor, a *Artifact, involved, allowDeleted
 	if a.PurgedAt != nil {
 		return ErrGone
 	}
-	if a.DeletedAt != nil && !allowDeleted {
-		return ErrNotFound
-	}
 	if !canRead(actor, a, involved) {
 		return ErrNotFound
+	}
+	if a.DeletedAt != nil && !allowDeleted {
+		return Errorf(ErrNotFound, "%s is in the bin; restore it with kazari restore %s or update_artifact restore: true, "+
+			"then make the change", a.Slug, a.Slug)
 	}
 	if !s.canWrite(actor, a) {
 		return ErrForbidden

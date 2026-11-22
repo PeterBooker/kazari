@@ -2195,3 +2195,23 @@ func TestAuditRecordsCredential(t *testing.T) {
 		t.Errorf("scheduler event has a credential: %v", sys.Details)
 	}
 }
+
+// A change to an artifact in the bin says how to restore it, to those who
+// may see it there, and nothing to anyone else.
+func TestChangeInTheBinSaysRestore(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	e.create(t, alice, "demo")
+	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	change := artifact.UpdateRequest{Slug: "demo", Files: files("index.html", "v2")}
+	_, _, err := e.svc.Update(e.ctx, alice, change)
+	if !errors.Is(err, artifact.ErrNotFound) || !strings.Contains(err.Error(), "kazari restore demo") {
+		t.Errorf("owner's Update in the bin: err = %v, want not_found naming kazari restore demo", err)
+	}
+	_, _, err = e.svc.Update(e.ctx, bob, change)
+	if !errors.Is(err, artifact.ErrNotFound) || strings.Contains(err.Error(), "bin") {
+		t.Errorf("stranger's Update in the bin: err = %v, want a bare not_found", err)
+	}
+}
