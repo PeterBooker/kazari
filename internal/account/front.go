@@ -47,7 +47,7 @@ func NewFront(o FrontOptions) Front {
 	}
 	page := func(kind, assets, origin string) http.Handler {
 		d := frontPage{
-			base: base{Assets: theme.URLs(assets), Host: host}, Kind: kind, MCPURL: o.MCPURL,
+			Assets: theme.URLs(assets), Host: host, Kind: kind, MCPURL: o.MCPURL,
 			CLIURL:  strings.TrimSuffix(strings.TrimSuffix(o.APIURL, "/"), "/v1"),
 			Account: strings.TrimSuffix(o.URL, "/") + Prefix, AdminURL: o.AdminURL,
 		}

@@ -2,6 +2,7 @@ package account_test
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -233,9 +234,7 @@ func TestRecoveryReturnsToTheSignIn(t *testing.T) {
 	}
 	const next = "a brand new long password"
 	form := url.Values{"login": {"ana"}, "code": {codes[0]}, "password": {next}, "confirm": {next}}
-	for k, v := range q {
-		form[k] = v
-	}
+	maps.Copy(form, q)
 	resp, body = b.post("/account/recover", form)
 	want := e.mcp.URL + oauth.PathSignIn + "?" + url.Values{"host": {"demo"}, "login": {"ana"}, "nonce": {nonce}, "notice": {"recovered"}, "path": {"/report"}}.Encode()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != want {
