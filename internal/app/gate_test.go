@@ -198,6 +198,33 @@ func TestGatedEndToEnd(t *testing.T) {
 	wantStatus(t, guest.get("http://team.localhost/"), http.StatusFound, "guest after revoke")
 	wantStatus(t, guest.get(created.URL), http.StatusForbidden, "revoked share link")
 
+	// A link with a password opens a form; the URL alone opens nothing.
+	locked, err := user.CreateShareLink(ctx, "team", "client", "2d", "open sesame")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !locked.ShareLink.Password {
+		t.Fatalf("created link = %+v, want password true", locked.ShareLink)
+	}
+	visitor := newBrowser(t, addr)
+	asked := visitor.get(locked.URL)
+	if asked.status != http.StatusOK || !strings.Contains(asked.body, `name="password"`) {
+		t.Fatalf("link with a password: %d, want 200 and the form; body %q", asked.status, truncate(asked.body))
+	}
+	wantStatus(t, visitor.get("http://team.localhost/"), http.StatusFound, "page before the password")
+	token := strings.TrimPrefix(locked.URL[strings.Index(locked.URL, "token="):], "token=")
+	post := func(password string) response {
+		return visitor.send(http.MethodPost, "http://team.localhost/.kazari/share",
+			url.Values{"token": {token}, "password": {password}}, http.Header{"Origin": {"http://team.localhost"}})
+	}
+	wantStatus(t, post("open says me"), http.StatusForbidden, "wrong password")
+	if back := visitor.follow(post("open sesame"), "right password"); back != "/" {
+		t.Fatalf("right password returned to %q", back)
+	}
+	if got := visitor.get("http://team.localhost/"); got.status != http.StatusOK || got.body != "team v2" {
+		t.Fatalf("page after the password: %d %q", got.status, got.body)
+	}
+
 	// Signing out on the MCP host ends the browser's access on every host.
 	wantStatus(t, b.get("http://mcp.localhost/oauth/signout"), http.StatusOK, "sign-out page")
 	out := b.send(http.MethodPost, "http://mcp.localhost/oauth/signout", url.Values{}, http.Header{"Origin": {"http://mcp.localhost"}})

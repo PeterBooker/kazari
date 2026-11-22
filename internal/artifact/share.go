@@ -284,7 +284,10 @@ func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *Sha
 // counts the use. Slowing guesses down is the caller's part.
 func (s *Service) UnlockShareLink(ctx context.Context, slug, token, password string) (_ *ShareLink, cookie string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.unlock", slug)
-	defer func() { s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("unlock")); endSpan(span, err) }()
+	defer func() {
+		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("unlock"))
+		endSpan(span, err)
+	}()
 	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
 		return nil, "", err

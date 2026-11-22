@@ -116,22 +116,12 @@
 .form { display: flex; flex-direction: column; gap: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .form-grid > .span-2, .form-grid > .actions { grid-column: 1 / -1; }
-.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field > label, .field-label { font: 500 14px/1.4 var(--font-sans); }
 .optional { font-weight: 400; color: var(--text-soft); }
-.input {
-  width: 100%; min-height: 44px; padding: 0 14px; border: 1px solid var(--field-border); border-radius: 10px;
-  background: var(--surface); color: var(--text); font: 400 16px/1.3 var(--font-sans);
-}
 textarea.input { min-height: 6.5em; padding: 10px 14px; line-height: 1.5; resize: vertical; }
 .input-mono { font-family: var(--font-mono); }
-.input:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
-.input[aria-invalid="true"] { border-color: var(--beni); }
 .input[readonly] { background: var(--code-bg); }
 .box .input, .door-card .input { background: var(--bg); }
 .box .input[readonly], .door-card .input[readonly] { background: var(--code-bg); }
-.help { font-size: 13.5px; color: var(--text-soft); }
-.error { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; color: var(--beni); }
 .error .icon { margin-top: .08em; }
 .check { display: flex; align-items: flex-start; gap: 10px; min-height: 24px; }
 .check input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--text); }

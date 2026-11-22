@@ -1,6 +1,6 @@
 begin_upload           1390    293
 create_artifact        4329   1567
-create_share_link       728    432
+create_share_link       786    522
 delete_artifact         509    234
 discard_upload          312    160
 edit_file              2937   1883
@@ -18,4 +18,4 @@ unmark_stale            132    141
 update_artifact        2001   2476
 upload_chunk            854    631
 instructions           1963
-total                 33373
+total                 33521

@@ -247,6 +247,31 @@ func TestRecoveryReturnsToTheSignIn(t *testing.T) {
 	}
 }
 
+func TestOwnPageShareLinkPassword(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", "")
+	e.page("ana", "notes", "Notes", artifact.Members)
+	b := e.browser()
+	b.signIn("ana", password)
+
+	_, body := b.get("/account/pages/notes")
+	if !strings.Contains(body, `name="password"`) {
+		t.Fatalf("the share-link form has no password field:\n%s", body)
+	}
+	resp, body := b.form("/account/pages/notes/links", url.Values{"days": {"3"}, "password": {"short"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Use 8 to 256 characters") {
+		t.Errorf("a short password: status %d, want 422 saying how long it must be", resp.StatusCode)
+	}
+	resp, body = b.form("/account/pages/notes/links", url.Values{"days": {"3"}, "password": {"open sesame"}})
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "and the password") || strings.Contains(body, "open sesame") {
+		t.Fatalf("a link with a password: status %d, want the link shown once, its password never:\n%s", resp.StatusCode, body)
+	}
+	links, err := e.arts.ListShareLinks(t.Context(), artifact.Actor{Handle: "ana"}, "notes")
+	if err != nil || len(links) != 1 || !links[0].HasPassword {
+		t.Fatalf("links after creating one with a password = %+v, %v", links, err)
+	}
+}
+
 func TestOwnPageDeletedVersion(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	ctx := t.Context()

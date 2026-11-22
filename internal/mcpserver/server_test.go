@@ -78,7 +78,7 @@ func newEnv(t testing.TB) *env {
 	// Loopback is allowed so tests can fetch from httptest servers.
 	fc := fetch.New(fetch.Options{Transport: http.DefaultTransport, Dir: dir})
 	arts := artifact.New(sqlite.NewArtifactStore(db), blobs, nil, artifact.Options{ReservedSlugs: reserved,
-		Pages: snapshot.New(fc, snapshot.Options{CSP: testCSP})})
+		Pages: snapshot.New(fc, snapshot.Options{CSP: testCSP}), Passwords: plainPasswords{}})
 	ups := upload.New(sqlite.NewUploadStore(db), upload.Options{Dir: filepath.Join(dir, "uploads"), MaxChunkBytes: 1 << 20})
 	return &env{
 		ctx: ctx,

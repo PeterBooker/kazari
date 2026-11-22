@@ -1,6 +1,7 @@
 package mcpserver_test
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -9,6 +10,37 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
 )
+
+// plainPasswords stands in for user.Service's hashing.
+type plainPasswords struct{}
+
+func (plainPasswords) HashPassword(_ context.Context, password string) (string, error) {
+	return "hash:" + password, nil
+}
+
+func (plainPasswords) VerifyPassword(_ context.Context, hash, password string) (bool, error) {
+	return hash == "hash:"+password, nil
+}
+
+func TestShareLinkPasswordTool(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
+		"slug": "team", "name": "Team", "description": "x", "visibility": "members",
+		"files": []map[string]any{{"path": "index.html", "content": "<h1>team</h1>"}},
+	})
+	created, res := ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "team", "password": "open sesame"})
+	if !created.Password || !strings.Contains(firstLine(res), "and the password") || strings.Contains(text(res), "open sesame") {
+		t.Errorf("create_share_link with a password = %+v, %q; want password true, said once, never repeated", created, firstLine(res))
+	}
+	if msg := fails(t, cs, "create_share_link", map[string]any{"slug": "team", "password": "short"}); !strings.HasPrefix(msg, "invalid_argument: ") {
+		t.Errorf("create_share_link with a short password = %q, want invalid_argument", msg)
+	}
+	list, _ := ok[api.ShareLinkList](t, cs, "list_share_links", map[string]any{"slug": "team"})
+	if len(list.Items) != 1 || !list.Items[0].Password {
+		t.Errorf("list_share_links = %+v, want one link with password true", list.Items)
+	}
+}
 
 func TestShareLinkTools(t *testing.T) {
 	e := newEnv(t)

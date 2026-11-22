@@ -203,7 +203,7 @@ type ShareLinkInput struct {
 	Label     string `json:"label,omitempty" jsonschema:"note on who the link is for, e.g. Acme review"`
 	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h, 14d or 2w; default 7d"`
 	Version   int    `json:"version,omitempty" jsonschema:"also return version_url, the link opening this version"`
-	Password  string `json:"password,omitempty" jsonschema:"a password the visitor types before the page opens; tell the user to send it apart from the link"`
+	Password  string `json:"password,omitempty" jsonschema:"a password the page asks for before it opens"`
 }
 
 // ListShareLinksInput is the input of list_share_links.

@@ -381,6 +381,29 @@ func TestPageDeleteVersion(t *testing.T) {
 	}
 }
 
+func TestPageShareLinkPassword(t *testing.T) {
+	e, b := pagesEnv(t)
+	b.get("/pages/members-one")
+	r := b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"short"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Use 8 to 256 characters, or leave it empty.") {
+		t.Fatalf("a short password: status %d, want 422 saying how long it must be", r.StatusCode)
+	}
+	b.get("/pages/members-one")
+	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"open sesame"}})
+	if r.StatusCode != http.StatusOK || !strings.Contains(r.body, "Send the password apart from the link") ||
+		strings.Contains(r.body, "open sesame") {
+		t.Fatalf("a link with a password: status %d, want the link shown once with a note on the password, and never the password:\n%s",
+			r.StatusCode, r.body)
+	}
+	links, err := e.artifacts.ListShareLinks(t.Context(), artifact.Actor{Handle: "boss", Admin: true}, "members-one")
+	if err != nil || len(links) != 1 || !links[0].HasPassword {
+		t.Fatalf("links after creating one with a password = %+v, %v", links, err)
+	}
+	if r := b.get("/pages/members-one"); !strings.Contains(r.body, `<span class="status tone-note">Password</span>`) {
+		t.Error("the page's link list does not mark the link with a password")
+	}
+}
+
 var shareToken = regexp.MustCompile(`kzs_[a-z2-7]{8}_[a-z2-7]{52}`)
 
 func TestPageShareLink(t *testing.T) {
