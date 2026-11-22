@@ -23,7 +23,7 @@ The documentation and guides are at <https://kazari.io/docs/>.
 - **A dashboard.** An admin runs the instance day to day from a browser on the admin host: people and invites, pages and the bin, page views and who opened a members-only page, the activity log, health checks, jobs and a backup download. It does nothing the `kazari admin` commands cannot.
 - **An account page.** Each member finds the connector address there with the steps for their agent, and changes their own pages in a browser: who can open them, share links, versions and the bin.
 - **Keys for one job.** An API key can be restricted to the artifacts whose slug matches a pattern, issued without the right to share or delete, and given an expiry, so a scheduled agent holds no more than its task needs. People issue and rotate their own keys, and the same key can stand behind an OAuth connection.
-- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token and the ports before the first start, and `kazari admin ready` checks a running server. SQLite and a blob directory are the only state, and `kazari admin backup` writes both as one archive. OpenTelemetry traces, metrics and logs over OTLP, Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
+- **Operations built in.** Wildcard certificates by ACME DNS-01 through Cloudflare, Route 53, Hetzner, DigitalOcean, Gandi, OVH, Namecheap or DuckDNS, certificate files with hot reload, or a reverse proxy in front. `kazari check` tests the DNS records, the DNS token, the ports and the identity provider before the first start, and `kazari admin ready` checks a running server. SQLite and a blob directory are the only state: `kazari admin backup` writes both as one archive, and `kazari admin restore-backup` puts it back. OpenTelemetry traces, metrics and logs over OTLP, Prometheus metrics, structured logs, an admin API, quotas and rate limits are included.
 
 ## Quick start
 
@@ -52,14 +52,12 @@ The [installation guide](docs/install.md) has every path, the preflight check, t
 
 ## Configuration at a glance
 
-`kazari.yaml` names the domain, the contact email and the DNS provider; everything else has a default. A file for ACME certificates through Cloudflare and sign-in through Microsoft Entra ID looks like this:
+`kazari.yaml` names the domain and the DNS provider; everything else has a default. A file for ACME certificates through Cloudflare and sign-in through Microsoft Entra ID looks like this:
 
 ```yaml
 base_domain: art.example.com
-data_dir: /var/lib/kazari
 
 tls:
-  email: ops@example.com
   dns_provider: cloudflare
   dns:
     api_token: ${KAZARI_TLS_DNS_API_TOKEN}
@@ -71,7 +69,7 @@ auth:
     client_secret: ${KAZARI_AUTH_OIDC_CLIENT_SECRET}
 ```
 
-Secrets stay out of the file. Kazari replaces each `${NAME}` with the environment variable `NAME`, read from the process environment or from a dotenv file (`/etc/kazari/kazari.env` under systemd, `.env` beside `compose.yml`), and a secret can also come from a file through `KAZARI_<KEY>_FILE`.
+Secrets stay out of the file. Kazari replaces each `${NAME}` with the environment variable `NAME`, read from the process environment or from a dotenv file (`kazari.env` beside `kazari.yaml`, `.env` beside `compose.yml`), and a secret can also come from a file through `KAZARI_<KEY>_FILE`.
 
 Every key can also be set directly as `KAZARI_<SECTION>_<KEY>`. The [configuration reference](docs/configuration.md) lists every key, and `deploy/kazari.reference.yaml` shows every default.
 

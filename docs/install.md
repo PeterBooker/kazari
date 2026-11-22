@@ -2,11 +2,11 @@
 
 This guide takes a fresh server to a first published page. It covers the DNS records, running Kazari with Docker Compose, from a package or from the binary, the preflight check, the first admin and a key, and a first publish. To try Kazari on your own machine first, the [quick start](quickstart.md) needs none of this.
 
-The examples use `art.example.com` as the base domain. Replace it with yours.
+The examples use `art.example.com` as the base domain. Replace it with yours: Kazari refuses to start while `base_domain` or `tls.email` is under `example.com`, `example.org` or `example.net`.
 
 ## Choosing how to run it
 
-Every way of running Kazari uses the same two files: `kazari.yaml`, which names the domain, the contact email and the DNS provider, and a dotenv file with the secrets. Pick the path that fits the host:
+Every way of running Kazari uses the same two files: `kazari.yaml`, which names the domain and the DNS provider, and a dotenv file with the secrets. Pick the path that fits the host:
 
 | Path                                                  | Best for                                                     | Upgrade                                     |
 | ----------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------- |
@@ -44,7 +44,7 @@ curl -fsSLO https://kazari.io/deploy/kazari.yaml
 curl -fsSL https://kazari.io/deploy/kazari.env.example -o .env
 ```
 
-Edit `kazari.yaml` with your domain, contact email and DNS provider, and put the provider's token in `.env`. Then start Kazari:
+Edit `kazari.yaml` with your domain and DNS provider, and put the provider's token in `.env`. Then start Kazari:
 
 ```sh
 docker compose up -d
@@ -59,7 +59,9 @@ To check the DNS records and the token from inside the running container, run th
 docker compose exec kazari kazari check
 ```
 
-The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION` in `.env`. Then go on to [creating the first admin](#creating-the-first-admin).
+Inside a container the `dns` lines cannot compare the records with the host's addresses, and say so instead: check that they show the host's public address.
+
+The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION=<version>` in `.env`, such as the newest on the [releases page](https://github.com/PeterBooker/kazari/releases). Then go on to [creating the first admin](#creating-the-first-admin).
 
 ## Installing the package
 
@@ -70,7 +72,7 @@ sudo apt install ./kazari_<version>_amd64.deb      # Debian and Ubuntu
 sudo dnf install ./kazari-<version>.x86_64.rpm     # Fedora and RHEL
 ```
 
-The package prints the remaining steps. Edit `/etc/kazari/kazari.yaml` with your domain, contact email and DNS provider, put the provider's token in `/etc/kazari/kazari.env`, then check and start:
+The package prints the remaining steps. Edit `/etc/kazari/kazari.yaml` with your domain and DNS provider, put the provider's token in `/etc/kazari/kazari.env`, then check and start:
 
 ```sh
 sudo kazari check
@@ -96,10 +98,10 @@ It prints the installed version. To install a particular release or into another
 
 ### By hand, verifying the release
 
-Each release on GitHub carries archives named `kazari_<version>_<os>_<arch>.tar.gz`, each holding the binary and the files in `deploy/`, with an SBOM each, a `checksums.txt`, and `checksums.txt.sigstore.json`, a Sigstore bundle signed with keyless cosign. Set the version you want, then download the archive, the checksums and their signature:
+Each release on GitHub carries archives named `kazari_<version>_<os>_<arch>.tar.gz`, each holding the binary and the files in `deploy/`, with an SBOM each, a `checksums.txt`, and `checksums.txt.sigstore.json`, a Sigstore bundle signed with keyless cosign. Set `VERSION` to the release you want, the newest on the [releases page](https://github.com/PeterBooker/kazari/releases) unless you have a reason, then download the archive, the checksums and their signature:
 
 ```sh
-VERSION=0.3.0
+VERSION=<version>
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/kazari_${VERSION}_linux_amd64.tar.gz
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt
 curl -LO https://github.com/PeterBooker/kazari/releases/download/$VERSION/checksums.txt.sigstore.json
@@ -144,7 +146,7 @@ sudo chmod 0600 /etc/kazari/kazari.env
 sudo curl -fsSL https://kazari.io/deploy/kazari.service -o /etc/systemd/system/kazari.service
 ```
 
-Edit `/etc/kazari/kazari.yaml` with your domain, contact email and DNS provider, and put the provider's token in `/etc/kazari/kazari.env`. Then check, enable and start the service:
+Edit `/etc/kazari/kazari.yaml` with your domain and DNS provider, and put the provider's token in `/etc/kazari/kazari.env`. Then check, enable and start the service:
 
 ```sh
 sudo kazari check
@@ -156,8 +158,9 @@ journalctl -u kazari -f
 The unit does these things:
 
 - `ExecStart=kazari serve --config /etc/kazari/kazari.yaml` starts the server, finding the binary in `/usr/local/bin` or `/usr/bin`.
-- `EnvironmentFile=/etc/kazari/kazari.env` supplies the secrets. systemd reads it as root before dropping privileges, so mode `0600` is right.
-- `DynamicUser=yes` runs it as a transient unprivileged user. `StateDirectory=kazari` gives that user `/var/lib/kazari` (stored under `/var/lib/private/kazari`), and `KAZARI_DATA_DIR` points there.
+- `Restart=on-failure` with `RestartSec=10s` restarts it after a failure, and `StartLimitIntervalSec=0` keeps doing so through a long outage instead of giving up.
+- `EnvironmentFile=/etc/kazari/kazari.env` supplies the secrets. systemd reads it as root before dropping privileges, so mode `0600` is right. `sudo kazari check` and `sudo kazari admin` read the same file, because it sits beside `kazari.yaml`.
+- `DynamicUser=yes` runs it as a transient unprivileged user. `StateDirectory=kazari` gives that user `/var/lib/kazari` (stored under `/var/lib/private/kazari`), the default `data_dir`.
 - `AmbientCapabilities=CAP_NET_BIND_SERVICE` lets it bind ports 80 and 443 without root.
 - `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and a system-call filter confine it to its state directory and `/tmp`.
 
@@ -171,12 +174,13 @@ Turn on proxy mode and bind the plain listener to the loopback address, in place
 
 ```yaml
 base_domain: art.example.com
-data_dir: /var/lib/kazari
 
 listen:
   proxy_mode: true
   http: "127.0.0.1:8080"
 ```
+
+`listen.http` takes `host:port`: a bare `8080` fails validation. `kazari check` warns when the address is reachable from other networks.
 
 In proxy mode Kazari needs no DNS provider token. Public URLs still use `https`, since `external_scheme` defaults to `https`. The proxy must hold a certificate for `art.example.com` and `*.art.example.com` and forward every host to Kazari with the `Host` header intact; [proxy examples](certificates.md#proxy-examples) has Caddy, nginx and Traefik configurations.
 
@@ -194,7 +198,7 @@ sudo kazari check
 It prints one line per check and a summary:
 
 ```text
-config       ok    /etc/kazari/kazari.yaml, base domain art.example.com, mode acme via cloudflare, data in /var/lib/kazari
+config       ok    /etc/kazari/kazari.yaml with /etc/kazari/kazari.env, base domain art.example.com, mode acme via cloudflare, data in /var/lib/kazari
 data_dir     ok    /var/lib/kazari is writable
 dns          ok    art.example.com -> 203.0.113.10 (this host)
 dns          ok    api.art.example.com -> 203.0.113.10 (this host)
@@ -203,14 +207,18 @@ dns token    ok    cloudflare wrote and removed a TXT record in zone example.com
 ports        ok    :443 is free
 ports        ok    :80 is free
 admin socket ok    /var/lib/kazari/admin.sock (no server listening yet)
-metrics      warn  /metrics is not served on admin.art.example.com without telemetry.metrics.token; set it, or scrape admin.listen on a private address
+metrics      skip  /metrics is not served on admin.art.example.com until telemetry.metrics.token is set, or scrape admin.listen on a private address
 dashboard    ok    https://admin.art.example.com
 telemetry    skip  no OTLP endpoint is set; nothing is exported
 
-all checks passed, 1 warning(s)
+all checks passed
 ```
 
-The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does. A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, a port is in use while Kazari runs, and the metrics warning only matters once Prometheus scrapes the instance ([metrics](ops.md#metrics)). The `dashboard` line names the address a browser uses for the [dashboard](dashboard.md), and warns when `admin.listen` is set without `admin.public_url`. A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
+The first line names the configuration file and the dotenv files read. An `override` line after it names each key a `KAZARI_*` variable set, and an `env file` warning names a variable that changed nothing ([the `.env` file](configuration.md#the-env-file)).
+
+The random host proves the wildcard record works. The token check writes a `_kazari-check` TXT record through the provider's API and removes it again, which is what issuance does; when the provider refuses, the line says what the token lacks. With `tls.mode: files`, a `cert files` line opens both files and names what the certificate covers and when it expires. With `auth.oidc`, an `oidc` line fetches the provider's discovery document.
+
+A `warn` line is worth reading but does not stop you: a host behind NAT or a proxy resolves to another address, and a port is in use while Kazari runs. The `dashboard` line names the address a browser uses for the [dashboard](dashboard.md), and warns when `admin.listen` is set without `admin.public_url`. A `fail` line exits with status 1; an invalid configuration exits with status 2 and lists every problem.
 
 Once the server runs, `kazari admin ready` repeats the checks that still apply and adds the certificate and the disk ([checking readiness](ops.md#checking-readiness)).
 
@@ -253,7 +261,7 @@ The key is shown exactly once, so copy it now. A key issued without `--scopes` c
 
 ### With an identity provider
 
-With an `auth.oidc` section, people sign in at your identity provider and no setup link is printed. List your own address under `admin_emails`, and your first sign-in creates your user as an admin ([provisioning policy](identity.md#provisioning-policy)):
+With an `auth.oidc` section, people sign in at your identity provider and no setup link is printed. List your own address under `admin_emails`, and your first sign-in creates your user as an admin, whatever `allowed_domains` says ([provisioning policy](identity.md#provisioning-policy)):
 
 ```yaml
 auth:

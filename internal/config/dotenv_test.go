@@ -136,7 +136,7 @@ func TestLoadEnvFileOption(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeEnvFile(t, ".", "KAZARI_TEST_DOMAIN=from.dotenv\n")
 
-	c, err := Load(cfgPath, envPath)
+	c, _, err := Load(cfgPath, envPath)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -148,12 +148,12 @@ func TestLoadEnvFileOption(t *testing.T) {
 	}
 
 	t.Setenv("KAZARI_TEST_DOMAIN", "from.process")
-	if c, err := Load(cfgPath, envPath); err != nil || c.BaseDomain != "from.process" {
+	if c, _, err := Load(cfgPath, envPath); err != nil || c.BaseDomain != "from.process" {
 		t.Errorf("with process env: BaseDomain = %q, %v; want from.process", c.BaseDomain, err)
 	}
 
 	missing := filepath.Join(dir, "nope.env")
-	if _, err := Load(cfgPath, missing); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), missing) {
+	if _, _, err := Load(cfgPath, missing); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), missing) {
 		t.Errorf("missing env file: err = %v, want fs.ErrNotExist naming %s", err, missing)
 	}
 }
@@ -162,13 +162,13 @@ func TestLoadDefaultEnvFile(t *testing.T) {
 	cfgPath := writeYAML(t, loadTestYAML)
 	t.Chdir(t.TempDir())
 
-	_, err := Load(cfgPath, "")
+	_, _, err := Load(cfgPath, "")
 	if want := "${KAZARI_TEST_DOMAIN} is not set"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("without .env: err = %v, want %q", err, want)
 	}
 
 	writeEnvFile(t, ".", "KAZARI_TEST_DOMAIN=from.dotenv\n")
-	c, err := Load(cfgPath, "")
+	c, _, err := Load(cfgPath, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestLoadDefaultEnvFile(t *testing.T) {
 	}
 
 	writeEnvFile(t, ".", "NOT A LINE\n")
-	if _, err := Load(cfgPath, ""); err == nil || !strings.Contains(err.Error(), ".env: line 1") {
+	if _, _, err := Load(cfgPath, ""); err == nil || !strings.Contains(err.Error(), ".env: line 1") {
 		t.Errorf("malformed .env: err = %v, want a line error", err)
 	}
 }
@@ -208,7 +208,7 @@ telemetry:
 	t.Chdir(dir)
 	envPath := writeEnvFile(t, dir, dotenv)
 
-	c, err := Load(cfgPath, "")
+	c, _, err := Load(cfgPath, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -233,7 +233,7 @@ telemetry:
 		}
 		writeEnvFile(t, dir, dotenv+"KAZARI_TELEMETRY_OTLP_HEADERS_FILE="+secret+"\n")
 		t.Cleanup(func() { writeEnvFile(t, dir, dotenv) })
-		c, err := Load(cfgPath, "")
+		c, _, err := Load(cfgPath, "")
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -244,7 +244,7 @@ telemetry:
 
 	// The same file named on purpose overrides as before.
 	t.Run("named file", func(t *testing.T) {
-		c, err := Load(cfgPath, envPath)
+		c, _, err := Load(cfgPath, envPath)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -255,7 +255,7 @@ telemetry:
 
 	t.Run("process environment", func(t *testing.T) {
 		t.Setenv("KAZARI_TELEMETRY_OTLP_ENDPOINT", "https://otlp.process.test")
-		c, err := Load(cfgPath, "")
+		c, _, err := Load(cfgPath, "")
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -269,7 +269,7 @@ telemetry:
 	t.Run("no config file", func(t *testing.T) {
 		writeEnvFile(t, dir, "KAZARI_BASE_DOMAIN=dotenv.test\nKAZARI_DATA_DIR=/d\nKAZARI_TLS_MODE=self-signed\n")
 		t.Cleanup(func() { writeEnvFile(t, dir, dotenv) })
-		c, err := Load("", "")
+		c, _, err := Load("", "")
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}

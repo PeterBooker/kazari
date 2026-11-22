@@ -129,11 +129,19 @@ func TestCAURL(t *testing.T) {
 
 func TestCertEvents(t *testing.T) {
 	h := &recordHandler{}
-	on := certEvents(slog.New(h))
+	a := &ACME{}
+	on := a.certEvents(slog.New(h), "cloudflare")
 	ctx := context.Background()
 	on(ctx, "cert_obtaining", map[string]any{"identifier": "*.art.example.com"})
 	on(ctx, "cert_obtained", map[string]any{"identifier": "*.art.example.com", "issuer": "acme-v02.api.letsencrypt.org-directory"})
-	on(ctx, "cert_failed", map[string]any{"identifier": "*.art.example.com", "error": errors.New("401 unauthorized"), "renewal": true})
+	if err := a.LastError(); err != nil {
+		t.Errorf("LastError after an obtained certificate = %v, want nil", err)
+	}
+	failure := errors.New("presenting for challenge: adding temporary record for zone example.com.: HTTP 401 unauthorized")
+	on(ctx, "cert_failed", map[string]any{"identifier": "*.art.example.com", "error": failure, "renewal": true})
+	if err := a.LastError(); !errors.Is(err, failure) {
+		t.Errorf("LastError after a failed order = %v, want %v", err, failure)
+	}
 	on(ctx, "cached_managed_cert", map[string]any{"sans": []string{"art.example.com"}})
 	var got []string
 	for _, r := range h.all() {
@@ -154,7 +162,54 @@ func TestCertEvents(t *testing.T) {
 		}
 		return true
 	})
-	if name != "*.art.example.com" || !strings.Contains(hint, "kazari check") {
+	if name != "*.art.example.com" || !strings.Contains(hint, "the provider refused the token") {
 		t.Errorf("failed event name %q hint %q", name, hint)
+	}
+	on(ctx, "cert_obtained", map[string]any{"identifier": "*.art.example.com"})
+	if err := a.LastError(); err != nil {
+		t.Errorf("LastError after a later success = %v, want nil", err)
+	}
+}
+
+func TestObtainHint(t *testing.T) {
+	tests := []struct {
+		name, err, want string
+	}{
+		{"token refused", "presenting for challenge: adding temporary record for zone \"example.com.\": HTTP 400: [{Code:6003 Message:Invalid format for Authorization header}]",
+			"the provider refused the token"},
+		{"no permission", "presenting for challenge: adding temporary record for zone example.com.: HTTP 403 Forbidden", "the token lacks permission"},
+		{"ca unreachable", `registering account with server: Get "https://acme-v02.api.letsencrypt.org/directory": dial tcp: lookup acme-v02.api.letsencrypt.org: no such host`,
+			"the CA cannot be reached"},
+		{"caa", "urn:ietf:params:acme:error:caa: CAA record for art.example.com prevents issuance", "a CAA record"},
+		{"rate limit", "urn:ietf:params:acme:error:rateLimited: too many certificates already issued", "rate limit"},
+		{"other", "urn:ietf:params:acme:error:unauthorized: Incorrect TXT record found at _acme-challenge.art.example.com", "check the DNS records"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ObtainHint("cloudflare", errors.New(tt.err)); !strings.Contains(got, tt.want) {
+				t.Errorf("ObtainHint(%q) = %q, want it to contain %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDNSAdvice(t *testing.T) {
+	tests := []struct {
+		name, err, want string
+	}{
+		{"bad header", "HTTP 400: [{Code:6003 Message:Invalid format for Authorization header}]",
+			"the provider refused the token: check that tls.dns.api_token (KAZARI_TLS_DNS_API_TOKEN) holds the whole token"},
+		{"unauthorized", "HTTP 401: Unauthorized", "the provider refused the token"},
+		{"forbidden", "got error status: HTTP 403: Forbidden", "the token lacks permission on zone example.com; cloudflare needs an API token with Zone.DNS:Edit on the zone"},
+		{"zone", "expected 1 zone, got 0 for example.com: zone not found", "the provider's account has no zone example.com"},
+		{"timestamp", "request 14001 failed: connection reset", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DNSAdvice("cloudflare", "example.com.", errors.New(tt.err))
+			if (tt.want == "") != (got == "") || !strings.Contains(got, tt.want) {
+				t.Errorf("DNSAdvice(%q) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }

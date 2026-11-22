@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -251,4 +253,89 @@ func (b *flexBool) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("oidc: email_verified is %T, want a boolean", v)
 	}
 	return nil
+}
+
+// ErrUnavailable is returned while a Lazy provider has not been discovered.
+var ErrUnavailable = errors.New("oidc: the identity provider has not been reached yet")
+
+// Lazy is a Provider discovered once the provider answers, so the server
+// starts, and serves its pages, while the provider is unreachable. Until
+// Discover succeeds, Ready returns ErrUnavailable and the sign-in pages say
+// so. It is safe for concurrent use.
+type Lazy struct {
+	cfg Config
+	p   atomic.Pointer[Provider]
+
+	mu      sync.Mutex // serialises discovery and guards lastErr
+	lastErr error
+}
+
+// NewLazy checks cfg without any network I/O.
+func NewLazy(cfg Config) (*Lazy, error) {
+	switch {
+	case cfg.Issuer == "":
+		return nil, errors.New("oidc: issuer is required")
+	case cfg.ClientID == "":
+		return nil, errors.New("oidc: client id is required")
+	case cfg.RedirectURL == "":
+		return nil, errors.New("oidc: redirect URL is required")
+	}
+	return &Lazy{cfg: cfg}, nil
+}
+
+// Discover runs discovery unless it has succeeded already, and returns its
+// error.
+func (l *Lazy) Discover(ctx context.Context) error {
+	if l.p.Load() != nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.p.Load() != nil {
+		return nil
+	}
+	p, err := New(ctx, l.cfg)
+	if err != nil {
+		l.lastErr = err
+		return err
+	}
+	l.lastErr = nil
+	l.p.Store(p)
+	return nil
+}
+
+// Ready returns nil once discovery has succeeded, else ErrUnavailable with
+// the last discovery error.
+func (l *Lazy) Ready() error {
+	if l.p.Load() != nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastErr == nil {
+		return ErrUnavailable
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, l.lastErr)
+}
+
+// Issuer returns the configured issuer URL.
+func (l *Lazy) Issuer() string { return l.cfg.Issuer }
+
+// AuthURL is Provider.AuthURL, or "" before discovery; callers check Ready
+// first.
+func (l *Lazy) AuthURL(state, nonce, codeChallenge string) string {
+	p := l.p.Load()
+	if p == nil {
+		return ""
+	}
+	return p.AuthURL(state, nonce, codeChallenge)
+}
+
+// Exchange is Provider.Exchange, or ErrUnavailable before discovery.
+func (l *Lazy) Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error) {
+	p := l.p.Load()
+	if p == nil {
+		return auth.Identity{}, ErrUnavailable
+	}
+	return p.Exchange(ctx, code, nonce, codeVerifier)
 }

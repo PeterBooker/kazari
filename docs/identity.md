@@ -312,7 +312,9 @@ Put the client secret in the environment file, not the YAML:
 KAZARI_AUTH_OIDC_CLIENT_SECRET=the-client-secret
 ```
 
-At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server does not start and logs `oidc: discover <issuer>: ...`. Kazari requests the scopes `openid email profile`.
+At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server starts anyway and serves its pages, logs `identity provider unreachable` with the error, and tries again every 30 seconds through the `oidc-discovery` job. Until it succeeds, sign-in answers `503` with "Sign-in is temporarily unavailable". Kazari requests the scopes `openid email profile`.
+
+`kazari check` and `kazari admin ready` fetch the discovery document too, and fail with what to fix when the issuer cannot be reached or names itself differently.
 
 The `issuer` must be exactly the `issuer` value that the provider's discovery document states, including any trailing slash.
 
@@ -321,17 +323,17 @@ The `issuer` must be exactly the `issuer` value that the provider's discovery do
 After the ID token is verified, Kazari resolves the person to a user in this order:
 
 1. **Known identity.** An identity already linked by `(issuer, subject)` signs in as its user.
-2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty), an existing user with that email gets this identity linked and signs in. An existing **admin** links this way only when `admin_emails` names the address; any other admin needs an identity linked by hand ([Admin-created users](#admin-created-users)), so a verified address alone never takes over an admin account.
-3. **Auto-provision.** Otherwise, if `auto_provision` is on and the verified email's domain is in `allowed_domains`, Kazari creates a new user. Its role is `admin` if the email is in `admin_emails`, else `member`; its quota is `limits.default_user_quota`; its display name is the IdP's `name`.
+2. **Link by verified email.** Otherwise, if the email is verified and its domain is in `allowed_domains` (or `allowed_domains` is empty, or `admin_emails` lists the address), an existing user with that email gets this identity linked and signs in. An existing **admin** links this way only when `admin_emails` names the address; any other admin needs an identity linked by hand ([Admin-created users](#admin-created-users)), so a verified address alone never takes over an admin account.
+3. **Provision.** Otherwise, if the verified email is in `admin_emails`, Kazari creates a new admin, whatever `allowed_domains` and `auto_provision` say. If `auto_provision` is on and the verified email's domain is in `allowed_domains`, it creates a new member. The new user's quota is `limits.default_user_quota`, and its display name is the IdP's `name`.
 4. **Refused.** Otherwise the person sees "No access ... Ask your administrator for access." and nothing is issued.
 
 A disabled user is always refused at step 1 or 2. Every successful sign-in updates the identity's `last_login_at` and the email it last signed in with.
 
 What this means in practice:
 
-- With `allowed_domains` empty, nobody is auto-provisioned. Only admin-created users with a matching email, or a linked identity, can sign in.
+- With `allowed_domains` empty, nobody outside `admin_emails` is auto-provisioned. Only the addresses in `admin_emails`, admin-created users with a matching email, or a linked identity, can sign in. At start, an instance with no users whose `auth.oidc` would let nobody in logs a warning.
 - With `auto_provision: false`, `allowed_domains` limits which admin-created users can link by email.
-- `admin_emails` does two things: a user provisioned with a listed email is an admin, and an existing admin with a listed email may link by email. It never changes the role of an existing user; to promote one, use `kazari admin users update <handle> --role admin`.
+- `admin_emails` does two things: a listed email is provisioned as an admin on its first sign-in, and an existing admin with a listed email may link by email. It never changes the role of an existing user; to promote one, use `kazari admin users update <handle> --role admin`.
 - After the first sign-in the match is on `(issuer, subject)`, so a later change of email address at the IdP does not create a second user.
 
 ### Handles
@@ -586,9 +588,11 @@ The handle or email is unknown, the password is wrong, the account has no passwo
 
 Several sign-ins with a wrong password came for this account, or from this address, shortly before. The wait starts at a second, doubles with each further failure and is never more than a minute. It ends by itself, and a sign-in with the right password clears the account's count.
 
-### Kazari does not start: `oidc: discover <issuer>: ...`
+### "Sign-in is temporarily unavailable"
 
-The issuer is unreachable from the server, or its discovery document names a different issuer. Fetch `<issuer>/.well-known/openid-configuration` from the server and copy its `issuer` value exactly, trailing slash included. For Entra, use the tenant ID, not `common`.
+Kazari has not reached the identity provider since it started, and the log has `identity provider unreachable` with the reason. The issuer is unreachable from the server, or its discovery document names a different issuer. Run `sudo kazari check`, whose `oidc` line says which; then fetch `<issuer>/.well-known/openid-configuration` from the server and copy its `issuer` value exactly, trailing slash included. For Entra, use the tenant ID, not `common`.
+
+Kazari retries every 30 seconds and logs `identity provider reached` once it succeeds; `kazari admin jobs run oidc-discovery` tries at once.
 
 ### "Sign-in failed: The identity provider's response could not be verified."
 
@@ -604,8 +608,8 @@ The person signed in, but the [provisioning policy](#provisioning-policy) did no
 
 1. Is the email present at all? For Entra, add the `email` optional claim, or make `preferred_username` an address.
 2. Is it verified? For Google, check that the account is a Workspace account of that domain.
-3. Is its domain in `allowed_domains`?
-4. Is `auto_provision` on, or does an admin-created user have that email?
+3. Is its domain in `allowed_domains`, or the address in `admin_emails`?
+4. Is `auto_provision` on, is the address in `admin_emails`, or does an admin-created user have that email?
 5. Is the user disabled?
 
 ### "Sign-in expired."

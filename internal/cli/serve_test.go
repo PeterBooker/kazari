@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -110,13 +112,98 @@ func TestServeConfigErrors(t *testing.T) {
 	if r.code != 2 || !strings.Contains(r.stderr, "nope.yaml") {
 		t.Errorf("missing config file: %+v", r)
 	}
+	t.Chdir(t.TempDir())
 	r = runCLI(t, map[string]string{"HOME": t.TempDir()}, "check")
-	if r.code != 2 || !strings.Contains(r.stderr, "base_domain: required") || !strings.Contains(r.stderr, "kazari check") {
+	if r.code != 2 || !strings.Contains(r.stderr, "base_domain: required") ||
+		!strings.Contains(r.stderr, "no configuration file: none was named with --config or $KAZARI_CONFIG, and /etc/kazari/kazari.yaml does not exist") ||
+		!strings.Contains(r.stderr, "run kazari check --local") {
 		t.Errorf("unconfigured: %+v", r)
+	}
+	if strings.Contains(r.stderr, "or run kazari check") {
+		t.Errorf("check sends the operator to itself: %s", r.stderr)
+	}
+	r = runCLI(t, map[string]string{"HOME": t.TempDir()}, "serve")
+	if r.code != 2 || !strings.Contains(r.stderr, "or run kazari check") {
+		t.Errorf("serve unconfigured: %+v, want a pointer to kazari check", r)
 	}
 	r = runCLI(t, nil, "serve", "--local", "--config", "x")
 	if r.code != 2 || !strings.Contains(r.stderr, "--local") {
 		t.Errorf("--local with --config: %+v", r)
+	}
+}
+
+func TestCheckReportsSources(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "kazari.yaml")
+	if err := os.WriteFile(cfgPath, []byte("base_domain: kazari.localhost\nlisten:\n  proxy_mode: true\n  http: \"127.0.0.1:0\"\nexternal_scheme: http\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "kazari.env"), []byte("KAZARI_DATA_DIR="+t.TempDir()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runCLI(t, nil, "check", "--config", cfgPath)
+	if r.code != 0 {
+		t.Fatalf("check: %+v", r)
+	}
+	for _, want := range []string{
+		"config       ok    " + cfgPath + " with " + filepath.Join(dir, "kazari.env") + ", base domain kazari.localhost",
+		"override     ok    data_dir from KAZARI_DATA_DIR in " + filepath.Join(dir, "kazari.env"),
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("check stdout lacks %q:\n%s", want, r.stdout)
+		}
+	}
+}
+
+func TestBackupStreamAndRestore(t *testing.T) {
+	dir, env := startLocal(t)
+	if r := runCLI(t, env, "admin", "users", "create", "ana", "--role", "admin"); r.code != 0 {
+		t.Fatalf("create user: %+v", r)
+	}
+	r := runCLI(t, env, "admin", "backup", "-")
+	if r.code != 0 || r.stdout == "" {
+		t.Fatalf("admin backup -: %+v", r)
+	}
+	tr := tar.NewReader(strings.NewReader(r.stdout))
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names = append(names, hdr.Name)
+	}
+	if !slices.Contains(names, "kazari.db") {
+		t.Errorf("backup - archive = %v, want kazari.db in it", names)
+	}
+
+	backupDir := filepath.Join(t.TempDir(), "b")
+	if r := runCLI(t, env, "admin", "backup", backupDir); r.code != 0 {
+		t.Fatalf("admin backup: %+v", r)
+	}
+	// The running server holds its data directory.
+	r = runCLI(t, env, "admin", "restore-backup", backupDir, "--data-dir", dir)
+	if r.code != 2 || !strings.Contains(r.stderr, "another kazari (pid ") || !strings.Contains(r.stderr, "stop the server first") {
+		t.Errorf("restore into a running server's directory: %+v", r)
+	}
+
+	target := filepath.Join(t.TempDir(), "data")
+	r = runCLI(t, env, "admin", "restore-backup", backupDir, "--data-dir", target)
+	if r.code != 0 || !strings.Contains(r.stdout, "into "+target) {
+		t.Fatalf("restore into a new directory: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(target, "kazari.db")); err != nil {
+		t.Errorf("restored kazari.db: %v", err)
+	}
+	r = runCLI(t, env, "admin", "restore-backup", backupDir, "--data-dir", target)
+	if r.code != 2 || !strings.Contains(r.stderr, "add --force") {
+		t.Errorf("restore over an instance without --force: %+v", r)
+	}
+	if r := runCLI(t, env, "admin", "restore-backup", backupDir, "--data-dir", target, "--force"); r.code != 0 {
+		t.Errorf("restore with --force: %+v", r)
+	}
+	if r := runCLI(t, env, "admin", "restore-backup", t.TempDir(), "--data-dir", target, "--force"); r.code != 2 || !strings.Contains(r.stderr, "holds no kazari.db") {
+		t.Errorf("restore of a directory that is no backup: %+v", r)
 	}
 }
 

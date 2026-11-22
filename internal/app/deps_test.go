@@ -90,6 +90,7 @@ var layers = map[string]layer{
 	"internal/buildinfo":  leaf,
 	"internal/config":     leaf,
 	"internal/csp":        leaf,
+	"internal/dirlock":    leaf,
 	"internal/disk":       leaf,
 	"internal/instrument": leaf,
 	"internal/theme":      leaf,

@@ -658,3 +658,24 @@ func TestSignInKeyFormNeedsNoIdentityProvider(t *testing.T) {
 		t.Fatalf("status %d: %s", resp.StatusCode, body)
 	}
 }
+
+func TestSignInIdentityProviderUnavailable(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.idp.setDown(errors.New("discovery: connection refused"))
+	client := e.register("http://127.0.0.1:9999/cb")
+	for _, path := range []string{
+		signInQuery("demo", "/"),
+		"/oauth/authorize?" + authorizeParams(client, "http://127.0.0.1:9999/cb", "", newPKCE("abc")).Encode(),
+	} {
+		resp, body := e.get(path)
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "Sign-in is temporarily unavailable") ||
+			resp.Header.Get("Retry-After") == "" {
+			t.Errorf("GET %s with the provider down = %d, Retry-After %q: %s", path, resp.StatusCode, resp.Header.Get("Retry-After"), body)
+		}
+	}
+	e.idp.setDown(nil)
+	resp, _ := e.get(signInQuery("demo", "/"))
+	if loc := location(t, resp); loc.Host != "idp.example" {
+		t.Errorf("sign-in with the provider back went to %s, want the identity provider", loc)
+	}
+}

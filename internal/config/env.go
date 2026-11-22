@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"strconv"
@@ -13,16 +14,19 @@ import (
 const envPrefix = "KAZARI"
 
 // applyEnv walks cfg by its yaml tags, so a new key gets its KAZARI_*
-// variable without further code.
-func applyEnv(cfg *Config, lookup func(string) (string, bool)) error {
-	_, err := applyEnvStruct(reflect.ValueOf(cfg).Elem(), envPrefix, lookup)
+// variable without further code. It records in set the variable that set
+// each key path; an optional mapping turned on by a variable is recorded
+// under its own path.
+func applyEnv(cfg *Config, lookup func(string) (string, bool), set map[string]string) error {
+	_, err := applyEnvStruct(reflect.ValueOf(cfg).Elem(), envPrefix, "", lookup, set)
 	return err
 }
 
-// applyEnvStruct reports whether any variable was set.
-func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string, bool)) (bool, error) {
+// applyEnvStruct returns the first variable with a non-empty value that it
+// applied, "" for none.
+func applyEnvStruct(v reflect.Value, prefix, path string, lookup func(string) (string, bool), set map[string]string) (string, error) {
 	t := v.Type()
-	applied := false
+	first := ""
 	var errs []error
 	for i := range t.NumField() {
 		f := t.Field(i)
@@ -31,11 +35,16 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 			continue
 		}
 		key := prefix + "_" + strings.ToUpper(name)
+		keyPath := name
+		if path != "" {
+			keyPath = path + "." + name
+		}
 		fv := v.Field(i)
 		switch {
 		case f.Type.Kind() == reflect.Pointer && f.Type.Elem().Kind() == reflect.Struct:
 			// An optional mapping: fill a defaulted copy, kept only if one of
-			// its variables is set.
+			// its variables has a value, so an empty line in a dotenv file
+			// never turns a section on.
 			target := fv
 			if fv.IsNil() {
 				target = reflect.New(f.Type.Elem())
@@ -43,26 +52,37 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 					d.applyDefaults()
 				}
 			}
-			ok, err := applyEnvStruct(target.Elem(), key, lookup)
+			inner := map[string]string{}
+			by, err := applyEnvStruct(target.Elem(), key, keyPath, lookup, inner)
 			if err != nil {
 				errs = append(errs, err)
 			}
-			if ok {
-				applied = true
-				fv.Set(target)
+			if !fv.IsNil() || by != "" {
+				maps.Copy(set, inner)
+				if fv.IsNil() {
+					set[keyPath] = by
+					fv.Set(target)
+				}
+			}
+			if first == "" {
+				first = by
 			}
 		case f.Type.Kind() == reflect.Struct && !isTextUnmarshaler(fv):
-			ok, err := applyEnvStruct(fv, key, lookup)
+			by, err := applyEnvStruct(fv, key, keyPath, lookup, set)
 			if err != nil {
 				errs = append(errs, err)
 			}
-			applied = applied || ok
+			if first == "" {
+				first = by
+			}
 		default:
+			from := key
 			raw, ok := lookup(key)
 			if !ok && f.Tag.Get("secret") == "true" {
 				// Docker, Swarm and Kubernetes mount secrets as files.
 				var err error
-				if raw, ok, err = secretFromFile(key+"_FILE", lookup); err != nil {
+				from = key + "_FILE"
+				if raw, ok, err = secretFromFile(from, lookup); err != nil {
 					errs = append(errs, err)
 					continue
 				}
@@ -74,17 +94,20 @@ func applyEnvStruct(v reflect.Value, prefix string, lookup func(string) (string,
 				errs = append(errs, fmt.Errorf("%s: %w", key, err))
 				continue
 			}
-			applied = true
+			set[keyPath] = from
+			if first == "" && strings.TrimSpace(raw) != "" {
+				first = from
+			}
 		}
 	}
-	return applied, errors.Join(errs...)
+	return first, errors.Join(errs...)
 }
 
 // secretFromFile reads the file named by the variable key, without its
-// trailing newline. ok is false when the variable is unset.
+// trailing newline. ok is false when the variable is unset or empty.
 func secretFromFile(key string, lookup func(string) (string, bool)) (string, bool, error) {
 	path, ok := lookup(key)
-	if !ok {
+	if !ok || path == "" {
 		return "", false, nil
 	}
 	data, err := os.ReadFile(path)

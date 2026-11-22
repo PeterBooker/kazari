@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +61,33 @@ func FuzzParseDuration(f *testing.F) {
 			if err1 != nil || err2 != nil || whole+part != d {
 				t.Errorf("ParseDuration(%q) = %v, want %v (%v) and %v (%v) together", s, d, whole, err1, part, err2)
 			}
+		}
+	})
+}
+
+func FuzzLoadFile(f *testing.F) {
+	for _, s := range []string{
+		"base_domain: art.kazari.test\ntls:\n  mode: self-signed\n",
+		"limits:\n  max_files: lots\n  max_version_bytes: 50 megs\n",
+		"auth:\n  oidc:\n    client_id: x\n",
+		"auth: on\n", "listen: &l\n  https: \":443\"\nadmin:\n  <<: *l\n", "a: [b, {c: d}]\n", "- 1\n- 2\n", "base_domian: x\n", "",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, doc string) {
+		path := filepath.Join(t.TempDir(), "kazari.yaml")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.LoadWith(path, func(string) (string, bool) { return "", false })
+		if err != nil {
+			if !strings.HasPrefix(err.Error(), "config: ") {
+				t.Errorf("LoadWith(%q) error %q does not start with config:", doc, err)
+			}
+			return
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("LoadWith(%q) returned a configuration that does not validate: %v", doc, err)
 		}
 	})
 }

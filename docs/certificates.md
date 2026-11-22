@@ -8,7 +8,7 @@ The examples use `art.example.com` as the base domain, held in the zone `example
 
 A certificate for `*.art.example.com` can only be issued by the DNS-01 challenge: the certificate authority asks for a TXT record at `_acme-challenge.art.example.com` and checks that it appears. The HTTP challenge cannot issue wildcards. So Kazari needs an API token for the DNS provider that holds the zone, writes the record through it, and removes it afterwards.
 
-One certificate covers `art.example.com` and `*.art.example.com`. A certificate per slug would need port 80 open to the world, run into Let's Encrypt's weekly limit per domain, and list every slug in the public certificate-transparency logs, including those of `members` pages.
+Kazari orders two certificates through the same DNS-01 flow: one for `art.example.com` and one for `*.art.example.com`, which covers every host under it. A certificate per slug would need port 80 open to the world, run into Let's Encrypt's weekly limit per domain, and list every slug in the public certificate-transparency logs, including those of `members` pages.
 
 `tls.mode` decides where the certificate comes from. Most instances use `acme`; use `files` when another tool manages the certificate, and `self-signed` for tests:
 
@@ -68,7 +68,7 @@ Keep the token out of `kazari.yaml`, which refers to it as `${KAZARI_TLS_DNS_API
 sudo kazari check
 ```
 
-The `dns token` line reports `wrote and removed a TXT record in zone example.com.`, or the provider's error.
+The `dns token` line reports `wrote and removed a TXT record in zone example.com.`. When the provider refuses, it says what to do first, then quotes the provider's error: a token in the wrong format or revoked, a token without permission on the zone, or a zone the token's account does not hold.
 
 ## Using another DNS provider
 
@@ -91,7 +91,24 @@ tls:
   key_file: /etc/kazari/lego/certificates/art.example.com.key
 ```
 
-Under systemd, the service user must be able to read the two files. Then renew on a schedule, with the same command and `renew` in place of `run`, for example from a daily timer or cron job. certbot works the same way with its DNS plugins.
+Then renew on a schedule, with the same command and `renew` in place of `run`, for example from a daily timer or cron job. certbot works the same way with its DNS plugins.
+
+`kazari check` opens both files as the server does, and its `cert files` line names the hosts the certificate covers and its expiry date, or fails when it does not cover the base domain and its wildcard.
+
+### Letting the service read the files
+
+The systemd unit runs Kazari as a dynamic user, which exists only while the service runs and owns no files. Give the files to a group instead, and add the service to that group. Create the group and hand it the files:
+
+```sh
+sudo groupadd --system kazari-tls
+sudo chgrp -R kazari-tls /etc/kazari/lego
+sudo chmod 0750 /etc/kazari/lego /etc/kazari/lego/certificates
+sudo chmod 0640 /etc/kazari/lego/certificates/*
+```
+
+Then uncomment `SupplementaryGroups=kazari-tls` in the unit and restart it. lego writes renewed files with its own mode, so repeat the `chgrp` and `chmod` in the renewal job.
+
+systemd's `LoadCredential=` is an alternative: it copies each file into `/run/credentials/kazari.service/` at start, readable by the service alone. Point `cert_file` and `key_file` at the copies there. A renewal then needs `systemctl restart kazari`, because the copies change only at start.
 
 ## Proxy examples
 
@@ -181,16 +198,19 @@ A tunnel reaches a server with no open ports: a `*` CNAME record pointing at the
 
 ### The certificate is not issued
 
-With `tls.mode: acme`, Kazari obtains the certificate in the background after start, and TLS handshakes fail until it has one. The log says `obtaining certificate`, then `certificate obtained` or `certificate not obtained` with the error. Under systemd, filter for them:
+With `tls.mode: acme`, Kazari obtains the certificate in the background after start, and TLS handshakes fail until it has one. The log says `obtaining certificate`, then `certificate obtained` or `certificate not obtained` with the error and a `hint` chosen by the kind of error. Under systemd, filter for them:
 
 ```sh
 journalctl -u kazari | grep -i certificate
 ```
 
+`kazari admin ready` reports the same: its `certificate` line warns when there is still no certificate five minutes after start, and fails with the last error once an order has failed.
+
 The usual causes:
 
 - **DNS provider errors** (`401`, `403`, "zone not found"): the token lacks permission on the zone. A Cloudflare token needs `Zone.DNS:Edit` for the zone that contains `base_domain`. `kazari check` reproduces this without waiting for an order.
 - **Challenge not seen**: DNS-01 writes a `_acme-challenge.art.example.com` TXT record and waits for it to propagate. Check it with `dig TXT _acme-challenge.art.example.com @1.1.1.1` while it runs.
+- **CA unreachable**: the host cannot make outbound HTTPS connections to `acme-v02.api.letsencrypt.org`, through a firewall or a proxy.
 - **CAA records**: they must allow `letsencrypt.org`.
 - **Rate limits**: repeated failures against production Let's Encrypt hit its limits. Debug with `tls.ca: letsencrypt-staging`, then switch back and delete `certmagic/` from the data directory to drop the staging certificate.
 - **`files` mode**: the files are checked once a minute, and a reload failure keeps the old certificate and logs `certs: reload failed, keeping previous certificate`.

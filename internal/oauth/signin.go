@@ -173,6 +173,9 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.idpUnavailable(w, r) {
+		return
+	}
 	verifier := oauth2.GenerateVerifier()
 	req := &SignInRequest{
 		ID:               signInStatePrefix + randomString(secretBytes),

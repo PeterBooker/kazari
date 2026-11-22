@@ -117,8 +117,8 @@ func TestExpandErrors(t *testing.T) {
 		name, doc string
 		want      []string
 	}{
-		{"unset", "tls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n", []string{"config: kazari.yaml: ${KAZARI_TLS_DNS_API_TOKEN} is not set"}},
-		{"every unset once", "a: ${A}\nb: ${B} ${A}\nc: [\"${A}\"]\n", []string{"config: kazari.yaml: ${A} is not set", "config: kazari.yaml: ${B} is not set"}},
+		{"unset", "tls:\n  dns:\n    api_token: ${KAZARI_TLS_DNS_API_TOKEN}\n", []string{"config: kazari.yaml: line 3: ${KAZARI_TLS_DNS_API_TOKEN} is not set; set KAZARI_TLS_DNS_API_TOKEN, or KAZARI_TLS_DNS_API_TOKEN_FILE to a file that holds it"}},
+		{"every unset once", "a: ${A}\nb: ${B} ${A}\nc: [\"${A}\"]\n", []string{"config: kazari.yaml: line 1: ${A} is not set", "config: kazari.yaml: line 2: ${B} is not set"}},
 		{"unterminated", "a: 1\nb: ${A\n", []string{`config: kazari.yaml: line 2: unterminated variable reference "${A"`}},
 		{"empty name", "a: 1\nb: ${}\n", []string{"config: kazari.yaml: line 2: invalid variable reference ${}"}},
 		{"bad name", "a: ${1A}\n", []string{"line 1: invalid variable reference ${1A}"}},
@@ -179,7 +179,7 @@ auth:
     client_secret: ${SECRET}
 `)
 	vars := map[string]string{
-		"DOMAIN":    "art.example.com",
+		"DOMAIN":    "art.kazari.test",
 		"DNS":       "12345",
 		"ADMIN":     "*a: #b\nc-0123456789abcdef01234567",
 		"CLIENT_ID": "0123",
@@ -193,7 +193,7 @@ auth:
 		name      string
 		got, want any
 	}{
-		{"base_domain", c.BaseDomain, "art.example.com"},
+		{"base_domain", c.BaseDomain, "art.kazari.test"},
 		{"data_dir", c.DataDir, "/var/lib/kazari"},
 		{"external_port", c.ExternalPort, 8080},
 		{"tls.dns.api_token", c.TLS.DNS.APIToken, "12345"},
@@ -213,7 +213,7 @@ auth:
 
 	_, err = LoadWith(path, env(map[string]string{"DNS": "x"}))
 	for _, name := range []string{"DOMAIN", "ADMIN", "CLIENT_ID", "SECRET"} {
-		if want := "config: " + path + ": ${" + name + "} is not set"; err == nil || !strings.Contains(err.Error(), want) {
+		if want := "${" + name + "} is not set"; err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to contain %q", err, want)
 		}
 	}
