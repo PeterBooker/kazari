@@ -22,6 +22,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/cli"
+	"github.com/PeterBooker/kazari/internal/config"
 )
 
 const testPassword = "correct horse battery"
@@ -311,6 +312,24 @@ func TestDashboardSwitchedOff(t *testing.T) {
 	root := get(t, client(in.app.Addrs().HTTP), "http://admin.localhost/")
 	if root.status != http.StatusNotFound || !strings.Contains(root.body, `"not_found"`) {
 		t.Errorf("the admin host's root with admin.dashboard off: status %d: %s", root.status, truncate(root.body))
+	}
+}
+
+// serve --local offers passkeys, so they can be tried without a domain.
+func TestLocalPresetOffersPasskeys(t *testing.T) {
+	cfg := config.Local()
+	cfg.DataDir = t.TempDir()
+	cfg.Listen.HTTP = "127.0.0.1:0"
+	in := start(t, cfg)
+	b := newBrowser(t, in.app.Addrs().HTTP)
+	signIn := b.follow(b.get("http://admin.kazari.localhost:8080/"), "the dashboard without a session")
+	if !strings.HasPrefix(signIn, "http://mcp.kazari.localhost:8080/oauth/signin?") {
+		t.Fatalf("sent to %q, want the sign-in host", signIn)
+	}
+	page := b.get(signIn)
+	wantStatus(t, page, http.StatusOK, "the sign-in page")
+	if !strings.Contains(page.body, `data-passkey="get"`) {
+		t.Errorf("the sign-in page of serve --local has no passkey form: %s", truncate(page.body))
 	}
 }
 

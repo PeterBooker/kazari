@@ -35,7 +35,7 @@ docker exec kazari kazari admin users create ana --role admin
 docker exec kazari kazari admin keys issue ana --label laptop      # prints kzk_... once
 ```
 
-Pages appear at `http://<slug>.localhost:8080/`, the API at `http://api.localhost:8080/` and the MCP server at `http://mcp.localhost:8080/`. The [quick start](https://kazari.io/docs/quickstart/) goes on to publish a first page from an agent, curl or the CLI.
+Pages appear at `http://<slug>.kazari.localhost:8080/`, the API at `http://api.kazari.localhost:8080/` and the MCP server at `http://mcp.kazari.localhost:8080/`. The [quick start](https://kazari.io/docs/quickstart/) goes on to publish a first page from an agent, curl or the CLI.
 
 To run it for a team on `art.example.com`, you need the DNS records `art.example.com` and `*.art.example.com` pointing at the host and an API token for the DNS provider. Two short files configure it, whether under Docker Compose, from a `.deb`/`.rpm` package or from the binary:
 
@@ -132,7 +132,7 @@ On the server, `sudo kazari admin ...` administers the instance over its socket 
 To run the development server, the tests and the checks CI runs:
 
 ```sh
-go run ./cmd/kazari serve --local                       # http://<slug>.localhost:8080/, data in ./.data
+go run ./cmd/kazari serve --local                       # http://<slug>.kazari.localhost:8080/, data in ./.data
 go run ./cmd/kazari admin users create peter --role admin   # over the socket in ./.data, no token
 docker compose up --build                               # the same server from the Docker image
 go test -race ./...                                     # tests with the race detector

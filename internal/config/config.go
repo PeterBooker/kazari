@@ -285,12 +285,14 @@ func Default() Config {
 }
 
 // Local returns the preset of kazari serve --local: plain HTTP on
-// 127.0.0.1:8080 under the base domain localhost, which browsers resolve to
-// the local machine, with the data in ./.data. No DNS, certificate or token
-// is needed; the admin API is reached over the socket.
+// 127.0.0.1:8080 under the base domain kazari.localhost, which browsers
+// resolve to the local machine, with the data in ./.data. No DNS,
+// certificate or token is needed; the admin API is reached over the socket.
 func Local() Config {
 	c := Default()
-	c.BaseDomain = "localhost"
+	// Not bare localhost: browsers make a passkey only for a registrable
+	// domain that the apex and the sign-in host share.
+	c.BaseDomain = "kazari.localhost"
 	c.DataDir = "./.data"
 	c.ExternalScheme = "http"
 	c.ExternalPort = 8080

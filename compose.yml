@@ -1,18 +1,22 @@
 # Kazari for local development and testing: the image built from
 # deploy/Dockerfile, run with serve --local (plain HTTP, base domain
-# localhost, data in a named volume). deploy/compose.yml is the one for a
-# real server.
+# kazari.localhost, data in a named volume). deploy/compose.yml is the one
+# for a real server.
 #
-#   docker compose up --build -d      # start; pages at http://<slug>.localhost:8080/
+#   docker compose up --build -d      # start; pages at http://<slug>.kazari.localhost:8080/
 #   docker compose logs -f            # follow the server log
 #   docker compose watch              # rebuild and restart when the source changes
 #   docker compose down               # stop; add -v to discard the data too
 #
+# On a fresh volume the log shows a setup link that creates the first admin,
+# who signs in to the dashboard at http://admin.kazari.localhost:8080/ and
+# adds passkeys and keys at http://kazari.localhost:8080/account/.
+#
 # The admin commands run inside the container over the admin socket, so they
 # need no token; then publish from the host with the key:
-#   docker compose exec kazari kazari admin users create peter --role admin
+#   docker compose exec kazari kazari admin setup-link
 #   docker compose exec kazari kazari admin keys issue peter --label laptop
-#   KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari publish ./site --slug demo
+#   KAZARI_URL=http://api.kazari.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/kazari publish ./site --slug demo
 #
 # A ./.env (start from deploy/kazari.env.example) is passed into the container
 # for KAZARI_* overrides.
@@ -30,7 +34,7 @@ services:
     image: kazari:dev
     command: ["serve", "--local"]
     ports:
-      # Loopback only: *.localhost resolves to both 127.0.0.1 and ::1.
+      # Loopback only: *.kazari.localhost resolves to both 127.0.0.1 and ::1.
       - "127.0.0.1:8080:8080"
       - "[::1]:8080:8080"
     volumes:

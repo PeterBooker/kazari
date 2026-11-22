@@ -203,7 +203,7 @@ func TestDashboardAddress(t *testing.T) {
 	local.DataDir = t.TempDir()
 	local.Listen.HTTP = "127.0.0.1:0"
 	if got := byCheck(Run(context.Background(), local, Options{}), "dashboard"); len(got) != 1 || got[0].Status != OK ||
-		got[0].Detail != "http://admin.localhost:8080" {
+		got[0].Detail != "http://admin.kazari.localhost:8080" {
 		t.Errorf("dashboard of serve --local = %+v", got)
 	}
 }

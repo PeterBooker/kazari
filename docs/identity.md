@@ -136,7 +136,7 @@ The account page lists each passkey with when it was added and last used. **Remo
 
 Passkeys need a browser with JavaScript, and a base domain that is a registrable name such as `art.example.com`. The apex and the sign-in host both end in it, so a passkey added on the account page signs in on the sign-in page.
 
-On `localhost`, as `kazari serve --local` runs, browsers refuse to make a passkey that both hosts share, so the passkey form is left out and people sign in with their password. The same holds for a base domain that is itself a public suffix, such as `github.io`.
+On a bare `localhost` base domain, browsers refuse to make a passkey that both hosts share, so the passkey form is left out and people sign in with their password. The same holds for a base domain that is itself a public suffix, such as `github.io`. A name under `localhost` works: `kazari serve --local` runs on `kazari.localhost`, where passkeys work over plain `http`, because browsers treat `*.localhost` as a secure origin.
 
 ### Resetting a password
 

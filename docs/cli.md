@@ -109,7 +109,7 @@ kazari serve --local
 
 Runs the server until it is interrupted. The configuration comes from `--config`, `$KAZARI_CONFIG` or `/etc/kazari/kazari.yaml`, else from the environment alone, and the secrets from `--env-file`, `$KAZARI_ENV_FILE` or a `.env` file in the working directory, which beside a configuration file only fills `${NAME}` references ([how configuration is loaded](configuration.md#how-configuration-is-loaded)). An invalid configuration exits with status 2 and lists every problem; any other failure, such as a port in use, exits with status 1.
 
-`--local` runs the preset for your own machine instead, with no DNS, certificate or token: `http://<slug>.localhost:8080/`, data in `./.data` ([the local preset](configuration.md#the-local-preset)).
+`--local` runs the preset for your own machine instead, with no DNS, certificate or token: `http://<slug>.kazari.localhost:8080/`, data in `./.data` ([the local preset](configuration.md#the-local-preset)).
 
 To run the server on your own machine:
 

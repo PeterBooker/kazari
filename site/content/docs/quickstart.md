@@ -5,13 +5,13 @@ description: Run Kazari on your own machine from the Docker image, create a user
 
 # Quick start
 
-Run Kazari on your own machine and publish a first page in about five minutes. You need no domain, DNS record or certificate: browsers resolve every `*.localhost` name to your own computer, so pages appear at addresses like `http://hello.localhost:8080/`.
+Run Kazari on your own machine and publish a first page in about five minutes. You need no domain, DNS record or certificate: browsers resolve every `*.localhost` name to your own computer, so pages appear at addresses like `http://hello.kazari.localhost:8080/`.
 
 You need [Docker](https://docs.docker.com/get-docker/). An AI agent that can use MCP servers is optional, and so is the `kazari` command on your machine ([installing the client](cli.md#installing-the-client)).
 
 ## 1. Start the server
 
-Start the published image with `serve --local`, which serves plain HTTP on port 8080 under the base domain `localhost`:
+Start the published image with `serve --local`, which serves plain HTTP on port 8080 under the base domain `kazari.localhost`:
 
 ```sh
 docker run -d --name kazari -p 127.0.0.1:8080:8080 -e KAZARI_LISTEN_HTTP=:8080 \
@@ -45,7 +45,7 @@ Publish with an agent, with curl or with the CLI, whichever suits you.
 
 ### With an agent
 
-Use an agent that runs on your machine, because a cloud agent cannot reach `localhost`. Add the MCP server `http://mcp.localhost:8080/` to its configuration, with your key.
+Use an agent that runs on your machine, because a cloud agent cannot reach `localhost`. Add the MCP server `http://mcp.kazari.localhost:8080/` to its configuration, with your key.
 
 Many agents take a JSON entry like this one. Your agent's documentation says where it goes:
 
@@ -53,7 +53,7 @@ Many agents take a JSON entry like this one. Your agent's documentation says whe
 {
   "mcpServers": {
     "kazari": {
-      "url": "http://mcp.localhost:8080/",
+      "url": "http://mcp.kazari.localhost:8080/",
       "headers": { "Authorization": "Bearer kzk_..." }
     }
   }
@@ -63,7 +63,7 @@ Many agents take a JSON entry like this one. Your agent's documentation says whe
 Claude Code, for example, adds the server with one command:
 
 ```sh
-claude mcp add --transport http kazari http://mcp.localhost:8080/ \
+claude mcp add --transport http kazari http://mcp.kazari.localhost:8080/ \
   --header "Authorization: Bearer kzk_..."
 ```
 
@@ -71,14 +71,14 @@ Then ask your agent for something:
 
 > Make a one-page "hello" site with a big friendly heading and publish it to Kazari with the slug hello.
 
-The agent calls the `create_artifact` tool and replies with the address, `http://hello.localhost:8080/`.
+The agent calls the `create_artifact` tool and replies with the address, `http://hello.kazari.localhost:8080/`.
 
 ### With curl
 
 Send the page's HTML to the REST API, with your key in the `Authorization` header:
 
 ```sh
-curl -sS http://api.localhost:8080/v1/artifacts \
+curl -sS http://api.kazari.localhost:8080/v1/artifacts \
   -H "Authorization: Bearer kzk_..." \
   -H 'Content-Type: application/json' \
   -d '{"slug": "hello", "files": [{"path": "index.html", "content": "<!doctype html><title>Hello</title><h1>Hello</h1>"}]}'
@@ -92,22 +92,22 @@ With `kazari` installed on your machine, write a one-line page into `site/`, poi
 
 ```sh
 mkdir -p site && echo '<!doctype html><title>Hello</title><h1>Hello</h1>' > site/index.html
-export KAZARI_URL=http://api.localhost:8080 KAZARI_TOKEN=kzk_...
+export KAZARI_URL=http://api.kazari.localhost:8080 KAZARI_TOKEN=kzk_...
 kazari publish ./site --slug hello
 ```
 
-The CLI prints the page's address, `http://hello.localhost:8080/`.
+The CLI prints the page's address, `http://hello.kazari.localhost:8080/`.
 
 ## 4. Look around
 
 With the page published, try its versions:
 
-- Open `http://hello.localhost:8080/` for the published version, and `http://hello--v1.localhost:8080/` for version 1, which never changes.
+- Open `http://hello.kazari.localhost:8080/` for the published version, and `http://hello--v1.kazari.localhost:8080/` for version 1, which never changes.
 - Publish again, by asking your agent to change the heading or by running `kazari update hello ./site`. A `--v2` address appears, and `--v1` stays as it was.
 - Roll back by asking your agent to "roll hello back to version 1". With the CLI, and `KAZARI_URL` and `KAZARI_TOKEN` exported as above, `kazari get hello` lists the versions and `kazari rollback hello 1` serves version 1 again.
 
 > [!NOTE]
-> Browsers and systemd-resolved resolve `*.localhost`, but some other resolvers cannot. If a tool cannot, add the names to `/etc/hosts`: `127.0.0.1 api.localhost admin.localhost mcp.localhost hello.localhost`.
+> Browsers and systemd-resolved resolve `*.localhost`, but some other resolvers cannot. If a tool cannot, add the names to `/etc/hosts`: `127.0.0.1 kazari.localhost api.kazari.localhost admin.kazari.localhost mcp.kazari.localhost hello.kazari.localhost`.
 
 ## 5. Stop the server
 
