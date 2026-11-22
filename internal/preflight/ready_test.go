@@ -14,7 +14,9 @@ import (
 	"github.com/PeterBooker/kazari/internal/config"
 
 	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/instrument/instrumenttest"
 )
 
@@ -287,6 +289,46 @@ func TestCheckerSharesOneRun(t *testing.T) {
 	}
 	if _, ok := c.Last(); !ok {
 		t.Error("no report kept")
+	}
+}
+
+// endWatch calls onEnd as each span ends, inside its End.
+type endWatch struct {
+	onEnd func(sdktrace.ReadOnlySpan)
+}
+
+func (w endWatch) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (w endWatch) OnEnd(s sdktrace.ReadOnlySpan)                   { w.onEnd(s) }
+func (w endWatch) Shutdown(context.Context) error                  { return nil }
+func (w endWatch) ForceFlush(context.Context) error                { return nil }
+
+// The run's span ends before its report reaches the callers, so a caller
+// that has the report finds the span recorded.
+func TestCheckerSpanEndsBeforeReport(t *testing.T) {
+	var c *Checker
+	var ended, reportedFirst bool
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(endWatch{func(s sdktrace.ReadOnlySpan) {
+		if s.Name() == "preflight.ready" {
+			ended = true
+			_, reportedFirst = c.Last()
+		}
+	}}))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	opts := readyOptions(&fakeDNS{})
+	opts.Now = func() time.Time { return readyNow }
+	opts.Providers = instrument.Providers{TracerProvider: tp}
+	c = NewChecker(acmeConfig(t), opts, 0)
+
+	ctx, parent := tp.Tracer("test").Start(context.Background(), "GET /v1/ready")
+	defer parent.End()
+	if _, err := c.Check(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if !ended {
+		t.Fatal("Check returned before the preflight.ready span ended")
+	}
+	if reportedFirst {
+		t.Error("the report was published before the preflight.ready span ended")
 	}
 }
 
