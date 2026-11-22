@@ -28,8 +28,9 @@ go run github.com/goreleaser/goreleaser/v2@latest check
 # http://kazari.localhost:8080/account/. Passkeys work here, not on a bare localhost base domain.
 # The admin commands find its socket in ./.data: go run ./cmd/kazari admin setup-link, or
 # admin users create peter --role admin, then admin keys issue peter. The kazari-dev server
-# in .mcp.json needs such a key exported as KAZARI_DEV_TOKEN before Claude Code starts. If
-# port 8080 is taken, move the local server and point .mcp.json at it, also before Claude Code starts:
+# in .mcp.json signs in with OAuth: /mcp opens the browser to sign in with a password or
+# passkey. If port 8080 is taken, move the local server and point .mcp.json at it, before
+# Claude Code starts:
 #   export KAZARI_LISTEN_HTTP=127.0.0.1:18080 KAZARI_EXTERNAL_PORT=18080 KAZARI_DEV_URL=http://mcp.kazari.localhost:18080/
 go run ./cmd/kazari serve --local
 docker compose up --build -d    # the same from the Docker image (serve --local), data in the volume kazari_data
