@@ -10,6 +10,26 @@ The server is stateless: every POST builds a fresh server for the authenticated 
 
 Every request carries a bearer token: a Kazari API key, or an OAuth access token once OAuth is set up.
 
+### Discovery
+
+From protocol 2026-07-28, a client can start with `server/discover` instead of `initialize`. The result lists the protocol versions the server speaks, newest first, with its capabilities and instructions. Every later request then carries the protocol version, the client's name and its capabilities in its own `_meta`, since there is no session to remember them.
+
+Clients on earlier versions send `initialize` as before, and get the same capabilities and instructions.
+
+The instructions depend on the credential: for a [restricted credential](api.md#restricted-credentials) they end with a line naming its slug patterns.
+
+### Cached results
+
+The results of `server/discover`, the four list methods and `resources/read` say how long a client can keep them, in `ttlMs`, and who can share a copy, in `cacheScope`. Every result is `private`: the instructions and the tool list depend on the credential, and a resource is what the caller may read.
+
+The lifetimes are five minutes, as for `skills/list`, except for artifacts:
+
+| Result | `ttlMs` |
+| ------ | ------- |
+| `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` | `300000` |
+| `resources/read` of the skill and the preview app | `300000` |
+| `resources/read` of an artifact or one of its files (`kazari://artifacts/...`) | `0`: stale at once, since every publish changes it |
+
 ## Connecting an agent
 
 Any agent or MCP client that supports Streamable HTTP can connect, whether it runs in the cloud or on your own machine. It authenticates with an API key or with OAuth.
@@ -587,7 +607,7 @@ The skill lists the next step for every code a tool returns.
 
 ## HTTP checks
 
-Every request to the `mcp.` host first passes a rate limit. The MCP endpoint then applies the two checks the MCP specification requires against DNS rebinding and version confusion, and checks the bearer token last.
+Every request to the `mcp.` host first passes a rate limit. The MCP endpoint then applies the two checks the MCP specification requires against DNS rebinding and version confusion, checks the bearer token, and from protocol 2026-07-28 checks the request headers against the body.
 
 ### Rate limit
 
@@ -616,3 +636,15 @@ A JSON-RPC batch, a body that is a JSON array, gets `400` with a JSON error at e
 ### Request size
 
 The request body limit is large enough for a whole version sent inline in base64, or for one full chunk. The artifact and upload services enforce the real limits.
+
+### Request headers
+
+From protocol 2026-07-28, every request names its method in an `Mcp-Method` header, and `tools/call`, `resources/read` and `prompts/get` also name the tool, resource URI or prompt in `Mcp-Name`. A proxy in front can then route or limit calls without reading the body.
+
+A request whose headers are missing or differ from the body gets `400` with the JSON-RPC error `-32020` and a message that names the header:
+
+```json
+{"jsonrpc":"2.0","id":2,"error":{"code":-32020,"message":"header mismatch: Mcp-Name header value 'delete_artifact' does not match body value 'list_artifacts'"}}
+```
+
+No Kazari tool declares `Mcp-Param-*` headers, so a `tools/call` needs only those two. The `MCP-Protocol-Version` header must also equal the `io.modelcontextprotocol/protocolVersion` in `_meta`, or the request gets the same `400` and `-32020`. Requests at earlier protocol versions need neither header.
