@@ -335,7 +335,7 @@ func TestTooManyPasskeys(t *testing.T) {
 func TestSupported(t *testing.T) {
 	for domain, want := range map[string]bool{
 		"art.example.com": true, "example.com": true, "artifacts.kazari.io": true, "kazari.test": true,
-		"localhost": false, "LOCALHOST": false, "github.io": false, "co.uk": false, "com": false,
+		"kazari.localhost": true, "localhost": false, "LOCALHOST": false, "github.io": false, "co.uk": false, "com": false,
 	} {
 		if got := passkey.Supported(domain); got != want {
 			t.Errorf("Supported(%q) = %v, want %v", domain, got, want)

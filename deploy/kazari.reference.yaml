@@ -22,7 +22,7 @@ base_domain: art.example.com         # artifacts are served at <slug>.art.exampl
 data_dir: /var/lib/kazari            # kazari.db, blobs/, uploads/, certmagic/, admin.sock
 
 # Public URL shape. kazari serve --local uses external_scheme: http and
-# external_port: 8080 (http://demo.localhost:8080/).
+# external_port: 8080 (http://demo.kazari.localhost:8080/).
 external_scheme: https               # https | http
 external_port: 0                     # 0 omits the port from URLs
 

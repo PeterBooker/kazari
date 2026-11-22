@@ -36,9 +36,11 @@ main() {
 	fi
 
 	if [ -z "$version" ]; then
-		version=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
-			sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
-		[ -n "$version" ] || fail "could not find the latest release; set KAZARI_VERSION"
+		latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") || latest=""
+		case "$latest" in
+		*/releases/tag/?*) version=${latest##*/} ;;
+		*) fail "could not find the latest release; set KAZARI_VERSION" ;;
+		esac
 	fi
 
 	tmp=$(mktemp -d)

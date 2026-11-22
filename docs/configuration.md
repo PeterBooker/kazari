@@ -21,7 +21,7 @@ A key the server does not know is an error, so a typo fails loudly rather than b
 
 ### The local preset
 
-`kazari serve --local` reads no file. It starts from a preset for a server on your own machine: plain HTTP on `127.0.0.1:8080` in proxy mode, the base domain `localhost`, `external_scheme: http` with `external_port: 8080`, the data in `./.data`, and `log.level: debug`. `KAZARI_*` variables apply on top of it, so `KAZARI_DATA_DIR` moves the data and `KAZARI_LISTEN_HTTP=:8080` makes it reachable from outside a container. `--local` and `--config` exclude each other.
+`kazari serve --local` reads no file. It starts from a preset for a server on your own machine: plain HTTP on `127.0.0.1:8080` in proxy mode, the base domain `kazari.localhost`, `external_scheme: http` with `external_port: 8080`, the data in `./.data`, and `log.level: debug`. `KAZARI_*` variables apply on top of it, so `KAZARI_DATA_DIR` moves the data and `KAZARI_LISTEN_HTTP=:8080` makes it reachable from outside a container. `--local` and `--config` exclude each other.
 
 ### Precedence
 
@@ -208,7 +208,7 @@ The domain, the data directory and the shape of public URLs:
 
 `data_dir` holds `kazari.db`, `blobs/`, `uploads/`, `certmagic/` and the admin socket. The systemd unit and the Docker image set it to `/var/lib/kazari`; `serve --local` uses `./.data`.
 
-`external_port` is appended only when it is not the scheme's default: `8080` gives `http://demo.localhost:8080/`, as under `--local`. `external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
+`external_port` is appended only when it is not the scheme's default: `8080` gives `http://demo.kazari.localhost:8080/`, as under `--local`. `external_scheme` and `external_port` only shape the URLs in responses; they do not change what Kazari listens on.
 
 ### `listen`
 

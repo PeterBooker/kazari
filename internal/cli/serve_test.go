@@ -98,7 +98,7 @@ func TestCheckLocal(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("check --local: %+v", r)
 	}
-	for _, want := range []string{"config       ok    --local, base domain localhost", "dns          skip", "dns token    skip  proxy mode", "ports        ok", "admin socket ok", "all checks passed"} {
+	for _, want := range []string{"config       ok    --local, base domain kazari.localhost", "dns          skip", "dns token    skip  proxy mode", "ports        ok", "admin socket ok", "all checks passed"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
 		}

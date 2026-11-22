@@ -301,6 +301,11 @@ func (c *Checker) run(ctx context.Context, done chan struct{}) {
 	ctx, span := instrument.StartChild(ctx, c.tracer, "preflight.ready")
 	var findings []Finding
 	defer func() {
+		// No request's Recover middleware stands above this goroutine, and
+		// the DNS provider's client is not Kazari's code.
+		if p := recover(); p != nil {
+			findings = []Finding{{Check: "ready", Status: Fail, Detail: fmt.Sprintf("the checks stopped with a panic: %v; report it with the log", p)}}
+		}
 		if span.IsRecording() {
 			var failed, warned int
 			for _, f := range findings {
@@ -313,14 +318,9 @@ func (c *Checker) run(ctx context.Context, done chan struct{}) {
 			}
 			span.SetAttributes(attribute.Int("kazari.ready.failed", failed), attribute.Int("kazari.ready.warned", warned))
 		}
+		// Before done closes: a caller that has its report also has the
+		// run's span.
 		span.End()
-	}()
-	defer func() {
-		// No request's Recover middleware stands above this goroutine, and
-		// the DNS provider's client is not Kazari's code.
-		if p := recover(); p != nil {
-			findings = []Finding{{Check: "ready", Status: Fail, Detail: fmt.Sprintf("the checks stopped with a panic: %v; report it with the log", p)}}
-		}
 		c.mu.Lock()
 		c.last = Report{Findings: findings, At: c.opts.Now()}
 		c.running = nil

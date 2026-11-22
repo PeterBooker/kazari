@@ -203,7 +203,7 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe = %q", got)
 	}
 	local := config.Local()
-	if got := Describe(local, ""); got != "environment only, base domain localhost, mode proxy, data in .data" {
+	if got := Describe(local, ""); got != "environment only, base domain kazari.localhost, mode proxy, data in .data" {
 		t.Errorf("Describe(local) = %q", got)
 	}
 }

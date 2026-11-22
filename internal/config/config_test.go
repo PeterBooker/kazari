@@ -155,7 +155,7 @@ func TestLocal(t *testing.T) {
 		name      string
 		got, want any
 	}{
-		{"base_domain", got.BaseDomain, "localhost"},
+		{"base_domain", got.BaseDomain, "kazari.localhost"},
 		{"data_dir", got.DataDir, "./.data"},
 		{"external_scheme", got.ExternalScheme, "http"},
 		{"external_port", got.ExternalPort, 8080},
