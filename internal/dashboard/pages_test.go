@@ -637,7 +637,7 @@ func hostilePages(t *testing.T) (*env, *browser) {
 	if _, _, err := e.artifacts.Update(ctx, boss, artifact.UpdateRequest{Slug: "members-one", Name: &name, Description: &desc}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour); err != nil {
+	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{DisplayName: new(hostileScript)}); err != nil {
@@ -698,7 +698,7 @@ func TestPagesMarkup(t *testing.T) {
 	}
 	strictMarkup(t, "a new share link", b.post("/pages/members-one/links", url.Values{"days": {"1"}}).body)
 	strictMarkup(t, "an error page", b.navigate("/pages/no-such-page").body)
-	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour)
+	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}

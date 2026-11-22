@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -134,6 +135,11 @@ type ownPageData struct {
 	StaleDays             string
 	Err                   map[string]string
 }
+
+// MinLinkPassword and MaxLinkPassword bound a share link's password, for
+// the form.
+func (ownPageData) MinLinkPassword() int { return artifact.ShareLinkPasswordMin }
+func (ownPageData) MaxLinkPassword() int { return artifact.ShareLinkPasswordMax }
 
 func stateOf(a *artifact.Artifact) string {
 	switch {
@@ -273,7 +279,11 @@ func (s *server) createLink(w http.ResponseWriter, r *http.Request, v visit, act
 	if artifact.ValidateLabel(label) != nil {
 		return refuse("label")
 	}
-	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour)
+	password := r.PostForm.Get("password")
+	if n := utf8.RuneCountInString(password); password != "" && (n < artifact.ShareLinkPasswordMin || n > artifact.ShareLinkPasswordMax) {
+		return refuse("password")
+	}
+	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour, password)
 	if errors.Is(err, artifact.ErrInvalidArgument) {
 		return refuse("label")
 	}

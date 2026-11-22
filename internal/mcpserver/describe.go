@@ -321,8 +321,9 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"until expires_in has passed (a duration such as \"72h\", \"14d\" or \"2w\"; default 7 days, at most %s) "+
 			"or the link is revoked; with version, version_url opens that version (%s). label is a note such as who "+
 			"the link is for. The URLs hold the link's secret and are returned only this once: give them to the user. "+
-			"Anyone who has one can open the page, so it is for the people it is meant for only. Needs the "+
-			"artifacts:share scope.", days(o.MaxShareLinkTTL), hostOnly(t.versionURL)),
+			"Anyone who has one can open the page, so it is for the people it is meant for only; with password "+
+			"(%d to %d characters) the page also asks for it. Needs the artifacts:share scope.",
+			days(o.MaxShareLinkTTL), hostOnly(t.versionURL), artifact.ShareLinkPasswordMin, artifact.ShareLinkPasswordMax),
 
 		"list_share_links": "List an artifact's share links, newest first: prefix, label, created_by, expires_at, " +
 			"revoked_at, uses, last_used_at and whether each is active. Their URLs are never shown again; revoke a link " +

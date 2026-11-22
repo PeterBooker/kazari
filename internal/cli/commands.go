@@ -416,14 +416,24 @@ type ShareCreateCmd struct {
 	Slug    string `arg:"" help:"Artifact slug."`
 	Label   string `help:"Note on who the link is for." placeholder:"LABEL"`
 	Expires string `help:"How long the link works, such as 72h or 14d (default: 7d)." placeholder:"DURATION"`
+	// A flag, not a value: a password on the command line would be in the
+	// shell's history and the process list.
+	Password bool `help:"Ask for a password the link needs before it opens the page: typed twice on a terminal, else the first line of stdin."`
 }
 
 func (c *ShareCreateCmd) Run(r *runner) error {
+	var password string
+	if c.Password {
+		var err error
+		if password, err = r.readLinkPassword(); err != nil {
+			return err
+		}
+	}
 	cl, err := r.userClient()
 	if err != nil {
 		return err
 	}
-	res, err := cl.CreateShareLink(r.ctx, c.Slug, c.Label, c.Expires)
+	res, err := cl.CreateShareLink(r.ctx, c.Slug, c.Label, c.Expires, password)
 	if err != nil {
 		return err
 	}
@@ -431,13 +441,61 @@ func (c *ShareCreateCmd) Run(r *runner) error {
 		return r.printJSON(res)
 	}
 	fmt.Fprintln(r.stdout, res.URL)
-	fmt.Fprintf(r.stderr, "share link %s opens %s until %s; anyone with the URL can open it\n",
-		res.ShareLink.Prefix, c.Slug, fmtTime(res.ShareLink.ExpiresAt))
+	who := "anyone with the URL"
+	if res.ShareLink.Password {
+		who = "anyone with the URL and the password; send the password apart from it"
+	}
+	fmt.Fprintf(r.stderr, "share link %s opens %s until %s; %s can open it\n",
+		res.ShareLink.Prefix, c.Slug, fmtTime(res.ShareLink.ExpiresAt), who)
 	if res.Artifact.Visibility != "members" {
 		fmt.Fprintf(r.stderr, "note: %s is %s, so it opens without the link too (kazari visibility %s members)\n",
 			c.Slug, res.Artifact.Visibility, c.Slug)
 	}
 	return nil
+}
+
+// readLinkPassword reads a share link's password: typed twice with the
+// echo off on a terminal, else the first line of stdin.
+func (r *runner) readLinkPassword() (string, error) {
+	in := bufio.NewReader(r.stdin)
+	line := func() (string, error) {
+		s, err := in.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("share create: read the password: %w", err)
+		}
+		return strings.TrimRight(s, "\r\n"), nil
+	}
+	if !r.terminal() {
+		p, err := line()
+		if err == nil && p == "" {
+			err = usagef("share create: --password read an empty line from stdin")
+		}
+		return p, err
+	}
+	var first, second string
+	ask := func(prompt string, into *string) error {
+		fmt.Fprint(r.stderr, prompt)
+		err := withoutEcho(r.stdin, func() error {
+			var err error
+			*into, err = line()
+			return err
+		})
+		fmt.Fprintln(r.stderr)
+		return err
+	}
+	if err := ask("Password for the link: ", &first); err != nil {
+		return "", err
+	}
+	if err := ask("The same password again: ", &second); err != nil {
+		return "", err
+	}
+	switch {
+	case first == "":
+		return "", usagef("share create: no password was typed")
+	case first != second:
+		return "", usagef("share create: the two passwords differ")
+	}
+	return first, nil
 }
 
 // ShareListCmd lists share links.
@@ -458,7 +516,7 @@ func (c *ShareListCmd) Run(r *runner) error {
 		return r.printJSON(list)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "PREFIX\tLABEL\tCREATED BY\tCREATED\tEXPIRES\tUSES\tLAST USED\tSTATE")
+	fmt.Fprintln(tw, "PREFIX\tLABEL\tCREATED BY\tCREATED\tEXPIRES\tUSES\tLAST USED\tPASSWORD\tSTATE")
 	for _, l := range list.Items {
 		state := "active"
 		switch {
@@ -467,8 +525,12 @@ func (c *ShareListCmd) Run(r *runner) error {
 		case !l.Active:
 			state = "expired"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", l.Prefix, dash(oneLine(l.Label)), l.CreatedBy,
-			fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), state)
+		password := "no"
+		if l.Password {
+			password = "yes"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", l.Prefix, dash(oneLine(l.Label)), l.CreatedBy,
+			fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), password, state)
 	}
 	return tw.Flush()
 }

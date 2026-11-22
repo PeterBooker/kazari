@@ -322,13 +322,17 @@ type ShareLink struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	Uses       int        `json:"uses"`
 	Active     bool       `json:"active"`
+	// Password is true for a link that asks for a password before it opens.
+	Password bool `json:"password,omitempty"`
 }
 
 // ShareLinkRequest is POST /artifacts/{slug}/share-links. ExpiresIn is a
-// duration such as 72h or 7d; empty means 7 days.
+// duration such as 72h or 7d; empty means 7 days. Password, when set, must
+// be given before the link opens the page.
 type ShareLinkRequest struct {
 	Label     string `json:"label,omitempty"`
 	ExpiresIn string `json:"expires_in,omitempty"`
+	Password  string `json:"password,omitempty"`
 }
 
 // CreatedShareLink carries the link's URL, which holds its token, exactly

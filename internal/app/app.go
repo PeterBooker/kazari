@@ -319,6 +319,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		CSP:               cfg.Serve.CSP,
 		AllowCSPOverride:  cfg.Serve.AllowCSPOverride,
 		Quotas:            users,
+		Passwords:         users,
 		Now:               now,
 		Logger:            log,
 		Telemetry:         tel,

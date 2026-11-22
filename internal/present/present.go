@@ -179,6 +179,7 @@ func ShareLink(sl *artifact.ShareLink, now time.Time) api.ShareLink {
 		LastUsedAt: sl.LastUsedAt,
 		Uses:       sl.Uses,
 		Active:     sl.Active(now),
+		Password:   sl.HasPassword,
 	}
 }
 

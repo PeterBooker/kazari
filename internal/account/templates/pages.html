@@ -104,7 +104,7 @@
 <thead><tr><th>Link</th><th>Created</th><th>State</th><th>Expires</th><th class="num">Opened</th><th><span class="sr-only">Actions</span></th></tr></thead>
 <tbody>
 {{range .Links}}<tr>
-<td data-label="Link"><span class="mono">{{.Prefix}}</span>{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Link"><span class="mono">{{.Prefix}}</span>{{if .HasPassword}} <span class="status tone-note">Password</span>{{end}}{{with .Label}} <span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="Created">{{template "time" .CreatedAt}}</td>
 <td data-label="State">{{if eq .State "active"}}<span class="status tone-ok">Active</span>{{else if eq .State "expired"}}<span class="status tone-neutral">Expired</span>{{else}}<span class="status tone-danger">Revoked</span>{{end}}</td>
 <td data-label="Expires">{{template "time" .ExpiresAt}}</td>
@@ -120,9 +120,11 @@
 {{if .Err.label}}<p class="error" id="link-label-err">{{template "icon/alert"}}<span>Keep the note to one line of plain text.</span></p>{{end}}</div>
 <div class="field"><label for="link-days">Works for, in days</label><input class="input" id="link-days" name="days" type="number" min="1" max="{{.MaxLinkDays}}" value="{{.LinkDays}}" required{{if .Err.days}} aria-invalid="true" aria-describedby="link-days-err"{{end}}>
 {{if .Err.days}}<p class="error" id="link-days-err">{{template "icon/alert"}}<span>Give a number of days from 1 to {{.MaxLinkDays}}.</span></p>{{end}}</div>
+<div class="field"><label for="link-password">Password <span class="optional">(optional)</span></label><input class="input" id="link-password" name="password" type="password" autocomplete="new-password" minlength="{{.MinLinkPassword}}" maxlength="{{.MaxLinkPassword}}"{{if .Err.password}} aria-invalid="true" aria-describedby="link-password-err"{{end}}>
+{{if .Err.password}}<p class="error" id="link-password-err">{{template "icon/alert"}}<span>Use {{.MinLinkPassword}} to {{.MaxLinkPassword}} characters, or leave it empty.</span></p>{{end}}</div>
 <button type="submit" class="btn btn-primary">{{template "icon/link"}}Make a share link</button>
 </form>
-<p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days.</p>
+<p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days. With a password, the page asks for it before it opens.</p>
 {{else}}{{template "share-members-only" .}}{{end}}
 </section>
 {{end}}
@@ -177,7 +179,7 @@
 <header class="head">
 <p class="crumb"><a href="/account/">Account</a> / <a class="mono" href="/account/pages/{{.Slug}}">{{.Slug}}</a></p>
 <div class="head-row"><h1 class="title">Your new <b>share link</b></h1><span class="status tone-note">Shown once</span></div>
-<p class="lede">Copy it now and send it to {{with .Link.Label}}{{.}}{{else}}the person{{end}} over a channel you trust. Whoever has it opens <span class="mono">{{.Host}}</span> without signing in.</p>
+<p class="lede">Copy it now and send it to {{with .Link.Label}}{{.}}{{else}}the person{{end}} over a channel you trust. Whoever has it{{if .Link.HasPassword}} and the password{{end}} opens <span class="mono">{{.Host}}</span> without signing in.</p>
 </header>
 <section class="box section" aria-labelledby="link-h">
 <h2 class="h2" id="link-h">The link, shown once</h2>
@@ -186,7 +188,8 @@
 <ul class="dash soft">
 <li>It works until {{template "time" .Link.ExpiresAt}}, or until you revoke it on the page under Share links.</li>
 <li>Kazari keeps no copy. After you leave this page it cannot be shown again; make another if it is lost.</li>
-</ul>
+{{if .Link.HasPassword}}<li>Send the password apart from the link, such as by phone or in another message.</li>
+{{end}}</ul>
 </section>
 <div class="actions"><a class="btn" href="/account/pages/{{.Slug}}">I have copied it</a></div>
 </div>

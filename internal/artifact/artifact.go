@@ -300,6 +300,9 @@ type ShareLink struct {
 	RevokedAt  *time.Time
 	LastUsedAt *time.Time
 	Uses       int // times the link was opened
+	// HasPassword is set for a link that asks for a password before it
+	// opens its artifact.
+	HasPassword bool
 }
 
 // Active reports whether the link opens its artifact at now.

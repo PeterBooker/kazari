@@ -64,6 +64,7 @@ type ShareLinkResult struct {
 	Prefix     string    `json:"prefix"`
 	Label      string    `json:"label,omitempty"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	Password   bool      `json:"password,omitempty"`
 }
 
 // EditedFile is the outcome of one file's edits in update_artifact.

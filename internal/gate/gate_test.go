@@ -81,26 +81,54 @@ func (f *fakeSessions) EndView(_ context.Context, host, token string) error {
 
 // fakeLinks knows one link, linkToken, for slug "team".
 type fakeLinks struct {
-	mu     sync.Mutex
-	opened int
-	gone   bool // the link was revoked
+	mu       sync.Mutex
+	opened   int
+	unlocked []string // the passwords UnlockShareLink was given
+	gone     bool     // the link was revoked
 }
 
-func (f *fakeLinks) CheckShareLink(_ context.Context, slug, token string) (*artifact.ShareLink, error) {
-	if slug != "team" || token != linkToken || f.gone {
+// lockedToken is a second link of team's, which asks for lockedPassword;
+// its view cookie is lockedCookie.
+var (
+	lockedToken  = artifact.LinkTokenPrefix + "pppppppp_" + strings.Repeat("q", 52)
+	lockedCookie = lockedToken + ".proof"
+)
+
+const lockedPassword = "open sesame"
+
+func (f *fakeLinks) CheckShareLink(_ context.Context, slug, cookie string) (*artifact.ShareLink, error) {
+	if slug != "team" || f.gone || (cookie != linkToken && cookie != lockedCookie) {
 		return nil, artifact.ErrLinkNotFound
 	}
-	return &artifact.ShareLink{Prefix: "aaaaaaaa", ExpiresAt: now.Add(48 * time.Hour)}, nil
+	return &artifact.ShareLink{Prefix: "aaaaaaaa", ExpiresAt: now.Add(48 * time.Hour), HasPassword: cookie == lockedCookie}, nil
 }
 
-func (f *fakeLinks) OpenShareLink(ctx context.Context, slug, token string) (*artifact.ShareLink, error) {
-	l, err := f.CheckShareLink(ctx, slug, token)
-	if err == nil {
-		f.mu.Lock()
-		f.opened++
-		f.mu.Unlock()
+func (f *fakeLinks) OpenShareLink(ctx context.Context, slug, token string) (*artifact.ShareLink, string, error) {
+	if slug == "team" && token == lockedToken && !f.gone {
+		return &artifact.ShareLink{Prefix: "pppppppp", ExpiresAt: now.Add(24 * time.Hour), HasPassword: true}, "", nil
 	}
-	return l, err
+	l, err := f.CheckShareLink(ctx, slug, token)
+	if err != nil {
+		return nil, "", err
+	}
+	f.mu.Lock()
+	f.opened++
+	f.mu.Unlock()
+	return l, token, nil
+}
+
+func (f *fakeLinks) UnlockShareLink(_ context.Context, slug, token, password string) (*artifact.ShareLink, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unlocked = append(f.unlocked, password)
+	if slug != "team" || token != lockedToken || f.gone {
+		return nil, "", artifact.ErrLinkNotFound
+	}
+	if password != lockedPassword {
+		return nil, "", artifact.ErrForbidden
+	}
+	f.opened++
+	return &artifact.ShareLink{Prefix: "pppppppp", ExpiresAt: now.Add(24 * time.Hour), HasPassword: true}, lockedCookie, nil
 }
 
 type fixture struct {

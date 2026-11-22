@@ -123,7 +123,9 @@ type Store interface {
 	// the link's token. ErrNotFound for an unknown slug. A link belongs to
 	// the artifact row, not the slug: it goes when the tombstone does and
 	// never opens a later artifact with the same slug.
-	CreateShareLink(ctx context.Context, slug string, l *ShareLink, hash string) error
+	// passwordHash is the hash of the link's password, "" for a link that
+	// opens without one.
+	CreateShareLink(ctx context.Context, slug string, l *ShareLink, hash, passwordHash string) error
 
 	// ListShareLinks returns the artifact's links, revoked and expired
 	// ones included, newest first.
@@ -139,9 +141,9 @@ type Store interface {
 	RevokeUserShareLinks(ctx context.Context, handle string, at time.Time) ([]RevokedShareLink, error)
 
 	// ShareLink returns the artifact's link whose token hashes to hash, in
-	// any state. ErrLinkNotFound otherwise, including for another
-	// artifact's link.
-	ShareLink(ctx context.Context, slug, hash string) (*ShareLink, error)
+	// any state, and its password hash ("" for none). ErrLinkNotFound
+	// otherwise, including for another artifact's link.
+	ShareLink(ctx context.Context, slug, hash string) (*ShareLink, string, error)
 
 	// UseShareLink counts one opening of the artifact's link with prefix
 	// and sets its last use to at. ErrLinkNotFound.

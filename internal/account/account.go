@@ -91,7 +91,7 @@ type Pages interface {
 	UnmarkStale(ctx context.Context, actor artifact.Actor, slug string) (*artifact.Artifact, error)
 	Delete(ctx context.Context, actor artifact.Actor, slug string, hard bool) error
 	Update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest) (*artifact.Artifact, *artifact.Version, error)
-	CreateShareLink(ctx context.Context, actor artifact.Actor, slug, label string, ttl time.Duration) (*artifact.ShareLink, string, error)
+	CreateShareLink(ctx context.Context, actor artifact.Actor, slug, label string, ttl time.Duration, password string) (*artifact.ShareLink, string, error)
 	ListShareLinks(ctx context.Context, actor artifact.Actor, slug string) ([]artifact.ShareLink, error)
 	RevokeShareLink(ctx context.Context, actor artifact.Actor, slug, prefix string) error
 }

@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 )
@@ -54,6 +56,38 @@ func isBase32(s string) bool {
 	return true
 }
 
+// IsLinkCookie reports whether s has the shape of the view cookie a share
+// link sets: its token, followed for a link with a password by a dot and
+// the proof that the password was given.
+func IsLinkCookie(s string) bool {
+	token, _, _ := strings.Cut(s, ".")
+	return IsLinkToken(token)
+}
+
+// Share-link passwords are ShareLinkPasswordMin to ShareLinkPasswordMax
+// characters.
+const (
+	ShareLinkPasswordMin = 8
+	ShareLinkPasswordMax = 256
+)
+
+func checkLinkPassword(password string) error {
+	n := utf8.RuneCountInString(password)
+	if !utf8.ValidString(password) || n < ShareLinkPasswordMin || n > ShareLinkPasswordMax {
+		return Errorf(ErrInvalidArgument, "a share link's password is %d to %d characters", ShareLinkPasswordMin, ShareLinkPasswordMax)
+	}
+	return nil
+}
+
+// linkProof is what a correct password adds to a link's cookie: an HMAC of
+// the token keyed with the stored password hash, which the URL does not
+// carry.
+func linkProof(passwordHash, token string) string {
+	m := hmac.New(sha256.New, []byte(passwordHash))
+	m.Write([]byte(token))
+	return linkEncoding.EncodeToString(m.Sum(nil))
+}
+
 // hashLinkToken is the stored form of a token: hex SHA-256.
 func hashLinkToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
@@ -84,9 +118,10 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) (*Art
 // CreateShareLink creates a link that opens slug without signing in until
 // ttl has passed (ttl <= 0 means DefaultShareLinkTTL, capped at
 // Options.MaxShareLinkTTL; a longer ttl is ErrInvalidArgument). label is a
-// note such as who the link is for. It returns the link and its token,
+// note such as who the link is for. A password, when not empty, must be
+// given before the link opens anything. It returns the link and its token,
 // which is never available again.
-func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration) (_ *ShareLink, _ string, err error) {
+func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration, password string) (_ *ShareLink, _ string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.create", slug)
 	defer func() {
 		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("create"))
@@ -104,6 +139,14 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 	if err := validateText("label", label, LabelMaxBytes, false); err != nil {
 		return nil, "", err
 	}
+	if password != "" {
+		if err := checkLinkPassword(password); err != nil {
+			return nil, "", err
+		}
+		if s.opts.Passwords == nil {
+			return nil, "", Errorf(ErrInvalidArgument, "this instance cannot keep share-link passwords")
+		}
+	}
 	a, err := s.shareable(ctx, actor, slug)
 	if err != nil {
 		return nil, "", err
@@ -113,15 +156,25 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 		return nil, "", Errorf(ErrInvalidArgument,
 			"%s is unpublished, so a share link would open nothing; set its visibility to members first", slug)
 	}
+	var passwordHash string
+	if password != "" {
+		if passwordHash, err = s.opts.Passwords.HashPassword(ctx, password); err != nil {
+			return nil, "", err
+		}
+	}
 	token, prefix := newLinkToken()
 	now := s.now()
-	l := &ShareLink{Prefix: prefix, Label: label, CreatedBy: actor.Handle, CreatedAt: now, ExpiresAt: now.Add(ttl)}
-	if err := s.store.CreateShareLink(ctx, slug, l, hashLinkToken(token)); err != nil {
+	l := &ShareLink{Prefix: prefix, Label: label, CreatedBy: actor.Handle, CreatedAt: now, ExpiresAt: now.Add(ttl),
+		HasPassword: password != ""}
+	if err := s.store.CreateShareLink(ctx, slug, l, hashLinkToken(token), passwordHash); err != nil {
 		return nil, "", err
 	}
 	details := map[string]string{"prefix": prefix, "expires_at": l.ExpiresAt.Format(time.RFC3339)}
 	if label != "" {
 		details["label"] = label
+	}
+	if l.HasPassword {
+		details["password"] = "true"
 	}
 	s.record(ctx, actor, audit.ShareLinkCreate, slug, details)
 	return l, token, nil
@@ -172,39 +225,92 @@ func (s *Service) RevokeUserShareLinks(ctx context.Context, actor Actor, handle 
 	return nil
 }
 
-// CheckShareLink returns slug's active link for token, for the serving
-// path. Anything else (a malformed, unknown, revoked or expired token, or
-// another artifact's) is ErrLinkNotFound.
-func (s *Service) CheckShareLink(ctx context.Context, slug, token string) (*ShareLink, error) {
+// activeLink returns slug's active link for token and its password hash;
+// anything else is ErrLinkNotFound.
+func (s *Service) activeLink(ctx context.Context, slug, token string) (*ShareLink, string, error) {
 	if !IsLinkToken(token) {
-		return nil, ErrLinkNotFound
+		return nil, "", ErrLinkNotFound
 	}
-	l, err := s.store.ShareLink(ctx, slug, hashLinkToken(token))
+	l, passwordHash, err := s.store.ShareLink(ctx, slug, hashLinkToken(token))
+	if err != nil {
+		return nil, "", err
+	}
+	if !l.Active(s.now()) {
+		return nil, "", ErrLinkNotFound
+	}
+	return l, passwordHash, nil
+}
+
+// CheckShareLink returns slug's active link for the view cookie a browser
+// was given when it opened the link, for the serving path: the token alone,
+// or for a link with a password the token and the proof that the password
+// was given. Anything else (a malformed, unknown, revoked or expired token,
+// a missing or wrong proof, or another artifact's link) is ErrLinkNotFound.
+func (s *Service) CheckShareLink(ctx context.Context, slug, cookie string) (*ShareLink, error) {
+	token, proof, _ := strings.Cut(cookie, ".")
+	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
 		return nil, err
 	}
-	if !l.Active(s.now()) {
+	want := ""
+	if passwordHash != "" {
+		want = linkProof(passwordHash, token)
+	}
+	if !hmac.Equal([]byte(proof), []byte(want)) {
 		return nil, ErrLinkNotFound
 	}
 	return l, nil
 }
 
-// OpenShareLink is CheckShareLink for a browser opening the link: it also
-// counts the use.
-func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *ShareLink, err error) {
+// OpenShareLink is a browser opening the link with its token: it returns
+// the link and the view cookie that opens slug, and counts the use. A link
+// with a password returns no cookie and counts nothing: the browser asks
+// for the password and calls UnlockShareLink.
+func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *ShareLink, cookie string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.open", slug)
 	defer func() { s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("open")); endSpan(span, err) }()
-	l, err := s.CheckShareLink(ctx, slug, token)
+	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	if passwordHash != "" {
+		return l, "", nil
+	}
+	return s.used(ctx, slug, l, token)
+}
+
+// UnlockShareLink opens a link with its password: a wrong password is
+// ErrForbidden, the right one returns the link and its view cookie and
+// counts the use. Slowing guesses down is the caller's part.
+func (s *Service) UnlockShareLink(ctx context.Context, slug, token, password string) (_ *ShareLink, cookie string, err error) {
+	ctx, span := s.span(ctx, "artifact.share_link.unlock", slug)
+	defer func() { s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("unlock")); endSpan(span, err) }()
+	l, passwordHash, err := s.activeLink(ctx, slug, token)
+	if err != nil {
+		return nil, "", err
+	}
+	if passwordHash == "" || s.opts.Passwords == nil {
+		return nil, "", ErrLinkNotFound
+	}
+	ok, err := s.opts.Passwords.VerifyPassword(ctx, passwordHash, password)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ok {
+		return nil, "", Errorf(ErrForbidden, "the password is not right")
+	}
+	return s.used(ctx, slug, l, token+"."+linkProof(passwordHash, token))
+}
+
+// used counts one opening of l and returns it with cookie.
+func (s *Service) used(ctx context.Context, slug string, l *ShareLink, cookie string) (*ShareLink, string, error) {
 	now := s.now()
 	if err := s.store.UseShareLink(ctx, slug, l.Prefix, now); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	l.Uses++
 	l.LastUsedAt = &now
-	return l, nil
+	return l, cookie, nil
 }
 
 // formatTTL prints a whole number of days as "90d", anything else as a

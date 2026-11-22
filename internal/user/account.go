@@ -502,6 +502,23 @@ func (s *Service) Account(ctx context.Context, handle string) (Account, error) {
 	return s.store.GetAccount(ctx, handle, s.now())
 }
 
+// HashPassword hashes a password that guards something other than an
+// account, such as a share link, with the parameters and the bound on hashes
+// at once that accounts have. The caller checks its length. ErrBusy.
+func (s *Service) HashPassword(ctx context.Context, password string) (string, error) {
+	return s.hashing.hash(ctx, password)
+}
+
+// VerifyPassword reports whether password matches a hash from HashPassword.
+// ErrBusy.
+func (s *Service) VerifyPassword(ctx context.Context, hash, password string) (bool, error) {
+	if hash == "" {
+		return false, nil
+	}
+	ok, _, err := s.hashing.verify(ctx, hash, password)
+	return ok, err
+}
+
 // MinPasswordLength is the shortest password the instance accepts, for the
 // pages that ask for one.
 func (s *Service) MinPasswordLength() int { return s.opts.MinPasswordLength }

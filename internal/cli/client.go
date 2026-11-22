@@ -541,10 +541,10 @@ func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResu
 
 // CreateShareLink creates a share link expiring after expiresIn, such as 72h
 // or 7d ("" for a week). The result's URL carries the token.
-func (c *Client) CreateShareLink(ctx context.Context, slug, label, expiresIn string) (*api.CreatedShareLink, error) {
+func (c *Client) CreateShareLink(ctx context.Context, slug, label, expiresIn, password string) (*api.CreatedShareLink, error) {
 	var out api.CreatedShareLink
 	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/share-links", nil, nil,
-		api.ShareLinkRequest{Label: label, ExpiresIn: expiresIn}, &out)
+		api.ShareLinkRequest{Label: label, ExpiresIn: expiresIn, Password: password}, &out)
 	if err != nil {
 		return nil, err
 	}

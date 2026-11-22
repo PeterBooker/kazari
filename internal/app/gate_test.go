@@ -181,7 +181,7 @@ func TestGatedEndToEnd(t *testing.T) {
 	}
 
 	// A share link opens the page for a browser that never signed in.
-	created, err := user.CreateShareLink(ctx, "team", "reviewer", "2d")
+	created, err := user.CreateShareLink(ctx, "team", "reviewer", "2d", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,11 +242,11 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 		Files: []api.FileInput{{Path: "index.html", Content: "team page"}}}); err != nil {
 		t.Fatal(err)
 	}
-	theirs, err := leaver.CreateShareLink(ctx, "team", "kept", "90d")
+	theirs, err := leaver.CreateShareLink(ctx, "team", "kept", "90d", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewers, err := owner.CreateShareLink(ctx, "team", "reviewer", "2d")
+	reviewers, err := owner.CreateShareLink(ctx, "team", "reviewer", "2d", "")
 	if err != nil {
 		t.Fatal(err)
 	}

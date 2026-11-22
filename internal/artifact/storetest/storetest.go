@@ -1660,15 +1660,16 @@ func testShareLinks(t *testing.T, h *harness) {
 
 	l1 := &artifact.ShareLink{Prefix: "aaaaaaaa", Label: "for the client", CreatedBy: "alice",
 		CreatedAt: at(time.Hour), ExpiresAt: at(48 * time.Hour)}
-	l2 := &artifact.ShareLink{Prefix: "bbbbbbbb", CreatedBy: "bob", CreatedAt: at(2 * time.Hour), ExpiresAt: at(72 * time.Hour)}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l1, hashOf("token-1")); err != nil {
+	l2 := &artifact.ShareLink{Prefix: "bbbbbbbb", CreatedBy: "bob", CreatedAt: at(2 * time.Hour), ExpiresAt: at(72 * time.Hour),
+		HasPassword: true}
+	if err := h.store.CreateShareLink(h.ctx, "demo", l1, hashOf("token-1"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l2, hashOf("token-2")); err != nil {
+	if err := h.store.CreateShareLink(h.ctx, "demo", l2, hashOf("token-2"), "$argon2id$stored"); err != nil {
 		t.Fatal(err)
 	}
 	wantErr(t, "CreateShareLink on a missing slug",
-		h.store.CreateShareLink(h.ctx, "missing", &artifact.ShareLink{Prefix: "cccccccc", CreatedAt: at(0), ExpiresAt: at(time.Hour)}, hashOf("t")),
+		h.store.CreateShareLink(h.ctx, "missing", &artifact.ShareLink{Prefix: "cccccccc", CreatedAt: at(0), ExpiresAt: at(time.Hour)}, hashOf("t"), ""),
 		artifact.ErrNotFound)
 
 	links, err := h.store.ListShareLinks(h.ctx, "demo")
@@ -1682,16 +1683,20 @@ func testShareLinks(t *testing.T, h *harness) {
 		t.Fatalf("ListShareLinks(other) = %v, %v; want none", links, err)
 	}
 
-	got, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-1"))
+	got, passwordHash, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(l1, got, cmpOpts...); diff != "" {
-		t.Fatalf("ShareLink (-want +got):\n%s", diff)
+	if diff := cmp.Diff(l1, got, cmpOpts...); diff != "" || passwordHash != "" {
+		t.Fatalf("ShareLink, password hash %q (-want +got):\n%s", passwordHash, diff)
 	}
-	_, err = h.store.ShareLink(h.ctx, "other", hashOf("token-1"))
+	if got, passwordHash, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-2")); err != nil || !got.HasPassword ||
+		passwordHash != "$argon2id$stored" {
+		t.Fatalf("ShareLink with a password = %+v, %q, %v; want HasPassword and the stored hash", got, passwordHash, err)
+	}
+	_, _, err = h.store.ShareLink(h.ctx, "other", hashOf("token-1"))
 	wantErr(t, "ShareLink of another artifact", err, artifact.ErrLinkNotFound)
-	_, err = h.store.ShareLink(h.ctx, "demo", hashOf("unknown"))
+	_, _, err = h.store.ShareLink(h.ctx, "demo", hashOf("unknown"))
 	wantErr(t, "ShareLink unknown", err, artifact.ErrLinkNotFound)
 
 	for i := range 2 {
@@ -1700,7 +1705,7 @@ func testShareLinks(t *testing.T, h *harness) {
 		}
 	}
 	wantErr(t, "UseShareLink through another artifact", h.store.UseShareLink(h.ctx, "other", l1.Prefix, at(0)), artifact.ErrLinkNotFound)
-	if got, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.Uses != 2 || !got.LastUsedAt.Equal(at(4*time.Hour)) {
+	if got, _, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.Uses != 2 || !got.LastUsedAt.Equal(at(4*time.Hour)) {
 		t.Fatalf("after two uses: Uses %d, LastUsedAt %v", got.Uses, got.LastUsedAt)
 	}
 
@@ -1711,7 +1716,7 @@ func testShareLinks(t *testing.T, h *harness) {
 	if err := h.store.RevokeShareLink(h.ctx, "demo", l1.Prefix, at(6*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.RevokedAt == nil || !got.RevokedAt.Equal(at(5*time.Hour)) {
+	if got, _, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.RevokedAt == nil || !got.RevokedAt.Equal(at(5*time.Hour)) {
 		t.Fatalf("RevokedAt = %v, want %v", got.RevokedAt, at(5*time.Hour))
 	}
 	wantErr(t, "RevokeShareLink through another artifact",
@@ -1731,7 +1736,7 @@ func testUserShareLinks(t *testing.T, h *harness) {
 		{"demo", "cccccccc", "alice"}, {"demo", "dddddddd", "bob"},
 	} {
 		link := &artifact.ShareLink{Prefix: l.prefix, CreatedBy: l.by, CreatedAt: at(0), ExpiresAt: at(time.Hour)}
-		if err := h.store.CreateShareLink(h.ctx, l.slug, link, hashOf(fmt.Sprintf("token-%d", i))); err != nil {
+		if err := h.store.CreateShareLink(h.ctx, l.slug, link, hashOf(fmt.Sprintf("token-%d", i)), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1753,7 +1758,7 @@ func testUserShareLinks(t *testing.T, h *harness) {
 		if i == 1 {
 			slug = "other"
 		}
-		l, err := h.store.ShareLink(h.ctx, slug, hashOf(fmt.Sprintf("token-%d", i)))
+		l, _, err := h.store.ShareLink(h.ctx, slug, hashOf(fmt.Sprintf("token-%d", i)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1777,20 +1782,20 @@ func testShareLinksFollowTheRow(t *testing.T, h *harness) {
 	h.mkUser("bob")
 	h.create(t, newArtifact("demo", "alice", at(0)))
 	l := &artifact.ShareLink{Prefix: "aaaaaaaa", CreatedBy: "alice", CreatedAt: at(0), ExpiresAt: at(1000 * time.Hour)}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l, hashOf("token")); err != nil {
+	if err := h.store.CreateShareLink(h.ctx, "demo", l, hashOf("token"), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.Purge(h.ctx, "demo", at(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token")); err != nil {
+	if _, _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token")); err != nil {
 		t.Fatalf("ShareLink on a tombstone: %v", err)
 	}
 	if err := h.store.DeleteTombstone(h.ctx, "demo"); err != nil {
 		t.Fatal(err)
 	}
 	h.create(t, newArtifact("demo", "bob", at(2*time.Hour)))
-	_, err := h.store.ShareLink(h.ctx, "demo", hashOf("token"))
+	_, _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token"))
 	wantErr(t, "old link on the reused slug", err, artifact.ErrLinkNotFound)
 	if links, err := h.store.ListShareLinks(h.ctx, "demo"); err != nil || len(links) != 0 {
 		t.Fatalf("ListShareLinks on the reused slug = %v, %v; want none", links, err)

@@ -11,6 +11,14 @@
 </head>
 {{template "theme/door-open"}}<h1 class="title">{{.Title}}</h1>
 <p>{{.Message}}</p>
-{{if .Form}}<form method="post" action="{{.Form}}"><button type="submit" class="btn btn-primary">Sign out of this page</button></form>
+{{with .Unlock}}<form method="post" action="{{.Action}}">
+<input type="hidden" name="token" value="{{.Token}}">
+<div class="field"><label for="password">Password</label>
+<input class="input" type="password" id="password" name="password" autocomplete="off" required autofocus{{if .Error}} aria-invalid="true" aria-describedby="password_error"{{end}}>
+{{if .Error}}<p class="error" id="password_error">{{.Error}}</p>
+{{end}}</div>
+<button type="submit" class="btn btn-primary">Open the page</button>
+</form>
+{{end}}{{if .Form}}<form method="post" action="{{.Form}}"><button type="submit" class="btn btn-primary">Sign out of this page</button></form>
 {{end}}{{if .Link}}<p><a href="{{.Link}}">{{.LinkText}}</a></p>
 {{end}}{{template "theme/door-close" ""}}

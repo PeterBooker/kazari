@@ -76,7 +76,7 @@ func TestShareLinks(t *testing.T) {
 	e.create(t, alice, "demo")
 	e.create(t, alice, "other")
 
-	l, token, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "for the client", 0)
+	l, token, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "for the client", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +94,15 @@ func TestShareLinks(t *testing.T) {
 		t.Fatal("the audit trail holds the token")
 	}
 
-	got, err := e.svc.OpenShareLink(e.ctx, "demo", token)
+	got, cookie, err := e.svc.OpenShareLink(e.ctx, "demo", token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Uses != 1 || got.LastUsedAt == nil {
-		t.Fatalf("after one open: %+v", got)
+	if got.Uses != 1 || got.LastUsedAt == nil || cookie != token {
+		t.Fatalf("after one open: %+v, cookie %q; want one use and the token as the cookie", got, cookie)
 	}
+	_, err = e.svc.CheckShareLink(e.ctx, "demo", token+".proof")
+	wantErr(t, "CheckShareLink of a link without a password, with a proof", err, artifact.ErrLinkNotFound)
 	for _, tc := range []struct{ name, slug, token string }{
 		{"other artifact", "other", token},
 		{"malformed", "demo", "kzs_short"},
@@ -127,7 +129,7 @@ func TestShareLinks(t *testing.T) {
 	wantErr(t, "revoke unknown", e.svc.RevokeShareLink(e.ctx, alice, "demo", "zzzzzzzz"), artifact.ErrLinkNotFound)
 
 	// Expiry: a one-hour link stops at the hour.
-	_, short, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", time.Hour)
+	_, short, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,13 +141,13 @@ func TestShareLinks(t *testing.T) {
 	_, err = e.svc.CheckShareLink(e.ctx, "demo", short)
 	wantErr(t, "expired link", err, artifact.ErrLinkNotFound)
 
-	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "", 31*24*time.Hour)
+	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "", 31*24*time.Hour, "")
 	wantErr(t, "beyond the maximum", err, artifact.ErrInvalidArgument)
-	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "bad\x00label", 0)
+	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "bad\x00label", 0, "")
 	wantErr(t, "control character in the label", err, artifact.ErrInvalidArgument)
-	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "missing", "", 0)
+	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "missing", "", 0, "")
 	wantErr(t, "unknown slug", err, artifact.ErrNotFound)
-	_, _, err = e.svc.CreateShareLink(e.ctx, artifact.Actor{}, "demo", "", 0)
+	_, _, err = e.svc.CreateShareLink(e.ctx, artifact.Actor{}, "demo", "", 0, "")
 	wantErr(t, "anonymous", err, artifact.ErrForbidden)
 }
 
@@ -154,7 +156,7 @@ func TestShareLinkDefaultCappedByMaximum(t *testing.T) {
 	e := newEnv(t, artifact.Options{MaxShareLinkTTL: 24 * time.Hour})
 	alice := e.user(t, "alice")
 	e.create(t, alice, "demo")
-	l, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	l, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +171,12 @@ func TestShareLinkPolicy(t *testing.T) {
 	alice := e.user(t, "alice")
 	bob := e.user(t, "bob")
 	e.create(t, alice, "demo")
-	l, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	l, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err = e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0)
+	_, _, err = e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0, "")
 	wantErr(t, "create by another member", err, artifact.ErrForbidden)
 	_, err = e.svc.ListShareLinks(e.ctx, bob, "demo")
 	wantErr(t, "list by another member", err, artifact.ErrForbidden)
@@ -203,9 +205,9 @@ func TestShareLinkOfflineArtifact(t *testing.T) {
 	if _, err := e.svc.SetVisibility(e.ctx, alice, "demo", artifact.Unpublished); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0)
+	_, _, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0, "")
 	wantErr(t, "stranger on an unpublished artifact", err, artifact.ErrNotFound)
-	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	wantErr(t, "owner on an unpublished artifact, which the link could not open", err, artifact.ErrInvalidArgument)
 }
 
@@ -215,11 +217,11 @@ func TestRevokeUserShareLinks(t *testing.T) {
 	e := newEnv(t, artifact.Options{MaxShareLinkTTL: 30 * 24 * time.Hour})
 	alice, bob := e.user(t, "alice"), e.user(t, "bob")
 	e.create(t, alice, "demo")
-	l, token, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0)
+	l, token, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, kept, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	_, kept, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

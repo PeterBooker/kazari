@@ -147,7 +147,7 @@ func TestEveryLinkLeadsSomewhere(t *testing.T) {
 	e.publish("ana", "report")
 	e.addVersion("ana", "report", "<h1>two</h1>")
 	ana := artifact.Actor{Handle: "ana"}
-	if _, _, err := e.artifacts.CreateShareLink(ctx, ana, "report", "for the board", time.Hour); err != nil {
+	if _, _, err := e.artifacts.CreateShareLink(ctx, ana, "report", "for the board", time.Hour, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.publish("ana", "old")
