@@ -353,7 +353,7 @@ func peopleFieldError(err error, handle string) (field, message string) {
 		if slices.Contains(user.ReservedHandles, handle) {
 			return "handle", "That handle is reserved. Choose another."
 		}
-		return "handle", fmt.Sprintf("Use %d to %d characters of a-z, 0-9, _ and -, starting with a letter or a digit.",
+		return "handle", fmt.Sprintf("Use %d to %d characters of a to z, 0 to 9, - and _, starting with a letter or a digit.",
 			user.MinHandleLen, user.MaxHandleLen)
 	case errors.Is(err, user.ErrHandleTaken):
 		return "handle", "That handle is taken. Choose another."

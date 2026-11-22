@@ -13,7 +13,7 @@
 <div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
 {{- else if eq .Kind "signed-out"}}{{template "theme/door" (.Door "Signed out")}}
 <h1 class="title">Signed <b>out</b></h1>
-<p>You are signed out of this Kazari instance in this browser.</p>
+<p>You are signed out of {{.Host}} in this browser.</p>
 <div class="actions"><a class="btn" href="/account/">Sign in again</a></div>
 {{- else if eq .Kind "signed-out-key"}}{{template "theme/door" (.Door "Key revoked")}}
 <h1 class="title">Key revoked, <b>and signed out</b></h1>
@@ -44,6 +44,18 @@
 {{- else if eq .Kind "bad-form"}}{{template "theme/door" (.Door "Form not read")}}
 <h1 class="title">The form <b>could not be read</b></h1>
 <p>Go back and send it again.</p>
+{{- else if eq .Kind "refused"}}{{template "theme/door" (.Door "Not changed")}}
+<h1 class="title">Nothing <b>was changed</b></h1>
+<p>{{.Text}}</p>
+<div class="actions"><a class="btn btn-primary" href="{{.Back}}">Back to the page</a></div>
+{{- else if eq .Kind "page-not-found"}}{{template "theme/door" (.Door "Page not found")}}
+<h1 class="title">No such <b>page</b></h1>
+<p>There is no page at this address that you can see. It may have been removed, or it may belong to someone else and be offline.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "page-gone"}}{{template "theme/door" (.Door "Removed for good")}}
+<h1 class="title">Removed <b>for good</b></h1>
+<p>That page was removed for good, and nothing brings it back.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
 {{- else if eq .Kind "not-found"}}{{template "theme/door" (.Door "Not found")}}
 <h1 class="title">Not <b>found</b></h1>
 <p>There is nothing at this address.</p>
@@ -56,12 +68,14 @@
 
 {{define "recover"}}{{template "theme/door" (.Door "Use a recovery code")}}
 <h1 class="title">Use a <b>recovery code</b></h1>
-<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.</p>
+<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.{{if or .Pending.RequestID .Pending.Host}} Then you sign in with the new password and carry on where you were.{{end}}</p>
 {{if eq .Err "wrong"}}<p class="error" role="alert">{{template "icon/alert"}}<span>That name or recovery code was not accepted. A code works once.</span></p>
 {{else if eq .Err "missing"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Enter your handle or email, and a recovery code.</span></p>
 {{else if eq .Err "wait"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
 {{end}}<form class="form" method="post" action="/account/recover">
-<div class="field"><label for="login">Handle or email</label>
+{{with .Pending}}{{if .RequestID}}<input type="hidden" name="request_id" value="{{.RequestID}}">
+{{else if .Host}}<input type="hidden" name="host" value="{{.Host}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="nonce" value="{{.Nonce}}">
+{{end}}{{end}}<div class="field"><label for="login">Handle or email</label>
 <input class="input" id="login" name="login" type="text" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
 <div class="field"><label for="code">Recovery code</label>
 <input class="input input-mono" id="code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="abcd-efgh-ijkl-mnop"></div>
@@ -84,9 +98,11 @@
 {{- if eq .Purpose "setup"}}{{template "theme/door" (.Door "Set up this instance")}}
 <h1 class="title">Set up <b>this instance</b></h1>
 <p>Create the first admin account. It invites everyone else.</p>
+{{if gt (len .Err) 1}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}Nothing was created yet</p><p>Correct the marked fields and send the form again.</p></div>
+{{end}}
 {{- else if eq .Purpose "invite"}}{{template "theme/door" (.Door "Choose a password")}}
 <h1 class="title">Welcome{{with .For.DisplayName}}, <b>{{.}}</b>{{end}}</h1>
-<p>You were invited to this Kazari instance. Choose a password to finish.</p>
+<p>You were invited to publish pages on {{.Host}}. Choose a password to finish.</p>
 {{- else}}{{template "theme/door" (.Door "Choose a new password")}}
 <h1 class="title">Choose a <b>new password</b></h1>
 <p>Using this link signs you out of every browser.</p>
@@ -95,8 +111,8 @@
 <input type="hidden" name="form_token" value="{{.FormToken}}">
 {{if eq .Purpose "setup" -}}
 <div class="field"><label for="handle">Handle</label>
-<input class="input input-mono" id="handle" name="handle" type="text" value="{{.NewHandle}}" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" aria-describedby="handle-help{{if .Err.handle}} handle-err{{end}}"{{if .Err.handle}} aria-invalid="true"{{end}}>
-{{if .Err.handle}}<p class="error" id="handle-err">{{template "icon/alert"}}<span>That handle cannot be used. Use 2 to 32 characters of a to z, 0 to 9, - and _, starting with a letter or a digit; admin and scheduler are taken.</span></p>
+<input class="input input-mono" id="handle" name="handle" type="text" value="{{.NewHandle}}" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]*" aria-describedby="handle-help{{if .Err.handle}} handle-err{{end}}"{{if .Err.handle}} aria-invalid="true"{{end}}>
+{{if .Err.handle}}<p class="error" id="handle-err">{{template "icon/alert"}}<span>That handle cannot be used. Use 2 to 32 characters of a to z, 0 to 9, - and _, starting with a letter or a digit; admin and scheduler are taken.{{with .Suggestion}} <span class="mono">{{.}}</span> would do.{{end}}</span></p>
 {{end}}<p class="help" id="handle-help">Your name in addresses and in the activity log, such as ana. 2 to 32 characters of a to z, 0 to 9, - and _.</p></div>
 <div class="field"><label for="name">Name <span class="optional">(optional)</span></label>
 <input class="input" id="name" name="name" type="text" value="{{.Name}}" autocomplete="name" maxlength="200"></div>
@@ -109,16 +125,16 @@
 <p class="help" id="handle-help">You sign in with this handle{{if .For.Email}}, or with {{.For.Email}},{{end}} and the password you choose now.</p></div>
 {{- end}}
 <div class="field"><label for="password">{{if eq .Purpose "reset"}}New password{{else}}Password{{end}}</label>
-<input class="input" id="password" name="password" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="password-help{{if .Err.password}} password-err{{end}}"{{if .Err.password}} aria-invalid="true"{{end}}>
+<input class="input" id="password" name="password" type="password" value="{{.Password}}" autocomplete="new-password" required minlength="{{.MinLength}}" maxlength="{{.MaxLength}}" aria-describedby="password-help{{if .Err.password}} password-err{{end}}"{{if .Err.password}} aria-invalid="true"{{end}}>
 {{if .Err.password}}<p class="error" id="password-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and {{.MaxLength}} characters.</span></p>
 {{end}}<p class="help" id="password-help">At least {{.MinLength}} characters. Length is the only rule: a few unrelated words work well, and so does a password manager.</p></div>
 <div class="field"><label for="confirm">The same password again</label>
-<input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if .Err.confirm}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
+<input class="input" id="confirm" name="confirm" type="password" value="{{.Password}}" autocomplete="new-password" required{{if .Err.confirm}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
 {{if .Err.confirm}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two passwords are not the same. Enter both again.</span></p>
 {{end}}</div>
 <div class="actions"><button type="submit" class="btn btn-primary">{{if eq .Purpose "setup"}}Create the account{{else}}Set the password{{end}}</button></div>
 </form>
 <div class="door-alt">
-<p class="help">The next page asks you to sign in with it.</p>
+<p class="help">You are then signed in, and your account page shows how to connect your AI agent.</p>
 </div>
 {{template "theme/door-close" .Host}}{{end}}

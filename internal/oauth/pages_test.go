@@ -259,7 +259,7 @@ func TestPagesSpeakOfPages(t *testing.T) {
 
 	for _, want := range []string{
 		"<title>Authorise access", `<h1 class="title">Authorise <b>`,
-		`List and read your pages <span class="mono soft">artifacts:read</span>`, "Create and update pages",
+		"<li>List and read your pages</li>", "Create and update pages", "<summary>Technical details</summary>",
 		"Change who can open pages, and create share links", "Delete pages", "its restriction to certain pages",
 	} {
 		if !strings.Contains(consent, want) {

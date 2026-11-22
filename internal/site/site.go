@@ -5,12 +5,14 @@
 package site
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,7 +26,9 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/csp"
+	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
@@ -103,12 +107,33 @@ type Options struct {
 // MaxImmutableAge is the default and the cap of ImmutableMaxAge.
 const MaxImmutableAge = 365 * 24 * time.Hour
 
+//go:embed pages/error.html
+var errorPageHTML string
+
+// The instance's own error pages, in the theme's inline form: an artifact
+// host serves no file of Kazari's. A share link that opens nothing gets
+// its own words, since whoever holds one was sent it by someone.
 var (
-	//go:embed pages/404.html
-	defaultNotFoundPage []byte
-	//go:embed pages/410.html
-	defaultGonePage []byte
+	defaultNotFoundPage = errorPage("Not found", "Nothing <b>here</b>",
+		"There is no page at this address. It may have moved, been taken offline or never existed; check the address with whoever gave it to you.")
+	defaultGonePage = errorPage("Gone", "Removed <b>for good</b>",
+		"The page that was at this address has been removed, and nothing brings it back.")
+	shareNotFoundPage = errorPage("Link not working", "This link <b>opens nothing</b>",
+		"The page it was for is offline for now, or no longer there. Ask the person who sent you the link for a new one.")
 )
+
+func errorPage(title string, heading template.HTML, message string) []byte {
+	t := template.Must(theme.Templates().New("error").Parse(errorPageHTML))
+	var b bytes.Buffer
+	if err := t.Execute(&b, struct {
+		Title   string
+		Heading template.HTML
+		Message string
+	}{title, heading, message}); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
 
 // A gated artifact is cacheGated on every host, so no shared cache keeps it
 // and a sign-out or revoked share link applies even to a version the browser
@@ -457,10 +482,12 @@ func (h *handler) evictWorker(w http.ResponseWriter, r *http.Request, clear bool
 // artifact's.
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, status int) {
 	var body []byte
-	switch status {
-	case http.StatusNotFound:
+	switch {
+	case status == http.StatusNotFound && r.URL.Path == gate.SharePath && bytes.Equal(h.opts.NotFoundPage, defaultNotFoundPage):
+		body = shareNotFoundPage
+	case status == http.StatusNotFound:
 		body = h.opts.NotFoundPage
-	case http.StatusGone:
+	case status == http.StatusGone:
 		body = h.opts.GonePage
 	}
 	h.setErrorHeaders(w, nil)

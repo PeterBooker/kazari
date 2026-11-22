@@ -1,0 +1,37 @@
+{{/* The pages at the roots of the apex, the connector address and the API address. */}}
+
+{{define "front-connector-field"}}<div class="copy"><label class="sr-only" for="connector">Connector address</label><input class="input input-mono" id="connector" type="text" readonly value="{{.}}" autocomplete="off" spellcheck="false">
+<button type="button" class="btn" data-copy-target="connector" hidden>Copy the address</button></div>{{end}}
+
+{{define "front"}}
+{{- if eq .Kind "connector"}}{{template "theme/door" (.Door "Connector address")}}
+<h1 class="title">The connector <b>address</b></h1>
+<p>This address is for your AI agent, not for a browser. Paste it into your agent as a connector, and the agent publishes pages on {{.Host}} for you.</p>
+{{template "front-connector-field" .MCPURL}}
+<div class="actions"><a class="btn btn-primary" href="{{.Account}}">How to connect, step by step</a></div>
+<div class="door-alt">
+<p class="help">Your account page has the steps for claude.ai, the Claude desktop app and Claude Code.</p>
+</div>
+{{- else if eq .Kind "api"}}{{template "theme/door" (.Door "API address")}}
+<h1 class="title">The API <b>address</b></h1>
+<p>This address is for scripts and the <span class="mono">kazari</span> command line, with an API key. Set it as the command line's address:</p>
+<div class="snippet"><pre><code id="api-url">export KAZARI_URL={{.CLIURL}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="api-url" hidden>Copy the line</button></div>
+<p>An AI agent connects at the connector address instead:</p>
+{{template "front-connector-field" .MCPURL}}
+<div class="actions"><a class="btn btn-primary" href="{{.Account}}">Open your account</a></div>
+<div class="door-alt">
+<p class="help">You make API keys on your account page.</p>
+</div>
+{{- else}}{{template "theme/door" (.Door .Host)}}
+<h1 class="title">{{.Host}}</h1>
+<p>This instance of Kazari hosts web pages that its members and their AI agents publish. Each page has its own address, such as <span class="mono">notes.{{.Host}}</span>.</p>
+<div class="actions"><a class="btn btn-primary" href="{{.Account}}">Sign in to your account</a>{{with .AdminURL}}<a class="btn" href="{{.}}/">Open the dashboard</a>{{end}}</div>
+<h2 class="h3">Connect your AI agent</h2>
+<p class="soft">Add this address to your agent as a connector, then sign in when it asks.</p>
+{{template "front-connector-field" .MCPURL}}
+<div class="door-alt">
+<p class="help">{{if .AdminURL}}The dashboard is for the admins of this instance. {{end}}Your account page has the steps for each agent, your pages and your API keys.</p>
+</div>
+{{- end}}
+{{template "theme/door-close" .Host}}{{end}}

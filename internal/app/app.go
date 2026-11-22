@@ -593,6 +593,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		APIURL:          apiBase,
 		LocalAccounts:   cfg.LocalAccounts(),
 		MaxKeyTTL:       cfg.Auth.Tokens.MaxKeyTTL.Std(),
+		MaxShareLinkTTL: cfg.Serve.ShareLinkMaxTTL.Std(),
 		InsecureCookies: cfg.ExternalScheme == "http",
 		Now:             now,
 		Telemetry:       tel,
@@ -601,16 +602,17 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	// get the per-IP budget every other surface has before authentication.
 	accountIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	accountLimit := ratelimit.Middleware(accountIPs, ratelimit.IPKey, nil)
-	apexH, err := apexHandler(cfg)
-	if err != nil {
-		return err
-	}
+	front := account.NewFront(account.FrontOptions{
+		URL: strings.TrimSuffix(cfg.ExternalURL(""), "/"), MCPURL: mcpURL, APIURL: apiBase, AdminURL: dashboardURL(cfg),
+	})
+	apexH := apexHandler(front.Home)
 
 	adminHost := adminH
 	if cfg.DashboardEnabled() {
 		deps := dashboard.Deps{
 			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
 			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
+			Flags: sqlite.NewFlagStore(a.db),
 		}
 		// Assigned only when there is one: a nil *update.Checker in the
 		// interface would not be a nil interface.
@@ -651,8 +653,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	mcpIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	mcpLimit := ratelimit.Middleware(mcpIPs, ratelimit.IPKey, nil)
 	a.router = a.routes(hosts{
-		api:     a.surface(instrument.SurfaceAPI, true, apiH),
-		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(mcpMux(oauthSvc.Handler(), mcpH))),
+		api:     a.surface(instrument.SurfaceAPI, true, apiHost(front.API, apiH)),
+		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(frontPage(front.Connector, mcpMux(oauthSvc.Handler(), mcpH)))),
 		admin:   publicAdmin,
 		apex:    a.surface(instrument.SurfaceApex, true, apexH),
 		account: a.surface(instrument.SurfaceAccount, true, accountLimit(accountH)),

@@ -6,11 +6,14 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 var activityFuncs = template.FuncMap{
@@ -129,6 +132,11 @@ func (f *activityFilter) query() audit.Query {
 type activityData struct {
 	Filter activityFilter
 	Kinds  any
+	// People and Pages are what the filter offers to choose from; Other is
+	// a person the filter names who is none of them, such as one removed.
+	People []user.User
+	Pages  []string
+	Other  string
 	Events []audit.Event
 	// Next is the address of the next, older page, "" on the last. The
 	// cursor only goes forward, so the way back is First, set on every page
@@ -149,6 +157,20 @@ func (s *server) activity(w http.ResponseWriter, r *http.Request, c *request) er
 		return err
 	}
 	data := activityData{Filter: f, Kinds: activityKinds, Events: found.Events}
+	if data.People, err = s.d.Users.ListUsers(r.Context()); err != nil {
+		return err
+	}
+	data.Other = f.Actor
+	if slices.Contains(user.ReservedHandles, f.Actor) || slices.ContainsFunc(data.People, func(u user.User) bool { return u.Handle == f.Actor }) {
+		data.Other = ""
+	}
+	pages, err := s.d.Artifacts.List(r.Context(), c.actor, artifact.ListQuery{All: true, Deleted: "include", Limit: artifact.MaxListLimit})
+	if err != nil {
+		return err
+	}
+	for _, a := range pages.Items {
+		data.Pages = append(data.Pages, a.Slug)
+	}
 	if q.Cursor != "" {
 		data.First = f.address("")
 	}

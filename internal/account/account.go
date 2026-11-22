@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,9 +80,20 @@ type Grants interface {
 	EndSessions(ctx context.Context, handle string, keep int64) error
 }
 
-// Pages lists a person's artifacts. artifact.Service implements it.
+// Pages lists a person's artifacts and changes them as the person may.
+// artifact.Service implements it.
 type Pages interface {
 	List(ctx context.Context, actor artifact.Actor, q artifact.ListQuery) (artifact.ListPage, error)
+	Get(ctx context.Context, actor artifact.Actor, slug string) (*artifact.Artifact, []artifact.Version, error)
+	SetVisibility(ctx context.Context, actor artifact.Actor, slug, v string) (*artifact.Artifact, error)
+	Publish(ctx context.Context, actor artifact.Actor, slug string, version int) (*artifact.Artifact, error)
+	MarkStale(ctx context.Context, actor artifact.Actor, slug string, grace time.Duration) (*artifact.Artifact, error)
+	UnmarkStale(ctx context.Context, actor artifact.Actor, slug string) (*artifact.Artifact, error)
+	Delete(ctx context.Context, actor artifact.Actor, slug string, hard bool) error
+	Update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest) (*artifact.Artifact, *artifact.Version, error)
+	CreateShareLink(ctx context.Context, actor artifact.Actor, slug, label string, ttl time.Duration) (*artifact.ShareLink, string, error)
+	ListShareLinks(ctx context.Context, actor artifact.Actor, slug string) ([]artifact.ShareLink, error)
+	RevokeShareLink(ctx context.Context, actor artifact.Actor, slug, prefix string) error
 }
 
 // Passkeys adds passkeys to accounts. passkey.Service implements it.
@@ -120,6 +132,9 @@ type Options struct {
 	MCPURL, APIURL string
 	// LocalAccounts turns the link pages and the password section on.
 	LocalAccounts bool
+	// MaxShareLinkTTL is the longest a share link may live; 0 is the
+	// artifact service's default.
+	MaxShareLinkTTL time.Duration
 	// MaxKeyTTL, when set, is the longest a key may live.
 	MaxKeyTTL time.Duration
 	// InsecureCookies drops the Secure attribute and the __Host- prefix,
@@ -208,6 +223,9 @@ func New(d Deps, o Options) http.Handler {
 	handle("GET "+Prefix+"{$}", s.signedIn(s.accountPage))
 	handle("POST "+Prefix+"signout", s.signOut)
 	handle("POST "+Prefix+"keys", s.signedIn(s.once(s.issueKey)))
+	if d.Artifacts != nil {
+		s.pageRoutes(handle)
+	}
 	handle("GET "+Prefix+"keys/{prefix}/rotate", s.signedIn(s.rotatePage))
 	handle("POST "+Prefix+"keys/{prefix}/rotate", s.signedIn(s.once(s.rotateKey)))
 	handle("GET "+Prefix+"keys/{prefix}/revoke", s.signedIn(s.revokeKeyPage))
@@ -271,8 +289,17 @@ func (s *server) signedIn(fn func(http.ResponseWriter, *http.Request, visit)) ht
 			return
 		}
 		// Member scopes at most, whatever the role: nothing on this page
-		// acts as an admin.
-		p := auth.Principal{Handle: u.Handle, Scopes: auth.MemberScopes, Source: auth.SourceSession, KeyID: sess.KeyPrefix}
+		// acts as an admin. A sign-in with a key acts with that key's.
+		scopes := auth.MemberScopes
+		if sess.KeyPrefix != "" {
+			st, err := s.d.Users.KeyStatus(ctx, sess.KeyPrefix)
+			if err != nil && !errors.Is(err, user.ErrKeyNotFound) {
+				s.fail(w, r, "load key", err)
+				return
+			}
+			scopes = slices.DeleteFunc(slices.Clone(auth.MemberScopes), func(sc string) bool { return !slices.Contains(st.Scopes, sc) })
+		}
+		p := auth.Principal{Handle: u.Handle, Scopes: scopes, Source: auth.SourceSession, KeyID: sess.KeyPrefix, QuotaBytes: u.QuotaBytes}
 		s.sess.Admit(ctx, p)
 		fn(w, r.WithContext(auth.ContextWithPrincipal(ctx, p)), visit{sess: sess, user: u})
 	}
@@ -358,6 +385,9 @@ type messagePage struct {
 	base
 	Kind    string
 	Seconds int // of a wait
+	// Text is the sentence of a refusal by the artifact service, and Back
+	// the page to go back to.
+	Text, Back string
 }
 
 func (s *server) message(w http.ResponseWriter, r *http.Request, status int, kind string) {
@@ -441,6 +471,12 @@ func formAction(policy string, targets ...string) string {
 }
 
 var funcs = template.FuncMap{
+	"scopeWords": func(sc string) string {
+		if w := scopeWords[sc]; w != "" {
+			return w
+		}
+		return sc
+	},
 	"rfc3339": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
 	"stamp":   func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") },
 }

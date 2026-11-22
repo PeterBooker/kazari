@@ -54,15 +54,23 @@ type pageRow struct {
 	UpdatedAt       time.Time
 }
 
-// keyForm is what the person typed into the new-key form.
+// keyForm is what the person typed into the new-key form. Scopes is nil
+// until it was sent, when every box starts ticked.
 type keyForm struct {
 	Label, Slugs, Days string
+	Scopes             []string
 }
 
 type accountPageData struct {
 	base
 	Flash string
 	User  *user.User
+	// MCPURL is the connector address; AdminURL the dashboard, "" when it
+	// is off.
+	MCPURL, AdminURL string
+	// Scopes are the boxes of the new-key form: what the session may give
+	// a key.
+	Scopes []scopeBox
 	// Local shows the password section. KeySession is a sign-in with an API
 	// key, named by KeyPrefix, which bounds the keys issued from here.
 	Local      bool
@@ -109,6 +117,8 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 	d.KeySession, d.KeyPrefix = v.sess.KeyPrefix != "", v.sess.KeyPrefix
 	d.MinLength = s.d.Users.MinPasswordLength()
 	d.MaxKeyDays = int(s.o.MaxKeyTTL / (24 * time.Hour))
+	d.MCPURL, d.AdminURL = s.o.MCPURL, s.o.AdminURL
+	d.Scopes = scopeBoxes(principal(r).Scopes, d.Key.Scopes)
 
 	var err error
 	if d.Local {

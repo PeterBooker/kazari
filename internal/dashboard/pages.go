@@ -19,6 +19,7 @@ var pagesFlashes = map[string]string{
 	"page-visibility":          "Who can open the page is changed.",
 	"page-hidden":              "The page is hidden. Its address answers 404 until it is published again.",
 	"page-kept":                "The stale mark is cleared. The page stays.",
+	"page-stale":               "The page is marked stale. It keeps serving until the date under Lifecycle, then moves to the bin.",
 	"page-binned":              "The page is in the bin. It can be restored until it is removed for good.",
 	"page-restored":            "The page is restored from the bin.",
 	"page-handed-over":         "The page has a new owner.",
@@ -40,6 +41,7 @@ func (s *server) pagesRoutes(mux *http.ServeMux) {
 	s.action(mux, "POST /pages/{slug}/visibility", s.pagesVisibility)
 	s.action(mux, "POST /pages/{slug}/hide", s.pagesHide)
 	s.action(mux, "POST /pages/{slug}/keep", s.pagesKeep)
+	s.action(mux, "POST /pages/{slug}/stale", s.pagesStale)
 	s.action(mux, "POST /pages/{slug}/bin", s.pagesToBin)
 	s.action(mux, "POST /pages/{slug}/restore", s.pagesRestore)
 	s.action(mux, "POST /pages/{slug}/owner", s.pagesHandOver)
@@ -86,9 +88,9 @@ func stateOf(a *artifact.Artifact) pageState {
 // visibilities are who can open a published page, in the order of the
 // selects.
 var visibilities = []struct{ Key, Label, Help string }{
-	{string(artifact.Public), "Public", "Anyone can open it, and it is listed for members."},
-	{string(artifact.Unlisted), "Unlisted", "Anyone with the address can open it."},
-	{string(artifact.Members), "Members only", "People sign in to open it, or use a share link."},
+	{string(artifact.Public), "Public", "Anyone can open it, and members see it when their agent or the command line lists pages."},
+	{string(artifact.Unlisted), "Unlisted", "Anyone with the address can open it. It is left out of other members' lists."},
+	{string(artifact.Members), "Members only", "Members open it after signing in, and anyone else with a share link."},
 }
 
 func visibilityLabel(v artifact.Visibility) string {
@@ -259,14 +261,14 @@ func pageErr(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, artifact.ErrNotFound):
-		return notFound("There is no page with that slug.")
+		return notFound("There is no page at that address.")
 	case errors.Is(err, artifact.ErrVersionNotFound):
 		return notFound("The page has no such version.")
 	case errors.Is(err, artifact.ErrLinkNotFound):
 		return notFound("The page has no such share link.")
 	case errors.Is(err, artifact.ErrGone):
 		return &problem{status: http.StatusGone, title: "Removed for good",
-			message: "That page was removed for good. Its slug stays taken until the copies browsers hold have expired."}
+			message: "That page was removed for good. Its address stays taken until the copies browsers hold have expired."}
 	}
 	if ae, ok := errors.AsType[*artifact.Error](err); ok {
 		status, _ := present.Error(err)
@@ -321,6 +323,11 @@ type pageData struct {
 	// LinkErr names what is wrong with a field of that form, by the
 	// field's name.
 	LinkErr map[string]string
+	// StaleDays is what was typed into the stale form, StaleErr why it was
+	// refused.
+	StaleDays, StaleErr string
+	// Retention is how long a page stays in the bin.
+	Retention time.Duration
 }
 
 const (
@@ -341,7 +348,7 @@ func (s *server) pageView(ctx context.Context, c *request, slug string) (*pageDa
 	u := s.d.Links.ArtifactURL(a.Slug)
 	d := &pageData{
 		Page: s.pageRow(a), URL: u, Host: hostOf(u), Visibilities: visibilities,
-		MaxLinkDays: s.maxLinkDays(), LinkDays: min(defaultLinkDays, s.maxLinkDays()),
+		MaxLinkDays: s.maxLinkDays(), LinkDays: min(defaultLinkDays, s.maxLinkDays()), Retention: s.o.Retention,
 	}
 	for _, v := range versions {
 		vu := s.d.Links.VersionURL(a.Slug, v.Number)
@@ -412,6 +419,34 @@ func (s *server) pagesKeep(w http.ResponseWriter, r *http.Request, c *request) e
 		return pageErr(err)
 	}
 	return s.done(w, r, pagePath(slug), "page-kept")
+}
+
+// maxStaleDays bounds the grace period of the stale form: ten years, past
+// which marking a page stale says nothing.
+const maxStaleDays = 3650
+
+// pagesStale marks the page stale: it keeps serving for the grace period,
+// then moves to the bin. Empty is the instance's default grace.
+func (s *server) pagesStale(w http.ResponseWriter, r *http.Request, c *request) error {
+	ctx, slug := r.Context(), r.PathValue("slug")
+	typed := strings.TrimSpace(r.PostForm.Get("days"))
+	var grace time.Duration
+	if typed != "" {
+		days, err := strconv.Atoi(typed)
+		if err != nil || days < 1 || days > maxStaleDays {
+			d, err := s.pageView(ctx, c, slug)
+			if err != nil {
+				return err
+			}
+			d.StaleDays, d.StaleErr = typed, "Enter a whole number of days from 1 to "+strconv.Itoa(maxStaleDays)+"."
+			return s.render(w, r, c, http.StatusUnprocessableEntity, "pages_page", page{Title: d.Page.Slug, Nav: "pages"}, d)
+		}
+		grace = time.Duration(days) * 24 * time.Hour
+	}
+	if _, err := s.d.Artifacts.MarkStale(ctx, c.actor, slug, grace); err != nil {
+		return pageErr(err)
+	}
+	return s.done(w, r, pagePath(slug), "page-stale")
 }
 
 func (s *server) pagesToBin(w http.ResponseWriter, r *http.Request, c *request) error {
@@ -563,7 +598,7 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 			hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in.",
 		Value: s.d.Links.ShareURL(slug, token), Button: "Copy the link",
 		Notes: []string{
-			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked from the page's own page.",
+			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked under Share links on the page.",
 			"Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.",
 		},
 		Back: "Back to the page",
@@ -726,7 +761,7 @@ func (s *server) pagesRemove(w http.ResponseWriter, r *http.Request, c *request)
 		return err
 	}
 	if d.Typed = strings.TrimSpace(r.PostForm.Get("slug")); d.Typed != d.Page.Slug {
-		d.Error = "That is not the slug of this page. Nothing was removed."
+		d.Error = "That is not the address of this page. Nothing was removed."
 		return s.render(w, r, c, http.StatusUnprocessableEntity, "pages_remove", page{Title: "Remove " + d.Page.Slug + " for good", Nav: "pages"}, d)
 	}
 	if err := s.d.Artifacts.Delete(ctx, c.actor, slug, true); err != nil {

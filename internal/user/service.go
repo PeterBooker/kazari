@@ -47,6 +47,35 @@ func ValidateHandle(h string) error {
 	return nil
 }
 
+// SuggestHandle returns a handle made from s, such as ana-admin from
+// "Ana Admin", or "" when nothing usable is left. A valid handle is its own
+// suggestion.
+func SuggestHandle(s string) string {
+	if ValidateHandle(s) == nil {
+		return s
+	}
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_':
+			b.WriteRune(r)
+			dash = false
+		case !dash && b.Len() > 0:
+			b.WriteByte('-')
+			dash = true
+		}
+		if b.Len() >= MaxHandleLen {
+			break
+		}
+	}
+	h := strings.TrimRight(strings.TrimLeft(b.String(), "_"), "-")
+	if ValidateHandle(h) != nil {
+		return ""
+	}
+	return h
+}
+
 // Options configures a Service. The zero value is usable.
 type Options struct {
 	// DefaultQuota is the quota of users created without one (0 = unlimited).

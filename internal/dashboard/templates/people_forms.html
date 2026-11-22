@@ -10,9 +10,9 @@
 <form class="form-grid" method="post" action="/invites/new">
 {{template "token" .}}
 <div class="field"><label for="invite-handle">Handle</label>
-<input class="input input-mono" id="invite-handle" name="handle" type="text" value="{{.Data.Handle}}" required minlength="2" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="invite-handle-help{{if .Data.Errors.handle}} invite-handle-err{{end}}"{{if .Data.Errors.handle}} aria-invalid="true"{{end}}>
-{{with .Data.Errors.handle}}<p class="error" id="invite-handle-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
-<p class="help" id="invite-handle-help">The short name they are listed with and can sign in with: 2 to 32 characters of a-z, 0-9, _ and -. It cannot be changed later.</p></div>
+<input class="input input-mono" id="invite-handle" name="handle" type="text" value="{{.Data.Handle}}" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]*" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="invite-handle-help{{if .Data.Errors.handle}} invite-handle-err{{end}}"{{if .Data.Errors.handle}} aria-invalid="true"{{end}}>
+{{with .Data.Errors.handle}}<p class="error" id="invite-handle-err">{{template "icon/alert"}}<span>{{.}}{{with $.Data.Suggestion}} <span class="mono">{{.}}</span> would do.{{end}}</span></p>{{end}}
+<p class="help" id="invite-handle-help">The short name they are listed with and can sign in with: 2 to 32 characters of a to z, 0 to 9, - and _. It cannot be changed later.</p></div>
 <div class="field"><label for="invite-name">Name <span class="optional">(optional)</span></label>
 <input class="input" id="invite-name" name="name" type="text" value="{{.Data.Name}}" autocomplete="off"></div>
 <div class="field span-2"><label for="invite-email">Email <span class="optional">(optional)</span></label>

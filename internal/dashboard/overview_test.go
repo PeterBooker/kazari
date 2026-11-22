@@ -95,12 +95,46 @@ func TestOverviewNewInstance(t *testing.T) {
 		t.Errorf("the overview shows no recent activity")
 	}
 
-	// The steps tick off as they are taken.
+	// The steps tick off as they are taken, and the list stays until an
+	// agent has connected too.
 	e.person("ana", "")
 	e.publish("ana", "report")
 	r = b.get("/")
-	if strings.Contains(r.body, "Getting started") {
-		t.Errorf("the getting-started list outlived the first page")
+	if !strings.Contains(r.body, "Getting started") || strings.Count(r.body, `tone-ok">Done`) != 2 {
+		t.Errorf("with a person and a page but no agent, two steps are done: %d", strings.Count(r.body, `tone-ok">Done`))
+	}
+	if _, key, err := e.users.IssueKey(context.Background(), user.IssueKeyRequest{Handle: "ana"}); err != nil {
+		t.Fatal(err)
+	} else if _, err := e.users.Authenticate(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	r = b.get("/")
+	if strings.Contains(r.body, "Getting started") || !strings.Contains(r.body, `value="https://mcp.art.test/"`) {
+		t.Errorf("once every step is done the list should go and the connector address stay")
+	}
+}
+
+// An admin puts the list away for good, and it stays away in the next
+// session; the connector address stays.
+func TestOverviewStartDismissed(t *testing.T) {
+	e := newEnv(t, nil)
+	e.person("boss", user.RoleAdmin)
+	e.person("other", user.RoleAdmin)
+	b := e.signedIn("boss")
+	if r := b.get("/"); !strings.Contains(r.body, `action="/start/dismiss"`) {
+		t.Fatalf("the list offers no way to put it away: %s", r.body)
+	}
+	r := b.submit("/start/dismiss", nil)
+	strictMarkup(t, "the overview", r.body)
+	if strings.Contains(r.body, "Getting started") || !strings.Contains(r.body, "The getting-started list is put away.") ||
+		!strings.Contains(r.body, `value="https://mcp.art.test/"`) {
+		t.Errorf("after putting the list away: %s", r.body)
+	}
+	if r := e.signedIn("boss").get("/"); strings.Contains(r.body, "Getting started") {
+		t.Error("the list is back in the next session")
+	}
+	if r := e.signedIn("other").get("/"); !strings.Contains(r.body, "Getting started") {
+		t.Error("one admin put the list away for another")
 	}
 }
 
@@ -164,7 +198,7 @@ func TestOverviewCounts(t *testing.T) {
 	strictMarkup(t, "the overview", r.body)
 	for _, want := range []string{
 		"2 active, 1 invited, 1 disabled", "1 admin<",
-		"1 live, 0 stale, 0 unpublished, 1 in the bin", "1 public, 0 unlisted, 0 for members",
+		"1 live, 0 stale, 0 unpublished, 1 in the bin", "1 public, 0 unlisted, 0 members only",
 		"5 GiB free of 100 GiB", `value="95"`,
 		"5 days", "mode <span class=\"mono\">acme</span>",
 		`tone-danger">Job failed`, `href="/system#jobs"`,
@@ -174,14 +208,17 @@ func TestOverviewCounts(t *testing.T) {
 		`tone-note">One admin`,
 		`tone-danger">Health check failed`, "add it at your DNS provider.",
 		`tone-note">New version`, "Kazari 9.9.9 is out. This instance runs 0.8.0.", `href="/system#about"`,
-		`tone-danger">Failed`, `href="/activity"`,
+		`href="/activity"`, "counted against quotas: the content, and 4 KiB for each file",
 	} {
 		if !strings.Contains(r.body, want) {
 			t.Errorf("the overview lacks %q", want)
 		}
 	}
-	if strings.Contains(r.body, "Getting started") || strings.Contains(r.body, "Nothing needs attention") {
-		t.Errorf("an instance in use shows the new instance's page")
+	if strings.Contains(r.body, "Nothing needs attention") {
+		t.Errorf("an instance with trouble says nothing needs attention")
+	}
+	if strings.Contains(r.body, `id="jobs"`) {
+		t.Errorf("the overview lists the jobs; a failed one is under Needs attention")
 	}
 }
 

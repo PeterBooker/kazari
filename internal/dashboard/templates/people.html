@@ -34,20 +34,21 @@
 {{if .Data.Filtered}}<a class="link" href="/people">Clear the filters</a>{{end}}
 </form>
 {{if .Data.Rows}}<table class="table">
-<thead><tr><th>Person</th><th>Role</th><th>Status</th><th>Signs in with</th><th>Usage</th><th class="num">Pages</th><th>Last active</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<thead><tr><th>Person</th><th>Role</th><th>Status</th><th>Signs in with</th><th>Quota used</th><th class="num">Pages</th><th>Last active</th><th><span class="sr-only">Actions</span></th></tr></thead>
 <tbody>
 {{range .Data.Rows}}<tr>
 <td data-label="Person"><a href="/people/{{.Handle}}">{{.Name}}</a> <span class="mono soft">{{.Handle}}</span>{{with .Email}}<br><span class="soft">{{.}}</span>{{end}}</td>
 <td data-label="Role">{{if .Admin}}Admin{{else}}Member{{end}}</td>
 <td data-label="Status">{{template "people-status" .}}</td>
 <td data-label="Signs in with">{{if .Methods}}{{join .Methods ", "}}{{else}}<span class="soft">nothing yet</span>{{end}}</td>
-<td data-label="Usage">{{template "people-usage" .}}</td>
+<td data-label="Quota used">{{template "people-usage" .}}</td>
 <td class="num" data-label="Pages">{{.Pages}}</td>
 <td data-label="Last active">{{if .LastActive}}{{when .LastActive}}{{else}}<span class="soft">never</span>{{end}}</td>
 <td class="row-actions"><a class="link" href="/people/{{.Handle}}">Open<span class="sr-only"> {{.Handle}}</span></a></td>
 </tr>
 {{end}}</tbody>
 </table>
+<p class="help">A quota counts every version of a person's pages in full, and 4 KiB for each file of each version.</p>
 <nav class="pager" aria-label="Pages of people">
 {{if .Data.Prev}}<a class="btn btn-sm" href="{{.Data.Prev}}" rel="prev">Previous</a>{{end}}
 <span class="label">{{.Data.From}} to {{.Data.To}} of {{.Data.Matched}}{{if .Data.Filtered}} matching, {{.Data.Total}} in all{{end}}</span>

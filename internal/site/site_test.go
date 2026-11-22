@@ -20,6 +20,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/gate"
 )
 
 const (
@@ -772,5 +773,27 @@ func TestAnnouncedBodyDoesNotHold(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !resp.Close {
 		t.Errorf("status = %d, close = %v; want 200 and Connection: close", resp.StatusCode, resp.Close)
+	}
+}
+
+// A share link to a page that is offline or gone says to ask its sender;
+// every other miss gets the instance's own page, in the theme.
+func TestShareLinkToNothing(t *testing.T) {
+	fx := newFixture(t)
+	h := fx.handler(Options{DefaultCSP: testCSP})
+	for _, host := range []string{"unpub.art.test", "nobody.art.test"} {
+		rec := do(t, h, http.MethodGet, host, gate.SharePath+"?token=x", nil)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Ask the person who sent you the link") {
+			t.Errorf("a share link on %s: status %d: %s", host, rec.Code, rec.Body)
+		}
+	}
+	rec := do(t, h, http.MethodGet, "unpub.art.test", "/", nil)
+	for _, want := range []string{"<style>", `class="door-card"`, "There is no page at this address."} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the instance's 404 lacks %q", want)
+		}
+	}
+	if strings.Contains(rec.Body.String(), "sent you the link") {
+		t.Error("the 404 of a page speaks of a link")
 	}
 }
