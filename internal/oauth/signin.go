@@ -167,7 +167,9 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 		}
 		// The form has no expiry, so the cookie outlasts a pending sign-in.
 		s.setNamedCookie(w, s.named(signInCookie), binding, s.opts.SessionTTL)
-		s.renderSignIn(w, http.StatusOK, t.form(), q.Get("with") == withKey, "")
+		page := t.form()
+		prefill(&page, q)
+		s.renderSignIn(w, http.StatusOK, page, q.Get("with") == withKey, "")
 		return
 	}
 
@@ -212,6 +214,9 @@ func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, 
 	p.Lifetime = lifetime(s.opts.SessionTTL)
 	if s.opts.RecoverURL != "" {
 		p.Recover = PathRecover
+		if q := p.pending().Encode(); q != "" {
+			p.Recover += "?" + q
+		}
 	}
 	if p.Password && s.passkeys != nil {
 		if c, err := s.passkeys.SignIn(); err != nil {
@@ -230,6 +235,51 @@ func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, 
 	}
 	s.pages.render(w, status, "signin", p, p.formTarget)
 }
+
+// pending names the sign-in the page continues, for a page that leaves it
+// and comes back: the recovery form.
+func (p signInPage) pending() url.Values {
+	if p.RequestID != "" {
+		return url.Values{"request_id": {p.RequestID}}
+	}
+	if p.Host == "" {
+		return nil
+	}
+	return url.Values{"host": {p.Host}, "path": {p.Path}, "nonce": {p.Nonce}}
+}
+
+// serveRecover sends a browser on to the recovery form with the sign-in it
+// came from, so that the form can return to it. Only a sign-in this page
+// could continue is passed on.
+func (s *Service) serveRecover(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var carry url.Values
+	if id := q.Get("request_id"); len(id) == tokenLen && pkceValue.MatchString(id) {
+		carry = url.Values{"request_id": {id}}
+	} else if t, ok := s.target(q.Get("host"), q.Get("path"), q.Get("nonce")); ok {
+		carry = url.Values{"host": {t.host}, "path": {t.path}, "nonce": {t.nonceHash}}
+	}
+	to := s.opts.RecoverURL
+	if len(carry) > 0 {
+		to += "?" + carry.Encode()
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// prefill fills in what a link to the sign-in form may: the name to sign in
+// with, and the notice of a fixed word.
+func prefill(p *signInPage, q url.Values) {
+	if login := strings.TrimSpace(q.Get("login")); len(login) <= maxAccountKey {
+		p.Login = login
+	}
+	if q.Get("notice") == noticeRecovered {
+		p.Notice = noticeRecovered
+	}
+}
+
+// noticeRecovered is the notice of a sign-in form reached from the recovery
+// form, once the new password is set.
+const noticeRecovered = "recovered"
 
 // lifetime describes d in whole hours ("12 hours"), or minutes below one.
 func lifetime(d time.Duration) string {
@@ -680,6 +730,32 @@ func (s *Service) Redeem(ctx context.Context, code, host, nonce string) (_ View,
 		return View{}, fmt.Errorf("oauth: redeem: %w", err)
 	}
 	return View{Token: token, ExpiresAt: v.ExpiresAt, Path: c.Path}, nil
+}
+
+// ViaLink is how a person signed in who was signed in by redeeming an
+// invite, a reset or the setup link, in the audit trail.
+const ViaLink = "link"
+
+// StartControl signs handle in on the control host directly, for a person
+// who has just shown who they are there: they redeemed a link and chose a
+// password. The sign-in belongs to no browser on the sign-in host, so it
+// opens that control host alone; signing out ends it as any other.
+func (s *Service) StartControl(ctx context.Context, host, handle string) (View, error) {
+	if !strings.HasPrefix(host, controlMark) {
+		return View{}, fmt.Errorf("oauth: %q is not a control host", host)
+	}
+	now := s.now()
+	sess := &Session{Hash: hashSecret(randomString(secretBytes)), UserHandle: handle, CreatedAt: now, ExpiresAt: now.Add(s.opts.SessionTTL)}
+	if err := s.store.CreateSession(ctx, sess); err != nil {
+		return View{}, fmt.Errorf("oauth: start control session: %w", err)
+	}
+	token := randomString(secretBytes)
+	v := &ViewSession{Hash: hashSecret(token), SessionID: sess.ID, Host: host, CreatedAt: now, ExpiresAt: sess.ExpiresAt}
+	if err := s.store.CreateViewSession(ctx, v); err != nil {
+		return View{}, fmt.Errorf("oauth: start control session: %w", err)
+	}
+	s.record(ctx, handle, ActionSignIn, handle, map[string]string{"via": ViaLink})
+	return View{Token: token, ExpiresAt: v.ExpiresAt}, nil
 }
 
 // Viewer returns the handle of the person whose view session on host

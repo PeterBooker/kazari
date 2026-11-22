@@ -225,7 +225,9 @@ func (s *Service) serveConsentPage(w http.ResponseWriter, r *http.Request) {
 		case s.passwords == nil || (s.keys != nil && r.URL.Query().Get("with") == withKey):
 			s.renderConsent(w, http.StatusOK, c, req, "", req.Scopes, "")
 		default:
-			s.renderSignIn(w, http.StatusOK, s.requestForm(ctx, req), false, "")
+			page := s.requestForm(ctx, req)
+			prefill(&page, r.URL.Query())
+			s.renderSignIn(w, http.StatusOK, page, false, "")
 		}
 		return
 	}

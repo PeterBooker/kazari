@@ -104,6 +104,9 @@ type signInPage struct {
 	KeyConsent bool
 	Login      string // what the person typed, shown again after a refusal
 	Error      string
+	// Notice is a fixed word for a line above the form: "recovered" after
+	// a new password was set with a recovery code.
+	Notice string
 
 	formTarget string // where the browser goes on to, for the CSP
 }

@@ -56,12 +56,14 @@
 
 {{define "recover"}}{{template "theme/door" (.Door "Use a recovery code")}}
 <h1 class="title">Use a <b>recovery code</b></h1>
-<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.</p>
+<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.{{if or .Pending.RequestID .Pending.Host}} Then you sign in with the new password and carry on where you were.{{end}}</p>
 {{if eq .Err "wrong"}}<p class="error" role="alert">{{template "icon/alert"}}<span>That name or recovery code was not accepted. A code works once.</span></p>
 {{else if eq .Err "missing"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Enter your handle or email, and a recovery code.</span></p>
 {{else if eq .Err "wait"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
 {{end}}<form class="form" method="post" action="/account/recover">
-<div class="field"><label for="login">Handle or email</label>
+{{with .Pending}}{{if .RequestID}}<input type="hidden" name="request_id" value="{{.RequestID}}">
+{{else if .Host}}<input type="hidden" name="host" value="{{.Host}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="nonce" value="{{.Nonce}}">
+{{end}}{{end}}<div class="field"><label for="login">Handle or email</label>
 <input class="input" id="login" name="login" type="text" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
 <div class="field"><label for="code">Recovery code</label>
 <input class="input input-mono" id="code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="abcd-efgh-ijkl-mnop"></div>
