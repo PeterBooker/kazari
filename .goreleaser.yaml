@@ -41,6 +41,8 @@ archives:
         info: *reproducible
       - src: README.md
         info: *reproducible
+      - src: CHANGELOG.md
+        info: *reproducible
       - src: deploy/kazari.yaml
         info: *reproducible
       - src: deploy/kazari.reference.yaml
@@ -89,6 +91,8 @@ nfpms:
         dst: /usr/share/doc/kazari/Caddyfile
       - src: LICENSE
         dst: /usr/share/doc/kazari/LICENSE
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/kazari/CHANGELOG.md
     scripts:
       postinstall: deploy/packaging/postinstall.sh
       preremove: deploy/packaging/preremove.sh
@@ -134,13 +138,10 @@ docker_signs:
   - cmd: cosign
     args: [sign, --yes, "${artifact}@${digest}"]
 
+# The release notes are the version's section of CHANGELOG.md, which
+# release.yml passes with --release-notes.
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+  disable: true
 
 release:
   github:

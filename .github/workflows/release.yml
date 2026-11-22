@@ -14,8 +14,15 @@ jobs:
     name: Check the tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - run: '[[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]'
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the changelog entry
+        run: .github/scripts/release-notes.sh "$GITHUB_REF_NAME" >/dev/null
 
   ci:
     needs: tag
@@ -50,10 +57,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v4.1.2
       - uses: anchore/sbom-action/download-syft@v0.24.3
+      - name: Write the release notes
+        run: .github/scripts/release-notes.sh "$GITHUB_REF_NAME" >"$RUNNER_TEMP/release-notes.md"
       - uses: goreleaser/goreleaser-action@v7.3.0
         with:
           version: v2.20.3 # as GORELEASER_VERSION in ci.yml
-          args: release --clean
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/attest@v4.2.2

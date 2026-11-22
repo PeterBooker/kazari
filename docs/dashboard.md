@@ -319,7 +319,7 @@ Restoring an archive, and backing up on a schedule, are done on the host ([backi
 
 ### About and the update check
 
-The about section shows the version and commit, when the server started, the data directory and the connector address, with links to the documentation and the release notes.
+The about section shows the version and commit, when the server started, the data directory and the connector address, with links to the documentation and the [changelog](../CHANGELOG.md).
 
 It also says whether a newer release exists. Kazari asks GitHub once a day, and the request carries nothing about the instance ([the update check](ops.md#the-update-check)). Upgrading is done on the host ([upgrading](ops.md#upgrading)).
 

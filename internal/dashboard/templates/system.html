@@ -69,7 +69,7 @@
 <dt>Version</dt><dd><span class="mono">{{.Data.Build.Version}}</span>{{with .Data.Build.Commit}}, commit <span class="mono">{{.}}</span>{{end}}</dd>
 <dt>Newest release</dt><dd>{{if .Data.Update.Off}}<span class="soft">The update check is off (<span class="mono">admin.update_check</span>).</span>
 {{else if .Data.Update.Unknown}}<span class="soft">Not known. No check has answered yet, or this build has no release version to compare.</span>
-{{else if .Data.Update.Newer}}<span class="status tone-note">New version</span> Kazari <span class="mono">{{.Data.Update.Latest}}</span> is out, checked {{when .Data.Update.CheckedAt}}. <a href="{{.Data.ReleasesURL}}">Release notes</a>
+{{else if .Data.Update.Newer}}<span class="status tone-note">New version</span> Kazari <span class="mono">{{.Data.Update.Latest}}</span> is out, checked {{when .Data.Update.CheckedAt}}. <a href="{{.Data.ChangelogURL}}">What changed</a>
 {{else}}<span class="status tone-ok">Up to date</span> as of {{when .Data.Update.CheckedAt}}{{end}}</dd>
 <dt>Started</dt><dd>{{when .Data.Started}}</dd>
 <dt>Data directory</dt><dd><span class="mono">{{.Data.DataDir}}</span></dd>
@@ -78,7 +78,7 @@
 </dl>
 <h3 class="h3">Upgrading</h3>
 <p>An upgrade is done on the host: back up, install the new release the way the current one was installed, and restart. Kazari updates its database at start, and only forwards. <a href="{{.Data.UpgradeURL}}">How to upgrade</a></p>
-<p class="actions"><a class="link" href="{{.Data.DocsURL}}">Documentation</a><a class="link" href="{{.Data.ReleasesURL}}">Release notes on GitHub</a></p>
+<p class="actions"><a class="link" href="{{.Data.DocsURL}}">Documentation</a><a class="link" href="{{.Data.ChangelogURL}}">Changelog</a></p>
 </section>
 
 {{if .Data.Settings}}<section class="section" id="settings" aria-labelledby="settings-h">

@@ -56,7 +56,7 @@ func TestSystemPage(t *testing.T) {
 		// Settings.
 		"edit the configuration file on the host and restart", `href="https://kazari.io/docs/configuration/"`, "base_domain",
 		// About.
-		"abc1234", `tone-ok">Up to date`, `href="https://github.com/PeterBooker/kazari/releases"`, `href="https://kazari.io/docs/"`,
+		"abc1234", `tone-ok">Up to date`, `href="https://kazari.io/docs/changelog/"`, `href="https://kazari.io/docs/"`,
 		"https://mcp.art.test/", "An upgrade is done on the host",
 		// Backup.
 		`action="/system/backup"`, "Keep a backup as a secret", "hash of every password and key", "of files, and the database on top",
