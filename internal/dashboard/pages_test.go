@@ -237,7 +237,7 @@ func TestPageOwnPage(t *testing.T) {
 		`href="https://live-one.art.test/"`, "live-one.art.test", `href="https://live-one--v1.art.test/"`, `href="https://live-one--v2.art.test/"`,
 		`<span class="status tone-version">Version 2</span> <span class="status tone-ok">Published</span>`,
 		`href="/pages/live-one/versions/1/publish"`, `href="/people/ana"`, `href="/people/ben"`,
-		`href="/activity?slug=live-one"`, "published version 2 of", `<span class="mono soft">artifact.update</span>`,
+		`href="/activity?slug=live-one"`, "published version 2 of", `<tr data-action="artifact.update">`,
 		`action="/pages/live-one/hide"`, `action="/pages/live-one/bin"`, `href="/pages/live-one/takedown"`, `href="/pages/live-one/remove"`,
 		`<option value="ben">ben</option>`,
 	} {
