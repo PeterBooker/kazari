@@ -1,0 +1,35 @@
+name: Install script
+
+# install.sh installs a published release, not the checkout, so it runs when the script changes, daily
+# from scheduled.yml and for each new release from release.yml.
+
+on:
+  pull_request:
+    paths: ["site/static/install.sh", ".github/workflows/install-script.yml"]
+  workflow_call:
+    inputs:
+      version:
+        description: The release to install; empty for the latest.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install.sh against a release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAZARI_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install with the script
+        run: |
+          KAZARI_BINDIR="$HOME/bin" sh site/static/install.sh
+          "$HOME/bin/kazari" version
+          "$HOME/bin/kazari" version | grep -qF "kazari $KAZARI_VERSION"
+          "$HOME/bin/kazari" --help | grep -q serve
