@@ -25,14 +25,14 @@ const (
 
 // NewRecoveryCodes makes a new set of recovery codes for handle, replacing
 // any earlier set, and returns them in the form a person copies:
-// abcd-efgh-ijkl-mnop. They are never available again. current is the
-// person's password, which making codes asks for again. ErrBadPassword,
-// ErrBusy, ErrLocalOff.
-func (s *Service) NewRecoveryCodes(ctx context.Context, handle, current string) (_ []string, err error) {
+// abcd-efgh-ijkl-mnop. They are never available again. The caller first
+// confirms that the person is at hand, with ConfirmPassword or one of their
+// passkeys: a session alone must not make codes. ErrNotFound, ErrLocalOff.
+func (s *Service) NewRecoveryCodes(ctx context.Context, handle string) (_ []string, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.new_recovery_codes")
 	defer func() { endSpan(span, err) }()
-	if err := s.ConfirmPassword(ctx, handle, current); err != nil {
-		return nil, err
+	if !s.opts.LocalAccounts {
+		return nil, ErrLocalOff
 	}
 	codes := make([]string, RecoveryCodeCount)
 	hashes := make([]string, RecoveryCodeCount)

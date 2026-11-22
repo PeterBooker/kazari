@@ -142,6 +142,35 @@
     return JSON.stringify(out);
   }
 
+  document.querySelectorAll("[data-passkey-js]").forEach(function (el) { el.hidden = false; });
+
+  // A form that asks for the current password takes one of the person's
+  // passkeys instead when the field is left empty.
+  function confirmFirst(form) {
+    var raw = form.getAttribute("data-passkey-confirm");
+    var current = form.querySelector('input[name="current"]');
+    var field = form.querySelector('input[name="confirm_passkey"]');
+    var error = form.querySelector("[data-passkey-confirm-error]");
+    if (error) error.hidden = true;
+    if (!raw || !field || (current && current.value)) return Promise.resolve();
+    return navigator.credentials.get({ publicKey: options(raw, false) }).then(function (cred) {
+      field.value = answer(cred);
+    }, function (err) {
+      field.value = "";
+      if (error) error.hidden = false;
+      throw err;
+    });
+  }
+
+  document.querySelectorAll("form[data-passkey-confirm]:not([data-passkey])").forEach(function (form) {
+    form.addEventListener("submit", function (e) {
+      var current = form.querySelector('input[name="current"]');
+      if (current && current.value) return;
+      e.preventDefault();
+      confirmFirst(form).then(function () { form.submit(); }, function () {});
+    });
+  });
+
   document.querySelectorAll("form[data-passkey]").forEach(function (form) {
     var create = form.getAttribute("data-passkey") === "create";
     var raw = form.getAttribute("data-passkey-options");
@@ -162,12 +191,15 @@
       e.preventDefault();
       if (waiting) waiting.abort();
       if (error) error.hidden = true;
-      var ask = create
-        ? navigator.credentials.create({ publicKey: options(raw, true) })
-        : navigator.credentials.get({ publicKey: options(raw, false) });
-      ask.then(send, function () {
-        if (error) error.hidden = false;
-      });
+      var confirmed = create ? confirmFirst(form) : Promise.resolve();
+      confirmed.then(function () {
+        var ask = create
+          ? navigator.credentials.create({ publicKey: options(raw, true) })
+          : navigator.credentials.get({ publicKey: options(raw, false) });
+        ask.then(send, function () {
+          if (error) error.hidden = false;
+        });
+      }, function () {});
     });
 
     // On the sign-in page, offer the passkeys in the name field's autofill.

@@ -22,6 +22,19 @@
 {{- else}}<span class="mono">{{.Action}}</span>
 {{- end}}{{end}}
 
+{{define "confirm-field"}}<div class="field{{if .Wide}} span-2{{end}}"><label for="{{.ID}}">Current password</label>
+<input class="input" id="{{.ID}}" name="current" type="password" autocomplete="current-password"{{if not .Passkey}} required{{end}}{{if or .Help .Passkey .Why}} aria-describedby="{{if or .Help .Passkey}}{{.ID}}-help{{if .Why}} {{end}}{{end}}{{if .Why}}{{.ID}}-err{{end}}"{{end}}{{if .Why}} aria-invalid="true"{{end}}>
+{{if eq .Why "wrong"}}<p class="error" id="{{.ID}}-err">{{template "icon/alert"}}<span>That is not your current password. {{.Undone}}</span></p>
+{{else if eq .Why "passkey"}}<p class="error" id="{{.ID}}-err">{{template "icon/alert"}}<span>That passkey was not accepted. {{.Undone}}</span></p>
+{{else if eq .Why "expired"}}<p class="error" id="{{.ID}}-err">{{template "icon/alert"}}<span>This page was open too long. {{.Undone}} Confirm again.</span></p>
+{{else if eq .Why "missing"}}<p class="error" id="{{.ID}}-err">{{template "icon/alert"}}<span>Enter your current password{{if .Passkey}}, or confirm with a passkey{{end}}. {{.Undone}}</span></p>
+{{else if eq .Why "wait"}}<p class="error" id="{{.ID}}-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
+{{end}}{{if or .Help .Passkey}}<p class="help" id="{{.ID}}-help">{{.Help}}{{if .Passkey}}{{if .Help}} {{end}}<span data-passkey-js hidden>Or leave it empty: your browser then asks for one of your passkeys.</span>{{end}}</p>
+{{end}}{{with .Passkey}}<input type="hidden" name="confirm_token" value="{{.Token}}"><input type="hidden" name="confirm_passkey" value="">
+<p class="error" data-passkey-confirm-error hidden>{{template "icon/alert"}}<span>No passkey was used. Enter your password instead.</span></p>
+{{end}}</div>
+{{end}}
+
 {{define "account"}}{{template "theme/shell" (.Shell "Account" "Account" "Your account")}}
 <div class="page">
 
@@ -79,14 +92,10 @@
 
 {{if .Local}}<section class="box section" aria-labelledby="password-h">
 <h2 class="h2" id="password-h">Password</h2>
-<form class="form-grid" method="post" action="/account/password">
+<form class="form-grid" method="post" action="/account/password"{{with .Confirm}} data-passkey-confirm="{{.Options}}"{{end}}>
 <input type="hidden" name="form_token" value="{{.FormToken}}">
 <input type="text" name="username" value="{{.User.Handle}}" autocomplete="username" hidden>
-<div class="field span-2"><label for="current">Current password</label>
-<input class="input" id="current" name="current" type="password" autocomplete="current-password" required{{if .Err.current}} aria-invalid="true" aria-describedby="current-err"{{end}}>
-{{if eq .Err.current "wrong"}}<p class="error" id="current-err">{{template "icon/alert"}}<span>That is not your current password. Nothing was changed.</span></p>
-{{else if eq .Err.current "wait"}}<p class="error" id="current-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
-{{end}}</div>
+{{template "confirm-field" (.ConfirmField "current" "current" "Nothing was changed." "" true)}}
 <div class="field"><label for="new">New password</label>
 <input class="input" id="new" name="new" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="new-help{{if .Err.new}} new-err{{end}}"{{if .Err.new}} aria-invalid="true"{{end}}>
 {{if .Err.new}}<p class="error" id="new-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and 256 characters.</span></p>
@@ -134,7 +143,7 @@
 <p class="notice-title">{{template "icon/alert"}}You hold as many passkeys as a person may</p>
 <p>Remove one you no longer use, then add the new one.</p>
 </div>
-{{end}}{{with .Ceremony}}<form class="form-grid" method="post" action="/account/passkeys" data-passkey="create" data-passkey-options="{{.Options}}" hidden>
+{{end}}{{with .Ceremony}}<form class="form-grid" method="post" action="/account/passkeys" data-passkey="create" data-passkey-options="{{.Options}}"{{with $.Confirm}} data-passkey-confirm="{{.Options}}"{{end}} hidden>
 <input type="hidden" name="form_token" value="{{$.FormToken}}">
 <input type="hidden" name="passkey_token" value="{{.Token}}">
 <input type="hidden" name="passkey" value="">
@@ -142,11 +151,7 @@
 <div class="field"><label for="passkey-name">Name <span class="optional">(optional)</span></label>
 <input class="input" id="passkey-name" name="name" type="text" value="{{$.PasskeyName}}" maxlength="100" autocomplete="off" aria-describedby="passkey-name-help">
 <p class="help" id="passkey-name-help">Where it lives, such as Work laptop or Phone.</p></div>
-<div class="field"><label for="passkey-current">Current password</label>
-<input class="input" id="passkey-current" name="current" type="password" autocomplete="current-password" required aria-describedby="passkey-help{{if $.Err.passkey}} passkey-err{{end}}"{{if or (eq $.Err.passkey "wrong") (eq $.Err.passkey "wait")}} aria-invalid="true"{{end}}>
-{{if eq $.Err.passkey "wrong"}}<p class="error" id="passkey-err">{{template "icon/alert"}}<span>That is not your current password. No passkey was added.</span></p>
-{{else if eq $.Err.passkey "wait"}}<p class="error" id="passkey-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq $.Seconds 1}}a second{{else}}{{$.Seconds}} seconds{{end}}.</span></p>
-{{end}}<p class="help" id="passkey-help">Adding a passkey asks for your password again, so a browser left signed in cannot add one.</p></div>
+{{template "confirm-field" ($.ConfirmField "passkey-current" "passkey-confirm" "No passkey was added." "Adding a passkey asks you to confirm it is you, so a browser left signed in cannot add one." false)}}
 <p class="error span-2" data-passkey-error hidden>{{template "icon/alert"}}<span>No passkey was added. If this device already holds one for your account, it is in the list above.</span></p>
 <div class="actions"><button type="submit" class="btn">{{template "icon/key"}}Add a passkey</button></div>
 </form>
@@ -161,14 +166,10 @@
 <section class="box section" aria-labelledby="recovery-h">
 <h2 class="h2" id="recovery-h">Recovery codes</h2>
 <p>{{if eq .RecoveryCodes 0}}You hold no recovery codes.{{else if eq .RecoveryCodes 1}}You hold one unused recovery code.{{else}}You hold {{.RecoveryCodes}} unused recovery codes.{{end}} A code sets a new password when you have lost yours, without asking an admin. Each works once.</p>
-<form class="form-grid" method="post" action="/account/recovery-codes">
+<form class="form-grid" method="post" action="/account/recovery-codes"{{with .Confirm}} data-passkey-confirm="{{.Options}}"{{end}}>
 <input type="hidden" name="form_token" value="{{.FormToken}}"><input type="hidden" name="once" value="{{.Once}}">
 <input type="text" name="username" value="{{.User.Handle}}" autocomplete="username" hidden>
-<div class="field span-2"><label for="recovery-current">Current password</label>
-<input class="input" id="recovery-current" name="current" type="password" autocomplete="current-password" required aria-describedby="recovery-help{{if .Err.recovery}} recovery-err{{end}}"{{if .Err.recovery}} aria-invalid="true"{{end}}>
-{{if eq .Err.recovery "wrong"}}<p class="error" id="recovery-err">{{template "icon/alert"}}<span>That is not your current password. No codes were made.</span></p>
-{{else if eq .Err.recovery "wait"}}<p class="error" id="recovery-err">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
-{{end}}<p class="help" id="recovery-help">Making codes asks for your password again, so a browser left signed in cannot make them.</p></div>
+{{template "confirm-field" (.ConfirmField "recovery-current" "recovery" "No codes were made." "Making codes asks you to confirm it is you, so a browser left signed in cannot make them." true)}}
 <div class="actions"><button type="submit" class="btn">{{if .RecoveryCodes}}Make new recovery codes{{else}}Make recovery codes{{end}}</button></div>
 </form>
 <ul class="dash soft">

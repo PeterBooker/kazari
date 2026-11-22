@@ -187,3 +187,110 @@ func TestNoPasskeysWithoutBuiltInAccounts(t *testing.T) {
 		t.Errorf("POST /account/passkeys: status %d", resp.StatusCode)
 	}
 }
+
+var (
+	confirmOptions = regexp.MustCompile(`data-passkey-confirm="([^"]+)"`)
+	confirmToken   = regexp.MustCompile(`name="confirm_token" value="([^"]+)"`)
+)
+
+// confirmation answers the passkey confirmation of the account page with a
+// passkey held by a, and returns the fields a form sends with it.
+func (b *browser) confirmation(a *passkeytest.Authenticator) url.Values {
+	b.e.t.Helper()
+	body := b.page()
+	o, tok := confirmOptions.FindStringSubmatch(body), confirmToken.FindStringSubmatch(body)
+	if o == nil || tok == nil {
+		b.e.t.Fatalf("the account page offers no passkey confirmation:\n%s", body)
+	}
+	answer, err := a.Get(html.UnescapeString(o[1]), b.e.apex.URL)
+	if err != nil {
+		b.e.t.Fatal(err)
+	}
+	return url.Values{"form_token": {formToken.FindStringSubmatch(body)[1]},
+		"confirm_token": {html.UnescapeString(tok[1])}, "confirm_passkey": {answer}}
+}
+
+func TestConfirmWithPasskey(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.person("ana", user.RoleMember)
+	e.person("ben", user.RoleMember)
+	b := e.browser()
+	b.signIn("ana", password)
+	if body := b.page(); strings.Contains(body, "data-passkey-confirm") || !strings.Contains(body, `id="current" name="current" type="password" autocomplete="current-password" required`) {
+		t.Fatal("without a passkey the page offers one to confirm, or the password is optional")
+	}
+	var a passkeytest.Authenticator
+	if resp, body := b.addPasskey(&a, password, "Laptop"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("add passkey: status %d: %s", resp.StatusCode, body)
+	}
+	body := b.page()
+	if n := strings.Count(body, "data-passkey-confirm="); n != 3 {
+		t.Errorf("%d forms offer a passkey to confirm, want 3", n)
+	}
+	if strings.Contains(body, `id="current" name="current" type="password" autocomplete="current-password" required`) {
+		t.Error("the password stays required beside a passkey")
+	}
+
+	// Recovery codes, confirmed with the passkey.
+	resp, body := b.post("/account/recovery-codes", b.confirmation(&a))
+	if resp.StatusCode != http.StatusOK || len(recoveryCode.FindAllString(body, -1)) != user.RecoveryCodeCount {
+		t.Fatalf("codes confirmed with a passkey: status %d: %s", resp.StatusCode, body)
+	}
+
+	// A second passkey, confirmed with the first.
+	f := b.confirmation(&a)
+	options, token := ceremony(t, b.page(), "create")
+	var phone passkeytest.Authenticator
+	answer, _ := phone.Create(options, e.apex.URL)
+	f.Set("passkey_token", token)
+	f.Set("passkey", answer)
+	f.Set("name", "Phone")
+	if resp, body := b.post("/account/passkeys", f); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("second passkey confirmed with the first: status %d: %s", resp.StatusCode, body)
+	}
+
+	// A new password, confirmed with the new passkey.
+	const next = "another long password"
+	f = b.confirmation(&phone)
+	f.Set("new", next)
+	f.Set("confirm", next)
+	if resp, body := b.post("/account/password", f); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("password confirmed with a passkey: status %d: %s", resp.StatusCode, body)
+	}
+	if _, err := e.users.CheckPassword(context.Background(), "ana", next); err != nil {
+		t.Errorf("the new password: %v", err)
+	}
+
+	// Refusals: nothing to confirm with, another person's passkey, an
+	// answer sent twice.
+	resp, body = b.post("/account/recovery-codes", url.Values{"form_token": {b.token()}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Enter your current password, or confirm with a passkey. No codes were made.") {
+		t.Errorf("no password and no passkey: status %d: %s", resp.StatusCode, body)
+	}
+	ben := e.browser()
+	ben.signIn("ben", password)
+	var bens passkeytest.Authenticator
+	if resp, _ := ben.addPasskey(&bens, password, ""); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ben's passkey: status %d", resp.StatusCode)
+	}
+	f = b.confirmation(&a)
+	body = b.page()
+	challenge := passkeytest.Challenge(html.UnescapeString(confirmOptions.FindStringSubmatch(body)[1]))
+	forged, _ := bens.Sign(bens.Passkeys[0], challenge, e.apex.URL)
+	f.Set("confirm_token", html.UnescapeString(confirmToken.FindStringSubmatch(body)[1]))
+	f.Set("confirm_passkey", forged)
+	resp, body = b.post("/account/recovery-codes", f)
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "That passkey was not accepted. No codes were made.") {
+		t.Errorf("another person's passkey: status %d: %s", resp.StatusCode, body)
+	}
+	f = b.confirmation(&a)
+	if resp, _ := b.post("/account/recovery-codes", f); resp.StatusCode != http.StatusOK {
+		t.Fatalf("codes: status %d", resp.StatusCode)
+	}
+	f.Set("form_token", b.token())
+	f.Set("once", b.once)
+	resp, body = b.post("/account/recovery-codes", f)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "This page was open too long. No codes were made. Confirm again.") {
+		t.Errorf("confirmation sent twice: status %d: %s", resp.StatusCode, body)
+	}
+}

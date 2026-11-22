@@ -130,8 +130,9 @@ type Ceremony struct {
 
 // What a ceremony is for, sealed into its token.
 const (
-	kindCreate = "create"
-	kindGet    = "get"
+	kindCreate  = "create"
+	kindGet     = "get"
+	kindConfirm = "confirm"
 )
 
 // account is a person as WebAuthn sees them.
@@ -235,10 +236,10 @@ func (s *Service) Verify(ctx context.Context, token, response string) (*user.Use
 		if !bytes.Equal(id, userHandle) {
 			return nil, user.ErrPasskeyNotFound
 		}
-		var cred webauthn.Credential
-		if err := json.Unmarshal(p.Record, &cred); err != nil {
-			lookErr = fmt.Errorf("passkey: decode credential %d: %w", p.ID, err)
-			return nil, lookErr
+		cred, err := decode(*p)
+		if err != nil {
+			lookErr = err
+			return nil, err
 		}
 		key, person = p, u
 		a := accountOf(u, id)
@@ -255,14 +256,91 @@ func (s *Service) Verify(ctx context.Context, token, response string) (*user.Use
 	if err != nil || cred.Authenticator.CloneWarning {
 		return nil, ErrRejected
 	}
-	record, err := json.Marshal(cred)
-	if err != nil {
-		return nil, fmt.Errorf("passkey: encode credential: %w", err)
-	}
-	if err := s.users.PasskeyUsed(ctx, key.ID, record); err != nil {
+	if err := s.keep(ctx, key.ID, cred); err != nil {
 		return nil, err
 	}
 	return person, nil
+}
+
+// Confirmation begins a check that u is at the browser, with one of u's own
+// passkeys, before a step that a password would otherwise confirm. ok is
+// false when u has no passkey.
+func (s *Service) Confirmation(ctx context.Context, u *user.User) (_ Ceremony, ok bool, err error) {
+	a, _, err := s.holder(ctx, u)
+	if err != nil || len(a.creds) == 0 {
+		return Ceremony{}, false, err
+	}
+	assertion, sess, err := s.wa.BeginLogin(a)
+	if err != nil {
+		return Ceremony{}, false, fmt.Errorf("passkey: begin confirmation: %w", err)
+	}
+	c, err := s.ceremony(kindConfirm, u.Handle, assertion.Response, sess)
+	return c, err == nil, err
+}
+
+// Confirm checks the browser's answer to a confirmation of u's.
+// ErrExpired, ErrRejected.
+func (s *Service) Confirm(ctx context.Context, u *user.User, token, response string) error {
+	sess, err := s.open(kindConfirm, u.Handle, token)
+	if err != nil {
+		return err
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes([]byte(response))
+	if err != nil {
+		return ErrRejected
+	}
+	a, held, err := s.holder(ctx, u)
+	if err != nil {
+		return err
+	}
+	cred, err := s.wa.ValidateLogin(a, *sess, parsed)
+	if err != nil || cred.Authenticator.CloneWarning {
+		return ErrRejected
+	}
+	for _, p := range held {
+		if bytes.Equal(p.CredentialID, cred.ID) {
+			return s.keep(ctx, p.ID, cred)
+		}
+	}
+	return ErrRejected
+}
+
+// holder returns u as WebAuthn sees them, with the passkeys they hold.
+func (s *Service) holder(ctx context.Context, u *user.User) (*account, []user.Passkey, error) {
+	id, err := s.users.PasskeyUserID(ctx, u.Handle)
+	if err != nil {
+		return nil, nil, err
+	}
+	held, err := s.users.Passkeys(ctx, u.Handle)
+	if err != nil {
+		return nil, nil, err
+	}
+	a := accountOf(u, id)
+	for _, p := range held {
+		cred, err := decode(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		a.creds = append(a.creds, cred)
+	}
+	return a, held, nil
+}
+
+func decode(p user.Passkey) (webauthn.Credential, error) {
+	var cred webauthn.Credential
+	if err := json.Unmarshal(p.Record, &cred); err != nil {
+		return cred, fmt.Errorf("passkey: decode credential %d: %w", p.ID, err)
+	}
+	return cred, nil
+}
+
+// keep stores what a check of passkey id updated: its counter and flags.
+func (s *Service) keep(ctx context.Context, id int64, cred *webauthn.Credential) error {
+	record, err := json.Marshal(cred)
+	if err != nil {
+		return fmt.Errorf("passkey: encode credential: %w", err)
+	}
+	return s.users.PasskeyUsed(ctx, id, record)
 }
 
 // ticket is what a ceremony's token seals.

@@ -342,3 +342,74 @@ func TestSupported(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirm(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	ana, ben := f.person("ana"), f.person("ben")
+	if _, ok, err := f.svc.Confirmation(ctx, ana); ok || err != nil {
+		t.Fatalf("confirmation without a passkey: ok %v, err %v", ok, err)
+	}
+	var a, b passkeytest.Authenticator
+	f.add(ana, &a, "")
+	f.add(ben, &b, "")
+
+	c, ok, err := f.svc.Confirmation(ctx, ana)
+	if !ok || err != nil {
+		t.Fatalf("Confirmation = %v, %v", ok, err)
+	}
+	if !strings.Contains(c.Options, `"allowCredentials":[{"type":"public-key","id":"`) || !strings.Contains(c.Options, `"userVerification":"required"`) {
+		t.Errorf("confirmation options name no passkey of ana's: %s", c.Options)
+	}
+	resp, err := a.Get(c.Options, apex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clock.t = t0.Add(time.Minute)
+	if err := f.svc.Confirm(ctx, ana, c.Token, resp); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if keys, _ := f.users.Passkeys(ctx, "ana"); keys[0].LastUsedAt == nil || !keys[0].LastUsedAt.Equal(t0.Add(time.Minute)) {
+		t.Errorf("last use not kept: %+v", keys[0])
+	}
+	if err := f.svc.Confirm(ctx, ana, c.Token, resp); !errors.Is(err, passkey.ErrExpired) {
+		t.Errorf("confirmation used twice: err = %v, want ErrExpired", err)
+	}
+
+	// Ben's passkey cannot confirm for ana, nor ana's ceremony for ben.
+	c, _, _ = f.svc.Confirmation(ctx, ana)
+	resp, _ = b.Sign(b.Passkeys[0], passkeytest.Challenge(c.Options), apex)
+	if err := f.svc.Confirm(ctx, ana, c.Token, resp); !errors.Is(err, passkey.ErrRejected) {
+		t.Errorf("another person's passkey: err = %v, want ErrRejected", err)
+	}
+	c, _, _ = f.svc.Confirmation(ctx, ana)
+	resp, _ = b.Sign(b.Passkeys[0], passkeytest.Challenge(c.Options), apex)
+	if err := f.svc.Confirm(ctx, ben, c.Token, resp); !errors.Is(err, passkey.ErrExpired) {
+		t.Errorf("ana's ceremony for ben: err = %v, want ErrExpired", err)
+	}
+
+	// A sign-in's token confirms nothing, and a confirmation's signs no one in.
+	s, _ := f.svc.SignIn()
+	resp, _ = a.Get(s.Options, apex)
+	if err := f.svc.Confirm(ctx, ana, s.Token, resp); !errors.Is(err, passkey.ErrExpired) {
+		t.Errorf("sign-in token used to confirm: err = %v, want ErrExpired", err)
+	}
+	c, _, _ = f.svc.Confirmation(ctx, ana)
+	resp, _ = a.Get(c.Options, mcp)
+	if _, err := f.svc.Verify(ctx, c.Token, resp); !errors.Is(err, passkey.ErrExpired) {
+		t.Errorf("confirmation token used to sign in: err = %v, want ErrExpired", err)
+	}
+
+	// Without user verification, or from another origin.
+	c, _, _ = f.svc.Confirmation(ctx, ana)
+	resp, _ = a.Get(c.Options, artHost)
+	if err := f.svc.Confirm(ctx, ana, c.Token, resp); !errors.Is(err, passkey.ErrRejected) {
+		t.Errorf("answer from an artifact host: err = %v, want ErrRejected", err)
+	}
+	a.NoUV = true
+	c, _, _ = f.svc.Confirmation(ctx, ana)
+	resp, _ = a.Get(c.Options, apex)
+	if err := f.svc.Confirm(ctx, ana, c.Token, resp); !errors.Is(err, passkey.ErrRejected) {
+		t.Errorf("no user verification: err = %v, want ErrRejected", err)
+	}
+}

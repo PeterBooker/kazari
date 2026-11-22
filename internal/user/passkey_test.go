@@ -139,3 +139,42 @@ func TestPasskeysLocalOff(t *testing.T) {
 		t.Errorf("PasskeyByCredential: err = %v", err)
 	}
 }
+
+func TestChangePasswordConfirmed(t *testing.T) {
+	ctx := context.Background()
+	var kept []int64
+	f := accounts(t, user.Options{EndSessions: func(_ context.Context, _ string, keep int64) error {
+		kept = append(kept, keep)
+		return nil
+	}})
+	f.invite(t, "ana", "")
+	_, reset, err := f.svc.IssueLink(ctx, "ana", user.PurposeReset, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", "short", 7); !errors.Is(err, user.ErrWeakPassword) {
+		t.Errorf("weak password: err = %v", err)
+	}
+	const next = "a new long password"
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", next, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.CheckPassword(ctx, "ana", next); err != nil {
+		t.Errorf("new password: %v", err)
+	}
+	if len(kept) != 1 || kept[0] != 7 {
+		t.Errorf("sessions ended keeping %v, want [7]", kept)
+	}
+	if _, _, err := f.svc.Link(ctx, reset); !errors.Is(err, user.ErrLinkNotFound) {
+		t.Errorf("reset link after the change: err = %v", err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "nobody", next, 0); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("unknown person: err = %v", err)
+	}
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", next, 0); !errors.Is(err, user.ErrDisabled) {
+		t.Errorf("disabled person: err = %v", err)
+	}
+}

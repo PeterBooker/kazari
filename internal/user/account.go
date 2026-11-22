@@ -445,6 +445,31 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 	if err != nil {
 		return err
 	}
+	return s.replacePassword(ctx, u.Handle, next, keep)
+}
+
+// ChangePasswordConfirmed is ChangePassword for a person the caller has
+// confirmed another way, with one of their passkeys, in place of the current
+// password. ErrNotFound, ErrDisabled, ErrWeakPassword, ErrLocalOff.
+func (s *Service) ChangePasswordConfirmed(ctx context.Context, handle, next string, keep int64) (err error) {
+	ctx, span := instrument.StartChild(ctx, s.tracer, "user.change_password")
+	defer func() { endSpan(span, err) }()
+	if !s.opts.LocalAccounts {
+		return ErrLocalOff
+	}
+	u, err := s.store.GetUser(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if u.DisabledAt != nil {
+		return ErrDisabled
+	}
+	return s.replacePassword(ctx, u.Handle, next, keep)
+}
+
+// replacePassword sets a confirmed person's new password, ends the links
+// that would set another and their browser sessions except keep.
+func (s *Service) replacePassword(ctx context.Context, handle, next string, keep int64) error {
 	if err := checkPolicy(next, s.opts.MinPasswordLength); err != nil {
 		return err
 	}
@@ -452,16 +477,16 @@ func (s *Service) ChangePassword(ctx context.Context, handle, current, next stri
 	if err != nil {
 		return err
 	}
-	if err := s.store.SetPassword(ctx, u.Handle, hash, s.now()); err != nil {
+	if err := s.store.SetPassword(ctx, handle, hash, s.now()); err != nil {
 		return err
 	}
-	s.record(ctx, u.Handle, audit.PasswordSet, u.Handle, map[string]string{"handle": u.Handle, "via": "change"})
+	s.record(ctx, handle, audit.PasswordSet, handle, map[string]string{"handle": handle, "via": "change"})
 	// A reset link made before the change would undo it.
-	if err := s.store.RevokeUserLinks(ctx, u.Handle, s.now()); err != nil {
-		return fmt.Errorf("user: change password of %q: %w", u.Handle, err)
+	if err := s.store.RevokeUserLinks(ctx, handle, s.now()); err != nil {
+		return fmt.Errorf("user: change password of %q: %w", handle, err)
 	}
-	if err := s.endSessions(ctx, u.Handle, keep); err != nil {
-		return fmt.Errorf("user: change password of %q: %w", u.Handle, err)
+	if err := s.endSessions(ctx, handle, keep); err != nil {
+		return fmt.Errorf("user: change password of %q: %w", handle, err)
 	}
 	return nil
 }

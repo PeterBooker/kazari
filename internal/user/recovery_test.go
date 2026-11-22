@@ -16,7 +16,7 @@ var codeShape = regexp.MustCompile(`^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7
 
 func (f *fixture) codes(t *testing.T, handle string) []string {
 	t.Helper()
-	codes, err := f.svc.NewRecoveryCodes(context.Background(), handle, goodPassword)
+	codes, err := f.svc.NewRecoveryCodes(context.Background(), handle)
 	if err != nil {
 		t.Fatalf("NewRecoveryCodes(%q): %v", handle, err)
 	}
@@ -27,11 +27,8 @@ func TestNewRecoveryCodes(t *testing.T) {
 	ctx := context.Background()
 	f := accounts(t, user.Options{})
 	f.invite(t, "ana", "")
-	if _, err := f.svc.NewRecoveryCodes(ctx, "ana", "not the password"); !errors.Is(err, user.ErrBadPassword) {
-		t.Fatalf("wrong password: err = %v, want ErrBadPassword", err)
-	}
-	if n := f.account(t, "ana").RecoveryCodes; n != 0 {
-		t.Fatalf("codes after a refusal = %d", n)
+	if _, err := f.svc.NewRecoveryCodes(ctx, "nobody"); !errors.Is(err, user.ErrNotFound) {
+		t.Fatalf("unknown person: err = %v, want ErrNotFound", err)
 	}
 
 	codes := f.codes(t, "ana")
@@ -181,7 +178,7 @@ func TestResetRevokeAllEndsRecoveryCodes(t *testing.T) {
 func TestRecoveryLocalOff(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})
-	if _, err := f.svc.NewRecoveryCodes(ctx, "ana", goodPassword); !errors.Is(err, user.ErrLocalOff) {
+	if _, err := f.svc.NewRecoveryCodes(ctx, "ana"); !errors.Is(err, user.ErrLocalOff) {
 		t.Errorf("NewRecoveryCodes: err = %v, want ErrLocalOff", err)
 	}
 	if _, err := f.svc.Recover(ctx, "ana", "aaaa-aaaa-aaaa-aaaa", goodPassword); !errors.Is(err, user.ErrLocalOff) {

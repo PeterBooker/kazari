@@ -126,7 +126,7 @@ After several wrong passwords the page asks the person to wait before the next a
 
 A passkey signs a person in with their fingerprint, their face or their device's PIN, in place of the password. Their device or password manager keeps it, and a passkey works only on the instance it was made for, so it cannot be phished.
 
-To add one, a person opens the [account page](#the-account-page), enters their current password under **Passkeys**, gives the passkey a name such as Work laptop, and chooses **Add a passkey**. The browser then asks them to confirm with a fingerprint, face or PIN. A person can hold 20 passkeys.
+To add one, a person opens the [account page](#the-account-page), [confirms it is them](#confirming-it-is-you) under **Passkeys**, gives the passkey a name such as Work laptop, and chooses **Add a passkey**. The browser then asks them to confirm with a fingerprint, face or PIN. A person can hold 20 passkeys.
 
 To sign in with a passkey, choose **Sign in with a passkey** under the password form, or pick the passkey where the browser offers it in the **Handle or email** field. No name or password is typed. A passkey sign-in opens the same 12-hour session as a password, and leads to the consent page of an MCP client the same way.
 
@@ -160,7 +160,7 @@ An instance that used API keys before built-in accounts existed keeps working af
 
 Recovery codes let a person set a new password without asking an admin. Each is a single-use code such as `abcd-efgh-ijkl-mnop`, and a set holds 10.
 
-To make a set, open the [account page](#the-account-page), enter the current password under **Recovery codes** and choose **Make recovery codes**. The next page shows the codes once: keep them in a password manager or on paper, apart from the password. Kazari keeps only a hash of each.
+To make a set, open the [account page](#the-account-page), [confirm it is you](#confirming-it-is-you) under **Recovery codes** and choose **Make recovery codes**. The next page shows the codes once: keep them in a password manager or on paper, apart from the password. Kazari keeps only a hash of each.
 
 Making a new set ends the codes held before. The account page says how many unused codes are left, and so do the person's page in the dashboard and `kazari admin users show`.
 
@@ -185,9 +185,17 @@ Every person has an account page at `https://<base>/account/`, where they sign i
 
 On an instance with an identity provider the page has no password form, passkeys or recovery codes, and everything else is the same.
 
+#### Confirming it is you
+
+Three forms change how a person signs in, so they ask the person to confirm it is them first: changing the password, adding a passkey and making recovery codes. A browser left signed in cannot use them alone.
+
+To confirm, enter the current password. A person who holds a passkey can leave that field empty instead: sending the form then asks the browser for one of their own passkeys, with a fingerprint, face or PIN.
+
+Wrong passwords and refused passkeys slow the next attempt alike, a second at first and never more than a minute.
+
 #### Changing a password
 
-The password form asks for the current password and the new one twice. Changing it signs the person out of every other browser and keeps the session it was changed in. API keys and connected apps keep working.
+The password form [confirms it is you](#confirming-it-is-you) and asks for the new password twice. Changing it signs the person out of every other browser and keeps the session it was changed in. API keys and connected apps keep working.
 
 **Sign out of my other sessions** does the same without a new password.
 

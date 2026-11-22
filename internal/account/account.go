@@ -88,6 +88,8 @@ type Pages interface {
 type Passkeys interface {
 	Registration(ctx context.Context, u *user.User) (passkey.Ceremony, error)
 	Register(ctx context.Context, u *user.User, token, response, name string) (*user.Passkey, error)
+	Confirmation(ctx context.Context, u *user.User) (passkey.Ceremony, bool, error)
+	Confirm(ctx context.Context, u *user.User, token, response string) error
 }
 
 // Deps are the collaborators of the account pages. Audit, Artifacts and

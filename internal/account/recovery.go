@@ -16,40 +16,17 @@ type recoveryPage struct {
 	Codes []string
 }
 
-// newRecoveryCodes makes a new set of recovery codes, given the current
-// password, and shows them in the answer to the POST.
+// newRecoveryCodes makes a new set of recovery codes, once the person
+// confirms it is them, and shows them in the answer to the POST.
 func (s *server) newRecoveryCodes(w http.ResponseWriter, r *http.Request, v visit) {
-	refuse := func(status int, why string, wait time.Duration) {
-		d := accountPageData{Err: map[string]string{"recovery": why}}
-		if wait > 0 {
-			w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
-			d.Seconds = max(1, int((wait+time.Second-1)/time.Second))
-		}
-		s.renderAccount(w, r, status, v, d)
-	}
-	attempt, wait := ratelimit.BeginPair(r.Context(), s.passwordDelay, v.user.Handle, s.addressDelay, ratelimit.IPKey(r))
-	if wait > 0 {
-		refuse(http.StatusTooManyRequests, "wait", wait)
+	if s.refused(w, r, v, "recovery", accountPageData{}) {
 		return
 	}
-	codes, err := s.d.Users.NewRecoveryCodes(r.Context(), v.user.Handle, r.PostForm.Get("current"))
-	if errors.Is(err, user.ErrBadPassword) {
-		attempt.Failed()
-	} else {
-		attempt.Done()
-	}
-	switch {
-	case errors.Is(err, user.ErrBadPassword):
-		refuse(http.StatusUnprocessableEntity, "wrong", 0)
-		return
-	case errors.Is(err, user.ErrBusy):
-		s.busy(w, r)
-		return
-	case err != nil:
+	codes, err := s.d.Users.NewRecoveryCodes(r.Context(), v.user.Handle)
+	if err != nil {
 		s.fail(w, r, "make recovery codes", err)
 		return
 	}
-	s.passwordDelay.Reset(v.user.Handle)
 	s.render(w, r, http.StatusOK, "recovery", recoveryPage{base: s.baseFor(v), Codes: codes})
 }
 

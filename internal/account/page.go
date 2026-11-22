@@ -13,7 +13,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey"
-	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -79,6 +78,9 @@ type accountPageData struct {
 	Passkeys    []user.Passkey
 	Ceremony    *passkey.Ceremony
 	PasskeyName string
+	// Confirm lets the forms that ask for the current password take one of
+	// the person's passkeys instead; nil when they have none.
+	Confirm *passkey.Ceremony
 	SignIns     []audit.Event
 	Events      []audit.Event
 	Keys        []keyRow // live
@@ -130,6 +132,14 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 				return
 			}
 			d.Ceremony = &c
+		}
+		c, ok, err := s.d.Passkeys.Confirmation(ctx, v.user)
+		if err != nil {
+			s.fail(w, r, "begin passkey confirmation", err)
+			return
+		}
+		if ok {
+			d.Confirm = &c
 		}
 	}
 	keys, err := s.keys(ctx, v.user.Handle)
@@ -227,9 +237,8 @@ func (s *server) apps(ctx context.Context, handle string) ([]appRow, error) {
 	return rows, nil
 }
 
-// changePassword replaces the person's password, given the current one,
-// and ends their sessions in other browsers. Wrong current passwords slow
-// the next attempt as wrong sign-ins do.
+// changePassword replaces the person's password, once they confirm it is
+// them, and ends their sessions in other browsers.
 func (s *server) changePassword(w http.ResponseWriter, r *http.Request, v visit) {
 	f := r.PostForm
 	refuse := func(status int, d accountPageData) { s.renderAccount(w, r, status, v, d) }
@@ -237,24 +246,11 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request, v visit)
 		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"confirm": "mismatch"}})
 		return
 	}
-	attempt, d := ratelimit.BeginPair(r.Context(), s.passwordDelay, v.user.Handle, s.addressDelay, ratelimit.IPKey(r))
-	if d > 0 {
-		w.Header().Set("Retry-After", ratelimit.RetryAfter(d))
-		refuse(http.StatusTooManyRequests, accountPageData{
-			Err: map[string]string{"current": "wait"}, Seconds: max(1, int((d+time.Second-1)/time.Second)),
-		})
+	if s.refused(w, r, v, "current", accountPageData{}) {
 		return
 	}
-	err := s.d.Users.ChangePassword(r.Context(), v.user.Handle, f.Get("current"), f.Get("new"), v.sess.SessionID)
-	if errors.Is(err, user.ErrBadPassword) {
-		attempt.Failed()
-	} else {
-		attempt.Done()
-	}
+	err := s.d.Users.ChangePasswordConfirmed(r.Context(), v.user.Handle, f.Get("new"), v.sess.SessionID)
 	switch {
-	case errors.Is(err, user.ErrBadPassword):
-		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"current": "wrong"}})
-		return
 	case errors.Is(err, user.ErrWeakPassword):
 		refuse(http.StatusUnprocessableEntity, accountPageData{Err: map[string]string{"new": "weak"}})
 		return
@@ -265,7 +261,6 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request, v visit)
 		s.fail(w, r, "change password", err)
 		return
 	}
-	s.passwordDelay.Reset(v.user.Handle)
 	s.done(w, r, "password-changed")
 }
 
