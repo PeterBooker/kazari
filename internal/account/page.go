@@ -81,12 +81,12 @@ type accountPageData struct {
 	// Confirm lets the forms that ask for the current password take one of
 	// the person's passkeys instead; nil when they have none.
 	Confirm *passkey.Ceremony
-	SignIns     []audit.Event
-	Events      []audit.Event
-	Keys        []keyRow // live
-	OldKeys     []keyRow // revoked or expired
-	Apps        []appRow
-	Pages       []pageRow
+	SignIns []audit.Event
+	Events  []audit.Event
+	Keys    []keyRow // live
+	OldKeys []keyRow // revoked or expired
+	Apps    []appRow
+	Pages   []pageRow
 	// Err names what is wrong with a field; Seconds is the wait of
 	// Err["current"] == "wait".
 	Err     map[string]string
