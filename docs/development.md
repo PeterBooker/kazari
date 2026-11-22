@@ -44,7 +44,7 @@ KAZARI_URL=http://api.kazari.localhost:8080 KAZARI_TOKEN=kzk_... go run ./cmd/ka
 
 Open `http://demo.kazari.localhost:8080/` to see the page. **Make the key** on the account page issues a key the same way. To script a fresh instance without a browser, create the user with `go run ./cmd/kazari admin users create peter --role admin` instead of the setup link. That user has no password, so they sign in to the dashboard with **Use an API key instead**.
 
-`serve --local` reads `./.env` for its `KAZARI_*` overrides. The client commands do not, but `KAZARI_URL` and `KAZARI_TOKEN` can live in a file you name with `KAZARI_ENV_FILE` instead of on the command line ([the rule](cli.md#environment-variables-and-env)). Keep `.env` out of version control. The `kazari-dev` MCP server in `.mcp.json` connects Claude Code to this server with OAuth: `/mcp` opens the browser, where you sign in with your password or a passkey and approve the connection.
+`serve --local` reads `./.env` for its `KAZARI_*` overrides. The client commands do not, but `KAZARI_URL` and `KAZARI_TOKEN` can live in a file you name with `KAZARI_ENV_FILE` instead of on the command line ([the rule](cli.md#environment-variables-and-env)). Keep `.env` out of version control. The `kazari-dev` MCP server in `.mcp.json` connects Claude Code to this server with a key exported as `KAZARI_DEV_TOKEN`.
 
 > [!NOTE]
 > Most browsers and systemd-resolved resolve `*.localhost`. If a tool on your system does not, add the hosts you need to `/etc/hosts`: `127.0.0.1 kazari.localhost api.kazari.localhost admin.kazari.localhost mcp.kazari.localhost demo.kazari.localhost`.
