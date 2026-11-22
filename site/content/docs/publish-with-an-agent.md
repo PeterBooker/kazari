@@ -20,7 +20,7 @@ Agents that run in a web or desktop app add Kazari as a custom connector, which 
 
 To connect one:
 
-1. In your agent's settings, add a custom connector with the address `https://mcp.art.example.com/` and connect.
+1. In your agent's settings, add a custom connector with the address `https://mcp.art.example.com/` and connect. Your account page, `https://art.example.com/account/`, shows this address with a copy button and the steps for each Claude app.
 2. The app sends you to sign in. If your organisation has set up single sign-on, use your work account. Otherwise sign in with your Kazari handle or email and your password, which you chose through the invite link your administrator sent you.
 3. Kazari shows a consent page naming the app, your account and what it may do. Approve it once.
 
@@ -49,7 +49,7 @@ claude mcp add --transport http kazari https://mcp.art.example.com/
 
 ### Agents that run on a schedule
 
-An agent that publishes on its own, such as a weekly report that nobody watches, should hold a credential that can do only that job. Ask your administrator for an API key restricted to the pages the agent keeps current, or issue one yourself if you hold a key:
+An agent that publishes on its own, such as a weekly report that nobody watches, should hold a credential that can do only that job. Make one under **Make a key** on your account page: tick only what the key may do, and give the page addresses it may touch, such as `weekly-*`. From the command line, if you already hold a key, the same is:
 
 ```sh
 kazari keys issue --label weekly-report --scopes artifacts:read,artifacts:write --slugs 'weekly-*' --expires 90d
@@ -139,6 +139,8 @@ Search engines are told not to index pages, unless you ask for a page to be inde
 
 A share link opens a members page for someone who cannot sign in, such as a client or an outside reviewer. Each link expires after a week unless you ask for longer, and you can revoke each one on its own.
 
+Ask your agent for one, or make it yourself: **Manage** beside the page on your account page opens its own page, where **Make a share link** shows the link once. Make the page members-only first; a public or unlisted page needs no link.
+
 Anyone who has the link can open the page until it expires or is revoked, so send it only to the people it is for.
 
 ## Tidying up
@@ -150,6 +152,8 @@ Pages you no longer need can retire themselves. Ask your agent to mark a page st
 3. The **slug is freed** and can be used again.
 
 To keep a page during its grace period, ask your agent to unmark it, or publish a new version, which clears the mark too.
+
+Your account page does the same without an agent: **Manage** beside a page opens its own page, with **Mark stale**, **Keep the page**, **Move to the bin**, **Restore the page** and **Publish this version** for an earlier version.
 
 You can also delete a page outright. The agent should check with you before a permanent delete, and apps that support it ask you to confirm.
 

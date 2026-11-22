@@ -79,7 +79,7 @@ An invite creates the user and a link that lets them choose a password. Invite a
 kazari admin users invite ana --email ana@example.com --name "Ana Lima"
 ```
 
-The command prints the link, `https://art.example.com/account/invite?token=kzl_...`, on stdout. Send it to the person over a channel you trust.
+The command prints the link, `https://art.example.com/account/invite?token=kzl_...`, on stdout. Send it to the person over a channel you trust, with the connector address, `https://mcp.art.example.com/`, for their agent. The dashboard writes this message for you beside the link.
 
 A link behaves the same whatever it is for:
 
@@ -110,7 +110,7 @@ Only an admin can invite an admin: add `--role admin`. The person's email, when 
 
 A password has at least 15 characters by default (`auth.local.min_password_length`) and at most 256. Length is the only rule: no character classes are required, and a password manager's output or a few unrelated words both work.
 
-Setting a password does not sign the person in. The next page is the sign-in page, where they enter it once more.
+Setting a password with an invite, a reset or the setup link signs the person in, in that browser and on the account page alone. The account page then welcomes them, with connecting an agent as the first step. The dashboard and the sign-in page for an agent ask for the new password once.
 
 ### Signing in with a password
 
@@ -118,7 +118,7 @@ The sign-in page asks for a handle or an email, and the password. A browser stay
 
 When an MCP client connects, `/oauth/authorize` shows this sign-in page first, unless the browser is already signed in. The consent page follows, naming the client, the account and the scopes, with **Approve** and **Deny**. A grant approved this way lasts as one approved after a provider sign-in does: no key bounds it.
 
-**Use an API key instead**, under the form, opens the form that takes a key in place of the password ([Signing in with an API key](#signing-in-with-an-api-key)).
+**Use an API key instead**, under **More ways to sign in** below the form, opens the form that takes a key in place of the password ([Signing in with an API key](#signing-in-with-an-api-key)).
 
 After several wrong passwords the page asks the person to wait before the next attempt, a second at first and never more than a minute. A wait ends by itself, and no account is ever locked.
 
@@ -170,18 +170,21 @@ A person who has lost their password opens **Lost your password? Use a recovery 
 
 Using a code sets the new password and signs the person out of every browser, as a reset link does. The code is used up, and their API keys and connected apps keep working.
 
+When the person came from a sign-in, such as connecting an agent or opening a members page, the recovery form returns them to it with their name filled in, and they sign in with the new password and carry on.
+
 Wrong codes slow the next attempt as wrong passwords do, a second at first and never more than a minute. A person with no codes left asks an admin for a [reset link](#resetting-a-password).
 
 ### The account page
 
-Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows:
+Every person has an account page at `https://<base>/account/`, where they sign in as anywhere else. It shows, in this order:
 
+- **Connect your AI agent**: the connector address with a copy button, the steps for claude.ai and the Claude desktop app, and the Claude Code command;
+- the pages they own, each with **Manage**, which opens [the page's own page](#managing-your-pages);
+- their connected apps, each of which they can disconnect;
 - their profile: handle, name, email and role, which only an admin changes;
 - their recent sign-ins and the recent security events of the account, such as a changed password, a new key or a reset link an admin made for them, each with who acted, since nobody is told of these by email;
 - the password form, passkeys and recovery codes, on an instance with built-in accounts;
-- their API keys, with issue, rotate and revoke;
-- their connected apps, each of which they can disconnect;
-- the pages they own.
+- their API keys, with issue, rotate and revoke.
 
 On an instance with an identity provider the page has no password form, passkeys or recovery codes, and everything else is the same.
 
@@ -201,7 +204,7 @@ The password form [confirms it is you](#confirming-it-is-you) and asks for the n
 
 #### Keys from the account page
 
-A person issues, rotates and revokes their own API keys on the account page, without a key in hand. What a new key can hold depends on how they signed in:
+A person issues, rotates and revokes their own API keys on the account page, without a key in hand. **What the key may do** has a box for each scope, all ticked at first, and **Page addresses** limits the key to pages whose address matches, such as `weekly-*`. What a new key can hold depends on how they signed in:
 
 - After signing in with a password or at the identity provider, a new key holds the member scopes at most (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`), for an admin too. A key with the `admin` scope comes from the dashboard or from `kazari admin keys issue`.
 - After signing in with an API key, a new key is bounded by that key, as on [`/me/keys`](api.md#your-own-keys-mekeys): no scope it lacks, a restriction inside its own, and an expiry no later.
@@ -211,6 +214,17 @@ The page revokes any of the person's keys. It rotates any but one that holds `ad
 A new or rotated key is shown once, on the page that answers the form. Reloading that page offers to send the form again, and doing so makes no second key: the page says **Form already sent**.
 
 A person can hold 50 live keys at most, however they are issued. Revoked and expired keys do not count. A key can still be rotated at the limit, because the key it replaces does not count against it.
+
+#### Managing your pages
+
+**Manage** beside a page opens `https://<base>/account/pages/<slug>`, where a person changes their own page without an agent or the command line:
+
+- **Who can open it**: public, unlisted or members only, or publish a hidden page again;
+- **Share links**: make one for someone who cannot sign in, such as a client, and revoke one. The link is shown once. The form is offered on a published members-only page alone; elsewhere the section says why, with a button that makes the page members-only;
+- **Versions**: **Publish this version** puts an earlier version back at the page's address;
+- **Lifecycle**: **Mark stale** with a grace period in days, **Keep the page**, **Move to the bin** and **Restore the page**.
+
+Each change is made as the person, with the rules of the [API](api.md): the write policy decides whose pages they may change, and after a sign-in with an API key the page offers only what that key's scopes allow. Under the default `owner` policy another member's page opens for looking, with nothing to change.
 
 ### Moving to an identity provider, or back
 
@@ -358,7 +372,7 @@ The dashboard has the same on a person's page, and the [admin API](api.md#identi
 
 ## Signing in with an API key
 
-On an instance without an identity provider, an API key signs a person in wherever a password does. With built-in accounts on, the sign-in page offers it as **Use an API key instead**. With `auth.local.enabled: false`, the key form is the only one.
+On an instance without an identity provider, an API key signs a person in wherever a password does. With built-in accounts on, the sign-in page offers it as **Use an API key instead**, under **More ways to sign in**. With `auth.local.enabled: false`, the key form is the only one.
 
 The form takes any of the person's keys that holds `artifacts:read`. The browser session lasts 12 hours or until the key is revoked or expires, whichever comes first. A key [restricted to some artifacts](api.md#restricted-credentials) is refused there, because a session opens every members page.
 
@@ -411,6 +425,8 @@ browser ──1──▶ team.<base>/report       no view cookie: 302, sets a no
 Every response to a `GET` on a members host, whether a page, an error, the redirect to sign in or a `/.kazari/` page, carries `Cross-Origin-Opener-Policy: same-origin`, as the sign-in page does. A window opened by another site therefore looks the same to its opener with access or without, so the opener cannot tell whether the visitor can see the page. It also means a members page has no `window.opener` from a page on another origin, and a popup it opens to another origin returns a handle that reads as closed. Public and unlisted artifacts do not send this header.
 
 Every sign-in session lasts 12 hours, and every view session it opened ends with it. A disabled user, or a revoked API key, loses access on the next request.
+
+The sign-in page of a members page starts with a note for a visitor who is no member: ask the person who sent the page for a share link. A share link to a page that is offline or gone opens a page that says the same.
 
 The account page and the dashboard are opened the same way, each with a cookie of its own on its own host: `__Host-kazari_account` on the apex and `__Host-kazari_admin` on the admin host.
 
