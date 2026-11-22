@@ -33,7 +33,8 @@ go run github.com/goreleaser/goreleaser/v2@latest check
 # Claude Code starts:
 #   export KAZARI_LISTEN_HTTP=127.0.0.1:18080 KAZARI_EXTERNAL_PORT=18080 KAZARI_DEV_URL=http://mcp.kazari.localhost:18080/
 go run ./cmd/kazari serve --local
-docker compose up --build -d    # the same from the Docker image (serve --local), data in the volume kazari_data
+docker compose up --build -d    # the same from the Docker image (serve --local), data in the volume kazari_data;
+                                # restarts with Docker until docker compose stop/down, and holds port 8080
 go run ./cmd/kazari check       # preflight: config, DNS, DNS token, ports (--local for the preset)
 
 # release dry run (real releases run in GitHub Actions from a version tag without a v, such as 0.3.0)

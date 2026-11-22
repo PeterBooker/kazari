@@ -65,6 +65,8 @@ docker compose exec kazari kazari admin setup-link
 docker compose exec kazari kazari admin keys issue peter --label laptop
 ```
 
+The container restarts whenever Docker starts, such as after a reboot, until you stop it with `docker compose stop` or `docker compose down`. While it runs it holds port 8080, so stop it before running `go run ./cmd/kazari serve --local`.
+
 `docker compose watch` rebuilds and restarts the container when the source changes, and `docker compose down` stops it; add `-v` to discard the data as well. `deploy/compose.yml` is the Compose file for a real server.
 
 ### Watching traces and metrics
