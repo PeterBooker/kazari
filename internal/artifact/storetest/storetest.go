@@ -36,6 +36,8 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"AddVersionConflict", testAddVersionConflict},
 		{"AddVersionConcurrent", testAddVersionConcurrent},
 		{"StagedVersion", testStagedVersion},
+		{"DeleteVersions", testDeleteVersions},
+		{"ListKeepVersions", testListKeepVersions},
 		{"Update", testUpdate},
 		{"UpdateErrors", testUpdateErrors},
 		{"UpdateCurrentRow", testUpdateCurrentRow},
@@ -391,6 +393,133 @@ func testStagedVersion(t *testing.T, h *harness) {
 	h.update(t, cur, "alice")
 	if got := staged("rolled back"); !slices.Equal(got, []bool{false, false}) {
 		t.Errorf("rolled back: versions 2 and 1 staged = %v, want [false false]", got)
+	}
+}
+
+// choose returns a DeleteVersions func that deletes numbers.
+func choose(numbers ...int) func(*artifact.Artifact, []artifact.Version) ([]int, error) {
+	return func(*artifact.Artifact, []artifact.Version) ([]int, error) { return numbers, nil }
+}
+
+func testDeleteVersions(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.create(t, newArtifact("demo", "alice", at(0)), file("index.html", "one"), file("big.bin", strings.Repeat("x", 100)))
+	for n := 2; n <= 4; n++ {
+		cur := h.get(t, "demo")
+		if err := h.addVersion(cur, newVersion("alice", at(time.Duration(n)*time.Hour), file("index.html", strings.Repeat("v", n))), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cur := h.get(t, "demo")
+	cur.PublishedVersion = 3
+	h.update(t, cur, "")
+	before, err := h.store.Usage(h.ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var seen []int
+	deleted, err := h.store.DeleteVersions(h.ctx, "demo", func(a *artifact.Artifact, vs []artifact.Version) ([]int, error) {
+		for _, v := range vs {
+			seen = append(seen, v.Number)
+		}
+		return []int{1, 2}, nil
+	})
+	if err != nil {
+		t.Fatalf("DeleteVersions(1, 2): %v", err)
+	}
+	if !slices.Equal(deleted, []int{1, 2}) || !slices.Equal(seen, []int{4, 3, 2, 1}) {
+		t.Errorf("DeleteVersions(1, 2) = %v after seeing %v; want [1 2] after [4 3 2 1]", deleted, seen)
+	}
+	got := h.get(t, "demo")
+	if got.PublishedVersion != 3 || got.LatestVersion != 4 {
+		t.Errorf("after deleting: published %d, latest %d; want 3 and 4", got.PublishedVersion, got.LatestVersion)
+	}
+	vs, err := h.store.ListVersions(h.ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 || vs[0].Number != 4 || vs[1].Number != 3 {
+		t.Errorf("ListVersions after deleting = %v, want versions 4 and 3", vs)
+	}
+	if after, err := h.store.Usage(h.ctx, "alice"); err != nil || after >= before {
+		t.Errorf("Usage after deleting = %d, %v; want less than %d", after, err, before)
+	}
+	unref, err := h.store.UnreferencedBlobs(h.ctx, at(1000*time.Hour), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(unref, hashOf(strings.Repeat("x", 100))) {
+		t.Errorf("UnreferencedBlobs after deleting = %v, want the blob only version 1 held", unref)
+	}
+
+	_, err = h.store.GetVersion(h.ctx, "demo", 2)
+	wantErr(t, "GetVersion(2) after deleting", err, artifact.ErrVersionNotFound)
+	if !strings.Contains(err.Error(), "deleted") {
+		t.Errorf("GetVersion(2) after deleting: %v, want a message that says it was deleted", err)
+	}
+	p, err := h.store.ResolveVersion(h.ctx, "demo", 2)
+	if err != nil || !p.VersionDeleted || p.VersionID != 0 || p.LatestVersion != 4 {
+		t.Errorf("ResolveVersion(2) = %+v, %v; want VersionDeleted, no version, latest 4", p, err)
+	}
+	_, err = h.store.ResolveVersion(h.ctx, "demo", 5)
+	wantErr(t, "ResolveVersion(5)", err, artifact.ErrVersionNotFound)
+
+	for _, tc := range []struct {
+		name string
+		fn   func(*artifact.Artifact, []artifact.Version) ([]int, error)
+		want error
+	}{
+		{"the published version", choose(3), artifact.ErrInvalidArgument},
+		{"the latest version", choose(4), artifact.ErrInvalidArgument},
+		{"a deleted version", choose(2), artifact.ErrVersionNotFound},
+		{"an error from fn", func(*artifact.Artifact, []artifact.Version) ([]int, error) { return nil, artifact.ErrForbidden }, artifact.ErrForbidden},
+	} {
+		_, err := h.store.DeleteVersions(h.ctx, "demo", tc.fn)
+		wantErr(t, "DeleteVersions of "+tc.name, err, tc.want)
+	}
+	// A failure after a deletion in the same call leaves both.
+	cur = h.get(t, "demo")
+	five := newVersion("alice", at(5*time.Hour), file("index.html", "five"))
+	five.Staged = true
+	if err := h.addVersion(cur, five, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.store.DeleteVersions(h.ctx, "demo", choose(4, 3))
+	wantErr(t, "DeleteVersions(4, published 3)", err, artifact.ErrInvalidArgument)
+	if _, err := h.store.GetVersion(h.ctx, "demo", 4); err != nil {
+		t.Errorf("version 4 after a failed DeleteVersions: %v, want it kept", err)
+	}
+	_, err = h.store.DeleteVersions(h.ctx, "missing", choose(1))
+	wantErr(t, "DeleteVersions missing", err, artifact.ErrNotFound)
+}
+
+func testListKeepVersions(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	for _, tc := range []struct {
+		slug    string
+		meta    map[string]string
+		deleted bool
+	}{
+		{"keeps", map[string]string{artifact.MetaKeepVersions: "3"}, false},
+		{"plain", map[string]string{"kazari.keep": "3"}, false},
+		{"binned", map[string]string{artifact.MetaKeepVersions: "3"}, true},
+	} {
+		a := newArtifact(tc.slug, "alice", at(0))
+		a.Metadata = tc.meta
+		h.create(t, a)
+		if tc.deleted {
+			cur := h.get(t, tc.slug)
+			cur.DeletedAt = new(at(time.Hour))
+			h.update(t, cur, "")
+		}
+	}
+	got, err := h.store.ListKeepVersions(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := slugs(got); !slices.Equal(s, []string{"keeps"}) {
+		t.Errorf("ListKeepVersions = %v, want [keeps]", s)
 	}
 }
 

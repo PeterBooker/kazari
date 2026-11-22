@@ -797,3 +797,22 @@ func TestShareLinkToNothing(t *testing.T) {
 		t.Error("the 404 of a page speaks of a link")
 	}
 }
+
+// A deleted version's host is gone for good, unless the page is offline,
+// which every host answers as not found.
+func TestDeletedVersion(t *testing.T) {
+	fx := newFixture(t)
+	fx.res.versions["demo"][1] = &artifact.Published{ArtifactID: 4, Slug: "demo", LatestVersion: 2, VersionDeleted: true,
+		Visibility: artifact.Public}
+	h := fx.handler(Options{})
+	if rec := do(t, h, http.MethodGet, "demo--v1.art.test", "/", nil); rec.Code != http.StatusGone {
+		t.Errorf("deleted version: status %d, want 410", rec.Code)
+	}
+	if rec := do(t, h, http.MethodGet, "demo.art.test", "/", nil); rec.Code != http.StatusOK {
+		t.Errorf("the published host beside a deleted version: status %d, want 200", rec.Code)
+	}
+	fx.res.versions["demo"][1].UnpublishedAt = new(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if rec := do(t, h, http.MethodGet, "demo--v1.art.test", "/", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("deleted version of an unpublished page: status %d, want 404", rec.Code)
+	}
+}
