@@ -80,19 +80,20 @@ type EditOutcome struct {
 	ExcerptOf int
 }
 
-// EditRequest edits one text file of the latest version into a new version.
+// EditRequest edits one text file of the base version into a new version.
 type EditRequest struct {
 	Slug            string
 	Path            string
 	Edits           []Edit
 	Label           string
 	ExpectedVersion int  // compared with LatestVersion; 0 = no check
+	BaseVersion     int  // the version edited, as in UpdateRequest
 	KeepStale       bool // a new version normally clears stale_at/expires_at
 }
 
 const editAttempts = 3
 
-// Edit applies req.Edits to a file of the latest version and publishes the
+// Edit applies req.Edits to a file of the base version and publishes the
 // result as a new version, returning an outcome per edit.
 func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (_ *Artifact, v *Version, out []EditOutcome, err error) {
 	ctx, span := s.span(ctx, "artifact.edit", req.Slug)
@@ -138,7 +139,11 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	}
-	data, f, err := s.readLatest(ctx, a, clean)
+	base, err := baseVersion(a, req.BaseVersion)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	data, f, err := s.readText(ctx, a.Slug, base, clean)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -149,10 +154,15 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	if edited == data {
 		return nil, nil, nil, Errorf(ErrInvalidArgument, "the edits leave %q unchanged", clean)
 	}
+	label := req.Label
+	if label == "" {
+		label = editLabel(clean, len(req.Edits))
+	}
 	got, v, err := s.update(ctx, actor, UpdateRequest{
 		Slug:            a.Slug,
-		Label:           req.Label,
-		ExpectedVersion: a.LatestVersion, // the version the edits were applied to
+		Label:           label,
+		ExpectedVersion: a.LatestVersion,
+		BaseVersion:     base, // the version the edits were applied to
 		KeepStale:       req.KeepStale,
 		Files:           []FileInput{{Path: clean, Content: strings.NewReader(edited), ContentType: f.ContentType}},
 	})
@@ -162,8 +172,16 @@ func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, cl
 	return got, v, out, nil
 }
 
-func (s *Service) readLatest(ctx context.Context, a *Artifact, p string) (string, File, error) {
-	v, err := s.store.GetVersion(ctx, a.Slug, a.LatestVersion)
+func editLabel(p string, edits int) string {
+	suffix := " (1 edit)"
+	if edits != 1 {
+		suffix = fmt.Sprintf(" (%d edits)", edits)
+	}
+	return "edit " + truncate(p, LabelMaxBytes-len("edit ")-len(suffix)) + suffix
+}
+
+func (s *Service) readText(ctx context.Context, slug string, number int, p string) (string, File, error) {
+	v, err := s.store.GetVersion(ctx, slug, number)
 	if err != nil {
 		return "", File{}, err
 	}
@@ -174,15 +192,15 @@ func (s *Service) readLatest(ctx context.Context, a *Artifact, p string) (string
 	f := v.Files[i]
 	rc, err := s.blobs.Open(ctx, f.Hash)
 	if err != nil {
-		return "", File{}, fmt.Errorf("artifact: open %s/%s: %w", a.Slug, p, err)
+		return "", File{}, fmt.Errorf("artifact: open %s/%s: %w", slug, p, err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(io.LimitReader(rc, s.opts.MaxFileBytes+1))
 	if err != nil {
-		return "", File{}, fmt.Errorf("artifact: read %s/%s: %w", a.Slug, p, err)
+		return "", File{}, fmt.Errorf("artifact: read %s/%s: %w", slug, p, err)
 	}
 	if int64(len(data)) > s.opts.MaxFileBytes {
-		return "", File{}, Errorf(ErrTooLarge, "%q is larger than the %d-byte file limit", p, s.opts.MaxFileBytes)
+		return "", File{}, Errorf(ErrTooLarge, "%q is over the %s file limit", p, FormatBytes(s.opts.MaxFileBytes))
 	}
 	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return "", File{}, Errorf(ErrInvalidArgument, "%q is not a UTF-8 text file; replace the whole file instead", p)
@@ -270,7 +288,7 @@ type editor struct {
 
 func (ed *editor) checkSize(size int64) error {
 	if ed.max > 0 && size > ed.max {
-		return Errorf(ErrTooLarge, "the edits would make %s %d bytes, more than the %d-byte file limit", ed.name, size, ed.max)
+		return Errorf(ErrTooLarge, "the edits would make %s %s, over the %s file limit", ed.name, FormatBytes(size), FormatBytes(ed.max))
 	}
 	return nil
 }

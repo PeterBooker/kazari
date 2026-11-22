@@ -155,7 +155,7 @@ func readBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	}
 	b := &bundle{f: f}
 	capped := &capReader{r: zr, left: limit,
-		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle exceeds %d bytes uncompressed", limit)}
+		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle is over %s uncompressed", artifact.FormatBytes(limit))}
 	if err := b.fill(tar.NewReader(capped), limit, capped.err); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}

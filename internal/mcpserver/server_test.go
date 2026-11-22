@@ -127,9 +127,9 @@ func TestGetArtifactPagesFileLists(t *testing.T) {
 	if _, _, err := e.deps.Artifacts.Create(e.ctx, alice, artifact.CreateRequest{Slug: "wide", Files: rows}); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
+	for i := range 2 {
 		if _, _, err := e.deps.Artifacts.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "wide",
-			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader("x")}}}); err != nil {
+			Files: []artifact.FileInput{{Path: "f0", Content: strings.NewReader(fmt.Sprint(i))}}}); err != nil {
 			t.Fatal(err)
 		}
 	}

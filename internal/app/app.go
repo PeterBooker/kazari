@@ -286,6 +286,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		WritePolicy:       cfg.Auth.WritePolicy,
 		DefaultVisibility: artifact.Visibility(cfg.Serve.DefaultVisibility),
 		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
+		CSP:               cfg.Serve.CSP,
+		AllowCSPOverride:  cfg.Serve.AllowCSPOverride,
 		Quotas:            users,
 		Now:               now,
 		Logger:            log,

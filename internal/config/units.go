@@ -94,17 +94,34 @@ const maxDays = math.MaxInt64 / int64(day)
 // "336h") with an optional leading whole-day component ("14d", "1d12h").
 type Duration time.Duration
 
-// ParseDuration is time.ParseDuration plus an optional leading whole-day
-// count ("14d").
+// ParseDuration is time.ParseDuration plus optional leading whole weeks
+// and days ("2w", "14d", "1w2d").
 func ParseDuration(s string) (Duration, error) {
 	t := strings.TrimSpace(s)
 	var days time.Duration
+	if i := strings.IndexByte(t, 'w'); i >= 0 {
+		n, err := strconv.ParseInt(t[:i], 10, 64)
+		if err != nil || n < 0 || n > maxDays/7 || !isDigits(t[:i]) {
+			return 0, fmt.Errorf("invalid duration %q: weeks must be a whole number before \"w\"", s)
+		}
+		days = time.Duration(n) * 7 * day
+		t = t[i+1:]
+		if t == "" {
+			return Duration(days), nil
+		}
+		if t[0] == '-' || t[0] == '+' {
+			return 0, fmt.Errorf("invalid duration %q: unexpected sign after weeks", s)
+		}
+	}
 	if i := strings.IndexByte(t, 'd'); i >= 0 {
 		n, err := strconv.ParseInt(t[:i], 10, 64)
 		if err != nil || n < 0 || n > maxDays || !isDigits(t[:i]) {
 			return 0, fmt.Errorf("invalid duration %q: days must be a whole number before \"d\"", s)
 		}
-		days = time.Duration(n) * day
+		if time.Duration(n)*day > math.MaxInt64-days {
+			return 0, fmt.Errorf("invalid duration %q: too large", s)
+		}
+		days += time.Duration(n) * day
 		t = t[i+1:]
 		if t == "" {
 			return Duration(days), nil

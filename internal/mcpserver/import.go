@@ -45,7 +45,7 @@ func (b *builder) addImport(s *mcp.Server, p auth.Principal, actor artifact.Acto
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			res := writeResult(b.d.Links.Imported(art, v.Number, rep))
+			res := writeResult(b.d.Links.Imported(art, v, rep))
 			return res, importedLine(res), nil
 		})
 }

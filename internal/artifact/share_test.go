@@ -205,9 +205,8 @@ func TestShareLinkOfflineArtifact(t *testing.T) {
 	}
 	_, _, err := e.svc.CreateShareLink(e.ctx, bob, "demo", "", 0)
 	wantErr(t, "stranger on an unpublished artifact", err, artifact.ErrNotFound)
-	if _, _, err := e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0); err != nil {
-		t.Fatalf("owner on an unpublished artifact: %v", err)
-	}
+	_, _, err = e.svc.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	wantErr(t, "owner on an unpublished artifact, which the link could not open", err, artifact.ErrInvalidArgument)
 }
 
 // Revoking a user's links ends them in the serving path, leaves other

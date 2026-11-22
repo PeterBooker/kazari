@@ -306,7 +306,7 @@ func must(err error) {
 
 // nextStepOrder is the row order of the skill's error table.
 var nextStepOrder = []string{
-	api.CodeVersionConflict, api.CodeAnchorMismatch, api.CodeEditNotFound, api.CodeEditAmbiguous,
+	api.CodeVersionConflict, api.CodePublishedNotLatest, api.CodeAnchorMismatch, api.CodeEditNotFound, api.CodeEditAmbiguous,
 	api.CodeSlugTaken, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument, api.CodeNotFound, api.CodeFileNotFound, api.CodeVersionNotFound,
 	api.CodeGone, api.CodeTooLarge, api.CodeTooManyFiles, api.CodeQuotaExceeded, api.CodeUploadNotFound,
 	api.CodeOffsetMismatch, api.CodeTooManyUploads, api.CodeLinkNotFound, api.CodeFetchFailed, api.CodeForbidden,
@@ -318,6 +318,9 @@ func (t texts) nextSteps(o Options) map[string]string {
 	return map[string]string{
 		api.CodeVersionConflict: "Someone published since you read it: read the artifact again (get_artifact, or read_file " +
 			"for the file), redo your change on the new content and retry with expected_version set to the new latest_version.",
+		api.CodePublishedNotLatest: "An earlier version was published again, usually a rollback. Ask the user which version " +
+			"to change unless they already said: set base_version to the published version to fix the page people see, or " +
+			"to the latest to carry on from it, then call again.",
 		api.CodeAnchorMismatch: "The file changed since you read it: call read_file with anchors: true for fresh anchors " +
 			"(start_line and end_line around the change are enough), then redo the edit.",
 		api.CodeEditNotFound: "Copy old_text exactly from the current file (read_file shows it; the error names the closest " +
@@ -352,7 +355,8 @@ func (t texts) nextSteps(o Options) map[string]string {
 			"user to save it from their browser and publish the files with create_artifact or kazari publish.",
 		api.CodeForbidden: "Retrying the same call will not help. If the message names slug patterns, the credential " +
 			"reaches only artifacts whose slug matches one: give a new artifact a matching slug. If it names visibility, " +
-			"call again without visibility. Otherwise tell the user: the connection's credential lacks the scope, or the " +
+			"this connection cannot choose who opens a page: tell the user, and publish without visibility only if they " +
+			"agree to the instance's default audience. Otherwise tell the user: the connection's credential lacks the scope, or the " +
 			"instance's write policy reserves the artifact for its owner.",
 		api.CodeRateLimited: "Wait as long as the message says, then repeat the call.",
 		api.CodeInternal:    "The server failed. Retry once; if it fails again, tell the user.",

@@ -35,7 +35,7 @@ func FuzzParseBytes(f *testing.F) {
 }
 
 func FuzzParseDuration(f *testing.F) {
-	for _, s := range []string{"15m", "336h", "14d", "1d12h", "0", "0d", "1h0m0s", "90s", "1.5h", "-5m", " 2d ", "106751d", "106752d",
+	for _, s := range []string{"15m", "336h", "14d", "2w", "1w2d", "1w-1h", "1d12h", "0", "0d", "1h0m0s", "90s", "1.5h", "-5m", " 2d ", "106751d", "106752d",
 		"106751d23h47m16.854775807s", "106751d24h", "1d-1h", "1d+1h", "-1d", "1.5d", "d", "1d1d", "5", "1dh", "", "١d"} {
 		f.Add(s)
 	}

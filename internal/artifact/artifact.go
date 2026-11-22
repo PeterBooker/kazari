@@ -68,6 +68,12 @@ type Version struct {
 	CreatedAt time.Time
 	SizeBytes int64
 	Files     []File // sorted by Path; empty unless requested
+
+	// Unchanged and Warnings describe the publish that returned the version
+	// and are never stored. Unchanged means the files matched the latest
+	// version, which is returned instead of a new one.
+	Unchanged bool
+	Warnings  []string
 }
 
 // File is one entry of a version.
@@ -129,10 +135,13 @@ type UpdateRequest struct {
 	Metadata        map[string]*string // nil value deletes the key
 	Visibility      *Visibility
 	Label           string
-	ExpectedVersion int  // compared with LatestVersion; 0 = no check
-	KeepStale       bool // a new version or a restore normally clears stale_at/expires_at
-	Restore         bool
-	Files           []FileInput
+	ExpectedVersion int // compared with LatestVersion; 0 = no check
+	// BaseVersion is the version a new one is built on; 0 is the latest,
+	// refused while an earlier version is published.
+	BaseVersion int
+	KeepStale   bool // a new version or a restore normally clears stale_at/expires_at
+	Restore     bool
+	Files       []FileInput
 }
 
 // ListQuery filters a listing. Viewer sees public artifacts plus any it

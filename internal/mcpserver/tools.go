@@ -367,7 +367,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			res := writeResult(links.Result(a, v.Number))
+			res := writeResult(links.Published(a, v))
 			return res, publishedLine(res), nil
 		})
 
@@ -410,14 +410,11 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			n := 0
-			if v != nil {
-				n = v.Number
-			}
-			res := writeResult(links.Result(a, n))
 			if v == nil {
+				res := writeResult(links.Result(a, 0))
 				return res, "Updated fields, no new version. " + publishedLine(res), nil
 			}
+			res := writeResult(links.Published(a, v))
 			return res, publishedLine(res), nil
 		})
 
@@ -440,7 +437,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				return EditFileResult{}, "", err
 			}
 			clean, _ := artifact.ValidatePath(in.Path) // valid: Edit accepted it
-			res := editFileResult(links.Edit(a, v.Number, clean, outs))
+			res := editFileResult(links.Edit(a, v, clean, outs))
 			return res, editLine(res), nil
 		})
 

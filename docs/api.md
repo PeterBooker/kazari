@@ -109,10 +109,22 @@ A version has the fields `number`, `label`, `created_by`, `created_at`, `size_by
 Create, update, publish, unstale and visibility changes return a publish result:
 
 ```json
-{ "url": "https://q3-report.art.example.com/", "version": 3, "artifact": { ... } }
+{
+  "url": "https://q3-report.art.example.com/", "version": 3,
+  "version_url": "https://q3-report--v3.art.example.com/",
+  "warnings": ["index.html refers to logo.png, which is not in this version"],
+  "artifact": { ... }
+}
 ```
 
-`version` is the version the call created or moved to. For a change to fields only, it is the published version. A create with `source_url` adds an `import` field ([Importing a web page](#importing-a-web-page)).
+The fields say what happened:
+
+- `version` is the version the call created or moved to, and `version_url` is its pinned address. For a change to fields only, it is the published version.
+- `unchanged` is `true` when an update sent files that match the latest version exactly. No version is added, and `version` is the latest.
+- `warnings` lists what will stop the version rendering as it should. The version is published anyway. The checks cover a missing root `index.html`, files a page or stylesheet refers to that are not in the version, and scripts, stylesheets, fonts, images, frames and media from origins the page's Content-Security-Policy blocks.
+- A create with `source_url` adds an `import` field ([Importing a web page](#importing-a-web-page)).
+
+A create without a `name` takes the `<title>` of its `index.html` as the name. A version added without a `label` gets one that lists what changed, such as `~index.html +logo.png -old.css`, or `edit index.html (2 edits)` for an edit.
 
 ### Rules
 
@@ -337,10 +349,17 @@ An unpublished or soft-deleted artifact is returned, with `unpublished_at` or `d
 Changes files and fields in one call, and returns a publish result. Sending files creates a new version built from the **latest** version's files plus the changes:
 
 - Paths you send are added or replaced.
-- Entries with `delete: true` are removed.
+- Entries with `delete: true` are removed. Deleting a path the version does not have is `404 file_not_found`.
 - Everything else is carried over.
 
-Sending no files changes fields only and creates no version.
+Sending no files changes fields only and creates no version, and so do files that leave the version as it is (the result says `unchanged`).
+
+#### After a rollback
+
+When an earlier version is published, as after a [rollback](#roll-back-or-forward-post-artifactsslugpublish), a change built on the latest version would publish it again and undo the rollback. Such a change is `409 published_not_latest` until it names its base with `base_version`:
+
+- The published version's number changes the page people see now.
+- The latest version's number carries on from it.
 
 #### JSON body
 
@@ -371,6 +390,7 @@ These fields work differently from create, or exist only here:
 | `metadata`         | Merged into the existing metadata; `null` deletes a key                         |
 | `visibility`       | `public`, `unlisted`, `members` or `unpublished`; applied after everything else. Needs `artifacts:share` |
 | `expected_version` | Fails with `412 version_conflict` unless this is the latest version             |
+| `base_version`     | The version the new one is built on; needed while an earlier version is published ([after a rollback](#after-a-rollback)) |
 | `keep_stale`       | `true` keeps `stale_at` and `expires_at`, which a new version or a `restore` otherwise clears |
 | `restore`          | Clears `deleted_at` on a soft-deleted artifact, which is `404` without it       |
 
@@ -469,6 +489,7 @@ Every anchor refers to the file as read, and the ranges must not overlap; an ins
 These rules apply to both kinds of edit:
 
 - `expected_version` (or `If-Match`) fails the request with `412 version_conflict` if someone published since. Without it, edits apply to the newest content.
+- While an earlier version is published, an edit needs `base_version`, as an [update does](#after-a-rollback). The edits apply to that version's file.
 - A binary file is `422 invalid_argument`.
 - A result larger than `limits.max_file_bytes` is `413 too_large`.
 
@@ -478,7 +499,8 @@ The response is an edit result:
 
 ```json
 {
-  "url": "https://q3-report.art.example.com/", "version": 5, "path": "index.html",
+  "url": "https://q3-report.art.example.com/", "version": 5,
+  "version_url": "https://q3-report--v5.art.example.com/", "path": "index.html",
   "edits": [
     { "match": "exact", "replacements": 1, "start_line": 12, "end_line": 12,
       "excerpt": "10:5d2e|  <body>\n11:0b7f|    <header>\n12:a41c|      <h1>Q4 report</h1>\n13:77e0|    </header>\n14:2c9d|    <main>" },
@@ -495,6 +517,8 @@ Each entry in `edits` describes one edit:
 - `excerpt` shows those lines, with two more on each side, anchored, so a follow-up anchor edit needs no new read. It holds at most 24 lines of new text, and lines longer than 160 bytes are clipped with a note.
 - In a new text of more than four lines that was sent as it is, the excerpt shows the first and last lines in full and the lines between as bare anchors, such as `8:a36d`. A text re-indented by an `indentation` match shows in full.
 - `excerpt_of` is set when the edit's excerpt would overlap or touch an earlier one: that edit's excerpt, named by its 1-based number, shows both, and this edit's `excerpt` is empty.
+
+The result also carries `warnings`, as a [publish result](#the-publish-result) does.
 
 ### Roll back or forward: `POST /artifacts/{slug}/publish`
 
@@ -514,7 +538,7 @@ The response is a publish result. A version that does not exist is `404 version_
 { "grace": "72h" }
 ```
 
-`grace` is a Go duration, so it counts in hours, not days: `336h` is 14 days. Without it, `lifecycle.default_grace` applies. The response is a stale result:
+`grace` is a duration such as `72h`, `3d` or `2w`, and whole weeks and days can lead hours, as in `1d12h`. Without it, `lifecycle.default_grace` applies. The response is a stale result:
 
 ```json
 { "stale_at": "2026-10-24T09:00:00Z", "expires_at": "2026-10-27T09:00:00Z", "artifact": { ... } }
@@ -559,7 +583,7 @@ The link's URL opens the latest host. The cookie it sets is per host, so to open
 
 Creating and revoking links needs `artifacts:share`, and the same rights as changing the artifact, so the write policy applies. An offline artifact's links can be managed only by the people who can see the artifact.
 
-A link on a `public` or `unlisted` artifact works but changes nothing, since those pages open for anyone anyway.
+A link on a `public` or `unlisted` artifact works but changes nothing, since those pages open for anyone anyway. An `unpublished` artifact takes no new links, which would open nothing: `422 invalid_argument`.
 
 #### Create a share link: `POST /artifacts/{slug}/share-links`
 
@@ -569,7 +593,7 @@ The body is optional. To name the link and set how long it lasts, send `label` a
 { "label": "Acme review", "expires_in": "14d" }
 ```
 
-`expires_in` is a duration such as `72h` or `14d`. It defaults to 7 days, and can be at most `serve.share_link_max_ttl`, which is 90 days by default. `label` follows the version label rules.
+`expires_in` is a duration such as `72h`, `14d` or `2w`. It defaults to 7 days, and can be at most `serve.share_link_max_ttl`, which is 90 days by default. `label` follows the version label rules.
 
 The response is the only time the link's URL, which holds its token, is returned:
 
@@ -1113,6 +1137,7 @@ These are the codes, with their HTTP status and meaning:
 | `slug_taken`             | 409    | Slug exists (including a purged slug still in its tombstone period)                |
 | `upload_offset_mismatch` | 409    | Chunk offset does not match the staged size                                        |
 | `anchor_mismatch`        | 409    | Edit: an anchor's line changed since it was read, or is past the end of the file   |
+| `published_not_latest`   | 409    | An earlier version is published; send `base_version` ([after a rollback](#after-a-rollback)) |
 | `handle_taken`           | 409    | Admin API: handle exists                                                           |
 | `email_taken`            | 409    | Admin API: another user has the email                                              |
 | `job_running`            | 409    | Admin API: the job is already running                                              |

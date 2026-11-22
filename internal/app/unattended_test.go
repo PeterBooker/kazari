@@ -174,7 +174,8 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 		t.Fatalf("GET /me with the connection = %+v, %v; want the key's restriction and expiry", viaOAuth, err)
 	}
 	oauthCS := mcpSession(t, addr, first.AccessToken)
-	if text, failed := toolText(t, oauthCS, "update_artifact", map[string]any{"slug": "weekly-report", "files": file}); failed {
+	if text, failed := toolText(t, oauthCS, "update_artifact", map[string]any{"slug": "weekly-report",
+		"files": []map[string]string{{"path": "index.html", "content": "<h1>Weekly, again</h1>"}}}); failed {
 		t.Fatalf("update through the connection: %s", text)
 	}
 	if text, failed := toolText(t, oauthCS, "get_artifact", map[string]any{"slug": "payroll"}); !failed || !strings.HasPrefix(text, "forbidden:") {

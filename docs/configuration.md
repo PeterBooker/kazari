@@ -169,7 +169,7 @@ An override's value is a string. Keys that are not strings take these formats:
 - **Booleans**: `true`, `false`, `1`, `0`, or anything else Go's `strconv.ParseBool` takes.
 - **Lists**: comma-separated, with spaces trimmed: `KAZARI_AUTH_OIDC_ALLOWED_DOMAINS=example.com,example.org`. A variable replaces the whole list.
 - **Sizes**: an integer with an optional unit, case-insensitive, with an optional space. `B`, `KiB`, `MiB`, `GiB` and `TiB` are powers of 1024; `KB`, `MB`, `GB` and `TB` are powers of 1000. For example `"50MiB"`, `"2 GiB"` or `52428800`.
-- **Durations**: Go durations such as `"15m"`, `"336h"` or `"1h30m"`, with an optional leading whole number of days: `"14d"`, `"1d12h"`.
+- **Durations**: Go durations such as `"15m"`, `"336h"` or `"1h30m"`, led by whole weeks and days if wanted: `"2w"`, `"14d"`, `"1d12h"`.
 
 ## Checking the configuration
 

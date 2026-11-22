@@ -460,7 +460,7 @@ func TestUpdateAddsVersion(t *testing.T) {
 	a, v, err := e.svc.Update(e.ctx, bob, artifact.UpdateRequest{
 		Slug:  "demo",
 		Label: "second",
-		Files: append(files("c.txt", "new c", "d/e.txt", "ddd"), del("b.txt"), del("never-existed")),
+		Files: append(files("c.txt", "new c", "d/e.txt", "ddd"), del("b.txt")),
 	})
 	if err != nil {
 		t.Fatal(err)

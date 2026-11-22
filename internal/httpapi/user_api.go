@@ -252,7 +252,7 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusCreated, h.links.Imported(a, v.Number, rep))
+		writeJSON(w, http.StatusCreated, h.links.Imported(a, v, rep))
 		return nil
 	}
 	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
@@ -308,7 +308,7 @@ func (h *userAPI) create(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusCreated, h.links.Result(a, v.Number))
+	writeJSON(w, http.StatusCreated, h.links.Published(a, v))
 	return nil
 }
 
@@ -429,11 +429,10 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 	}
 
 	var (
-		a       *artifact.Artifact
-		version int
+		a *artifact.Artifact
+		v *artifact.Version
 	)
 	if !visibilityOnly {
-		var v *artifact.Version
 		a, v, err = h.d.Artifacts.Update(r.Context(), actor, artifact.UpdateRequest{
 			Slug:            slug,
 			Name:            req.Name,
@@ -441,6 +440,7 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 			Metadata:        req.Metadata,
 			Label:           req.Label,
 			ExpectedVersion: expected,
+			BaseVersion:     req.BaseVersion,
 			KeepStale:       req.KeepStale,
 			Restore:         req.Restore,
 			Files:           files,
@@ -448,16 +448,21 @@ func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principa
 		if err != nil {
 			return err
 		}
-		if v != nil {
-			version = v.Number
-		}
 	}
 	if req.Visibility != nil {
 		if a, err = h.d.Artifacts.SetVisibility(r.Context(), actor, slug, *req.Visibility); err != nil {
 			return err
 		}
 	}
-	writeJSON(w, http.StatusOK, h.links.Result(a, version))
+	if v != nil {
+		res := h.links.Published(a, v)
+		if req.Visibility != nil {
+			res.Artifact = h.links.Artifact(a)
+		}
+		writeJSON(w, http.StatusOK, res)
+		return nil
+	}
+	writeJSON(w, http.StatusOK, h.links.Result(a, 0))
 	return nil
 }
 
@@ -501,13 +506,14 @@ func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 		Edits:           edits,
 		Label:           req.Label,
 		ExpectedVersion: expected,
+		BaseVersion:     req.BaseVersion,
 		KeepStale:       req.KeepStale,
 	})
 	if err != nil {
 		return err
 	}
 	clean, _ := artifact.ValidatePath(req.Path) // valid: Edit accepted it
-	writeJSON(w, http.StatusOK, h.links.Edit(a, v.Number, clean, outs))
+	writeJSON(w, http.StatusOK, h.links.Edit(a, v, clean, outs))
 	return nil
 }
 
@@ -598,9 +604,9 @@ func (h *userAPI) markStale(w http.ResponseWriter, r *http.Request, p auth.Princ
 	}
 	var grace time.Duration
 	if req.Grace != "" {
-		d, err := time.ParseDuration(req.Grace)
+		d, err := present.ParseDuration("grace", req.Grace)
 		if err != nil || d <= 0 {
-			return invalid("grace must be a positive duration such as 336h")
+			return invalid("grace must be a positive duration such as 72h, 3d or 2w")
 		}
 		grace = d
 	}

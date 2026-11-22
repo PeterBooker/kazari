@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -344,6 +345,50 @@ func FuzzApplyEditsAnchor(f *testing.F) {
 		}
 		if err := outcomeError(got, outs[0]); err != nil {
 			t.Errorf("ApplyEdits(%q, %+v) = %q, %+v: %v", content, edit, got, outs[0], err)
+		}
+	})
+}
+
+func FuzzPageTitle(f *testing.F) {
+	for _, s := range []string{"<title>Q3 report</title>", "<html><head><title>\n  Team\tnotes </title>", "<title></title>",
+		"<title>a&amp;b</title>", "<svg><title>x</title></svg>", "", "<title>" + strings.Repeat("é", 300)} {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		title := artifact.PageTitle(data)
+		if title == "" {
+			return
+		}
+		if err := artifact.ValidateName(title); err != nil {
+			t.Errorf("PageTitle(%q) = %q, an invalid name: %v", data, title, err)
+		}
+		if title != strings.TrimSpace(title) || strings.Contains(title, "  ") {
+			t.Errorf("PageTitle(%q) = %q, want collapsed whitespace", data, title)
+		}
+	})
+}
+
+func FuzzCheckPage(f *testing.F) {
+	const policy = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data: https:"
+	for _, s := range []string{
+		`<script src="https://cdn.tailwindcss.com"></script><img src="/logo.png"><link rel=stylesheet href="a.css">`,
+		`<style>@import url("https://fonts.bunny.net/css"); .x{background:url(img/bg.png)}</style>`,
+		`<iframe src="//www.youtube.com/embed/x"></iframe><a href="missing.html">`, "", "<style>url(",
+	} {
+		f.Add("index.html", []byte(s))
+	}
+	f.Add("css/site.css", []byte(`@font-face{src:url(../fonts/a.woff2)} body{background:url("data:image/png;base64,AA")}`))
+	f.Fuzz(func(t *testing.T, page string, data []byte) {
+		got := artifact.CheckPage(policy, true, page, data)
+		if again := artifact.CheckPage(policy, true, page, data); !slices.Equal(got, again) {
+			t.Errorf("CheckPage(%q) differs between runs: %q, then %q", data, got, again)
+		}
+		seen := map[string]bool{}
+		for _, w := range got {
+			if seen[w] {
+				t.Errorf("CheckPage(%q) repeats %q", data, w)
+			}
+			seen[w] = true
 		}
 	})
 }
