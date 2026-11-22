@@ -208,6 +208,7 @@ func TestIssueKeyWithKeyAfterDemotion(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, user.Options{})
 	f.mustCreate(t, "root", "", user.RoleAdmin)
+	f.mustCreate(t, "second", "", user.RoleAdmin)
 	admin, secret := f.issue(t, user.IssueKeyRequest{Handle: "root", Scopes: auth.AllScopes})
 	member := user.RoleMember
 	if _, err := f.svc.UpdateUser(ctx, "root", user.UpdateUserRequest{Role: &member}); err != nil {

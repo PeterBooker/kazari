@@ -44,6 +44,11 @@ func TestMetricNames(t *testing.T) {
 	if err := in.app.Scheduler().Trigger(context.Background(), "sweep"); err != nil {
 		t.Fatal(err)
 	}
+	// The readiness checks run once at start, in the background: wait for
+	// that run, so its gauges are in the scrape every time.
+	if _, err := cli.NewClient("http://admin.localhost", adminToken, hc).Ready(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tt := range []struct{ file, accept string }{
 		{"metrics.txt", "text/plain;version=0.0.4"},

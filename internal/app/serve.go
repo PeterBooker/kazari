@@ -20,6 +20,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // readTimeout and writeTimeout stop a stalled client holding a connection
@@ -54,7 +56,6 @@ func (a *App) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	close(a.started)
 	addrs := a.Addrs()
 	a.log.Info("kazari started",
 		"version", buildinfo.Get().Version,
@@ -71,8 +72,20 @@ func (a *App) Run(ctx context.Context) (err error) {
 		"api", a.cfg.ExternalURL("api"),
 		"mcp", a.cfg.ExternalURL("mcp"),
 		"admin", a.cfg.ExternalURL("admin"),
+		"dashboard", a.cfg.DashboardEnabled(),
 	)
+	switch {
+	case !a.cfg.Admin.Dashboard || a.cfg.DashboardEnabled():
+	case a.cfg.AdminURL() == "":
+		a.log.Warn("the dashboard is off: admin.listen moves the admin host and admin.public_url does not say where a browser reaches it",
+			"next", "set admin.public_url, for example http://localhost:9443 for an SSH tunnel to admin.listen")
+	default:
+		a.log.Warn("the dashboard is off: its address is plain http on a host that is not this machine",
+			"address", a.cfg.AdminURL(), "next", "serve the admin host over https, or set admin.public_url to an https address")
+	}
 	a.firstRunHint(context.WithoutCancel(ctx))
+	// After the hint, so whoever waits for the listeners can read it.
+	close(a.started)
 
 	// Background work outlives the servers' shutdown so in-flight requests
 	// finish against a working system.
@@ -95,6 +108,16 @@ func (a *App) Run(ctx context.Context) (err error) {
 		})
 	}
 	g.Go(func() error { return a.sched.Run(bg) })
+	// Once at start, so the dashboard and the readiness gauge say what a
+	// restart with a broken configuration did, without anyone asking. After
+	// that the checks run on demand: one writes a record at the DNS
+	// provider, which is no work for a timer.
+	g.Go(func() error {
+		if _, err := a.ready.Check(bg, false); err != nil && bg.Err() == nil {
+			a.log.Warn("readiness checks at start", "err", err)
+		}
+		return nil
+	})
 	if a.certs != nil {
 		g.Go(func() error {
 			if err := a.certs.Run(bg); err != nil {
@@ -118,12 +141,27 @@ func (a *App) Run(ctx context.Context) (err error) {
 	return err
 }
 
-// firstRunHint tells an operator watching the log of a fresh instance how
-// to create the first admin, over the socket on this host or with the admin
-// token from anywhere.
+// firstRunHint tells an operator watching a fresh instance how to create
+// the first admin. With built-in accounts that is a setup link, written
+// straight to stderr: a log line may be exported to a collector, and the
+// link makes whoever opens it the admin. Otherwise it is two commands, over
+// the socket on this host or with the admin token from anywhere.
 func (a *App) firstRunHint(ctx context.Context) {
 	users, err := a.users.ListUsers(ctx)
 	if err != nil || len(users) > 0 {
+		return
+	}
+	if a.cfg.LocalAccounts() {
+		l, token, err := a.users.SetupLink(ctx)
+		if err != nil {
+			a.log.WarnContext(ctx, "no users yet, and no setup link could be made", "err", err, "next", "kazari admin setup-link")
+			return
+		}
+		link := present.Links{URL: a.cfg.ExternalURL}.AccountLinkURL(user.PurposeSetup, token)
+		fmt.Fprintf(a.stderr, "\nKazari has no users yet. Open this link to create the first admin:\n\n    %s\n\n"+
+			"It works once, until %s. For a fresh one run: kazari admin setup-link\n\n",
+			link, l.ExpiresAt.UTC().Format("15:04 UTC"))
+		a.log.WarnContext(ctx, "no users yet", "next", "open the setup link printed on stderr, or run kazari admin setup-link")
 		return
 	}
 	how := "set KAZARI_AUTH_ADMIN_TOKEN and run it with KAZARI_ADMIN_URL=" + strings.TrimSuffix(a.cfg.ExternalURL("admin"), "/")

@@ -23,6 +23,11 @@ tls:
 # no token. To administer from elsewhere, set KAZARI_AUTH_ADMIN_TOKEN in the
 # dotenv file (at least 32 characters: openssl rand -hex 32).
 
+# People sign in with built-in accounts, and a fresh instance prints a setup
+# link for its first admin. The dashboard is at https://admin.<base_domain>/.
+# To sign people in at an OpenID Connect provider instead, add auth.oidc:
+# https://kazari.io/docs/identity/
+
 # To send traces to an OpenTelemetry collector or vendor (its token, if any,
 # goes in the dotenv file as KAZARI_TELEMETRY_OTLP_HEADERS):
 # telemetry:

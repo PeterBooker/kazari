@@ -26,9 +26,12 @@ const (
 const (
 	viaOIDC           = "oidc"
 	viaAPIKey         = "api_key"
+	viaPassword       = "password"
+	viaPasskey        = "passkey"
 	signInOK          = "ok"
 	signInNotAdmitted = "not_admitted"
 	signInFailed      = "failed"
+	signInDelayed     = "delayed" // refused unseen, too soon after failures
 )
 
 // errorCodes are the RFC 6749 and RFC 7591 error codes Kazari answers with,

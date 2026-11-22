@@ -1,0 +1,52 @@
+{{define "activity"}}{{template "theme/shell" .Shell}}<div class="page">
+<header class="head">
+<div class="head-row">
+<h1 class="title">Activity</h1>
+<span class="ja" lang="ja" aria-hidden="true">履歴</span>
+</div>
+<p class="lede">Who did what, newest first. Nothing prunes this log: events are kept for as long as the instance's database, and a backup includes them.</p>
+</header>
+{{template "flash" .}}
+{{with .Data}}
+<section class="section" aria-labelledby="activity-list">
+<h2 class="h2 sr-only" id="activity-list">Events</h2>
+<form class="filters" method="get" action="/activity">
+<div class="field"><label for="f-person">Person</label><input class="input input-mono" id="f-person" name="person" type="text" value="{{.Filter.Actor}}" autocapitalize="none" spellcheck="false" placeholder="A handle"></div>
+<div class="field"><label for="f-slug">Page</label><input class="input input-mono" id="f-slug" name="slug" type="text" value="{{.Filter.Slug}}" autocapitalize="none" spellcheck="false" placeholder="A slug"></div>
+<div class="field"><label for="f-kind">Kind</label><select class="input" id="f-kind" name="kind"><option value="">Any</option>{{range .Kinds}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Kind}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+<div class="field"><label for="f-from">From</label><input class="input" id="f-from" name="from" type="date" value="{{.Filter.From}}"{{if .Filter.FromError}} aria-invalid="true" aria-describedby="f-from-err"{{end}}>
+{{with .Filter.FromError}}<p class="error" id="f-from-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<div class="field"><label for="f-to">To</label><input class="input" id="f-to" name="to" type="date" value="{{.Filter.To}}"{{if .Filter.ToError}} aria-invalid="true" aria-describedby="f-to-err"{{end}}>
+{{with .Filter.ToError}}<p class="error" id="f-to-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}</div>
+<button type="submit" class="btn">Filter</button>
+{{if .Filter.Set}}<a class="link" href="/activity">Clear</a>{{end}}
+</form>
+<p class="help">Dates are whole days in UTC, and the last day is included.</p>
+{{if .Events}}{{template "events" .Events}}
+<nav class="pager" aria-label="Pages of activity">
+{{with .First}}<a class="btn btn-sm" href="{{.}}">First page</a>{{end}}
+{{with .Next}}<a class="btn btn-sm" href="{{.}}" rel="next">Older</a>{{end}}
+</nav>
+{{else}}<div class="empty">
+{{if or .Filter.Set .First}}<p>No event matches this filter.</p>
+<a class="btn" href="/activity">Show all activity</a>
+{{else}}<p>Nothing has happened yet. Every change to a page, a person, a key or a sign-in is recorded here, with who made it.</p>
+<a class="btn" href="/people">See people</a>{{end}}
+</div>{{end}}
+</section>
+
+<section class="box section" aria-labelledby="activity-export">
+<h2 class="h2" id="activity-export">Export</h2>
+<p class="soft">Download {{if .Filter.Set}}the events this filter matches{{else}}every event{{end}} as a CSV file, for a spreadsheet or an archive. The export is itself recorded here.</p>
+<form method="post" action="/activity/export">
+{{template "token" $}}
+<input type="hidden" name="person" value="{{.Filter.Actor}}">
+<input type="hidden" name="slug" value="{{.Filter.Slug}}">
+<input type="hidden" name="kind" value="{{.Filter.Kind}}">
+<input type="hidden" name="from" value="{{.Filter.From}}">
+<input type="hidden" name="to" value="{{.Filter.To}}">
+<div class="actions"><button type="submit" class="btn">{{template "icon/download"}}Export as CSV</button></div>
+</form>
+</section>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}

@@ -31,6 +31,9 @@ const (
 	// SourceLocal is a request on the admin Unix socket, whose file
 	// permissions stand in for a credential.
 	SourceLocal = "local"
+	// SourceSession is a person at one of Kazari's own pages, signed in in
+	// a browser: the dashboard or the account page.
+	SourceSession = "session"
 )
 
 // ErrInvalidToken is returned by an Authenticator that does not recognise
@@ -42,7 +45,7 @@ type Principal struct {
 	Handle     string
 	Admin      bool
 	Scopes     []string
-	Source     string // SourceAPIKey | SourceOAuth | SourceAdminToken
+	Source     string // SourceAPIKey | SourceOAuth | SourceAdminToken | SourceLocal | SourceSession
 	KeyID      string // key prefix or token id, for audit and rate limiting
 	QuotaBytes int64  // owner quota, 0 = unlimited
 	// ClientID is the OAuth client a token was issued to; it names the

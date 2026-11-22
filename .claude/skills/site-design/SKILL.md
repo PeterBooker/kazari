@@ -29,9 +29,10 @@ The site's mechanics (Hugo version, layout names, link rules, `nav.toml`) are in
 | `site/layouts/home.html` | The landing page. |
 | `site/layouts/_partials/docs.html`, `_markup/render-blockquote.html` | Docs layout (crumb, sidebar, "On this page", pager) and callouts. |
 | `site/data/nav.toml` | Sidebar groups; `ja` is each group's Japanese label for the crumb. |
-| `site/subset-fonts.sh`, `site/static/fonts/` | Self-hosted, subset woff2 files and their licences. |
+| `site/subset-fonts.sh`, `site/static/fonts/` | Self-hosted, subset woff2 files and their licences. The script also writes `internal/theme/fonts/`, the smaller set embedded in the binary. |
+| `internal/theme/` | The same design for the pages the server renders itself (the dashboard, the sign-in and consent pages, the account pages and the gate): the tokens in `css/tokens.css` with the accent fixed at gentian, one stylesheet, one script, the embedded fonts and the shared templates. `testdata/sample.html` and `testdata/door.html` show every component. |
 | `.claude/skills/site-design/sekki-colours.py` | Derives every term's `light` and `dark` from its `base` for the current grounds. |
-| `.claude/skills/site-design/check-colours.py` | Contrast check for every text colour in both themes and all 24 terms. |
+| `.claude/skills/site-design/check-colours.py` | Contrast check for every text colour in both themes and all 24 terms, and for the theme's pairs in `internal/theme/css/tokens.css`. |
 
 ## Colour
 
@@ -90,7 +91,7 @@ A warning is always ochre and a caution always red; never use `--season` for a s
 To change a term's colour or any ground (`--bg`, `--bg-soft`, `--surface`, `--code-bg`), run from the repository root:
 
 1. `python3 .claude/skills/site-design/sekki-colours.py --write` to rederive every `light` and `dark` (it reads the grounds from `main.css`; without `--write` it only prints).
-2. `python3 .claude/skills/site-design/check-colours.py`: exit 1 lists every pair under 4.5:1. It covers the neutrals and fixed colours on every ground (including `--well`), all 24 terms, and the primary button.
+2. `python3 .claude/skills/site-design/check-colours.py`: exit 1 lists every pair under its minimum. For the site it covers the neutrals and fixed colours on every ground (including `--well`), all 24 terms, and the primary button, at 4.5:1. For `internal/theme` it covers the same text colours with gentian as the accent, the tinted notices and the buttons at 4.5:1, and at 3:1 the marks that are not text (the focus ring, a field's outline, a usage bar on its track). It also fails when a token the theme shares with the site differs from the site's.
 
 Keep neighbouring terms visibly different in the strip's hover colours.
 
@@ -118,7 +119,7 @@ Scale (desktop; the `clamp()`s shrink on phones):
 
 ### Fonts are subset
 
-The woff2 files in `site/static/fonts` hold Latin plus only the Japanese characters the site uses. **After adding any Japanese character anywhere in `site/` or `docs/`, run `site/subset-fonts.sh`** (needs `curl` and fonttools with brotli) and commit the changed woff2 files; a missing character silently falls back to a system font. The script downloads the sources from google/fonts at a pinned commit, cuts the variable fonts to the weights above and copies their OFL licences. A weight outside those ranges needs the script changed first. Do not load fonts from Google or any other CDN.
+The woff2 files in `site/static/fonts` hold Latin plus only the Japanese characters the site uses. **After adding any Japanese character anywhere in `site/` or `docs/`, run `site/subset-fonts.sh site`** (needs `curl` and fonttools with brotli) and commit the changed woff2 files; a missing character silently falls back to a system font. `site/subset-fonts.sh app` rebuilds the set in `internal/theme/fonts`, which holds only the Japanese found in the templates, stylesheets and Go files under `internal/`; run it after adding a character there. Without an argument the script writes both sets. The script downloads the sources from google/fonts at a pinned commit, cuts the variable fonts to the weights above and copies their OFL licences. A weight outside those ranges needs the script changed first. Do not load fonts from Google or any other CDN.
 
 ## Layout and components
 
@@ -176,7 +177,7 @@ Plain, direct and specific, from the reader's side: "Publish with an agent", not
 
 1. `hugo --source site --gc --minify` prints no WARN or ERROR.
 2. `python3 .claude/skills/site-design/check-colours.py` exits 0 if any colour changed (after `sekki-colours.py --write` if a ground or a `base` changed).
-3. `site/subset-fonts.sh` was run if any Japanese character was added.
+3. `site/subset-fonts.sh` was run if any Japanese character was added (`site` for the website, `app` for `internal/theme`).
 4. Look at it with `hugo server --source site` (<http://localhost:1313/>): the home page and a docs page with a table, code and a callout, at desktop and phone widths (about 390px: nothing may scroll sideways except code, tables and the tab list), in Ma and Yūgure (the theme button), and in two other seasons (`dataset.sekki = "11"` and `"20"`).
 
 ## Never

@@ -1,0 +1,13 @@
+{{template "theme/door" .}}<h1 class="title">Sign in <b>to art.example.com</b></h1>
+<p class="error" role="alert">{{template "icon/alert"}}<span>That handle and password do not match.</span></p>
+<form method="post" action="#">
+<div class="field"><label for="who">Handle or email</label><input class="input" id="who" name="login" type="text" autocomplete="username"></div>
+<div class="field"><label for="pw">Password</label><input class="input" id="pw" name="password" type="password" autocomplete="current-password">
+<p class="help">At least 15 characters.</p></div>
+<div class="actions"><button type="submit" class="btn" name="action" value="deny">Deny</button><button type="submit" class="btn btn-primary" name="action" value="approve">Sign in</button></div>
+</form>
+<div class="door-alt">
+<a class="link" href="#">Use an API key instead</a>
+<p class="help">No password yet, or forgotten it? Ask an admin of this instance for a link. Kazari sends no email.</p>
+</div>
+{{template "theme/door-close" "mcp.art.example.com"}}

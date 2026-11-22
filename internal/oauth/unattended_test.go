@@ -438,7 +438,7 @@ func TestRestrictedKeyOpensNoBrowserSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, body := e.keySignIn("demo", key, nil)
-	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "restricted to certain artifacts") ||
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "restricted to certain pages") ||
 		!strings.Contains(body, `name="api_key"`) {
 		t.Fatalf("sign-in with a restricted key: status %d:\n%s", resp.StatusCode, body)
 	}

@@ -517,13 +517,13 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 	return out, nil
 }
 
-func (s *OAuthStore) RevokeGrant(ctx context.Context, familyID int64, at time.Time) (err error) {
+func (s *OAuthStore) RevokeGrant(ctx context.Context, familyID int64, at time.Time) (handle string, err error) {
 	ctx, end := s.db.op(ctx, "OAuthStore.RevokeGrant")
 	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		var one int
 		err := tx.QueryRowContext(ctx,
-			`SELECT 1 FROM oauth_token WHERE family_id = ? AND kind = 'refresh' LIMIT 1`, familyID).Scan(&one)
+			`SELECT u.handle FROM oauth_token t JOIN user u ON u.id = t.user_id
+			WHERE t.family_id = ? AND t.kind = 'refresh' LIMIT 1`, familyID).Scan(&handle)
 		if errors.Is(err, sql.ErrNoRows) {
 			return oauth.ErrNotFound
 		}
@@ -535,9 +535,9 @@ func (s *OAuthStore) RevokeGrant(ctx context.Context, familyID int64, at time.Ti
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("sqlite: revoke oauth grant: %w", err)
+		return "", fmt.Errorf("sqlite: revoke oauth grant: %w", err)
 	}
-	return nil
+	return handle, nil
 }
 
 func (s *OAuthStore) RevokeAllForUser(ctx context.Context, handle string, at time.Time) (err error) {

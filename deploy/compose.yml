@@ -6,11 +6,13 @@
 #   curl -fsSLO https://kazari.io/deploy/kazari.yaml            # the domain, email and DNS provider
 #   curl -fsSL  https://kazari.io/deploy/kazari.env.example -o .env   # the DNS provider's token
 #   docker compose up -d
-#   docker compose exec kazari kazari admin users create <handle> --role admin
+#   docker compose logs kazari        # prints the setup link for the first admin
 #
 # The image serves /etc/kazari/kazari.yaml; the data (SQLite, blobs,
-# certificates, the admin socket) lives in the volume kazari_data. The admin
-# commands above run inside the container, over the socket, with no token.
+# certificates, the admin socket) lives in the volume kazari_data. Admin
+# commands run inside the container, over the socket, with no token:
+#
+#   docker compose exec kazari kazari admin setup-link
 
 services:
   kazari:

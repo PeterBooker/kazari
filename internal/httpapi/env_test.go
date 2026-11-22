@@ -51,6 +51,17 @@ type config struct {
 	auth auth.Authenticator
 	// maxKeyTTL is user.Options.MaxKeyTTL.
 	maxKeyTTL time.Duration
+	// maxKeys is user.Options.MaxKeys; 0 is the default.
+	maxKeys int
+	// local turns the built-in accounts on.
+	local bool
+	// empty leaves the instance without its member alice, as a fresh one is.
+	empty bool
+	// sessions, backup and ready are the admin API's optional collaborators.
+	sessions httpapi.Sessions
+	backup   httpapi.BackupWriter
+	ready    httpapi.ReadyChecker
+	updates  httpapi.Updates
 }
 
 type env struct {
@@ -90,7 +101,10 @@ func newEnv(t *testing.T, c config) *env {
 	c.upload.Dir = filepath.Join(dir, "uploads")
 	c.upload.Now = now
 	uploads := upload.New(sqlite.NewUploadStore(db), c.upload)
-	users := user.New(sqlite.NewUserStore(db), rec, user.Options{Now: now, MaxKeyTTL: c.maxKeyTTL})
+	users := user.New(sqlite.NewUserStore(db), rec, user.Options{Now: now, MaxKeyTTL: c.maxKeyTTL, MaxKeys: c.maxKeys,
+		LocalAccounts: c.local,
+		// The real parameters cost 64 MiB a hash.
+		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1}})
 	var authn auth.Authenticator = users
 	if c.auth != nil {
 		authn = auth.Chain(c.auth, users)
@@ -126,6 +140,10 @@ func newEnv(t *testing.T, c config) *env {
 		Audit:     rec,
 		Jobs:      jobs,
 		Grants:    c.grants,
+		Sessions:  c.sessions,
+		Backup:    c.backup,
+		Ready:     c.ready,
+		Updates:   c.updates,
 		Settings:  func() map[string]any { return map[string]any{"base_domain": "art.test", "admin_token": "***"} },
 		Metrics: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, "kazari_up 1\n")
@@ -136,7 +154,9 @@ func newEnv(t *testing.T, c config) *env {
 
 	e := &env{t: t, ctx: ctx, art: art, users: users, uploads: uploads, jobRuns: &runs,
 		userURL: userSrv.URL, admURL: admSrv.URL}
-	e.alice = e.member("alice", nil)
+	if !c.empty {
+		e.alice = e.member("alice", nil)
+	}
 	return e
 }
 

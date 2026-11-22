@@ -6,6 +6,8 @@ package instrument
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -62,6 +64,9 @@ func StartChild(ctx context.Context, t trace.Tracer, name string, opts ...trace.
 // End ends span, marking it failed when err is set, with error.type set to
 // code, Kazari's error code. Only internal errors become exception events:
 // the others are messages meant for the caller, already counted by code.
+// The event carries the type of the error's root cause and not its
+// message, which names what the operation was about: a handle, a link, a
+// key. The log line of the same trace has the message.
 func End(span trace.Span, err error, code string) {
 	if err != nil && span.IsRecording() {
 		if code == "" {
@@ -70,10 +75,22 @@ func End(span trace.Span, err error, code string) {
 		span.SetAttributes(semconv.ErrorTypeKey.String(code))
 		span.SetStatus(codes.Error, code)
 		if code == CodeInternal {
-			span.RecordError(err)
+			span.AddEvent(semconv.ExceptionEventName, trace.WithAttributes(semconv.ExceptionType(rootType(err))))
 		}
 	}
 	span.End()
+}
+
+// rootType is the type of the innermost error err wraps, which says what
+// failed where a wrapper's type says only that something was wrapped.
+func rootType(err error) string {
+	for {
+		inner := errors.Unwrap(err)
+		if inner == nil {
+			return fmt.Sprintf("%T", err)
+		}
+		err = inner
+	}
 }
 
 // CodeInternal is the error code of every failure that is not the caller's.
@@ -115,11 +132,15 @@ const (
 
 // Surfaces, the values of kazari.surface.
 const (
-	SurfaceSite      = "site"
-	SurfaceAPI       = "api"
-	SurfaceMCP       = "mcp"
-	SurfaceAdmin     = "admin"
-	SurfaceApex      = "apex"
+	SurfaceSite  = "site"
+	SurfaceAPI   = "api"
+	SurfaceMCP   = "mcp"
+	SurfaceAdmin = "admin"
+	SurfaceApex  = "apex"
+	// SurfaceAccount is the account pages under /account/ on the apex:
+	// people's passwords and keys, which is control plane, where the rest of
+	// the apex is one public page.
+	SurfaceAccount   = "account"
 	SurfaceRedirect  = "redirect"
 	SurfaceScheduler = "scheduler"
 )
@@ -148,27 +169,40 @@ func SurfaceFrom(ctx context.Context) string {
 // Redacted stands in for a value telemetry must not carry.
 const Redacted = "REDACTED"
 
-// RedactAdminPath hides the handles and credential ids in admin paths
-// (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix}, /v1/grants/{id}):
-// who did what stays in the audit log.
+// RedactAdminPath hides the handles and credential ids in the paths of the
+// admin API (/v1/users/{handle}, /v1/users/{handle}/keys/{prefix},
+// /v1/grants/{id}, /v1/invites/{id}), of the dashboard
+// (/people/{handle}/keys/{prefix}, /people/{handle}/apps/{id},
+// /invites/{id}, /pages/{slug}/links/{prefix}) and of the account pages
+// (/account/keys/{prefix}, /account/apps/{id}): who did what stays in the
+// audit log.
 func RedactAdminPath(p string) string {
-	rest, ok := strings.CutPrefix(p, "/v1/")
-	if !ok {
-		return p
+	api := strings.HasPrefix(p, "/v1/")
+	root := "/"
+	if api {
+		root = "/v1/"
 	}
-	seg := strings.Split(rest, "/")
+	seg := strings.Split(p[len(root):], "/")
 	switch {
-	case len(seg) >= 2 && seg[0] == "users":
+	case len(seg) >= 2 && (api && seg[0] == "users" || !api && seg[0] == "people"):
 		seg[1] = Redacted
-		if len(seg) >= 4 && seg[2] == "keys" {
+		if len(seg) >= 4 && (seg[2] == "keys" || seg[2] == "apps") {
 			seg[3] = Redacted
 		}
-	case len(seg) >= 2 && seg[0] == "grants":
+	case len(seg) >= 2 && api && seg[0] == "grants":
 		seg[1] = Redacted
+	// "new" is the form that makes an invite, not one of them.
+	case len(seg) >= 2 && seg[0] == "invites" && seg[1] != "new":
+		seg[1] = Redacted
+	case len(seg) >= 3 && !api && seg[0] == "account" && (seg[1] == "keys" || seg[1] == "apps"):
+		seg[2] = Redacted
+	// A share link's prefix names a credential as a key's does.
+	case len(seg) >= 4 && !api && seg[0] == "pages" && seg[2] == "links":
+		seg[3] = Redacted
 	default:
 		return p
 	}
-	return "/v1/" + strings.Join(seg, "/")
+	return root + strings.Join(seg, "/")
 }
 
 // RedactQuery keeps a query string's keys and hides every value: share

@@ -49,6 +49,7 @@ type CLI struct {
 	Get        GetCmd        `cmd:"" help:"Show an artifact and its versions."`
 	List       ListCmd       `cmd:"" help:"List artifacts."`
 	Rm         RmCmd         `cmd:"" help:"Delete an artifact, or purge it with --hard."`
+	Restore    RestoreCmd    `cmd:"" help:"Restore a deleted artifact that is not purged yet."`
 	Stale      StaleCmd      `cmd:"" help:"Mark an artifact stale."`
 	Unstale    UnstaleCmd    `cmd:"" help:"Clear the stale mark."`
 	Visibility VisibilityCmd `cmd:"" help:"Set public, unlisted, members or unpublished."`
@@ -59,7 +60,7 @@ type CLI struct {
 	Skill      SkillCmd      `cmd:"" help:"Print the instance's Agent Skill (SKILL.md)."`
 	Me         MeCmd         `cmd:"" help:"Show the caller's identity."`
 	Keys       KeysCmd       `cmd:"" help:"List, issue, rotate and revoke the caller's API keys."`
-	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, keys, grants, artifacts, jobs, audit, health."`
+	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, invites, keys, identities, grants, artifacts, jobs, audit, backup, readiness."`
 	Version    VersionCmd    `cmd:"" help:"Print the version."`
 	Help       HelpCmd       `cmd:"" help:"Show help for a command."`
 }
@@ -346,7 +347,9 @@ func socketClient(path string) *Client {
 			return d.DialContext(ctx, "unix", path)
 		},
 	}}
-	return NewClient("http://kazari", "", hc)
+	c := NewClient("http://kazari", "", hc)
+	c.local = true
+	return c
 }
 
 func (r *runner) configHint() string {

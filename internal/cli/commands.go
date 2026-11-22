@@ -330,17 +330,20 @@ func (r *runner) printArtifact(a *api.Artifact) {
 
 // listFlags are the filters of list and admin artifacts list.
 type listFlags struct {
-	Mine    string            `help:"created, updated or any." placeholder:"WHICH"`
-	Meta    map[string]string `help:"Metadata filter key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
-	Stale   string            `help:"include, exclude or only." placeholder:"WHICH"`
-	Deleted string            `help:"include, exclude or only." placeholder:"WHICH"`
-	Cursor  string            `help:"Page cursor from a previous list." placeholder:"CURSOR"`
-	Limit   int               `help:"Page size." placeholder:"N"`
-	All     bool              `help:"Follow cursors and print every page."`
+	Mine       string            `help:"created, updated or any." placeholder:"WHICH"`
+	Meta       map[string]string `help:"Metadata filter key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
+	Stale      string            `help:"include, exclude or only." placeholder:"WHICH"`
+	Deleted    string            `help:"include, exclude or only." placeholder:"WHICH"`
+	Search     string            `help:"Only artifacts with this text in their slug or name." placeholder:"TEXT"`
+	Visibility string            `help:"public, unlisted, members or unpublished." placeholder:"WHICH"`
+	Cursor     string            `help:"Page cursor from a previous list." placeholder:"CURSOR"`
+	Limit      int               `help:"Page size." placeholder:"N"`
+	All        bool              `help:"Follow cursors and print every page."`
 }
 
 func (f *listFlags) params() ListParams {
-	return ListParams{Mine: f.Mine, Metadata: nilIfEmpty(f.Meta), Stale: f.Stale, Deleted: f.Deleted, Cursor: f.Cursor, Limit: f.Limit}
+	return ListParams{Mine: f.Mine, Metadata: nilIfEmpty(f.Meta), Stale: f.Stale, Deleted: f.Deleted,
+		Search: f.Search, Visibility: f.Visibility, Cursor: f.Cursor, Limit: f.Limit}
 }
 
 func (r *runner) fetchList(f *listFlags, list func(ListParams) (*api.ArtifactList, error)) (*api.ArtifactList, error) {
@@ -593,6 +596,27 @@ func (c *ShareRevokeCmd) Run(r *runner) error {
 		return r.printJSON(api.OK{OK: true})
 	}
 	fmt.Fprintf(r.stdout, "revoked share link %s of %s\n", c.Prefix, c.Slug)
+	return nil
+}
+
+// RestoreCmd takes a soft-deleted artifact out of the bin.
+type RestoreCmd struct {
+	Slug string `arg:"" help:"Artifact slug."`
+}
+
+func (c *RestoreCmd) Run(r *runner) error {
+	cl, err := r.userClient()
+	if err != nil {
+		return err
+	}
+	res, err := cl.Patch(r.ctx, c.Slug, api.UpdateArtifactRequest{Restore: true})
+	if err != nil {
+		return err
+	}
+	if r.g.JSON {
+		return r.printJSON(res)
+	}
+	fmt.Fprintf(r.stdout, "restored %s: %s\n", c.Slug, res.URL)
 	return nil
 }
 

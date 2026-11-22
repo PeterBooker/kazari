@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,6 +31,110 @@ func (c *Client) CreateUser(ctx context.Context, req api.CreateUserRequest) (*ap
 func (c *Client) UpdateUser(ctx context.Context, handle string, req api.UpdateUserRequest) (*api.User, error) {
 	var out api.User
 	if err := c.doJSON(ctx, http.MethodPatch, "/users/"+seg(handle), nil, nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetUser returns a user with their identities and usage.
+func (c *Client) GetUser(ctx context.Context, handle string) (*api.User, error) {
+	var out api.User
+	if err := c.doJSON(ctx, http.MethodGet, "/users/"+seg(handle), nil, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LinkIdentity links an identity provider's (issuer, subject) pair to a
+// user, moving it from any other user.
+func (c *Client) LinkIdentity(ctx context.Context, handle string, req api.LinkIdentityRequest) error {
+	return c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/identities", nil, nil, req, nil)
+}
+
+// UnlinkIdentity removes one of a user's identities.
+func (c *Client) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) error {
+	req := api.LinkIdentityRequest{Issuer: issuer, Subject: subject}
+	return c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/identities/unlink", nil, nil, req, nil)
+}
+
+// TransferAll gives every artifact handle owns to owner.
+func (c *Client) TransferAll(ctx context.Context, handle, owner string) (*api.TransferredArtifacts, error) {
+	var out api.TransferredArtifacts
+	err := c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/transfer", nil, nil, api.TransferRequest{Owner: owner}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Invite creates a user and the link that lets them set a password. The
+// link's address is in the result exactly once.
+func (c *Client) Invite(ctx context.Context, req api.InviteRequest) (*api.Invited, error) {
+	var out api.Invited
+	if err := c.doJSON(ctx, http.MethodPost, "/invites", nil, nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// IssueLink makes a new invite or reset link for a user, ending the one
+// before it.
+func (c *Client) IssueLink(ctx context.Context, handle string, req api.LinkRequest) (*api.CreatedLink, error) {
+	var out api.CreatedLink
+	if err := c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/links", nil, nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetupLink makes the link that creates the first admin.
+func (c *Client) SetupLink(ctx context.Context) (*api.CreatedLink, error) {
+	var out api.CreatedLink
+	if err := c.doJSON(ctx, http.MethodPost, "/setup-link", nil, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListLinks lists the links that have not been used, revoked or expired.
+func (c *Client) ListLinks(ctx context.Context) ([]api.Link, error) {
+	return decodeSlice[api.Link](c, ctx, "/invites", nil)
+}
+
+// RevokeLink ends the unused link with id.
+func (c *Client) RevokeLink(ctx context.Context, id int64) error {
+	return c.doJSON(ctx, http.MethodDelete, "/invites/"+strconv.FormatInt(id, 10), nil, nil, nil, nil)
+}
+
+// EndSessions ends every browser session of a user.
+func (c *Client) EndSessions(ctx context.Context, handle string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/users/"+seg(handle)+"/sessions", nil, nil, nil, nil)
+}
+
+// Backup starts a backup and returns the tar stream, which the caller
+// closes. certs asks for the certificate directory too, which the server
+// grants on the admin socket alone.
+func (c *Client) Backup(ctx context.Context, certs bool) (io.ReadCloser, error) {
+	var q url.Values
+	if certs {
+		q = url.Values{"certs": {"true"}}
+	}
+	resp, err := c.send(ctx, request{method: http.MethodPost, path: "/backup", query: q})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// Ready runs the server's readiness checks, anew with fresh, else as last
+// run within the server's cache time.
+func (c *Client) Ready(ctx context.Context, fresh bool) (*api.Ready, error) {
+	var q url.Values
+	if fresh {
+		q = url.Values{"fresh": {"true"}}
+	}
+	var out api.Ready
+	if err := c.doJSON(ctx, http.MethodGet, "/ready", q, nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -122,20 +227,48 @@ func (c *Client) RunJob(ctx context.Context, name string) error {
 	return c.doJSON(ctx, http.MethodPost, "/jobs/"+seg(name)+"/run", nil, nil, nil, nil)
 }
 
-// Audit queries the audit log. since is RFC 3339; empty strings and a zero
-// limit are omitted.
-func (c *Client) Audit(ctx context.Context, since, slug string, limit int) ([]api.AuditEvent, error) {
+// AuditParams filters GET /audit. Zero fields are omitted.
+type AuditParams struct {
+	Since, Until string // RFC 3339; Since is inclusive, Until is not
+	Slug         string
+	Actor        string
+	Subject      string
+	// Actions keeps the events with one of these actions; one ending in "."
+	// is a prefix, such as "artifact.".
+	Actions []string
+	Cursor  string
+	Limit   int
+}
+
+func (p AuditParams) values() url.Values {
 	q := url.Values{}
-	if since != "" {
-		q.Set("since", since)
+	set := func(k, v string) {
+		if v != "" {
+			q.Set(k, v)
+		}
 	}
-	if slug != "" {
-		q.Set("slug", slug)
+	set("since", p.Since)
+	set("until", p.Until)
+	set("slug", p.Slug)
+	set("actor", p.Actor)
+	set("subject", p.Subject)
+	for _, a := range p.Actions {
+		q.Add("action", a)
 	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
+	set("cursor", p.Cursor)
+	if p.Limit > 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
 	}
-	return decodeSlice[api.AuditEvent](c, ctx, "/audit", q)
+	return q
+}
+
+// Audit returns one page of the audit log, newest first.
+func (c *Client) Audit(ctx context.Context, p AuditParams) (*api.AuditList, error) {
+	var out api.AuditList
+	if err := c.doJSON(ctx, http.MethodGet, "/audit", p.values(), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // Health reports liveness and the server version.

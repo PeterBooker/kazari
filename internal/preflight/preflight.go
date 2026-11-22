@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,7 +41,9 @@ const (
 
 // Finding is one line of the report.
 type Finding struct {
-	Check  string // data_dir, dns, dns token, ports, admin socket, metrics, telemetry
+	// data_dir, dns, dns token, ports, admin socket, metrics, dashboard,
+	// telemetry; from Ready also config, certificate, disk, database, blobs
+	Check  string
 	Status Status
 	Detail string
 }
@@ -77,6 +80,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) []Finding {
 	checkPorts(cfg, add)
 	checkSocket(cfg, add)
 	checkMetrics(cfg, add)
+	checkDashboard(cfg, add)
 	if opts.Telemetry != nil {
 		checkTelemetry(ctx, *opts.Telemetry, add)
 	}
@@ -84,7 +88,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) []Finding {
 }
 
 // checkMetrics warns that a scraper of the public admin host gets nothing
-// until the scrape token is set, which 0.3.0 made a requirement.
+// until the scrape token is set, which 0.6.0 made a requirement.
 func checkMetrics(cfg config.Config, add adder) {
 	t := cfg.Telemetry.Metrics
 	if !t.Prometheus || t.Token != "" || cfg.Admin.Listen != "" || config.IsLocalhost(cfg.BaseDomain) {
@@ -92,6 +96,26 @@ func checkMetrics(cfg config.Config, add adder) {
 	}
 	add("metrics", Warn, "/metrics is not served on %s without telemetry.metrics.token; set it, or scrape admin.listen on a private address",
 		cfg.Host("admin"))
+}
+
+// checkDashboard reports where a browser finds the dashboard, and an address
+// that cannot carry its session.
+func checkDashboard(cfg config.Config, add adder) {
+	if !cfg.Admin.Dashboard {
+		return
+	}
+	addr := cfg.AdminURL()
+	if addr == "" {
+		add("dashboard", Warn, "off: admin.listen is set and admin.public_url is not; set admin.public_url to the address a browser uses for the admin host, "+
+			"for example http://localhost:9443 through an SSH tunnel")
+		return
+	}
+	if u, err := url.Parse(addr); err == nil && u.Scheme == "http" && !config.IsLoopbackHost(u.Hostname()) {
+		add("dashboard", Fail, "%s is plain http, so the session cookie would cross the network unencrypted; "+
+			"set admin.public_url to an https address, or set admin.dashboard to false", addr)
+		return
+	}
+	add("dashboard", OK, "%s", addr)
 }
 
 // checkTelemetry sends one record per enabled signal to its OTLP endpoint.

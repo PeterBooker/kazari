@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"github.com/PeterBooker/kazari/internal/instrument"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,23 +13,35 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/passkey"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-// Browser sign-in for gated artifacts. An artifact host sends a person to
-// PathSignIn with its host label, the path to return to and the S256 hash
-// of a nonce cookie it set. A browser with a live session cookie goes
-// straight back with a single-use code; otherwise the person signs in at
-// the identity provider first, or, without one, with an API key. The
-// artifact host redeems the code in-process (Redeem) for a view session
-// whose cookie only that host receives.
+// Browser sign-in for the other hosts. A host sends a person to PathSignIn
+// with its label, the path to return to and the S256 hash of a nonce cookie
+// it set. A browser with a live session cookie goes straight back with a
+// single-use code; otherwise the person signs in first: at the identity
+// provider, or without one with the password of their built-in account or
+// an API key. The host redeems the code in-process (Redeem) for a view
+// session whose cookie only that host receives.
 //
-// A sign-in ends at PathSignOut and nowhere else: member-authored script
-// runs on every artifact host, so an artifact host can end only its own
-// view session (EndView).
+// On an artifact host a sign-in ends at PathSignOut and nowhere else:
+// member-authored script runs there, so an artifact host can end only its
+// own view session (EndView). A control host runs Kazari's pages alone and
+// ends the whole sign-in (SignOut).
 const (
 	PathSignIn  = "/oauth/signin"
 	PathSignOut = "/oauth/signout"
+	// PathRecover sends a browser on to Options.RecoverURL.
+	PathRecover = "/oauth/recover"
+
+	// The labels of the control hosts. "@" is in no artifact label, so
+	// neither can be mistaken for an artifact host.
+	HostAdmin   = "@admin"   // the dashboard, at admin.public_url
+	HostAccount = "@account" // the account pages, on the apex
+	controlMark = "@"
 
 	// Cookie names before the __Host- prefix: the session on the MCP host,
 	// and the per-browser value that binds a pending identity-provider
@@ -60,24 +71,49 @@ type View struct {
 	Path      string
 }
 
-// signInTarget is where a browser sign-in returns: an artifact host label,
-// its callback URL, a path on it and the hash of its nonce cookie.
+// signInTarget is where a browser sign-in returns: a host label, its
+// callback URL, a path on it and the hash of its nonce cookie.
 type signInTarget struct {
 	host, callback, path, nonceHash string
 }
 
-// target validates the parameters an artifact host sent. ok is false
-// for a host that is not an artifact host or a malformed nonce hash; a
-// path that is not a plain path on the host becomes "/".
+// target validates the parameters a host sent. ok is false for a label
+// that names neither an artifact host nor a control host, or a malformed
+// nonce hash; a path that is not a plain path on the host becomes "/".
 func (s *Service) target(host, path, nonceHash string) (signInTarget, bool) {
-	if s.opts.ViewCallback == nil || len(nonceHash) != nonceLen || !pkceValue.MatchString(nonceHash) {
+	if len(nonceHash) != nonceLen || !pkceValue.MatchString(nonceHash) {
 		return signInTarget{}, false
 	}
-	cb, ok := s.opts.ViewCallback(host)
+	callback := s.opts.ViewCallback
+	if strings.HasPrefix(host, controlMark) {
+		callback = s.opts.ControlCallback
+	}
+	if callback == nil {
+		return signInTarget{}, false
+	}
+	cb, ok := callback(host)
 	if !ok {
 		return signInTarget{}, false
 	}
 	return signInTarget{host: host, callback: cb, path: ReturnPath(path), nonceHash: nonceHash}, true
+}
+
+// form returns the sign-in page for the target.
+func (t signInTarget) form() signInPage {
+	p := signInPage{Host: t.host, Path: t.path, Nonce: t.nonceHash, formTarget: t.callback}
+	switch t.host {
+	case HostAdmin:
+		p.Title, p.Lede = "Sign in to the dashboard", "The dashboard is open to the admins of this Kazari instance."
+	case HostAccount:
+		p.Title, p.Lede = "Sign in to your account", "Your password, API keys and connected apps on this Kazari instance."
+	default:
+		site := t.callback
+		if u, err := url.Parse(t.callback); err == nil {
+			site = u.Scheme + "://" + u.Host
+		}
+		p.Title, p.Site = "Sign in to view this page", site
+	}
+	return p
 }
 
 // ReturnPath returns p if it is a path on the same host ("/" not followed
@@ -125,13 +161,13 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 	// once each complete, and their sessions end together.
 	binding := s.signInBinding(r)
 	if s.idp == nil {
-		if s.keys == nil {
+		if s.keys == nil && s.passwords == nil {
 			s.message(w, http.StatusNotFound, "Sign-in unavailable", "This instance has no way to sign in.", "")
 			return
 		}
 		// The form has no expiry, so the cookie outlasts a pending sign-in.
 		s.setNamedCookie(w, s.named(signInCookie), binding, s.opts.SessionTTL)
-		s.renderSignIn(w, http.StatusOK, t, "")
+		s.renderSignIn(w, http.StatusOK, t.form(), q.Get("with") == withKey, "")
 		return
 	}
 
@@ -164,16 +200,35 @@ func (s *Service) signInBinding(r *http.Request) string {
 	return randomString(secretBytes)
 }
 
-// renderSignIn shows the API-key sign-in form, used without an identity
-// provider.
-func (s *Service) renderSignIn(w http.ResponseWriter, status int, t signInTarget, errMsg string) {
-	site := t.callback
-	if u, err := url.Parse(t.callback); err == nil {
-		site = u.Scheme + "://" + u.Host
+// withKey is the value of the "with" parameter that asks for the API-key
+// form on an instance that also takes passwords.
+const withKey = "key"
+
+// renderSignIn shows the sign-in form, used without an identity provider:
+// for a password where built-in accounts are on, else, or when byKey asks
+// for it, for an API key. Each form links to the other when both exist.
+func (s *Service) renderSignIn(w http.ResponseWriter, status int, p signInPage, byKey bool, errMsg string) {
+	p.Password = s.passwords != nil && !(byKey && s.keys != nil)
+	p.Lifetime = lifetime(s.opts.SessionTTL)
+	if s.opts.RecoverURL != "" {
+		p.Recover = PathRecover
 	}
-	s.pages.render(w, status, "signin", signInPage{
-		Site: site, Lifetime: lifetime(s.opts.SessionTTL), Host: t.host, Path: t.path, Nonce: t.nonceHash, Error: errMsg,
-	}, t.callback)
+	if p.Password && s.passkeys != nil {
+		if c, err := s.passkeys.SignIn(); err != nil {
+			s.log.Error("oauth: begin passkey sign-in", "err", err)
+		} else {
+			p.Passkey = &c
+		}
+	}
+	p.Error = errMsg
+	if s.passwords != nil && s.keys != nil && p.RequestID == "" {
+		q := url.Values{"host": {p.Host}, "path": {p.Path}, "nonce": {p.Nonce}}
+		if p.Password {
+			q.Set("with", withKey)
+		}
+		p.Switch = PathSignIn + "?" + q.Encode()
+	}
+	s.pages.render(w, status, "signin", p, p.formTarget)
 }
 
 // lifetime describes d in whole hours ("12 hours"), or minutes below one.
@@ -187,10 +242,13 @@ func lifetime(d time.Duration) string {
 	return "an hour"
 }
 
-// serveSignInKey signs a browser in with the API key from the sign-in
-// form. Like the consent form, it must come from the form itself: an
-// attacker's page could otherwise sign a visitor in as the attacker.
-func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
+// serveSignInForm signs a browser in with what the sign-in form sent: the
+// name and password of a built-in account, or an API key. Like the consent
+// form, it must come from the form itself: an attacker's page could
+// otherwise sign a visitor in as the attacker. The form names where the
+// sign-in continues: a host, or the pending authorization of an MCP client
+// (request_id), which then goes on to the consent page.
+func (s *Service) serveSignInForm(w http.ResponseWriter, r *http.Request) {
 	r, out, span := s.handle(r, "oauth.sign_in")
 	defer endHandle(span, out)
 	ctx := r.Context()
@@ -205,40 +263,201 @@ func (s *Service) serveSignInKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := r.PostForm
-	t, ok := s.target(f.Get("host"), f.Get("path"), f.Get("nonce"))
-	if !ok {
-		s.message(w, http.StatusBadRequest, "Invalid sign-in link",
-			"This sign-in link is not valid. Open the page you wanted again.", "")
-		return
-	}
-	if s.idp != nil || s.keys == nil {
+	if s.idp != nil || (s.keys == nil && s.passwords == nil) {
 		s.message(w, http.StatusForbidden, "Sign-in required",
 			"Sign in at the identity provider. Open the page you wanted again.", "")
 		return
 	}
-	p, err := s.keys.Authenticate(ctx, strings.TrimSpace(f.Get("api_key")))
-	s.keySignIn(ctx, err)
-	if err != nil || !p.HasScope(auth.ScopeRead) {
-		if err != nil && !errors.Is(err, auth.ErrInvalidToken) {
-			s.log.ErrorContext(ctx, "oauth: authenticate api key", "err", err)
+
+	var (
+		page signInPage
+		t    signInTarget
+		req  *Request
+	)
+	if id := f.Get("request_id"); id != "" {
+		var ok bool
+		if req, ok = s.formRequest(w, r, id); !ok {
+			return
 		}
-		s.renderSignIn(w, http.StatusUnauthorized, t, "That API key was not accepted.")
-		return
+		page = s.requestForm(ctx, req)
+	} else {
+		var ok bool
+		if t, ok = s.target(f.Get("host"), f.Get("path"), f.Get("nonce")); !ok {
+			s.message(w, http.StatusBadRequest, "Invalid sign-in link",
+				"This sign-in link is not valid. Open the page you wanted again.", "")
+			return
+		}
+		page = t.form()
 	}
-	// A session opens every members page, which is more than a restricted
-	// key may read.
-	if len(p.Slugs) > 0 {
-		s.renderSignIn(w, http.StatusForbidden, t,
-			"That API key is restricted to certain artifacts, so it cannot sign in to view pages. Use a key without a restriction.")
-		return
+
+	var handle, keyPrefix, via string
+	if _, byPasskey := f["passkey"]; byPasskey {
+		u, ok := s.passkeySignIn(w, r, page)
+		if !ok {
+			return
+		}
+		handle, via = u.Handle, viaPasskey
+	} else if _, byKey := f["api_key"]; byKey {
+		// An MCP client's authorization takes a key on the consent page,
+		// where the key bounds the grant, not here.
+		if s.keys == nil || req != nil {
+			s.message(w, http.StatusBadRequest, "Bad request", "This form takes no API key.", "")
+			return
+		}
+		p, err := s.keys.Authenticate(ctx, strings.TrimSpace(f.Get("api_key")))
+		s.keySignIn(ctx, err)
+		if err != nil || !p.HasScope(auth.ScopeRead) {
+			if err != nil && !errors.Is(err, auth.ErrInvalidToken) {
+				s.log.ErrorContext(ctx, "oauth: authenticate api key", "err", err)
+			}
+			s.renderSignIn(w, http.StatusUnauthorized, page, true, "That API key was not accepted.")
+			return
+		}
+		// A session opens every members page, which is more than a restricted
+		// key may read.
+		if len(p.Slugs) > 0 {
+			s.renderSignIn(w, http.StatusForbidden, page, true,
+				"That API key is restricted to certain pages, so it cannot sign in. Use a key without a restriction.")
+			return
+		}
+		handle, keyPrefix, via = p.Handle, p.KeyID, viaAPIKey
+	} else {
+		u, ok := s.passwordSignIn(w, r, page)
+		if !ok {
+			return
+		}
+		handle, via = u.Handle, viaPassword
 	}
-	sess, err := s.startSession(ctx, w, s.signInBinding(r), p.Handle, p.KeyID)
+
+	sess, err := s.startSession(ctx, w, s.signInBinding(r), handle, keyPrefix, via)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
 		return
 	}
+	if req != nil {
+		s.continueRequest(w, r, req, handle)
+		return
+	}
 	s.sendToHost(w, r, sess, t)
+}
+
+// passwordSignIn checks the name and password of the sign-in form. When ok
+// is false it has answered: with the form again, and after too many
+// failures with how long to wait. An unknown name is answered as a wrong
+// password is, down to the delay it earns.
+func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page signInPage) (*user.User, bool) {
+	ctx := r.Context()
+	if s.passwords == nil {
+		s.message(w, http.StatusForbidden, "Sign-in required", "This instance does not sign people in with a password.", "")
+		return nil, false
+	}
+	login, password := strings.TrimSpace(r.PostForm.Get("login")), r.PostForm.Get("password")
+	page.Login = login
+	if login == "" || password == "" {
+		s.renderSignIn(w, http.StatusBadRequest, page, false, "Enter your handle or email, and your password.")
+		return nil, false
+	}
+	account := s.accountKey(ctx, login)
+	attempt, wait := ratelimit.BeginPair(ctx, s.accountDelay, account, s.ipDelay, ratelimit.IPKey(r))
+	if wait > 0 {
+		s.signedIn(ctx, viaPassword, signInDelayed)
+		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
+		s.renderSignIn(w, http.StatusTooManyRequests, page, false,
+			"Too many attempts. Try again in "+waitText(wait)+".")
+		return nil, false
+	}
+	u, err := s.passwords.CheckPassword(ctx, login, password)
+	if errors.Is(err, user.ErrBadPassword) {
+		attempt.Failed()
+		s.signedIn(ctx, viaPassword, signInFailed)
+		s.renderSignIn(w, http.StatusUnauthorized, page, false, "That name or password was not accepted.")
+		return nil, false
+	}
+	attempt.Done()
+	if errors.Is(err, user.ErrBusy) {
+		w.Header().Set("Retry-After", "5")
+		s.renderSignIn(w, http.StatusServiceUnavailable, page, false, "The server is busy. Try again in a moment.")
+		return nil, false
+	}
+	if err != nil {
+		s.log.ErrorContext(ctx, "oauth: check password", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return nil, false
+	}
+	s.accountDelay.Reset(account)
+	s.signedIn(ctx, viaPassword, signInOK)
+	return u, true
+}
+
+// passkeySignIn checks the passkey the sign-in form carries. When ok is
+// false it has answered, with the form again. A passkey names its person
+// only once it verifies, so refusals are counted per address alone.
+func (s *Service) passkeySignIn(w http.ResponseWriter, r *http.Request, page signInPage) (*user.User, bool) {
+	ctx := r.Context()
+	if s.passkeys == nil {
+		s.message(w, http.StatusForbidden, "Sign-in required", "This instance does not sign people in with a passkey.", "")
+		return nil, false
+	}
+	refuse := func(status int, msg string) {
+		page.PasskeyError = msg
+		s.renderSignIn(w, status, page, false, "")
+	}
+	attempt, wait := s.ipDelay.Begin(ratelimit.IPKey(r))
+	if wait > 0 {
+		s.ipDelay.Refused(ctx)
+		s.signedIn(ctx, viaPasskey, signInDelayed)
+		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
+		refuse(http.StatusTooManyRequests, "Too many attempts. Try again in "+waitText(wait)+".")
+		return nil, false
+	}
+	u, err := s.passkeys.Verify(ctx, r.PostForm.Get("passkey_token"), r.PostForm.Get("passkey"))
+	switch {
+	case errors.Is(err, passkey.ErrExpired):
+		attempt.Done()
+		s.signedIn(ctx, viaPasskey, signInFailed)
+		refuse(http.StatusBadRequest, "This page was open too long. Use your passkey again.")
+		return nil, false
+	case errors.Is(err, passkey.ErrRejected):
+		attempt.Failed()
+		s.signedIn(ctx, viaPasskey, signInFailed)
+		refuse(http.StatusUnauthorized, "That passkey was not accepted. It may have been removed from your account.")
+		return nil, false
+	case err != nil:
+		attempt.Done()
+		s.log.ErrorContext(ctx, "oauth: check passkey", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return nil, false
+	}
+	attempt.Done()
+	s.signedIn(ctx, viaPasskey, signInOK)
+	return u, true
+}
+
+// accountKey is what failed sign-ins are counted under: the person the name
+// belongs to, so that their handle and their email are one account, else
+// the name as typed, folded and bounded, so an unknown name earns its
+// delays like a real one.
+func (s *Service) accountKey(ctx context.Context, login string) string {
+	if handle := s.users.HandleFor(ctx, login); handle != "" {
+		return handle
+	}
+	login = strings.ToLower(login)
+	if len(login) > maxAccountKey {
+		login = login[:maxAccountKey]
+	}
+	return login
+}
+
+// maxAccountKey is the longest email address (RFC 5321).
+const maxAccountKey = 254
+
+// waitText describes a wait in whole seconds, rounded up.
+func waitText(d time.Duration) string {
+	if n := ratelimit.RetryAfter(d); n != "1" {
+		return n + " seconds"
+	}
+	return "a second"
 }
 
 // serveSignInCallback finishes a browser sign-in at the identity provider.
@@ -310,7 +529,7 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signedIn(ctx, viaOIDC, signInOK)
-	sess, err := s.startSession(ctx, w, ck.Value, u.Handle, "")
+	sess, err := s.startSession(ctx, w, ck.Value, u.Handle, "", viaOIDC)
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: start session", "err", err)
 		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
@@ -321,14 +540,12 @@ func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {
 
 // startSession stores a session for handle in the browser that binding
 // names and sets both cookies, the binding lasting as long as the session
-// so that a tab finishing later joins it. A session opened with an API key
-// ends no later than the key.
-func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, binding, handle, keyPrefix string) (*Session, error) {
+// so that a tab finishing later joins it. via is how the person signed in.
+// A session opened with an API key ends no later than the key.
+func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, binding, handle, keyPrefix, via string) (*Session, error) {
 	now := s.now()
 	expires := now.Add(s.opts.SessionTTL)
-	via := "oidc"
 	if keyPrefix != "" {
-		via = "api_key"
 		key, err := s.approvingKey(ctx, keyPrefix, handle)
 		if err != nil {
 			return nil, err
@@ -351,7 +568,7 @@ func (s *Service) startSession(ctx context.Context, w http.ResponseWriter, bindi
 	if keyPrefix != "" {
 		details["key_prefix"] = keyPrefix
 	}
-	s.record(ctx, handle, ActionSignIn, details)
+	s.record(ctx, handle, ActionSignIn, handle, details)
 	return sess, nil
 }
 
@@ -481,6 +698,51 @@ func (s *Service) Viewer(ctx context.Context, host, token string) (string, error
 		return "", ErrNotFound
 	}
 	return v.UserHandle, nil
+}
+
+// ControlSession is a person signed in on a control host.
+type ControlSession struct {
+	Handle string
+	// KeyPrefix is the API key the person signed in with; "" after a
+	// password or an identity-provider sign-in.
+	KeyPrefix string
+	// SessionID is the sign-in session, which every host it opened shares.
+	SessionID int64
+	ExpiresAt time.Time
+}
+
+// ControlSession returns who the view session token on the control host is,
+// and how they signed in. ErrNotFound unless the view session exists for
+// that host, has not expired and its sign-in session is still live: the
+// person enabled and, for an API-key sign-in, the key still active. What
+// the person may do there is the host's to decide, on every request.
+func (s *Service) ControlSession(ctx context.Context, host, token string) (ControlSession, error) {
+	v, err := s.viewSession(ctx, host, token)
+	if err != nil {
+		return ControlSession{}, err
+	}
+	live, err := s.sessionLive(ctx, v.UserHandle, v.KeyPrefix, v.ExpiresAt)
+	if err != nil {
+		return ControlSession{}, fmt.Errorf("oauth: control session: %w", err)
+	}
+	if !live {
+		return ControlSession{}, ErrNotFound
+	}
+	return ControlSession{Handle: v.UserHandle, KeyPrefix: v.KeyPrefix, SessionID: v.SessionID, ExpiresAt: v.ExpiresAt}, nil
+}
+
+// SignOut ends the sign-in behind the view session token on the control
+// host: the session, every session of the same browser and every view
+// session they opened, on every host. An unknown token is not an error.
+func (s *Service) SignOut(ctx context.Context, host, token string) error {
+	v, err := s.viewSession(ctx, host, token)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.store.DeleteSession(ctx, v.SessionID)
 }
 
 // EndView ends the view session token on host. Its sign-in session and

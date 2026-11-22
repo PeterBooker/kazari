@@ -133,14 +133,33 @@ type Fetch struct {
 }
 
 // Auth holds the write policy, the admin token, the lifetimes of
-// credentials and the optional identity provider.
+// credentials, the built-in accounts and the optional identity provider.
 type Auth struct {
-	WritePolicy string `yaml:"write_policy"`
-	AdminToken  string `yaml:"admin_token" secret:"true"`
-	Tokens      Tokens `yaml:"tokens"`
-	// Nil when auth.oidc is absent: sign-in falls back to API keys.
+	WritePolicy string    `yaml:"write_policy"`
+	AdminToken  string    `yaml:"admin_token" secret:"true"`
+	Tokens      Tokens    `yaml:"tokens"`
+	Local       LocalAuth `yaml:"local"`
+	// Nil when auth.oidc is absent: people sign in with a built-in account,
+	// or with an API key when auth.local is off.
 	OIDC *OIDC `yaml:"oidc"`
 }
+
+// LocalAuth configures the accounts Kazari keeps itself: a password per
+// person, set through a link an admin hands over.
+type LocalAuth struct {
+	// Nil follows auth.oidc: on without a provider, off with one.
+	Enabled           *bool    `yaml:"enabled"`
+	MinPasswordLength int      `yaml:"min_password_length"`
+	InviteTTL         Duration `yaml:"invite_ttl"`
+	ResetTTL          Duration `yaml:"reset_ttl"`
+}
+
+// Bounds of auth.local.min_password_length. The upper one is also the
+// longest password accepted.
+const (
+	MinPasswordLength = 8
+	MaxPasswordLength = 256
+)
 
 // Tokens sets how long OAuth tokens and API keys live.
 type Tokens struct {
@@ -176,6 +195,13 @@ type Admin struct {
 	// Unix socket that serves the admin API without a token, relative to
 	// data_dir unless absolute; empty disables it.
 	Socket string `yaml:"socket"`
+	// Serve the dashboard at the root of the admin host.
+	Dashboard bool `yaml:"dashboard"`
+	// The address a browser reaches the admin host at. Empty means
+	// https://admin.<base_domain>, or none at all with admin.listen set.
+	PublicURL string `yaml:"public_url"`
+	// Ask GitHub once a day for the newest release.
+	UpdateCheck bool `yaml:"update_check"`
 }
 
 // DefaultAdminSocket is admin.socket's default, under data_dir.
@@ -239,9 +265,16 @@ func Default() Config {
 				RefreshTTL:         Duration(90 * day),
 				RefreshReuseWindow: Duration(30 * second),
 			},
+			Local: LocalAuth{
+				MinPasswordLength: 15,
+				InviteTTL:         Duration(7 * day),
+				ResetTTL:          Duration(1 * day),
+			},
 		},
 		Admin: Admin{
-			Socket: DefaultAdminSocket,
+			Socket:      DefaultAdminSocket,
+			Dashboard:   true,
+			UpdateCheck: true,
 		},
 		Log: Log{
 			Level:  "info",
@@ -477,6 +510,38 @@ func (c Config) ExternalURL(sub string) string {
 	return scheme + "://" + host + "/"
 }
 
+// LocalAccounts reports whether people sign in with a password Kazari
+// keeps: auth.local.enabled, which without a value is on exactly when no
+// identity provider is configured.
+func (c Config) LocalAccounts() bool {
+	if c.Auth.Local.Enabled != nil {
+		return *c.Auth.Local.Enabled
+	}
+	return c.Auth.OIDC == nil
+}
+
+// AdminURL is the address a browser reaches the admin host at, without a
+// trailing slash: admin.public_url, else the public admin host. It is "" when
+// admin.listen moves the host off the public listener and admin.public_url does not
+// say where to, so nothing can link to it.
+func (c Config) AdminURL() string {
+	if c.Admin.PublicURL != "" {
+		return strings.TrimSuffix(c.Admin.PublicURL, "/")
+	}
+	if c.Admin.Listen != "" {
+		return ""
+	}
+	return strings.TrimSuffix(c.ExternalURL("admin"), "/")
+}
+
+// DashboardEnabled reports whether the dashboard is served: admin.dashboard
+// is on, AdminURL names where a browser finds it, and that address is one
+// CheckAdminURL accepts. The last matters for the default address under
+// external_scheme http, which no validation of admin.public_url has seen.
+func (c Config) DashboardEnabled() bool {
+	return c.Admin.Dashboard && c.AdminURL() != "" && CheckAdminURL(c.AdminURL()) == nil
+}
+
 // SlogLevel returns log.level as a slog.Level (info when unrecognised).
 func (c Config) SlogLevel() slog.Level { return ParseLevel(c.Log.Level) }
 
@@ -516,7 +581,15 @@ func (c Config) Logger(w io.Writer, journal bool) *slog.Logger {
 // YAML file, with set secrets as "***", sizes and durations as strings
 // ("50MiB", "336h") and a missing auth.oidc as nil.
 func (c Config) Redacted() map[string]any {
-	return redactStruct(reflect.ValueOf(c))
+	m := redactStruct(reflect.ValueOf(c))
+	// The effective value, where the key's own may be left to follow
+	// auth.oidc.
+	if auth, ok := m["auth"].(map[string]any); ok {
+		if local, ok := auth["local"].(map[string]any); ok {
+			local["enabled"] = c.LocalAccounts()
+		}
+	}
+	return m
 }
 
 func redactStruct(v reflect.Value) map[string]any {

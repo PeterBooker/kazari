@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -130,7 +132,124 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.idp.AuthURL(req.UpstreamState, req.Nonce, oauth2.S256ChallengeFromVerifier(verifier)), http.StatusFound)
 		return
 	}
-	s.renderConsent(w, http.StatusOK, c, req, "", scopes, "")
+	if s.passwords == nil {
+		s.renderConsent(w, http.StatusOK, c, req, "", scopes, "")
+		return
+	}
+	// A browser that is signed in already goes straight to the consent
+	// page; one signed in with an API key signs in again, because a key
+	// approves a grant on the consent page, where it bounds the grant.
+	sess, err := s.liveSession(ctx, r)
+	if err != nil {
+		s.log.ErrorContext(ctx, "oauth: load session", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return
+	}
+	if sess != nil && sess.KeyPrefix == "" {
+		s.continueRequest(w, r, req, sess.UserHandle)
+		return
+	}
+	s.setNamedCookie(w, s.named(signInCookie), s.signInBinding(r), s.opts.SessionTTL)
+	s.renderSignIn(w, http.StatusOK, s.requestForm(ctx, req), false, "")
+}
+
+// requestForm returns the sign-in page that continues an MCP client's
+// authorization.
+func (s *Service) requestForm(ctx context.Context, req *Request) signInPage {
+	name := req.ClientID
+	if c, err := s.store.GetClient(ctx, req.ClientID); err == nil && c.Name != "" {
+		name = c.Name
+	}
+	return signInPage{
+		Title:      "Sign in to connect " + name,
+		Lede:       "Sign in first; the next page asks what " + name + " may do.",
+		RequestID:  req.ID,
+		KeyConsent: s.keys != nil,
+	}
+}
+
+// formRequest loads the pending request a form names. The form's request
+// id must equal the cookie, which another page can neither read nor, with
+// the __Host- prefix, set. When ok is false a page has been written.
+func (s *Service) formRequest(w http.ResponseWriter, r *http.Request, formID string) (*Request, bool) {
+	ck, err := r.Cookie(s.cookieName())
+	if err != nil || formID == "" || subtle.ConstantTimeCompare([]byte(formID), []byte(ck.Value)) != 1 {
+		s.message(w, http.StatusForbidden, "Request rejected",
+			"This form does not belong to the current sign-in. Start again from your application.", "")
+		return nil, false
+	}
+	return s.pendingRequest(w, r)
+}
+
+// continueRequest binds a pending request to the person who just signed in
+// and sends the browser to the consent page.
+func (s *Service) continueRequest(w http.ResponseWriter, r *http.Request, req *Request, handle string) {
+	ctx := r.Context()
+	if err := s.store.BindRequest(ctx, req.ID, handle); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			s.message(w, http.StatusBadRequest, "Sign-in already used",
+				"This sign-in has already been completed. Start again from your application.", "")
+			return
+		}
+		s.log.ErrorContext(ctx, "oauth: bind request", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return
+	}
+	http.Redirect(w, r, PathConsent, http.StatusSeeOther)
+}
+
+// serveConsentPage shows the consent page of the pending request to the
+// person who signed in for it with a password. Without a sign-in yet it
+// asks for one, or with ?with=key shows the page that takes an API key in
+// place of a sign-in.
+func (s *Service) serveConsentPage(w http.ResponseWriter, r *http.Request) {
+	r, out, span := s.handle(r, "oauth.consent")
+	defer endHandle(span, out)
+	ctx := r.Context()
+	req, ok := s.pendingRequest(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.store.GetClient(ctx, req.ClientID)
+	if err != nil {
+		s.log.ErrorContext(ctx, "oauth: load client", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return
+	}
+	if req.UserHandle == "" {
+		switch {
+		case s.idp != nil:
+			s.message(w, http.StatusForbidden, "Sign-in required",
+				"Sign in at the identity provider first. Start again from your application.", "")
+		case s.passwords == nil || (s.keys != nil && r.URL.Query().Get("with") == withKey):
+			s.renderConsent(w, http.StatusOK, c, req, "", req.Scopes, "")
+		default:
+			s.renderSignIn(w, http.StatusOK, s.requestForm(ctx, req), false, "")
+		}
+		return
+	}
+	u, err := s.users.GetUser(ctx, req.UserHandle)
+	if err == nil && u.DisabledAt != nil {
+		err = user.ErrDisabled
+	}
+	if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
+		s.message(w, http.StatusForbidden, "No access",
+			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", "")
+		return
+	}
+	if err != nil {
+		s.log.ErrorContext(ctx, "oauth: load user", "err", err)
+		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		return
+	}
+	scopes := intersect(req.Scopes, user.ScopesFor(u))
+	if len(scopes) == 0 {
+		_ = s.store.DeleteRequest(ctx, req.ID)
+		s.clearCookie(w)
+		s.invalidRequest(w, "invalid_scope", "none of the requested scopes is available to this account")
+		return
+	}
+	s.renderConsent(w, http.StatusOK, c, req, u.Handle, scopes, "")
 }
 
 // invalidRequest answers a request the server cannot act on with a page.
@@ -373,16 +492,8 @@ func (s *Service) renderConsent(w http.ResponseWriter, status int, c *Client, re
 }
 
 // sameOrigin reports whether a form post comes from this server's pages.
-// Same-site is not enough: artifacts on sibling hosts run member-authored
-// script. The consent page's no-referrer policy makes Origin "null", so then
-// Sec-Fetch-Site decides; with neither header (a non-browser client or an
-// old browser) the __Host- cookie still holds.
 func (s *Service) sameOrigin(r *http.Request) bool {
-	if o := r.Header.Get("Origin"); o != "" && o != "null" {
-		return strings.EqualFold(o, s.origin)
-	}
-	site := r.Header.Get("Sec-Fetch-Site")
-	return site == "" || site == "same-origin"
+	return middleware.SameOrigin(r, s.origin)
 }
 
 func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
@@ -399,16 +510,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		s.message(w, http.StatusBadRequest, "Bad request", "The form could not be read.", "")
 		return
 	}
-	// The form's request id must equal the cookie, which another page can
-	// neither read nor, with the __Host- prefix, set.
-	ck, err := r.Cookie(s.cookieName())
-	formID := r.PostForm.Get("request_id")
-	if err != nil || formID == "" || subtle.ConstantTimeCompare([]byte(formID), []byte(ck.Value)) != 1 {
-		s.message(w, http.StatusForbidden, "Request rejected",
-			"This form does not belong to the current sign-in. Start again from your application.", "")
-		return
-	}
-	req, ok := s.pendingRequest(w, r)
+	req, ok := s.formRequest(w, r, r.PostForm.Get("request_id"))
 	if !ok {
 		return
 	}
@@ -437,7 +539,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := randomString(secretBytes)
-	err = s.store.CreateCode(ctx, &Code{
+	err := s.store.CreateCode(ctx, &Code{
 		Hash:          hashSecret(code),
 		ClientID:      req.ClientID,
 		UserHandle:    a.handle,
@@ -461,7 +563,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	if a.keyPrefix != "" {
 		details["key_prefix"] = a.keyPrefix
 	}
-	s.record(ctx, a.handle, ActionGrant, details)
+	s.record(ctx, a.handle, ActionGrant, a.handle, details)
 	v := url.Values{"code": {code}}
 	if req.ClientState != "" {
 		v.Set("state", req.ClientState)
@@ -472,16 +574,16 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 type approval struct {
 	handle    string
 	scopes    []string
-	via       string // "oidc" or "api_key"
-	keyPrefix string // the approving API key, "" via oidc
+	via       string // "oidc", "password" or "api_key"
+	keyPrefix string // the approving API key, "" unless via is "api_key"
 }
 
 // approver is who approves the request. With an API key in the form it is
 // the key's owner, and the grant is the key over OAuth: capped at its
-// scopes, restricted to its slugs and alive only as long as it is. After an
-// identity-provider sign-in the key must be the signed-in person's own;
-// without a key it is that person, with scopes capped by role. When ok is
-// false a page has been written.
+// scopes, restricted to its slugs and alive only as long as it is. After a
+// sign-in, at the identity provider or with a password, the key must be the
+// signed-in person's own; without a key it is that person, with scopes
+// capped by role. When ok is false a page has been written.
 func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request) (approval, bool) {
 	ctx := r.Context()
 	fail := func(status int, title, msg string) (approval, bool) {
@@ -510,7 +612,11 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 
 	key := strings.TrimSpace(r.PostForm.Get("api_key"))
 	if signedIn != nil && key == "" {
-		return approval{handle: signedIn.Handle, scopes: intersect(req.Scopes, user.ScopesFor(signedIn)), via: "oidc"}, true
+		via := viaOIDC
+		if s.idp == nil {
+			via = viaPassword
+		}
+		return approval{handle: signedIn.Handle, scopes: intersect(req.Scopes, user.ScopesFor(signedIn)), via: via}, true
 	}
 	if s.keys == nil {
 		return fail(http.StatusForbidden, "Sign-in required", "This instance has no way to approve with an API key.")
@@ -535,5 +641,5 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		s.renderConsent(w, http.StatusUnauthorized, c, req, handle, scopes, "That API key was not accepted.")
 		return approval{}, false
 	}
-	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: "api_key", keyPrefix: p.KeyID}, true
+	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: viaAPIKey, keyPrefix: p.KeyID}, true
 }

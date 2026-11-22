@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"slices"
@@ -94,6 +95,19 @@ func (c *Config) Validate() error {
 	if t.MaxKeyTTL < 0 {
 		v.add("auth.tokens.max_key_ttl", "must not be negative; 0 sets no limit")
 	}
+	l := c.Auth.Local
+	if l.Enabled != nil && *l.Enabled && c.Auth.OIDC != nil {
+		v.add("auth.local.enabled", "must not be true with auth.oidc: people sign in with built-in accounts or the identity provider, never both")
+	}
+	if l.MinPasswordLength < MinPasswordLength || l.MinPasswordLength > MaxPasswordLength {
+		v.add("auth.local.min_password_length", fmt.Sprintf("must be between %d and %d", MinPasswordLength, MaxPasswordLength))
+	}
+	if l.InviteTTL <= 0 {
+		v.add("auth.local.invite_ttl", "must be greater than 0")
+	}
+	if l.ResetTTL <= 0 {
+		v.add("auth.local.reset_ttl", "must be greater than 0")
+	}
 	if o := c.Auth.OIDC; o != nil {
 		if !isHTTPSURL(o.Issuer) {
 			v.add("auth.oidc.issuer", "must be an https URL")
@@ -101,6 +115,12 @@ func (c *Config) Validate() error {
 		v.required("auth.oidc.client_id", o.ClientID)
 		if o.ClientSecret == "" {
 			v.add("auth.oidc.client_secret", "required (or set KAZARI_AUTH_OIDC_CLIENT_SECRET)")
+		}
+	}
+
+	if c.Admin.PublicURL != "" {
+		if err := CheckAdminURL(c.Admin.PublicURL); err != nil {
+			v.add("admin.public_url", err.Error())
 		}
 	}
 
@@ -130,6 +150,33 @@ var DNSProviders = []string{"cloudflare", "route53", "hetzner", "digitalocean", 
 // reaches.
 func IsLocalhost(base string) bool {
 	return base == "localhost" || strings.HasSuffix(base, ".localhost")
+}
+
+// CheckAdminURL reports why raw cannot be the address of the dashboard: it
+// must be an origin, and plain http only on this machine, where no one else
+// reads the session cookie off the wire.
+func CheckAdminURL(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https"):
+		return errors.New("must be an http or https URL, such as https://admin.example.com or http://localhost:9443")
+	case u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/"):
+		return errors.New("must be an origin: a scheme, a host and an optional port, with no path or query")
+	case u.Scheme == "http" && !IsLoopbackHost(u.Hostname()):
+		return errors.New("must be https unless the host is localhost or a loopback address; put a TLS proxy in front of admin.listen")
+	}
+	return nil
+}
+
+// IsLoopbackHost reports whether host (without a port) only ever names this
+// machine: localhost, a name under it, or a loopback IP address.
+func IsLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if IsLocalhost(host) {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 type validator struct {

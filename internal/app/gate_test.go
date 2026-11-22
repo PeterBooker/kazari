@@ -119,8 +119,13 @@ func TestGatedEndToEnd(t *testing.T) {
 	}
 	form := b.get(signIn)
 	wantStatus(t, form, http.StatusOK, "sign-in page")
-	if !strings.Contains(form.body, `name="api_key"`) {
+	// Built-in accounts are on without a provider: the page asks for a
+	// password, with the API-key form one link away.
+	if !strings.Contains(form.body, `name="password"`) || !strings.Contains(form.body, "with=key") {
 		t.Fatalf("sign-in page = %q", truncate(form.body))
+	}
+	if keyForm := b.get(signIn + "&with=key"); !strings.Contains(keyForm.body, `name="api_key"`) {
+		t.Fatalf("API-key sign-in page = %q", truncate(keyForm.body))
 	}
 	q := u.Query()
 	callback := b.follow(b.send(http.MethodPost, "http://mcp.localhost/oauth/signin", url.Values{
@@ -279,12 +284,12 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 			t.Errorf("link by %s: active = %v, want %v", l.CreatedBy, l.Active, want)
 		}
 	}
-	events, err := admin.Audit(ctx, "", "team", 0)
+	events, err := admin.Audit(ctx, cli.AuditParams{Slug: "team"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var revokes []api.AuditEvent
-	for _, ev := range events {
+	for _, ev := range events.Events {
 		if ev.Action == audit.ShareLinkRevoke {
 			revokes = append(revokes, ev)
 		}
@@ -359,7 +364,7 @@ func TestArtifactScriptCannotEndSignIn(t *testing.T) {
 	}
 	wantStatus(t, b.send(http.MethodPost, "http://mcp.localhost/oauth/signout", url.Values{}, http.Header{"Origin": {"http://mcp.localhost"}}), http.StatusOK, "sign out")
 	again := b.follow(b.get("http://team.localhost/"), "after signing out")
-	if got := b.get(again); got.status != http.StatusOK || !strings.Contains(got.body, `name="api_key"`) {
+	if got := b.get(again); got.status != http.StatusOK || !strings.Contains(got.body, `name="password"`) {
 		t.Fatalf("after signing out: status %d, body %q", got.status, truncate(got.body))
 	}
 }

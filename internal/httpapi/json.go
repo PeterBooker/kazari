@@ -17,7 +17,9 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
@@ -92,11 +94,13 @@ func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		instrument.Surface.String(instrument.OneOf(instrument.SurfaceFrom(ctx), instrument.SurfaceAPI, instrument.SurfaceAdmin)),
 		instrument.ErrorCode.String(instrument.OneOf(body.Code, api.ErrorCodes...)),
 	))
-	if status >= http.StatusInternalServerError {
+	// Turning a caller away for load is the server working as meant, not a
+	// fault to look into.
+	if status >= http.StatusInternalServerError && body.Code != api.CodeBusy {
 		b.log.ErrorContext(r.Context(), "httpapi: request failed",
 			"method", r.Method, "path", r.URL.Path, "status", status, "err", err)
 	}
-	if status == http.StatusTooManyRequests {
+	if status == http.StatusTooManyRequests || retry > 0 {
 		secs := int64(math.Ceil(retry.Seconds()))
 		w.Header().Set("Retry-After", strconv.FormatInt(max(secs, 1), 10))
 	}
@@ -111,12 +115,25 @@ func errorResponse(err error) (int, api.Error, time.Duration) {
 	switch {
 	case errors.Is(err, user.ErrInvalidIdentity):
 		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
+	case errors.Is(err, audit.ErrInvalidQuery):
+		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
 	case errors.Is(err, ErrGrantNotFound):
 		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "grant not found"}, 0
+	case errors.Is(err, backup.ErrRunning):
+		return http.StatusConflict, api.Error{Code: api.CodeBackupRunning, Message: "a backup is already running; wait for it to finish"}, 0
+	case errors.Is(err, backup.ErrNoSpace):
+		return http.StatusInsufficientStorage, api.Error{Code: api.CodeNoSpace, Message: err.Error()}, 0
 	}
 	status, body := present.Error(err)
+	if body.Code == api.CodeBusy {
+		return status, body, busyRetryAfter
+	}
 	return status, body, 0
 }
+
+// busyRetryAfter is what a caller turned away for load is told to wait: a
+// password hash takes well under a second, so the queue is short-lived.
+const busyRetryAfter = 5 * time.Second
 
 // decodeJSON rejects unknown fields, trailing data and bodies over limit
 // (413). An empty body is a 422 unless optional, which leaves v as it is.
@@ -195,11 +212,13 @@ func listQuery(r *http.Request) (artifact.ListQuery, error) {
 		return artifact.ListQuery{}, err
 	}
 	lq := artifact.ListQuery{
-		Mine:    q.Get("mine"),
-		Stale:   q.Get("stale"),
-		Deleted: q.Get("deleted"),
-		Cursor:  q.Get("cursor"),
-		Limit:   limit,
+		Mine:       q.Get("mine"),
+		Stale:      q.Get("stale"),
+		Deleted:    q.Get("deleted"),
+		Search:     q.Get("q"),
+		Visibility: q.Get("visibility"),
+		Cursor:     q.Get("cursor"),
+		Limit:      limit,
 	}
 	for k, vs := range q {
 		key, ok := strings.CutPrefix(k, "metadata.")

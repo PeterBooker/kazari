@@ -36,7 +36,7 @@ claude mcp add --transport http kazari https://mcp.art.example.com/ \
   --header "Authorization: Bearer kzk_..."
 ```
 
-An administrator issues the key with [`kazari admin keys issue`](cli.md#admin-commands), and a person who holds a key issues further ones with [`kazari keys issue`](cli.md#keys). The secret is shown once.
+An administrator issues the key with [`kazari admin keys issue`](cli.md#admin-commands) or in the [dashboard](dashboard.md#issuing-and-revoking-keys). A person issues their own on their [account page](identity.md#the-account-page), and one who holds a key issues further ones with [`kazari keys issue`](cli.md#keys). The secret is shown once.
 
 A key carries scopes, which decide the tools it can call:
 
@@ -114,7 +114,7 @@ Some hosts connect to an MCP server with OAuth and offer no header, such as a cu
 
 1. Add the server's URL, `https://mcp.art.example.com/`, as a connector.
 2. Sign in when the host sends you to Kazari.
-3. On the consent page, open **Approve with an API key instead**, paste the agent's key and approve. On an instance without an identity provider, the page asks for the key directly.
+3. On the consent page, open **Approve with an API key instead**, paste the agent's key and approve. On an instance without an identity provider, choose **Use an API key instead** on the sign-in page to reach a consent page that asks for the key directly.
 
 The connection is then that key over OAuth: it has the key's scopes and restriction, ends when the key expires or is revoked, and is recorded with the key's prefix ([Approving with an API key](identity.md#approving-with-an-api-key)). Everything that uses the connection is restricted alike, a chat as much as a scheduled run.
 

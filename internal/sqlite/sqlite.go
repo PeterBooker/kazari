@@ -64,6 +64,18 @@ func Open(ctx context.Context, path string, o Options) (*DB, error) {
 
 const maxOpenConns = 8
 
+// VacuumInto writes a compacted copy of the database to path, which must
+// not exist. The copy is one consistent snapshot, taken while other
+// connections go on reading and writing.
+func (db *DB) VacuumInto(ctx context.Context, path string) (err error) {
+	ctx, end := db.op(ctx, "DB.VacuumInto")
+	defer func() { end(err) }()
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+		return fmt.Errorf("sqlite: vacuum into %s: %w", path, err)
+	}
+	return nil
+}
+
 // observePool reports the connection pool as the database client
 // conventions describe it, from sql.DBStats at each collection.
 func observePool(m metric.Meter, db *sql.DB) {
@@ -111,8 +123,15 @@ func errorCode(err error) string {
 		return ""
 	case artifact.CodeOf(err) != "":
 		return artifact.CodeOf(err)
-	case errors.Is(err, user.ErrNotFound), errors.Is(err, user.ErrKeyNotFound), errors.Is(err, oauth.ErrNotFound):
+	case errors.Is(err, user.ErrNotFound), errors.Is(err, user.ErrKeyNotFound), errors.Is(err, oauth.ErrNotFound),
+		errors.Is(err, user.ErrLinkNotFound):
 		return api.CodeNotFound
+	case errors.Is(err, user.ErrLastAdmin):
+		return api.CodeLastAdmin
+	case errors.Is(err, user.ErrTooManyKeys):
+		return api.CodeTooManyKeys
+	case errors.Is(err, user.ErrSetupDone):
+		return api.CodeSetupDone
 	case errors.Is(err, user.ErrHandleTaken):
 		return api.CodeHandleTaken
 	case errors.Is(err, user.ErrEmailTaken):

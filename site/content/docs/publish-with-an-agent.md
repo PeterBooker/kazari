@@ -21,7 +21,7 @@ Agents that run in a web or desktop app add Kazari as a custom connector, which 
 To connect one:
 
 1. In your agent's settings, add a custom connector with the address `https://mcp.art.example.com/` and connect.
-2. The app sends you to sign in. If your organisation has set up single sign-on, use your work account. Otherwise Kazari asks for an API key, which your administrator can issue for you.
+2. The app sends you to sign in. If your organisation has set up single sign-on, use your work account. Otherwise sign in with your Kazari handle or email and your password, which you chose through the invite link your administrator sent you.
 3. Kazari shows a consent page naming the app, your account and what it may do. Approve it once.
 
 In claude.ai, for example, custom connectors are under **Settings → Connectors**. On Team and Enterprise plans, an owner may need to add the connector for the organisation before members can connect it.

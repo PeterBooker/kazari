@@ -21,6 +21,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -118,7 +119,8 @@ type env struct {
 	store  *sqlite.OAuthStore
 	users  *user.Service
 	clock  *clock
-	idp    *fakeIDP // nil without an identity provider
+	idp    *fakeIDP         // nil without an identity provider
+	keys   *passkey.Service // nil unless envOptions.passkeys
 	rec    *recorder
 	jar    http.CookieJar
 	client *http.Client
@@ -130,6 +132,15 @@ type envOptions struct {
 	logger           *slog.Logger
 	maxUnusedClients int
 	reuseWindow      time.Duration
+	// passwords turns the built-in accounts on, as an instance without an
+	// identity provider has them.
+	passwords bool
+	// checker replaces the service that checks passwords, to count or hold
+	// its calls.
+	checker oauth.Passwords
+	// passkeys adds the passkey sign-in, for passkeys of the relying party
+	// art.test made on the apex, https://art.test.
+	passkeys bool
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -149,6 +160,13 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		AdminEmails:    []string{"boss@example.com"},
 		// As internal/app wires it.
 		OnDisable: func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
+		EndSessions: func(ctx context.Context, handle string, keep int64) error {
+			return e.svc.EndSessions(ctx, handle, keep)
+		},
+		RevokeGrants:  func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
+		LocalAccounts: eo.passwords,
+		// The real parameters cost 64 MiB a hash.
+		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1},
 	})
 	var idp oauth.IdentityProvider
 	if !eo.noIDP {
@@ -157,8 +175,24 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		idp = e.idp
 	}
 
+	var passwords oauth.Passwords
+	if eo.passwords {
+		passwords = e.users
+	}
+	if eo.checker != nil {
+		passwords = eo.checker
+	}
+
 	e.srv = httptest.NewUnstartedServer(nil)
 	base := "http://" + e.srv.Listener.Addr().String()
+	var keys oauth.Passkeys
+	if eo.passkeys {
+		e.keys, err = passkey.New(e.users, passkey.Options{RPID: "art.test", Origins: []string{"https://art.test", base}, Now: e.clock.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = e.keys
+	}
 	e.svc = oauth.New(e.store, e.users, e.users, idp, e.rec, oauth.Options{
 		Issuer:             base,
 		Resource:           base + "/",
@@ -169,6 +203,10 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		Logger:             eo.logger,
 		InsecureCookies:    true,
 		ViewCallback:       viewCallback,
+		ControlCallback:    controlCallback,
+		Passwords:          passwords,
+		RecoverURL:         recoverURL(passwords),
+		Passkeys:           keys,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()
@@ -182,12 +220,32 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	return e
 }
 
+// recoverURL is the recovery page of an instance with built-in accounts.
+func recoverURL(p oauth.Passwords) string {
+	if p == nil {
+		return ""
+	}
+	return "https://art.test/account/recover"
+}
+
 // viewCallback knows the artifact hosts demo, demo--v2 and other under
 // art.test.
 func viewCallback(host string) (string, bool) {
 	switch host {
 	case "demo", "demo--v2", "other":
 		return "https://" + host + ".art.test/.kazari/callback", true
+	}
+	return "", false
+}
+
+// controlCallback knows the two control hosts, as internal/app builds them
+// from the configuration.
+func controlCallback(host string) (string, bool) {
+	switch host {
+	case oauth.HostAdmin:
+		return "https://admin.art.test/session/callback", true
+	case oauth.HostAccount:
+		return "https://art.test/account/callback", true
 	}
 	return "", false
 }

@@ -3,6 +3,8 @@ package audit
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -26,15 +28,32 @@ const (
 	KeyIssue           = "key.issue"
 	KeyRevoke          = "key.revoke"
 	KeyRotate          = "key.rotate"
+	// A link that sets a password: Details["purpose"] is invite, reset or
+	// setup.
+	InviteCreate    = "invite.create"
+	InviteUse       = "invite.use"
+	InviteRevoke    = "invite.revoke"
+	PasswordSet     = "password.set"
+	RecoveryCreate  = "recovery.create"
+	RecoveryUse     = "recovery.use"
+	PasskeyCreate   = "passkey.create"
+	PasskeyDelete   = "passkey.delete"
+	SessionRevoke   = "session.revoke" // a person's browser sessions ended
+	DashboardSignIn = "dashboard.signin"
+	AuditExport     = "audit.export"
+	BackupCreate    = "backup.create"
 )
 
 // Event is one audit row.
 type Event struct {
-	ID      int64
-	At      time.Time
-	Actor   string // handle, or "scheduler" / "admin"
-	Action  string
-	Slug    string
+	ID     int64
+	At     time.Time
+	Actor  string // handle, or "scheduler" / "admin"
+	Action string
+	Slug   string
+	// Subject is the handle of the person whose account the event changed
+	// or signed in to, whoever acted; "" for an event about no account.
+	Subject string
 	Details map[string]string
 }
 
@@ -44,17 +63,52 @@ type Recorder interface {
 	Record(ctx context.Context, e Event) error
 }
 
-// Query filters a listing for the admin API.
+// Query filters a listing. Every set field must match.
 type Query struct {
-	Since time.Time
-	Slug  string
-	Actor string
-	Limit int // 0 = 100, capped at 1000
+	Since   time.Time // inclusive
+	Until   time.Time // exclusive
+	Slug    string
+	Actor   string
+	Subject string
+	// Actions keeps the events whose action is one of these. An entry
+	// ending in "." is a prefix: "artifact." matches every artifact action.
+	Actions []string
+	// Cursor is the NextCursor of the page before; it continues that
+	// listing when the other fields are the same.
+	Cursor string
+	Limit  int // 0 = 100, capped at 1000
 }
 
-// Reader lists events, newest first.
+// MaxActions bounds Query.Actions.
+const MaxActions = 32
+
+// ErrInvalidQuery is a Query no listing can answer: a cursor that is not
+// one, an empty action or more than MaxActions of them.
+var ErrInvalidQuery = errors.New("audit: invalid query")
+
+// Validate reports ErrInvalidQuery for the Actions of q. The cursor is
+// checked where it is decoded.
+func (q Query) Validate() error {
+	if len(q.Actions) > MaxActions {
+		return fmt.Errorf("%w: at most %d actions", ErrInvalidQuery, MaxActions)
+	}
+	for _, a := range q.Actions {
+		if a == "" || a == "." {
+			return fmt.Errorf("%w: an action is empty", ErrInvalidQuery)
+		}
+	}
+	return nil
+}
+
+// Page is one page of a listing.
+type Page struct {
+	Events     []Event
+	NextCursor string // empty on the last page
+}
+
+// Reader lists events, newest first. ErrInvalidQuery.
 type Reader interface {
-	List(ctx context.Context, q Query) ([]Event, error)
+	List(ctx context.Context, q Query) (Page, error)
 }
 
 // Nop discards events.

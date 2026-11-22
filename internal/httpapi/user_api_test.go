@@ -283,6 +283,11 @@ func TestList(t *testing.T) {
 		{"?metadata.k=v", []string{"alpha", "gamma"}},
 		{"?mine=created&metadata.k=v", []string{"alpha"}},
 		{"?stale=only", nil},
+		{"?q=A", []string{"alpha", "beta", "gamma"}},
+		{"?q=ALP", []string{"alpha"}},
+		{"?q=et&mine=created", []string{"beta"}},
+		{"?visibility=public", []string{"alpha", "beta", "gamma"}},
+		{"?visibility=unlisted", nil},
 	}
 	for _, tt := range tests {
 		if got := slugs(tt.query); !slices.Equal(got, tt.want) {
@@ -301,7 +306,7 @@ func TestList(t *testing.T) {
 		t.Errorf("second page = %+v", next)
 	}
 
-	for _, q := range []string{"?limit=x", "?mine=nobody", "?stale=maybe"} {
+	for _, q := range []string{"?limit=x", "?mine=nobody", "?stale=maybe", "?visibility=secret"} {
 		e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts" + q), token: e.alice}), 422, api.CodeInvalidArgument)
 	}
 }

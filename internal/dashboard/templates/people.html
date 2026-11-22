@@ -1,0 +1,82 @@
+{{/* The list of people, with the links that are waiting to be used. */}}
+
+{{define "people-status"}}<span class="status {{.Tone}}">{{.StatusWord}}</span>{{end}}
+
+{{define "people-usage"}}<div class="usage">{{if .Quota}}<span>{{bytes .Used}} of {{bytes .Quota}}{{if ge .Percent 75}} <span class="{{if ge .Percent 90}}tone-danger{{else}}tone-warn{{end}}">({{.Percent}}%)</span>{{end}}</span><meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Percent}}">{{.Percent}}%</meter>{{else}}<span>{{bytes .Used}}, <span class="soft">no limit</span></span>{{end}}</div>{{end}}
+
+{{define "people"}}{{template "theme/shell" .Shell}}<div class="page">
+<header class="head">
+<div class="head-row">
+<h1 class="title">People</h1>
+<span class="ja" lang="ja" aria-hidden="true">利用者</span>
+<div class="head-actions"><a class="btn btn-primary" href="/invites/new">{{template "icon/plus"}}{{if .Data.Local}}Invite a person{{else}}Add a person{{end}}</a></div>
+</div>
+<p class="lede">Everyone who can sign in to this instance, how they sign in and what they use.</p>
+</header>
+{{template "flash" .}}
+
+<section class="section" aria-labelledby="people-all">
+<h2 class="h2 sr-only" id="people-all">Everyone</h2>
+<form class="filters" method="get" action="/people">
+<div class="field field-search"><label for="people-q">Search</label><input class="input" id="people-q" name="q" type="search" value="{{.Data.Q}}" placeholder="Name, handle or email"></div>
+<div class="field"><label for="people-role">Role</label><select class="input" id="people-role" name="role">
+<option value="">Any</option>
+<option value="admin"{{if eq .Data.Role "admin"}} selected{{end}}>Admin</option>
+<option value="member"{{if eq .Data.Role "member"}} selected{{end}}>Member</option>
+</select></div>
+<div class="field"><label for="people-status">Status</label><select class="input" id="people-status" name="status">
+<option value="">Any</option>
+<option value="active"{{if eq .Data.Status "active"}} selected{{end}}>Active</option>
+<option value="invited"{{if eq .Data.Status "invited"}} selected{{end}}>Invited</option>
+<option value="disabled"{{if eq .Data.Status "disabled"}} selected{{end}}>Disabled</option>
+</select></div>
+<button type="submit" class="btn">Filter</button>
+{{if .Data.Filtered}}<a class="link" href="/people">Clear the filters</a>{{end}}
+</form>
+{{if .Data.Rows}}<table class="table">
+<thead><tr><th>Person</th><th>Role</th><th>Status</th><th>Signs in with</th><th>Usage</th><th class="num">Pages</th><th>Last active</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Data.Rows}}<tr>
+<td data-label="Person"><a href="/people/{{.Handle}}">{{.Name}}</a> <span class="mono soft">{{.Handle}}</span>{{with .Email}}<br><span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Role">{{if .Admin}}Admin{{else}}Member{{end}}</td>
+<td data-label="Status">{{template "people-status" .}}</td>
+<td data-label="Signs in with">{{if .Methods}}{{join .Methods ", "}}{{else}}<span class="soft">nothing yet</span>{{end}}</td>
+<td data-label="Usage">{{template "people-usage" .}}</td>
+<td class="num" data-label="Pages">{{.Pages}}</td>
+<td data-label="Last active">{{if .LastActive}}{{when .LastActive}}{{else}}<span class="soft">never</span>{{end}}</td>
+<td class="row-actions"><a class="link" href="/people/{{.Handle}}">Open<span class="sr-only"> {{.Handle}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+<nav class="pager" aria-label="Pages of people">
+{{if .Data.Prev}}<a class="btn btn-sm" href="{{.Data.Prev}}" rel="prev">Previous</a>{{end}}
+<span class="label">{{.Data.From}} to {{.Data.To}} of {{.Data.Matched}}{{if .Data.Filtered}} matching, {{.Data.Total}} in all{{end}}</span>
+{{if .Data.Next}}<a class="btn btn-sm" href="{{.Data.Next}}" rel="next">Next</a>{{end}}
+</nav>
+{{else}}<div class="empty">
+<p>Nobody matches these filters. This list is everyone with an account on this instance, {{.Data.Total}} in all.</p>
+<a class="btn" href="/people">Clear the filters</a>
+</div>{{end}}
+</section>
+
+{{if .Data.Local}}<section class="section" aria-labelledby="people-links">
+<h2 class="h2" id="people-links">Links waiting to be used</h2>
+{{if .Data.Links}}<p class="soft">An invite or reset link is shown once, when it is made. One that was lost is replaced, never shown again.</p>
+<table class="table">
+<thead><tr><th>For</th><th>Link</th><th>Made by</th><th>Works until</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Data.Links}}<tr>
+<td data-label="For"><a class="mono" href="/people/{{.Handle}}">{{.Handle}}</a></td>
+<td data-label="Link">{{if eq .Purpose "reset"}}Password reset{{else}}Invite{{end}}</td>
+<td data-label="Made by"><span class="mono">{{.CreatedBy}}</span></td>
+<td data-label="Works until">{{when .ExpiresAt}}</td>
+<td class="row-actions"><a class="link" href="{{.Replace}}">Replace<span class="sr-only"> the link for {{.Handle}}</span></a> <a class="link link-danger" href="/invites/{{.ID}}/revoke">Revoke<span class="sr-only"> the link for {{.Handle}}</span></a></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+<p>Nobody is waiting on a link. An invite is a link you copy and send: it works once, and Kazari sends no email.</p>
+<a class="btn" href="/invites/new">Invite a person</a>
+</div>{{end}}
+</section>{{end}}
+</div>{{template "theme/shell-close"}}{{end}}

@@ -1,0 +1,107 @@
+{{define "system"}}{{template "theme/shell" .Shell}}
+<div class="page">
+
+<header class="head">
+<div class="head-row">
+<h1 class="title">System</h1>
+<span class="ja" lang="ja" aria-hidden="true">運用</span>
+<span class="mono soft">{{.Data.Build.Version}}</span>
+</div>
+<p class="lede">How the instance is doing, and what it runs with. Installing, upgrading, restoring a backup and changing the configuration are done on the host; this page says what state they are in.</p>
+</header>
+
+{{template "flash" .}}
+{{if .Data.HasReady}}<section class="section" id="health" aria-labelledby="health-h">
+<div class="section-head">
+<h2 class="h2" id="health-h">Health</h2>
+<form class="inline" method="post" action="/system/health/run">{{template "token" .}}<button type="submit" class="btn btn-sm">Run the checks now</button></form>
+</div>
+{{with .Data.Report}}<p class="soft">Checked {{when .At}}. A run asks the DNS servers and the DNS provider, so it can take a minute.</p>
+<table class="table">
+<thead><tr><th>Check</th><th>Result</th><th>Detail</th></tr></thead>
+<tbody>
+{{range .Findings}}<tr><td data-label="Check"><span class="mono">{{.Check}}</span></td>
+<td data-label="Result"><span class="status tone-{{findingTone .Status}}">{{findingWord .Status}}</span></td>
+<td data-label="Detail">{{.Detail}}</td></tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty"><p>The checks have not run since the server started. They look at the configuration, the DNS records, the DNS token, the certificate and the disk. A run can take a minute.</p></div>
+{{end}}</section>
+{{end}}
+{{if .Data.HasJobs}}<section class="section" id="jobs" aria-labelledby="jobs-h">
+<h2 class="h2" id="jobs-h">Jobs</h2>
+<table class="table">
+<thead><tr><th>Job</th><th>Every</th><th>Last run</th><th>Next run</th><th>Last error</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Data.Jobs}}<tr><td data-label="Job"><span class="mono">{{.Name}}</span>{{with .About}}<br><span class="soft">{{.}}</span>{{end}}</td>
+<td data-label="Every" class="nowrap">{{if gt .Every 0}}{{span .Every}}{{else}}<span class="soft">on demand</span>{{end}}</td>
+<td data-label="Last run">{{if .Running}}<span class="status tone-note">Running</span>{{else if .LastRun}}{{when .LastRun}}{{else}}<span class="soft">not yet</span>{{end}}</td>
+<td data-label="Next run">{{if .NextRun}}{{when .NextRun}}{{else}}<span class="soft">not scheduled</span>{{end}}</td>
+<td data-label="Last error">{{if .LastError}}<span class="status tone-danger">Failed</span> <span class="mono">{{.LastError}}</span>{{else}}<span class="soft">none</span>{{end}}</td>
+<td class="row-actions"><form class="inline" method="post" action="/system/jobs/{{.Name}}/run">{{template "token" $}}<button type="submit" class="btn btn-sm">Run now</button></form></td></tr>
+{{end}}</tbody>
+</table>
+</section>
+{{end}}
+{{with .Data.Backup}}<section class="box section" id="backup" aria-labelledby="backup-h">
+<h2 class="h2" id="backup-h">Backup</h2>
+<dl class="kv">
+<dt>Size to expect</dt><dd>About {{bytes .FileBytes}} of files, and the database on top. The server needs free space for a temporary copy of the database, and says so when it has too little.</dd>
+<dt>Last backup</dt><dd>{{with .Last}}{{when .At}} by <span class="mono">{{.Actor}}</span>{{else}}<span class="soft">None taken through Kazari yet.</span>{{end}}</dd>
+</dl>
+<div class="notice tone-warn">
+<p class="notice-title">Keep a backup as a secret</p>
+<p>The archive holds every page, every version and the hash of every password and key.</p>
+</div>
+<form class="form" method="post" action="/system/backup">{{template "token" $}}
+<div class="actions"><button type="submit" class="btn btn-primary">{{template "icon/download"}}Download a backup</button></div>
+</form>
+<ul class="dash soft">
+<li>The download leaves out the certificate's private key. <span class="mono">kazari admin backup</span>, run on the server, includes it.</li>
+<li>Restoring is done on the host, with the server stopped. <a href="{{$.Data.BackupDocsURL}}">How to restore</a></li>
+<li>To back up on a schedule, run <span class="mono">kazari admin backup</span> from a timer on the host.</li>
+</ul>
+</section>
+{{end}}
+<section class="box section" id="about" aria-labelledby="about-h">
+<h2 class="h2" id="about-h">About</h2>
+<dl class="kv">
+<dt>Version</dt><dd><span class="mono">{{.Data.Build.Version}}</span>{{with .Data.Build.Commit}}, commit <span class="mono">{{.}}</span>{{end}}</dd>
+<dt>Newest release</dt><dd>{{if .Data.Update.Off}}<span class="soft">The update check is off (<span class="mono">admin.update_check</span>).</span>
+{{else if .Data.Update.Unknown}}<span class="soft">Not known. No check has answered yet, or this build has no release version to compare.</span>
+{{else if .Data.Update.Newer}}<span class="status tone-note">New version</span> Kazari <span class="mono">{{.Data.Update.Latest}}</span> is out, checked {{when .Data.Update.CheckedAt}}. <a href="{{.Data.ReleasesURL}}">Release notes</a>
+{{else}}<span class="status tone-ok">Up to date</span> as of {{when .Data.Update.CheckedAt}}{{end}}</dd>
+<dt>Started</dt><dd>{{when .Data.Started}}</dd>
+<dt>Data directory</dt><dd><span class="mono">{{.Data.DataDir}}</span></dd>
+<dt>Connector address</dt><dd><span class="mono">{{.Data.MCPURL}}</span></dd>
+<dt>Certificates</dt><dd>{{if eq .Data.TLSMode "proxy"}}A proxy in front of Kazari holds the certificate.{{else}}Mode <span class="mono">{{.Data.TLSMode}}</span>{{end}}</dd>
+</dl>
+<h3 class="h3">Upgrading</h3>
+<p>An upgrade is done on the host: back up, install the new release the way the current one was installed, and restart. Kazari updates its database at start, and only forwards. <a href="{{.Data.UpgradeURL}}">How to upgrade</a></p>
+<p class="actions"><a class="link" href="{{.Data.DocsURL}}">Documentation</a><a class="link" href="{{.Data.ReleasesURL}}">Release notes on GitHub</a></p>
+</section>
+
+{{if .Data.Settings}}<section class="section" id="settings" aria-labelledby="settings-h">
+<h2 class="h2" id="settings-h">Settings</h2>
+<p class="soft">The configuration the server runs with, secrets hidden. To change a setting, edit the configuration file on the host and restart the server. <a href="{{.Data.ConfigURL}}">What each setting does</a></p>
+{{range .Data.Settings}}<details class="more"{{if eq .Name "general"}} open{{end}}><summary><span class="mono">{{.Name}}</span></summary>
+<table class="table">
+<thead><tr><th>Setting</th><th>Value</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr><td data-label="Setting"><span class="mono">{{.Key}}</span></td>
+<td data-label="Value">{{if .Secret}}<span class="mono">***</span> <span class="soft">set, hidden</span>{{else if .Unset}}<span class="soft">not set</span>{{else}}<span class="mono">{{.Value}}</span>{{end}}</td></tr>
+{{end}}</tbody>
+</table>
+</details>
+{{end}}</section>
+{{end}}
+<section class="section" id="diagnostics" aria-labelledby="diagnostics-h">
+<h2 class="h2" id="diagnostics-h">Diagnostics</h2>
+<p class="soft">The version, the settings above with their secrets hidden, and the results of the checks, as text to paste for whoever you ask for help.</p>
+<div class="snippet"><details class="more"><summary>Show the text</summary>
+<pre><code id="diagnostics-text">{{.Data.Diagnostic}}</code></pre></details>
+<button type="button" class="btn btn-sm" data-copy-target="diagnostics-text" hidden>Copy diagnostics</button></div>
+</section>
+
+</div>
+{{template "theme/shell-close"}}{{end}}

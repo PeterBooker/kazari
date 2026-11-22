@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/theme"
 )
 
 // Endpoint paths, relative to the issuer.
@@ -38,13 +39,22 @@ func (s *Service) Handler() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		})))
 	}
+	// No method in the pattern: the theme answers 405 itself.
+	mux.Handle(PathAssets, theme.Handler(PathAssets))
 	mux.HandleFunc("GET "+PathAuthorize, s.serveAuthorize)
 	mux.HandleFunc("GET "+PathCallback, s.serveCallback)
+	mux.HandleFunc("GET "+PathConsent, s.serveConsentPage)
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
 	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
-	mux.HandleFunc("POST "+PathSignIn, s.serveSignInKey)
+	mux.HandleFunc("POST "+PathSignIn, s.serveSignInForm)
 	mux.HandleFunc("GET "+PathSignOut, s.serveSignOutPage)
 	mux.HandleFunc("POST "+PathSignOut, s.serveSignOut)
+	if s.opts.RecoverURL != "" {
+		// The sign-in page links here, so it names no other origin.
+		mux.HandleFunc("GET "+PathRecover, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, s.opts.RecoverURL, http.StatusSeeOther)
+		})
+	}
 	return middleware.Routed(mux)
 }
 

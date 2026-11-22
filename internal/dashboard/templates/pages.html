@@ -1,0 +1,86 @@
+{{define "pages"}}{{template "theme/shell" .Shell}}<div class="page">
+<header class="head">
+<div class="head-row">
+<h1 class="title">Pages</h1>
+<span class="ja" lang="ja" aria-hidden="true">ページ</span>
+<div class="head-actions"><a class="link" href="/bin">The bin</a></div>
+</div>
+<p class="lede">Every page on this instance, whoever owns it.</p>
+</header>
+{{template "flash" .}}
+{{with .Data}}
+<section class="section" aria-labelledby="pages-list">
+<h2 class="h2 sr-only" id="pages-list">All pages</h2>
+<form class="filters" method="get" action="/pages">
+<div class="field field-search"><label for="f-q">Search</label><input class="input" id="f-q" name="q" type="search" value="{{.Filter.Q}}" placeholder="Slug or name"></div>
+<div class="field"><label for="f-status">Status</label><select class="input" id="f-status" name="status"><option value="">Any</option>{{range .States}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Status}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+<div class="field"><label for="f-visibility">Open to</label><select class="input" id="f-visibility" name="visibility"><option value="">Any</option>{{range .Visibilities}}<option value="{{.Key}}"{{if eq .Key $.Data.Filter.Visibility}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+<div class="field"><label for="f-owner">Owner</label><select class="input" id="f-owner" name="owner"><option value="">Anyone</option>{{range .Owners}}<option value="{{.Handle}}"{{if eq .Handle $.Data.Filter.Owner}} selected{{end}}>{{.Handle}}</option>{{end}}</select></div>
+<button type="submit" class="btn">Filter</button>
+{{if .Filter.Set}}<a class="link" href="/pages">Clear</a>{{end}}
+</form>
+{{if .Rows}}<table class="table">
+<thead><tr><th>Page</th><th>Owner</th><th>Open to</th><th>Status</th><th class="num">Versions</th><th class="num">Size</th><th>Updated</th><th>Next step</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a>{{if and .Name (ne .Name .Slug)}} <span class="soft">{{.Name}}</span>{{end}}</td>
+<td data-label="Owner"><a class="mono" href="/people/{{.OwnerHandle}}">{{.OwnerHandle}}</a></td>
+<td data-label="Open to" class="nowrap">{{.Open}}</td>
+<td data-label="Status" class="nowrap"><span class="status {{.State.Tone}}">{{.State.Label}}</span></td>
+<td class="num" data-label="Versions">{{.LatestVersion}}</td>
+<td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
+<td data-label="Updated" class="nowrap">{{when .UpdatedAt}}</td>
+<td data-label="Next step">{{if .Step}}{{.Step}} on {{day .StepAt}}{{else}}<span class="soft">None</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+{{if or .Filter.Set .First}}<p>No page matches this filter.</p>
+<a class="btn" href="/pages">Show all pages</a>
+{{else}}<p>No page has been published yet. Pages come from the people of this instance: an agent connected to Kazari publishes one when asked, and <span class="mono">kazari publish</span> does from a directory. Each page gets an address of its own, and shows up here.</p>
+<a class="btn" href="/people">See people</a>{{end}}
+</div>{{end}}
+{{if or .Next .First}}<nav class="pager" aria-label="Pages of the list">
+{{with .First}}<a class="btn btn-sm" href="{{.}}">First page</a>{{end}}
+{{with .Next}}<a class="btn btn-sm" href="{{.}}" rel="next">Next page</a>{{end}}
+</nav>{{end}}
+</section>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}
+
+{{define "pages_bin"}}{{template "theme/shell" .Shell}}<div class="page">
+<header class="head">
+<p class="crumb"><a href="/pages">Pages</a> / The bin</p>
+<div class="head-row">
+<h1 class="title">The bin</h1>
+</div>
+<p class="lede">Pages that were deleted, or went stale and were not kept. Nobody can open them. Each can be restored until it is removed for good, {{span .Data.Retention}} after it came here.</p>
+</header>
+{{template "flash" .}}
+{{with .Data}}
+<section class="section" aria-labelledby="bin-list">
+<h2 class="h2 sr-only" id="bin-list">Pages in the bin</h2>
+{{if .Rows}}<table class="table">
+<thead><tr><th>Page</th><th>Owner</th><th class="num">Size</th><th>In the bin since</th><th>Removed for good on</th><th><span class="sr-only">Actions</span></th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a>{{if and .Name (ne .Name .Slug)}} <span class="soft">{{.Name}}</span>{{end}}</td>
+<td data-label="Owner"><a class="mono" href="/people/{{.OwnerHandle}}">{{.OwnerHandle}}</a></td>
+<td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
+<td data-label="In the bin since" class="nowrap">{{when .DeletedAt}}</td>
+<td data-label="Removed for good on" class="nowrap">{{day .StepAt}}</td>
+<td class="row-actions"><form class="inline" method="post" action="/pages/{{.Slug}}/restore">{{template "token" $}}<button type="submit" class="link">Restore<span class="sr-only"> {{.Slug}}</span></button></form></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<div class="empty">
+<p>The bin is empty. A page comes here when someone deletes it or when its stale mark runs out, and waits {{span .Retention}} before it is removed for good.</p>
+<a class="btn" href="/pages">See all pages</a>
+</div>{{end}}
+{{if or .Next .First}}<nav class="pager" aria-label="Pages of the bin">
+{{with .First}}<a class="btn btn-sm" href="{{.}}">First page</a>{{end}}
+{{with .Next}}<a class="btn btn-sm" href="{{.}}" rel="next">Next page</a>{{end}}
+</nav>{{end}}
+</section>
+{{end}}
+</div>{{template "theme/shell-close"}}{{end}}

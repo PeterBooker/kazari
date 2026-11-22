@@ -28,6 +28,8 @@ const scope = "github.com/PeterBooker/kazari/internal/ratelimit"
 const (
 	ScopeIP         = "ip"
 	ScopeCredential = "credential"
+	// ScopeAccount is the account a sign-in names, whoever is trying.
+	ScopeAccount = "account"
 )
 
 // Options configure a Limiter. The zero value is valid.
@@ -79,11 +81,16 @@ func New(perMinute int, o Options) *Limiter {
 		perMinute: perMinute,
 		now:       o.Now,
 		scope:     instrument.OneOf(o.Scope, ScopeIP, ScopeCredential),
-		rejected: instrument.Handle(o.Telemetry.Meter(scope).Int64Counter("kazari.rate_limit.rejected_requests",
-			metric.WithDescription("Requests refused by a rate limit."),
-			metric.WithUnit("{request}"))),
-		entries: map[string]*entry{},
+		rejected:  rejectedCounter(o.Telemetry),
+		entries:   map[string]*entry{},
 	}
+}
+
+// rejectedCounter is the one counter every limiter and backoff adds to.
+func rejectedCounter(p instrument.Providers) metric.Int64Counter {
+	return instrument.Handle(p.Meter(scope).Int64Counter("kazari.rate_limit.rejected_requests",
+		metric.WithDescription("Requests refused by a rate limit."),
+		metric.WithUnit("{request}")))
 }
 
 // Reserve takes a token for key and returns 0, or returns how long until the

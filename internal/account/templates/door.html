@@ -1,0 +1,124 @@
+{{define "time"}}<time datetime="{{rfc3339 .}}">{{stamp .}} UTC</time>{{end}}
+
+{{define "message"}}
+{{- if eq .Kind "link-invalid"}}{{template "theme/door" (.Door "Link not valid")}}
+<h1 class="title">This link <b>no longer works</b></h1>
+<p>It was used, replaced or has expired, or it was not copied in full. Ask an admin of this instance for a new one.</p>
+{{- else if eq .Kind "wait"}}{{template "theme/door" (.Door "Too many attempts")}}
+<h1 class="title">Too many <b>attempts</b></h1>
+<p>Wait {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}, then open the link again.</p>
+{{- else if eq .Kind "signin-failed"}}{{template "theme/door" (.Door "Sign-in not completed")}}
+<h1 class="title">Sign-in <b>not completed</b></h1>
+<p>This sign-in has expired, was already used or was started in another browser.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "signed-out"}}{{template "theme/door" (.Door "Signed out")}}
+<h1 class="title">Signed <b>out</b></h1>
+<p>You are signed out of this Kazari instance in this browser.</p>
+<div class="actions"><a class="btn" href="/account/">Sign in again</a></div>
+{{- else if eq .Kind "signed-out-key"}}{{template "theme/door" (.Door "Key revoked")}}
+<h1 class="title">Key revoked, <b>and signed out</b></h1>
+<p>You had signed in with the key you revoked, so this browser is signed out too.</p>
+<div class="actions"><a class="btn" href="/account/">Sign in again</a></div>
+{{- else if eq .Kind "unauthorized"}}{{template "theme/door" (.Door "Not signed in")}}
+<h1 class="title">Not <b>signed in</b></h1>
+<p>Your session has ended, so nothing was changed. Open your account to sign in again.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "forbidden"}}{{template "theme/door" (.Door "Request not accepted")}}
+<h1 class="title">Request <b>not accepted</b></h1>
+<p>This form was not sent from your account page, or the page had been open since before you last signed in. Nothing was changed.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "form-used"}}{{template "theme/door" (.Door "Form already sent")}}
+<h1 class="title">Form <b>already sent</b></h1>
+<p>Nothing new was made. The key this form made the first time was shown once, on the page that answered it. To make another, open your account and use the form there.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "form-expired"}}{{template "theme/door" (.Door "Form expired")}}
+<h1 class="title">Form <b>expired</b></h1>
+<p>The page was opened too long ago or before the server restarted. Nothing was changed. Open your account and use the form there.</p>
+<div class="actions"><a class="btn btn-primary" href="/account/">Open your account</a></div>
+{{- else if eq .Kind "link-forbidden"}}{{template "theme/door" (.Door "Request not accepted")}}
+<h1 class="title">Request <b>not accepted</b></h1>
+<p>This form was not sent from the page your link opened. Nothing was changed. Open the link again and fill in the form there.</p>
+{{- else if eq .Kind "busy"}}{{template "theme/door" (.Door "Busy")}}
+<h1 class="title">Busy, <b>try again</b></h1>
+<p>The server is checking as many passwords as it can at once. Nothing was changed. Go back and send the form again in a moment.</p>
+{{- else if eq .Kind "bad-form"}}{{template "theme/door" (.Door "Form not read")}}
+<h1 class="title">The form <b>could not be read</b></h1>
+<p>Go back and send it again.</p>
+{{- else if eq .Kind "not-found"}}{{template "theme/door" (.Door "Not found")}}
+<h1 class="title">Not <b>found</b></h1>
+<p>There is nothing at this address.</p>
+<div class="actions"><a class="btn" href="/account/">Open your account</a></div>
+{{- else}}{{template "theme/door" (.Door "Something went wrong")}}
+<h1 class="title">Something <b>went wrong</b></h1>
+<p>Please try again later.</p>
+{{- end}}
+{{template "theme/door-close" .Host}}{{end}}
+
+{{define "recover"}}{{template "theme/door" (.Door "Use a recovery code")}}
+<h1 class="title">Use a <b>recovery code</b></h1>
+<p>Lost your password? One of the recovery codes you saved sets a new one. Using it signs you out of every browser.</p>
+{{if eq .Err "wrong"}}<p class="error" role="alert">{{template "icon/alert"}}<span>That name or recovery code was not accepted. A code works once.</span></p>
+{{else if eq .Err "missing"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Enter your handle or email, and a recovery code.</span></p>
+{{else if eq .Err "wait"}}<p class="error" role="alert">{{template "icon/alert"}}<span>Too many attempts. Try again in {{if eq .Seconds 1}}a second{{else}}{{.Seconds}} seconds{{end}}.</span></p>
+{{end}}<form class="form" method="post" action="/account/recover">
+<div class="field"><label for="login">Handle or email</label>
+<input class="input" id="login" name="login" type="text" value="{{.Login}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+<div class="field"><label for="code">Recovery code</label>
+<input class="input input-mono" id="code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="abcd-efgh-ijkl-mnop"></div>
+<div class="field"><label for="password">New password</label>
+<input class="input" id="password" name="password" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="password-help{{if eq .Err "weak"}} password-err{{end}}"{{if eq .Err "weak"}} aria-invalid="true"{{end}}>
+{{if eq .Err "weak"}}<p class="error" id="password-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and {{.MaxLength}} characters.</span></p>
+{{end}}<p class="help" id="password-help">At least {{.MinLength}} characters. Length is the only rule.</p></div>
+<div class="field"><label for="confirm">The same password again</label>
+<input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if eq .Err "mismatch"}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
+{{if eq .Err "mismatch"}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two passwords are not the same. Enter both again.</span></p>
+{{end}}</div>
+<div class="actions"><button type="submit" class="btn btn-primary">Set the password</button></div>
+</form>
+<div class="door-alt">
+<p class="help">No codes left? Ask an admin of this instance for a reset link. Kazari sends no email.</p>
+</div>
+{{template "theme/door-close" .Host}}{{end}}
+
+{{define "link"}}
+{{- if eq .Purpose "setup"}}{{template "theme/door" (.Door "Set up this instance")}}
+<h1 class="title">Set up <b>this instance</b></h1>
+<p>Create the first admin account. It invites everyone else.</p>
+{{- else if eq .Purpose "invite"}}{{template "theme/door" (.Door "Choose a password")}}
+<h1 class="title">Welcome{{with .For.DisplayName}}, <b>{{.}}</b>{{end}}</h1>
+<p>You were invited to this Kazari instance. Choose a password to finish.</p>
+{{- else}}{{template "theme/door" (.Door "Choose a new password")}}
+<h1 class="title">Choose a <b>new password</b></h1>
+<p>Using this link signs you out of every browser.</p>
+{{- end}}
+<form class="form" method="post" action="/account/{{.Purpose}}">
+<input type="hidden" name="form_token" value="{{.FormToken}}">
+{{if eq .Purpose "setup" -}}
+<div class="field"><label for="handle">Handle</label>
+<input class="input input-mono" id="handle" name="handle" type="text" value="{{.NewHandle}}" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" aria-describedby="handle-help{{if .Err.handle}} handle-err{{end}}"{{if .Err.handle}} aria-invalid="true"{{end}}>
+{{if .Err.handle}}<p class="error" id="handle-err">{{template "icon/alert"}}<span>That handle cannot be used. Use 2 to 32 characters of a to z, 0 to 9, - and _, starting with a letter or a digit; admin and scheduler are taken.</span></p>
+{{end}}<p class="help" id="handle-help">Your name in addresses and in the activity log, such as ana. 2 to 32 characters of a to z, 0 to 9, - and _.</p></div>
+<div class="field"><label for="name">Name <span class="optional">(optional)</span></label>
+<input class="input" id="name" name="name" type="text" value="{{.Name}}" autocomplete="name" maxlength="200"></div>
+<div class="field"><label for="email">Email <span class="optional">(optional)</span></label>
+<input class="input" id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" maxlength="254" aria-describedby="email-help">
+<p class="help" id="email-help">A second name to sign in with. Kazari sends nothing to it.</p></div>
+{{- else -}}
+<div class="field"><label for="handle">Your handle</label>
+<input class="input input-mono" id="handle" name="username" type="text" value="{{.For.Handle}}" autocomplete="username" readonly aria-describedby="handle-help">
+<p class="help" id="handle-help">You sign in with this handle{{if .For.Email}}, or with {{.For.Email}},{{end}} and the password you choose now.</p></div>
+{{- end}}
+<div class="field"><label for="password">{{if eq .Purpose "reset"}}New password{{else}}Password{{end}}</label>
+<input class="input" id="password" name="password" type="password" autocomplete="new-password" required minlength="{{.MinLength}}" aria-describedby="password-help{{if .Err.password}} password-err{{end}}"{{if .Err.password}} aria-invalid="true"{{end}}>
+{{if .Err.password}}<p class="error" id="password-err">{{template "icon/alert"}}<span>Use between {{.MinLength}} and {{.MaxLength}} characters.</span></p>
+{{end}}<p class="help" id="password-help">At least {{.MinLength}} characters. Length is the only rule: a few unrelated words work well, and so does a password manager.</p></div>
+<div class="field"><label for="confirm">The same password again</label>
+<input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required{{if .Err.confirm}} aria-invalid="true" aria-describedby="confirm-err"{{end}}>
+{{if .Err.confirm}}<p class="error" id="confirm-err">{{template "icon/alert"}}<span>The two passwords are not the same. Enter both again.</span></p>
+{{end}}</div>
+<div class="actions"><button type="submit" class="btn btn-primary">{{if eq .Purpose "setup"}}Create the account{{else}}Set the password{{end}}</button></div>
+</form>
+<div class="door-alt">
+<p class="help">The next page asks you to sign in with it.</p>
+</div>
+{{template "theme/door-close" .Host}}{{end}}

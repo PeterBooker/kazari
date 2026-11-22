@@ -275,3 +275,67 @@ func TestMigrationFreesReservedHandles(t *testing.T) {
 		t.Errorf("audit: %d events left under admin, %d renames, want 6 and 2", history, renames)
 	}
 }
+
+func TestMigrationFillsAuditSubject(t *testing.T) {
+	ctx := context.Background()
+	raw, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "kazari.db")+"?_pragma=foreign_keys(1)&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	sub, err := fs.Sub(migrationFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := fs.Glob(sub, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := fstest.MapFS{}
+	for _, name := range names {
+		if name >= "0013" {
+			continue
+		}
+		b, err := fs.ReadFile(sub, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		older[name] = &fstest.MapFile{Data: b}
+	}
+	if err := migrate(ctx, raw, older); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO user (id, handle, role, created_at) VALUES (1, 'ann', 'admin', 1), (2, 'bob', 'member', 1)`,
+		`INSERT INTO oauth_client (id, name, redirect_uris, created_at) VALUES ('c1', 'App', '[]', 1)`,
+		`INSERT INTO oauth_token (id, token_hash, kind, client_id, user_id, family_id, created_at, expires_at) VALUES
+			(7, 'h7', 'refresh', 'c1', 2, 7, 1, 2)`,
+		`INSERT INTO audit_event (id, at, actor, action, slug, details) VALUES
+			(1, 1, 'ann', 'invite.create', '', '{"purpose":"reset","handle":"bob"}'),
+			(2, 1, 'ann', 'key.issue', '', '{"handle":"bob","prefix":"p1"}'),
+			(3, 1, 'bob', 'oauth.signin', '', '{"via":"password"}'),
+			(4, 1, 'ann', 'session.revoke', '', '{"user":"bob","sessions":"2"}'),
+			(5, 1, 'ann', 'oauth.revoke', '', '{"grant":"7"}'),
+			(6, 1, 'ann', 'oauth.revoke', '', '{"grant":"99"}'),
+			(7, 1, 'bob', 'invite.use', '', '{"purpose":"invite","handle":"bob"}'),
+			(8, 1, 'bob', 'artifact.create', 'demo', '{"version":"1"}'),
+			(9, 1, 'ann', 'invite.create', '', '{"purpose":"setup"}')`,
+	} {
+		if _, err := raw.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := migrate(ctx, raw, sub); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]string{1: "bob", 2: "bob", 3: "bob", 4: "bob", 5: "bob", 6: "", 7: "bob", 8: "", 9: ""}
+	for id, subject := range want {
+		var got string
+		if err := raw.QueryRowContext(ctx, `SELECT subject FROM audit_event WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != subject {
+			t.Errorf("event %d subject = %q, want %q", id, got, subject)
+		}
+	}
+}

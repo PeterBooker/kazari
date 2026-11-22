@@ -97,8 +97,16 @@ auth:
     refresh_ttl: 90d                 # an OAuth refresh token, renewed on every use
     refresh_reuse_window: 30s        # a rotated refresh token is accepted once more for this long; 0 = never
     max_key_ttl: 0                   # longest an API key may live; 0 = a key may be issued without an expiry
-  # Sign-in through the organisation's OpenID Connect provider. Leave oidc
-  # out entirely to fall back to API-key sign-in on the consent page.
+  # Built-in accounts: a password per person, set through an invite or reset
+  # link that an admin copies and sends. On when oidc below is absent, off
+  # when it is present; the two never run together.
+  local:
+    # enabled: true                  # default: true without auth.oidc, false with it
+    min_password_length: 15          # 8 to 256
+    invite_ttl: 7d                   # how long an invite link works
+    reset_ttl: 1d                    # how long a password reset link works
+  # Sign-in through the organisation's OpenID Connect provider, in place of
+  # the built-in accounts.
   # Register https://mcp.<base_domain>/oauth/callback as the redirect URI; it
   # serves MCP clients and people opening members pages alike.
   #
@@ -115,6 +123,12 @@ admin:
   # Unix socket that serves the admin API to this host without a token;
   # relative to data_dir unless absolute, "" disables it.
   socket: admin.sock
+  dashboard: true                    # serve the dashboard at the root of the admin host
+  # The address a browser reaches the admin host at. Required for the
+  # dashboard when listen is set, e.g. http://localhost:9443 through an SSH
+  # tunnel; plain http is accepted for localhost and loopback addresses only.
+  public_url: ""                     # default https://admin.<base_domain>
+  update_check: true                 # ask GitHub once a day for the newest release
 
 log:
   level: info                        # debug | info | warn | error
@@ -143,9 +157,9 @@ telemetry:
     key_file: ""                     # else OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE and _CLIENT_KEY
   traces:
     otlp: true                       # export spans when an endpoint is set
-    # New traces on api., mcp., admin. and the admin socket, and on artifact
-    # hosts and the apex. With both unset, OTEL_TRACES_SAMPLER decides when
-    # set, else 1.0 and 0.01.
+    # New traces on api., mcp., admin., the admin socket and the account
+    # pages, and on artifact hosts and the apex's own page. With both unset,
+    # OTEL_TRACES_SAMPLER decides when set, else 1.0 and 0.01.
     sample_ratio:
     site_sample_ratio:
   metrics:

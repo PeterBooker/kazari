@@ -38,6 +38,33 @@ const (
 	resultForbidden = "forbidden"
 )
 
+// Results of an authentication, for a Sessions caller.
+const (
+	ResultOK        = resultOK
+	ResultMissing   = resultMissing
+	ResultInvalid   = resultInvalid
+	ResultForbidden = resultForbidden
+)
+
+// Sessions counts the authentications of browser sessions, which pass
+// through no bearer middleware: the hosts that take a session cookie, the
+// dashboard and the account pages, report each request's outcome here, so
+// kazari.auth.requests covers every credential.
+type Sessions struct{ rec recorder }
+
+// NewSessions returns a Sessions recording to p.
+func NewSessions(p instrument.Providers) Sessions { return Sessions{newRecorder(p)} }
+
+// Record counts one request by its result: ResultOK with the principal the
+// session stands for, ResultMissing without a cookie, ResultInvalid for a
+// session that has ended, ResultForbidden for a person the host refuses.
+func (s Sessions) Record(ctx context.Context, result string, p *Principal) {
+	if result != ResultOK {
+		p = nil
+	}
+	s.rec.record(ctx, SourceSession, result, p)
+}
+
 type recorder struct{ requests metric.Int64Counter }
 
 func newRecorder(p instrument.Providers) recorder {
@@ -50,7 +77,7 @@ func newRecorder(p instrument.Providers) recorder {
 // credential's type and OAuth client on the request's span. Never the handle
 // or the credential's id: who did what stays in the audit log.
 func (rec recorder) record(ctx context.Context, source, result string, p *Principal) {
-	source = instrument.OneOf(source, SourceAPIKey, SourceOAuth, SourceAdminToken, SourceLocal)
+	source = instrument.OneOf(source, SourceAPIKey, SourceOAuth, SourceAdminToken, SourceLocal, SourceSession)
 	rec.requests.Add(ctx, 1, metric.WithAttributes(
 		instrument.Surface.String(instrument.SurfaceFrom(ctx)),
 		instrument.CredentialType.String(source),

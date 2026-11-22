@@ -82,18 +82,28 @@ func userLookupID(ctx context.Context, tx *sql.Tx, handle string) (int64, error)
 func (s *UserStore) CreateUser(ctx context.Context, u *user.User) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateUser")
 	defer func() { end(err) }()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO user
+	if err := userInsert(ctx, s.db, u); err != nil {
+		return fmt.Errorf("sqlite: create user %q: %w", u.Handle, err)
+	}
+	return nil
+}
+
+// userExecer is a *sql.DB or a *sql.Tx.
+type userExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func userInsert(ctx context.Context, q userExecer, u *user.User) error {
+	res, err := q.ExecContext(ctx, `INSERT INTO user
 		(handle, email, display_name, role, quota_bytes, disabled_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		u.Handle, userNullEmail(u.Email), u.DisplayName, string(u.Role), u.QuotaBytes,
 		nullNanos(u.DisabledAt), toNanos(u.CreatedAt))
 	if err != nil {
-		return fmt.Errorf("sqlite: create user %q: %w", u.Handle, userUniqueErr(err))
+		return userUniqueErr(err)
 	}
-	if u.ID, err = res.LastInsertId(); err != nil {
-		return fmt.Errorf("sqlite: create user %q: %w", u.Handle, err)
-	}
-	return nil
+	u.ID, err = res.LastInsertId()
+	return err
 }
 
 func (s *UserStore) GetUser(ctx context.Context, handle string) (_ *user.User, err error) {
@@ -147,21 +157,47 @@ func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
 	return users, nil
 }
 
-func (s *UserStore) UpdateUser(ctx context.Context, u *user.User) (err error) {
+func (s *UserStore) UpdateUser(ctx context.Context, handle string, fn func(u *user.User) error) (_ *user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.UpdateUser")
 	defer func() { end(err) }()
-	res, err := s.db.ExecContext(ctx, `UPDATE user
-		SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
-		WHERE handle = ?`,
-		userNullEmail(u.Email), u.DisplayName, string(u.Role), u.QuotaBytes,
-		nullNanos(u.DisabledAt), u.Handle)
+	var u user.User
+	var fnErr error
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `SELECT `+userColumns+` FROM user WHERE handle = ?`, handle)
+		if err := userScan(row, &u); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return user.ErrNotFound
+			}
+			return err
+		}
+		wasAdmin := u.Role == user.RoleAdmin && u.DisabledAt == nil
+		if fnErr = fn(&u); fnErr != nil {
+			return fnErr
+		}
+		if wasAdmin && (u.Role != user.RoleAdmin || u.DisabledAt != nil) {
+			var others int
+			err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user
+				WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?`, u.ID).Scan(&others)
+			if err != nil {
+				return err
+			}
+			if others == 0 {
+				return user.ErrLastAdmin
+			}
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE user
+			SET email = ?, display_name = ?, role = ?, quota_bytes = ?, disabled_at = ?
+			WHERE id = ?`,
+			userNullEmail(u.Email), u.DisplayName, string(u.Role), u.QuotaBytes, nullNanos(u.DisabledAt), u.ID)
+		return userUniqueErr(err)
+	})
+	if fnErr != nil {
+		return nil, fnErr
+	}
 	if err != nil {
-		return fmt.Errorf("sqlite: update user %q: %w", u.Handle, userUniqueErr(err))
+		return nil, fmt.Errorf("sqlite: update user %q: %w", handle, err)
 	}
-	if err := userOneRow(res, user.ErrNotFound); err != nil {
-		return fmt.Errorf("sqlite: update user %q: %w", u.Handle, err)
-	}
-	return nil
+	return &u, nil
 }
 
 func userOneRow(res sql.Result, notFound error) error {
@@ -179,16 +215,43 @@ func userJoinScopes(scopes []string) string { return strings.Join(scopes, " ") }
 
 func userSplitScopes(s string) []string { return strings.Fields(s) }
 
-// userInsertKey resolves k.IssuedBy among the keys of the same user.
-func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey) error {
-	uid, err := userLookupID(ctx, tx, k.UserHandle)
+// userInsertKey resolves k.IssuedBy among the keys of the same user, and
+// counts their live keys against maxLive inside the caller's transaction, so
+// concurrent requests cannot pass the limit together.
+func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey, maxLive int) error {
+	var (
+		uid      int64
+		disabled sql.NullInt64
+	)
+	err := tx.QueryRowContext(ctx, `SELECT id, disabled_at FROM user WHERE handle = ?`, k.UserHandle).Scan(&uid, &disabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return user.ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
+	if disabled.Valid {
+		return user.ErrDisabled
+	}
+	if maxLive > 0 {
+		var live int
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_key
+			WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+			uid, toNanos(k.CreatedAt)).Scan(&live)
+		if err != nil {
+			return err
+		}
+		if live >= maxLive {
+			return fmt.Errorf("%w: %d is the limit; revoke one first", user.ErrTooManyKeys, maxLive)
+		}
+	}
 	var issuer sql.NullInt64
 	if k.IssuedBy != "" {
-		err := tx.QueryRowContext(ctx, `SELECT id FROM api_key WHERE prefix = ? AND user_id = ?`,
-			k.IssuedBy, uid).Scan(&issuer.Int64)
+		// Live as of now, read here: a key revoked between the caller's
+		// check and this insert must not leave a key that outlives it.
+		err := tx.QueryRowContext(ctx, `SELECT id FROM api_key WHERE prefix = ?1 AND user_id = ?2
+			AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?3)`,
+			k.IssuedBy, uid, toNanos(k.CreatedAt)).Scan(&issuer.Int64)
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.ErrKeyNotFound
 		}
@@ -210,31 +273,37 @@ func userInsertKey(ctx context.Context, tx *sql.Tx, k *user.APIKey) error {
 	return err
 }
 
-func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey) (err error) {
+func (s *UserStore) CreateKey(ctx context.Context, k *user.APIKey, maxLive int) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.CreateKey")
 	defer func() { end(err) }()
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertKey(ctx, tx, k) })
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error { return userInsertKey(ctx, tx, k, maxLive) })
 	if err != nil {
 		return fmt.Errorf("sqlite: create key for %q: %w", k.UserHandle, err)
 	}
 	return nil
 }
 
-func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey, expires time.Time) (err error) {
+func (s *UserStore) RotateKey(ctx context.Context, prefix string, k *user.APIKey, expires time.Time, maxLive int) (err error) {
 	ctx, end := s.db.op(ctx, "UserStore.RotateKey")
 	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE api_key
 			SET expires_at = CASE WHEN expires_at IS NULL OR expires_at > ?1 THEN ?1 ELSE expires_at END
-			WHERE prefix = ?2 AND user_id = (SELECT id FROM user WHERE handle = ?3)`,
-			toNanos(expires), prefix, k.UserHandle)
+			WHERE prefix = ?2 AND user_id = (SELECT id FROM user WHERE handle = ?3)
+			  AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?4)`,
+			toNanos(expires), prefix, k.UserHandle, toNanos(k.CreatedAt))
 		if err == nil {
 			err = userOneRow(res, user.ErrKeyNotFound)
 		}
 		if err != nil {
 			return err
 		}
-		return userInsertKey(ctx, tx, k)
+		// The key being replaced is still live for its overlap and is not
+		// a key more.
+		if maxLive > 0 && expires.After(k.CreatedAt) {
+			maxLive++
+		}
+		return userInsertKey(ctx, tx, k, maxLive)
 	})
 	if err != nil {
 		return fmt.Errorf("sqlite: rotate key %q of %q: %w", prefix, k.UserHandle, err)
@@ -444,13 +513,22 @@ func (s *UserStore) LinkIdentity(ctx context.Context, handle string, id user.Ide
 				user_id = excluded.user_id,
 				email_at_login = excluded.email_at_login,
 				last_login_at = excluded.last_login_at`,
-			uid, id.Issuer, id.Subject, id.EmailAtLogin, toNanos(id.LastLoginAt))
+			uid, id.Issuer, id.Subject, id.EmailAtLogin, identityLogin(id.LastLoginAt))
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("sqlite: link identity %q %q to %q: %w", id.Issuer, id.Subject, handle, err)
 	}
 	return nil
+}
+
+// identityLogin stores a sign-in time, with 0 for the zero time of a link
+// made by hand: the column takes no NULL.
+func identityLogin(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return toNanos(t)
 }
 
 func (s *UserStore) UnlinkIdentity(ctx context.Context, handle, issuer, subject string) (err error) {
@@ -491,7 +569,9 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user
 			if err := rows.Scan(&id.Issuer, &id.Subject, &id.EmailAtLogin, &last); err != nil {
 				return err
 			}
-			id.LastLoginAt = fromNanos(last)
+			if last != 0 {
+				id.LastLoginAt = fromNanos(last)
+			}
 			ids = append(ids, id)
 		}
 		return rows.Err()

@@ -35,6 +35,12 @@ const (
 	CodeLinkNotFound     = "share_link_not_found"
 	CodeFetchFailed      = "fetch_failed"
 	CodeJobRunning       = "job_running"
+	CodeLastAdmin        = "last_admin"
+	CodeTooManyKeys      = "too_many_keys"
+	CodeSetupDone        = "setup_done"
+	CodeBackupRunning    = "backup_running"
+	CodeNoSpace          = "no_space"
+	CodeBusy             = "busy"
 )
 
 // ErrorCodes is every code above, the bounded set metrics count errors by.
@@ -44,7 +50,8 @@ var ErrorCodes = []string{
 	CodeInvalidSlug, CodeInvalidPath, CodeInvalidMetadata, CodeInvalidArgument, CodeForbidden,
 	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeRateLimited, CodeHandleTaken,
 	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
-	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning,
+	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning, CodeLastAdmin,
+	CodeTooManyKeys, CodeSetupDone, CodeBackupRunning, CodeNoSpace, CodeBusy,
 }
 
 // Error is the body of every error response.
@@ -355,14 +362,28 @@ type User struct {
 	DisabledAt  *time.Time `json:"disabled_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	Identities  []Identity `json:"identities,omitempty"`
+	// How the person signs in, on the admin API: whether they have set a
+	// password, whether an invite is waiting for them to, their unused
+	// recovery codes, their passkeys, their live keys and the latest of their sign-ins and
+	// key uses.
+	Password      bool       `json:"password,omitempty"`
+	Invited       bool       `json:"invited,omitempty"`
+	RecoveryCodes int        `json:"recovery_codes,omitempty"`
+	Passkeys      int        `json:"passkeys,omitempty"`
+	Keys          int        `json:"keys,omitempty"`
+	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
+	// Sessions counts the person's browser sessions, on GET /users/{handle}.
+	Sessions *int `json:"sessions,omitempty"`
 }
 
 // Identity is an upstream identity linked to a user.
 type Identity struct {
-	Issuer      string    `json:"issuer"`
-	Subject     string    `json:"subject"`
-	Email       string    `json:"email,omitempty"`
-	LastLoginAt time.Time `json:"last_login_at"`
+	Issuer  string `json:"issuer"`
+	Subject string `json:"subject"`
+	Email   string `json:"email,omitempty"`
+	// LastLoginAt is absent for an identity an admin linked that has not
+	// signed in yet.
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
 }
 
 // CreateUserRequest is POST /users on the admin API.
@@ -372,6 +393,75 @@ type CreateUserRequest struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Role        string `json:"role,omitempty"` // member (default) | admin
 	QuotaBytes  *int64 `json:"quota_bytes,omitempty"`
+}
+
+// InviteRequest is POST /invites on the admin API: a new user, and the
+// link that lets them set a password.
+type InviteRequest struct {
+	Handle      string `json:"handle"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role,omitempty"` // member (default) | admin
+	QuotaBytes  *int64 `json:"quota_bytes,omitempty"`
+}
+
+// LinkRequest is POST /users/{handle}/links: a new invite or reset link for
+// an existing user, ending the one before it.
+type LinkRequest struct {
+	Purpose string `json:"purpose"` // invite | reset
+	// RevokeAll makes using a reset link also revoke the user's API keys and
+	// OAuth grants.
+	RevokeAll bool `json:"revoke_all,omitempty"`
+}
+
+// Link is a single-use link that sets a password. User is empty for the
+// setup link, which creates the first admin.
+type Link struct {
+	ID        int64     `json:"id"`
+	User      string    `json:"user,omitempty"`
+	Purpose   string    `json:"purpose"` // invite | reset | setup
+	RevokeAll bool      `json:"revoke_all,omitempty"`
+	CreatedBy string    `json:"created_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// CreatedLink is a new link with its address, which holds the token and is
+// never available again.
+type CreatedLink struct {
+	Link
+	URL string `json:"url"`
+}
+
+// Invited is the result of POST /invites.
+type Invited struct {
+	User User        `json:"user"`
+	Link CreatedLink `json:"link"`
+}
+
+// Ready is GET /ready on the admin API: the checks of a running server.
+type Ready struct {
+	Ready     bool      `json:"ready"` // no check failed
+	CheckedAt time.Time `json:"checked_at"`
+	Checks    []Check   `json:"checks"`
+	// Update is absent until the update check has got an answer, and on an
+	// instance that does not run it.
+	Update *Update `json:"update,omitempty"`
+}
+
+// Update is the last answer of the daily update check.
+type Update struct {
+	Latest    string    `json:"latest"`
+	Newer     bool      `json:"newer"` // than the running version
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// Check is one readiness finding. Detail ends with what to do next when
+// Status is warn or fail.
+type Check struct {
+	Check  string `json:"check"`
+	Status string `json:"status"` // ok | warn | fail | skip
+	Detail string `json:"detail"`
 }
 
 // UpdateUserRequest is PATCH /users/{handle}.
@@ -435,6 +525,12 @@ type TransferRequest struct {
 	Owner string `json:"owner"`
 }
 
+// TransferredArtifacts answers POST /users/{handle}/transfer: the slugs that
+// changed owner.
+type TransferredArtifacts struct {
+	Transferred []string `json:"transferred"`
+}
+
 // JobStatus is one scheduler job.
 type JobStatus struct {
 	Name      string     `json:"name"`
@@ -445,12 +541,19 @@ type JobStatus struct {
 	Running   bool       `json:"running"`
 }
 
+// AuditList is one page of GET /audit, newest first.
+type AuditList struct {
+	Events     []AuditEvent `json:"events"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
 // AuditEvent is one audit row.
 type AuditEvent struct {
 	At      time.Time         `json:"at"`
 	Actor   string            `json:"actor"`
 	Action  string            `json:"action"`
 	Slug    string            `json:"slug,omitempty"`
+	Subject string            `json:"subject,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
 }
 

@@ -1,0 +1,29 @@
+/* The front door: sign-in, consent, setup, invite, reset, the gate and message pages. */
+.door {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
+  padding: 48px 20px;
+}
+/* Fixed, so the overhang never adds to the page's scroll height. */
+.door-ghost {
+  position: fixed; right: -3rem; bottom: -7rem; z-index: 0;
+  font: 200 clamp(14rem, 38vw, 34rem)/1 var(--font-ja); letter-spacing: -.04em; white-space: nowrap;
+  color: var(--ghost); pointer-events: none; user-select: none;
+}
+.door > :not(.door-ghost) { position: relative; z-index: 1; }
+.door-card {
+  width: 100%; max-width: 440px;
+  display: flex; flex-direction: column; gap: 22px;
+  padding: 36px 36px 30px; border: 1px solid var(--box-border); border-radius: 18px; background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.door-card > form { display: flex; flex-direction: column; gap: 18px; }
+.door-card .btn { min-height: 48px; }
+.door-card .actions { gap: 12px; }
+.door-card .actions .btn { flex: 1 1 auto; }
+.door-alt { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 16px; border-top: 1px solid var(--border); }
+.door-foot { text-align: center; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .door { padding: 28px 14px; gap: 20px; }
+  .door-card { padding: 26px 22px 22px; }
+}

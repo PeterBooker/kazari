@@ -350,13 +350,61 @@ func TestClientEndpoints(t *testing.T) {
 		{
 			name: "audit",
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.Audit(ctx, "2026-10-01T00:00:00Z", "demo", 10)
+				return c.Audit(ctx, AuditParams{Since: "2026-10-01T00:00:00Z", Until: "2026-10-02T00:00:00Z", Slug: "demo",
+					Actor: "ann", Actions: []string{"artifact.", "key.issue"}, Cursor: "c1", Limit: 10})
 			},
-			reply:  `[{"at":"2026-10-01T12:00:00Z","actor":"ann","action":"create","slug":"demo"}]`,
+			reply:  `{"events":[{"at":"2026-10-01T12:00:00Z","actor":"ann","action":"create","slug":"demo"}],"next_cursor":"c2"}`,
 			method: "GET",
 			path:   "/v1/audit",
-			query:  url.Values{"since": {"2026-10-01T00:00:00Z"}, "slug": {"demo"}, "limit": {"10"}},
-			want:   []api.AuditEvent{{At: t0, Actor: "ann", Action: "create", Slug: "demo"}},
+			query: url.Values{"since": {"2026-10-01T00:00:00Z"}, "until": {"2026-10-02T00:00:00Z"}, "slug": {"demo"},
+				"actor": {"ann"}, "action": {"artifact.", "key.issue"}, "cursor": {"c1"}, "limit": {"10"}},
+			want: &api.AuditList{Events: []api.AuditEvent{{At: t0, Actor: "ann", Action: "create", Slug: "demo"}}, NextCursor: "c2"},
+		},
+		{
+			name:   "audit unfiltered",
+			call:   func(ctx context.Context, c *Client) (any, error) { return c.Audit(ctx, AuditParams{}) },
+			reply:  `{"events":[]}`,
+			method: "GET",
+			path:   "/v1/audit",
+			want:   &api.AuditList{Events: []api.AuditEvent{}},
+		},
+		{
+			name:    "transfer all",
+			call:    func(ctx context.Context, c *Client) (any, error) { return c.TransferAll(ctx, "ann", "bob") },
+			reply:   `{"transferred":["demo"]}`,
+			method:  "POST",
+			path:    "/v1/users/ann/transfer",
+			reqBody: `{"owner":"bob"}`,
+			want:    &api.TransferredArtifacts{Transferred: []string{"demo"}},
+		},
+		{
+			name: "link identity",
+			call: func(ctx context.Context, c *Client) (any, error) {
+				return nil, c.LinkIdentity(ctx, "ann", api.LinkIdentityRequest{Issuer: "https://idp.test", Subject: "sub-1", Email: "ann@x.test"})
+			},
+			method:  "POST",
+			path:    "/v1/users/ann/identities",
+			reqBody: `{"issuer":"https://idp.test","subject":"sub-1","email":"ann@x.test"}`,
+		},
+		{
+			name: "unlink identity",
+			call: func(ctx context.Context, c *Client) (any, error) {
+				return nil, c.UnlinkIdentity(ctx, "ann", "https://idp.test", "sub-1")
+			},
+			method:  "POST",
+			path:    "/v1/users/ann/identities/unlink",
+			reqBody: `{"issuer":"https://idp.test","subject":"sub-1"}`,
+		},
+		{
+			name: "list filtered",
+			call: func(ctx context.Context, c *Client) (any, error) {
+				return c.List(ctx, ListParams{Search: "q3 report", Visibility: "members"})
+			},
+			reply:  `{"items":[]}`,
+			method: "GET",
+			path:   "/v1/artifacts",
+			query:  url.Values{"q": {"q3 report"}, "visibility": {"members"}},
+			want:   &api.ArtifactList{Items: []api.Artifact{}},
 		},
 		{
 			name:   "health",

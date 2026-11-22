@@ -40,6 +40,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"UpdateCurrentRow", testUpdateCurrentRow},
 		{"Quota", testQuota},
 		{"QuotaChargesFiles", testQuotaChargesFiles},
+		{"TransferOwned", testTransferOwned},
 		{"Involved", testInvolved},
 		{"ListFilters", testListFilters},
 		{"ListPagination", testListPagination},
@@ -623,6 +624,73 @@ func testQuotaChargesFiles(t *testing.T, h *harness) {
 	wantErr(t, "AddVersion of an empty file over quota", err, artifact.ErrQuotaExceeded)
 }
 
+func testTransferOwned(t *testing.T, h *harness) {
+	for _, u := range []string{"alice", "bob", "root"} {
+		h.mkUser(u)
+	}
+	h.create(t, newArtifact("live", "alice", at(0)))
+	deleted := newArtifact("deleted", "alice", at(0))
+	deleted.DeletedAt = ptr(at(time.Hour))
+	h.create(t, deleted)
+	h.create(t, newArtifact("tomb", "alice", at(0)))
+	if err := h.store.Purge(h.ctx, "tomb", at(time.Hour), nil); err != nil {
+		t.Fatal(err)
+	}
+	h.create(t, newArtifact("other", "bob", at(0)))
+
+	for _, tt := range []struct{ name, from, to string }{
+		{"unknown from", "nobody", "bob"},
+		{"unknown to", "alice", "nobody"},
+	} {
+		_, err := h.store.TransferOwned(h.ctx, tt.from, tt.to, "root", at(2*time.Hour))
+		wantErr(t, tt.name, err, artifact.ErrInvalidArgument)
+	}
+	if got := h.get(t, "live"); got.OwnerHandle != "alice" || !got.UpdatedAt.Equal(at(0)) {
+		t.Fatalf("a failed transfer changed the artifact: %+v", got)
+	}
+
+	moved, err := h.store.TransferOwned(h.ctx, "alice", "bob", "root", at(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"deleted", "live"}, moved); diff != "" {
+		t.Fatalf("moved slugs (-want +got):\n%s", diff)
+	}
+	for _, slug := range moved {
+		got := h.get(t, slug)
+		if got.OwnerHandle != "bob" || !got.UpdatedAt.Equal(at(2*time.Hour)) {
+			t.Errorf("%s after the transfer: owner %q, updated %v", slug, got.OwnerHandle, got.UpdatedAt)
+		}
+		if ok, err := h.store.Involved(h.ctx, slug, "root"); err != nil || !ok {
+			t.Errorf("Involved(%s, root) = %v, %v; want the transferring handle marked an updater", slug, ok, err)
+		}
+	}
+	if got := h.get(t, "deleted"); got.DeletedAt == nil {
+		t.Error("the transfer restored a soft-deleted artifact")
+	}
+	if got := h.get(t, "tomb"); got.OwnerHandle != "alice" {
+		t.Errorf("tombstone owner = %q, want it left with alice", got.OwnerHandle)
+	}
+	if n, err := h.store.Usage(h.ctx, "alice"); err != nil || n != 0 {
+		t.Errorf("Usage(alice) = %d, %v; want 0 once everything moved", n, err)
+	}
+
+	moved, err = h.store.TransferOwned(h.ctx, "alice", "bob", "", at(3*time.Hour))
+	if err != nil || len(moved) != 0 {
+		t.Fatalf("second transfer = %v, %v; want nothing left to move", moved, err)
+	}
+	moved, err = h.store.TransferOwned(h.ctx, "bob", "alice", "", at(3*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"deleted", "live", "other"}, moved); diff != "" {
+		t.Fatalf("moved slugs (-want +got):\n%s", diff)
+	}
+	if ok, err := h.store.Involved(h.ctx, "other", "root"); err != nil || ok {
+		t.Errorf("Involved(other, root) = %v, %v; want no updater recorded without a handle", ok, err)
+	}
+}
+
 func testInvolved(t *testing.T, h *harness) {
 	for _, u := range []string{"alice", "bob", "carol", "dave"} {
 		h.mkUser(u)
@@ -679,6 +747,7 @@ func testListFilters(t *testing.T, h *harness) {
 		{"stale-bob", "bob", func(a *artifact.Artifact) { a.StaleAt, a.ExpiresAt = ptr(t0), ptr(t0.Add(time.Hour)) }},
 		{"deleted-bob", "bob", func(a *artifact.Artifact) { a.DeletedAt = ptr(t0) }},
 		{"meta-carol", "carol", func(a *artifact.Artifact) {
+			a.Name = "Q3 100%_Report"
 			a.Metadata = map[string]string{"team": "x", artifact.MetaSPA: "true"}
 		}},
 		{"unpub-carol", "carol", func(a *artifact.Artifact) { a.UnpublishedAt = ptr(t0) }},
@@ -748,6 +817,32 @@ func testListFilters(t *testing.T, h *harness) {
 			[]string{"deleted-bob"}},
 		{"tombstones never listed", artifact.ListQuery{Viewer: "carol", All: true, Deleted: "include", Owner: "carol"},
 			[]string{"unpub-carol", "meta-carol"}},
+		{"search slug", artifact.ListQuery{Viewer: "dave", All: true, Search: "alice"},
+			[]string{"unl-alice", "pub-alice"}},
+		{"search ignores case", artifact.ListQuery{Viewer: "dave", All: true, Search: "UNL-B"},
+			[]string{"unl-bob"}},
+		{"search name", artifact.ListQuery{Viewer: "dave", All: true, Search: "q3 100"},
+			[]string{"meta-carol"}},
+		{"search reads no wildcard", artifact.ListQuery{Viewer: "dave", All: true, Search: "1_0%"},
+			nil},
+		{"search matches a literal wildcard", artifact.ListQuery{Viewer: "dave", All: true, Search: "0%_r"},
+			[]string{"meta-carol"}},
+		{"search respects the viewer", artifact.ListQuery{Viewer: "dave", Search: "bob"},
+			[]string{"stale-bob"}},
+		{"search with deleted", artifact.ListQuery{Viewer: "dave", All: true, Search: "bob", Deleted: "include"},
+			[]string{"deleted-bob", "stale-bob", "unl-bob"}},
+		{"visibility public", artifact.ListQuery{Viewer: "dave", All: true, Visibility: "public"},
+			[]string{"meta-carol", "stale-bob", "pub-alice"}},
+		{"visibility unlisted", artifact.ListQuery{Viewer: "dave", All: true, Visibility: "unlisted"},
+			[]string{"unl-bob", "unl-alice"}},
+		{"visibility members", artifact.ListQuery{Viewer: "dave", All: true, Visibility: "members"},
+			nil},
+		{"visibility unpublished", artifact.ListQuery{Viewer: "dave", All: true, Visibility: "unpublished"},
+			[]string{"unpub-carol"}},
+		{"visibility respects the viewer", artifact.ListQuery{Viewer: "dave", Visibility: "unlisted"},
+			nil},
+		{"visibility and search", artifact.ListQuery{Viewer: "dave", All: true, Visibility: "unlisted", Search: "bob"},
+			[]string{"unl-bob"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -841,6 +936,8 @@ func testListInvalid(t *testing.T, h *harness) {
 		{Deleted: "yes"},
 		{Cursor: "not a cursor!"},
 		{Metadata: map[string]string{"bad key'": "x"}},
+		{Visibility: "private"},
+		{Search: strings.Repeat("a", artifact.MaxSearchLen+1)},
 	} {
 		if _, err := h.store.List(h.ctx, q); err == nil {
 			t.Errorf("List(%+v) succeeded, want an error", q)
@@ -1006,6 +1103,14 @@ func testUsage(t *testing.T, h *harness) {
 	h.create(t, newArtifact("three", "bob", at(0)), file("c", "1"))
 
 	const charge = artifact.FileChargeBytes
+	owners, err := h.store.OwnerUsage(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOwners := []artifact.OwnerUsage{{Handle: "alice", Artifacts: 2, Bytes: 15 + 3*charge}, {Handle: "bob", Artifacts: 1, Bytes: 1 + charge}}
+	if diff := cmp.Diff(wantOwners, owners); diff != "" {
+		t.Errorf("OwnerUsage (-want +got):\n%s", diff)
+	}
 	for handle, want := range map[string]int64{"alice": 15 + 3*charge, "bob": 1 + charge, "nobody": 0} {
 		got, err := h.store.Usage(h.ctx, handle)
 		if err != nil {
@@ -1024,6 +1129,15 @@ func testUsage(t *testing.T, h *harness) {
 	}
 	if got, _ := h.store.Usage(h.ctx, "alice"); got != 8+2*charge {
 		t.Errorf("Usage(alice) after purge = %d, want %d", got, 8+2*charge)
+	}
+	// A tombstone is no longer anyone's page.
+	owners, err = h.store.OwnerUsage(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOwners[0] = artifact.OwnerUsage{Handle: "alice", Artifacts: 1, Bytes: 8 + 2*charge}
+	if diff := cmp.Diff(wantOwners, owners); diff != "" {
+		t.Errorf("OwnerUsage after purge (-want +got):\n%s", diff)
 	}
 }
 

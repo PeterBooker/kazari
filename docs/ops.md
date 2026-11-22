@@ -1,6 +1,8 @@
 # Operating Kazari
 
-Kazari keeps all its state in one directory and runs its own maintenance jobs. This page covers the data layout, backing up and restoring, upgrading, logs, metrics and tracing, the scheduled jobs and the page lifecycle, quotas, disabling users, responding to abuse, the audit log and troubleshooting. It assumes an instance set up as in the [installation guide](install.md).
+Kazari keeps all its state in one directory and runs its own maintenance jobs. This page covers the data layout, backing up and restoring, upgrading, checking readiness, logs, metrics and tracing, the scheduled jobs and the page lifecycle, quotas, disabling users, responding to abuse, the audit log and troubleshooting. It assumes an instance set up as in the [installation guide](install.md).
+
+Most of the everyday tasks here, such as disabling a user, taking a page down or downloading a backup, can also be done in the [dashboard](dashboard.md). What only the host's operator does stays on this page: restoring, upgrading and scheduling.
 
 ## Data layout
 
@@ -13,13 +15,125 @@ Everything Kazari keeps lives under `data_dir`, which the systemd unit and the D
 | `uploads/<id>/<n>`                            | Chunked uploads in progress. Disposable                                                  |
 | `certmagic/`                                  | ACME account, certificates and locks (`tls.mode: acme` only)                             |
 | `admin.sock`                                  | The admin socket, mode `0600`; recreated at every start                                  |
-| `tmp/`                                        | Multipart bundles spilled to disk while they are published, removed afterwards. Disposable |
+| `tmp/`                                        | Multipart bundles spilled to disk while they are published and the database copy of a running backup, removed afterwards. Disposable |
 
 Kazari writes each blob to a temporary `.put-*` file and renames it, so a partial blob is never visible.
 
 ## Backing up and restoring
 
-The database and the blobs are the state. Back up the database first, with SQLite's online backup, which is consistent while Kazari is running, then copy the blobs straight after:
+The database and the blobs are the state. Kazari writes both as one archive, which is consistent while the server runs and needs no other tool.
+
+### Taking a backup
+
+To take a backup on the server, name a directory that is empty or does not exist yet:
+
+```sh
+sudo kazari admin backup /backup/kazari/2026-11-21
+```
+
+The command prints the number of files, their size and the directory, which then holds what a data directory holds:
+
+| Path         | Contents                                                                     |
+| ------------ | ---------------------------------------------------------------------------- |
+| `kazari.db`  | A complete copy of the database, taken first                                 |
+| `blobs/`     | Every blob, copied after the database                                        |
+| `certmagic/` | The ACME account and the certificate with its private key (`tls.mode: acme`) |
+
+`uploads/` and `tmp/` are left out, as they need no backup. `--no-certs` leaves `certmagic/` out too; an instance restored without it asks for a new certificate.
+
+Under Compose, write into a directory that is mounted from the host:
+
+```sh
+docker compose exec kazari kazari admin backup /backup/2026-11-21
+```
+
+#### What a backup needs
+
+A backup depends on three things:
+
+- **Free space.** Kazari first copies the database into `tmp/` under the data directory and removes the copy afterwards. With less free space there than the database's size, the backup is refused with `no_space`.
+- **One at a time.** A second backup started while one runs is refused with `backup_running`.
+- **The garbage collector waits.** The `gc` job skips its run while a backup is written, and a backup waits for a run in progress, so every blob the database copy refers to is in the archive.
+
+Every backup is recorded in the [audit log](#audit-log) as `backup.create`, with who took it.
+
+#### From another machine
+
+From another machine, the same command works over the admin URL with an admin credential. The archive then never holds `certmagic/`, and the command says so: the certificate's private key leaves the server only over the admin socket.
+
+The route behind the command is `POST /v1/backup`, which answers the archive as a tar stream ([admin API](api.md#backup)).
+
+A backup lasts as long as its reader keeps reading. When `kazari admin backup` or a download reads nothing for a minute, the server ends it, and the next backup can start.
+
+#### From the dashboard
+
+**Download a backup** on the dashboard's [System page](dashboard.md#downloading-a-backup) sends the same archive to the browser as `kazari-<base_domain>-<date>.tar`, without `certmagic/`.
+
+> [!WARNING]
+> An archive holds every page, private ones included, and the hash of every password and API key. Keep it where only the instance's operators can read it.
+
+### Scheduling backups
+
+Kazari does not schedule backups itself. Run the command from a timer, for example with systemd. The two units are:
+
+```ini
+# /etc/systemd/system/kazari-backup.service
+[Unit]
+Description=Back up Kazari
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'exec kazari admin backup /backup/kazari/$$(date +%%F)'
+```
+
+```ini
+# /etc/systemd/system/kazari-backup.timer
+[Unit]
+Description=Back up Kazari every night
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable the timer:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now kazari-backup.timer
+```
+
+Each night's backup lands in a directory named for its date. Removing old ones, and copying them off the host, is left to your own tooling.
+
+### Restoring from a backup
+
+Restore with the server stopped. To restore a directory written by `kazari admin backup`, replace the database and the blobs with the backup's:
+
+```sh
+sudo systemctl stop kazari
+cd /var/lib/private/kazari
+sudo rm -rf kazari.db kazari.db-wal kazari.db-shm blobs
+sudo cp -a /backup/kazari/2026-11-21/. .
+sudo chown -R --reference=. kazari.db blobs certmagic
+sudo systemctl start kazari
+```
+
+The `chown` gives the restored files to the user the server runs as, which owns the data directory. Leave `certmagic` out of it if the backup has none.
+
+To restore an archive downloaded from the dashboard, unpack it in place of the `cp`:
+
+```sh
+sudo tar -xf kazari-art.example.com-20261121-030000.tar -C /var/lib/private/kazari
+```
+
+At its next start Kazari applies any migrations the backup's database lacks, and the `gc` job later removes blobs that nothing in it references.
+
+### Backing up by hand
+
+The archive is the recommended way. To back up with your own tools instead, for example to keep the blobs in step with `rsync`, copy the database first, with SQLite's online backup, then the blobs straight after:
 
 ```sh
 cd /var/lib/private/kazari
@@ -28,16 +142,14 @@ rsync -a --delete blobs/ /backup/kazari/blobs/
 rsync -a certmagic/ /backup/kazari/certmagic/     # optional; saves a re-issue after a restore
 ```
 
-`uploads/` and `tmp/` need no backup.
+This needs the `sqlite3` command, which the Docker image does not have.
 
 > [!WARNING]
-> Do not copy `kazari.db` with `cp` or `rsync` while the server runs. The WAL makes that copy inconsistent; use SQLite's `.backup` as above.
+> Do not copy `kazari.db` with `cp` or `rsync` while the server runs. The WAL makes that copy inconsistent; use SQLite's `.backup` as above, or `kazari admin backup`.
 
 The database first and the blobs second gives a complete backup. Blobs are immutable and deleted only once no version references them, so a later blob copy holds everything the database snapshot refers to. The only gap is blobs of artifacts purged in between, which the snapshot no longer needs once it is restored and swept.
 
-### Restoring from a backup
-
-Restore with the server stopped, the blobs first and the database second:
+To restore such a copy, stop the server and put the blobs back first and the database second:
 
 ```sh
 sudo systemctl stop kazari
@@ -79,11 +191,76 @@ docker compose up -d
 
 The container keeps its data in the volume `kazari_data`.
 
+### Upgrading to 0.8
+
+Kazari 0.8 adds [built-in accounts](identity.md#built-in-accounts) and the [dashboard](dashboard.md). An instance that signs people in at an identity provider keeps doing so. Four things change for the others, and for scripts:
+
+- **Sign-in is a password.** Without an `auth.oidc` section, the sign-in page asks for a handle and a password, with **Use an API key instead** under the form. People who signed in with an API key have no password yet, and their keys keep working. To give a person a password, make them a reset link with `kazari admin users reset-password <handle>` and send it to them ([resetting a password](identity.md#resetting-a-password)). To keep sign-in by API key alone, set `auth.local.enabled` to `false`.
+- **The dashboard needs an address with `admin.listen`.** The admin host serves the dashboard at `/`. On an instance that sets `admin.listen`, the dashboard stays off until `admin.public_url` says where a browser reaches the listener ([the dashboard's address](configuration.md#the-dashboards-address)).
+- **The audit log answers an object.** `GET /v1/audit` and `kazari --json admin audit` answered an array of events. They now answer `{"events": [...], "next_cursor": "..."}`, so a script that read the array reads `events` ([audit log](api.md#audit-log)).
+- **A fifth job runs.** `update-check` asks GitHub for the newest release once a day ([the update check](#the-update-check)). `kazari admin jobs list` shows it, and `admin.update_check: false` turns it off.
+
 ### Users named admin or scheduler
 
 Kazari 0.5 reserved the handles `admin` and `scheduler` for new users only. The first start after this change renames any user who still holds one to the first free suffix, such as `admin-2`, and records a `user.update` event with `handle` and `renamed_from`. API keys, sign-ins, OAuth grants and artifacts stay with the user; versions and share links show the new handle. Scripts and links that name the user need the new handle.
 
 Events from before the rename keep the actor they had, so `admin` there can be the operator or that user: `credential` tells them apart, `admin_token` or `local` for the operator. Earlier releases also made a user called `admin` involved in any artifact the operator hid or transferred, which opens it to that user while it is offline. The migration removes that involvement where the audit log shows only operator events for the artifact from that actor. It stays where the log also shows the user acting, or shows an event with no `credential`, because those cannot be attributed; review them with `kazari admin audit --slug <slug>`.
+
+## Checking readiness
+
+Two commands ask a running server how it is. `kazari admin health` answers whether it is up: it needs no credential, costs nothing and is what the Compose file's health check runs. `kazari admin ready` answers whether it is set up correctly:
+
+```sh
+sudo kazari admin ready
+```
+
+It prints one line per check, as [`kazari check`](install.md#checking-the-setup) does, and when the checks ran:
+
+```text
+config       ok    the configuration is valid
+dns          ok    art.example.com -> 203.0.113.10 (this host)
+dns          ok    api.art.example.com -> 203.0.113.10 (this host)
+dns          ok    check-7f3a9c01.art.example.com -> 203.0.113.10 (this host)
+dns token    ok    cloudflare wrote and removed a TXT record in zone example.com.
+certificate  ok    valid until 2027-02-12 (83 days)
+disk         ok    31.2 GiB free of 49.0 GiB on the disk holding /var/lib/kazari (64%)
+database     ok    18.4 MiB in /var/lib/kazari/kazari.db
+blobs        ok    1.2 GiB in /var/lib/kazari/blobs
+dashboard    ok    https://admin.art.example.com
+
+all checks passed
+checked 2026-11-21T14:05:00Z
+```
+
+The command exits with status 1 when a check fails, so a monitor can run it. Every `warn` and `fail` line ends with what to do next.
+
+These are the checks:
+
+| Check         | Warns                                   | Fails                                   |
+| ------------- | --------------------------------------- | --------------------------------------- |
+| `config`      |                                         | The configuration is not valid          |
+| `dns`         | As in `kazari check`                    | As in `kazari check`                    |
+| `dns token`   | As in `kazari check`                    | As in `kazari check`                    |
+| `certificate` | It expires within 14 days               | It has expired                          |
+| `disk`        | Under 10% of the data directory's disk is free | Under 2% is free                 |
+| `database`, `blobs` | The blob directory cannot be read | Never: they report sizes                |
+| `dashboard`   | `admin.listen` is set without `admin.public_url` | The dashboard's address is plain `http` on a host other than this machine |
+
+Unlike `kazari check`, it leaves the ports and the admin socket alone, since the running server holds them. In proxy mode the certificate check is skipped: the proxy holds the certificate.
+
+The server runs the checks once when it starts, in the background, so the result of a restart is there without anyone asking. After that it runs them on demand: it keeps the result of a run for 15 minutes and answers from it. To run the checks now, add `--fresh`:
+
+```sh
+sudo kazari admin ready --fresh
+```
+
+A fresh run looks the DNS records up and writes and removes a TXT record through the DNS provider, so it can take a minute. The same result is on the dashboard's [System page](dashboard.md#checking-health) and at `GET /v1/ready` on the [admin API](api.md#readiness), which needs an admin credential.
+
+When [the update check](#the-update-check) knows of a newer release, the command ends with one more line:
+
+```text
+a newer release is available: 0.8.0 (checked 2026-11-21T03:12:00Z)
+```
 
 ## Logs
 
@@ -174,8 +351,8 @@ These describe requests on every surface:
 | `http_server_active_requests`           | gauge     | `kazari_surface`, `http_request_method`, `url_scheme`                                                                               |
 | `http_server_response_body_size_bytes`  | histogram | As `http_server_request_duration_seconds`; its sum is each surface's bandwidth                                                     |
 | `kazari_api_errors_total`               | counter   | `kazari_surface` (`api`, `admin`), `kazari_error_code`                                                                             |
-| `kazari_auth_requests_total`            | counter   | `kazari_surface`, `kazari_credential_type` (`api_key`, `oauth`, `admin_token`, `local`), `kazari_auth_result` (`ok`, `missing`, `invalid`, `forbidden`) |
-| `kazari_rate_limit_rejected_requests_total` | counter | `kazari_surface`, `kazari_rate_limit_scope` (`ip`, `credential`)                                                                |
+| `kazari_auth_requests_total`            | counter   | `kazari_surface`, `kazari_credential_type` (`api_key`, `oauth`, `admin_token`, `local`, `session`), `kazari_auth_result` (`ok`, `missing`, `invalid`, `forbidden`) |
+| `kazari_rate_limit_rejected_requests_total` | counter | `kazari_surface`, `kazari_rate_limit_scope` (`ip`, `credential`, `account`)                                                     |
 
 These describe MCP and what agents do:
 
@@ -192,7 +369,8 @@ These describe MCP and what agents do:
 | `kazari_artifact_imports_total`          | counter   | `error_type`                                                                                             |
 | `kazari_share_link_operations_total`     | counter   | `kazari_share_link_operation` (`create`, `revoke`, `open`), `error_type`                                 |
 | `kazari_upload_chunks_total`             | counter   | `error_type`                                                                                             |
-| `kazari_fetch_duration_seconds`          | histogram | `kazari_fetch_purpose` (`file`, `import`, `cimd`, `oidc`), `error_type` (a status code, `refused`, `timeout`, `too_large`) |
+| `kazari_fetch_duration_seconds`          | histogram | `kazari_fetch_purpose` (`file`, `import`, `cimd`, `oidc`, `update`), `error_type` (a status code, `refused`, `timeout`, `too_large`) |
+| `kazari_blob_writes_total`               | counter   | `kazari_blob_existing` (`true`, `false`): whether the content was already stored                         |
 | `kazari_fetch_body_size_bytes`           | histogram | `kazari_fetch_purpose`                                                                                   |
 
 These describe sign-in and access:
@@ -200,7 +378,9 @@ These describe sign-in and access:
 | Metric                                      | Type    | Labels                                                                                  |
 | ------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
 | `kazari_gate_requests_total`                | counter | `kazari_gate_result` (`public`, `member`, `share_link`, `redirect`, `denied`)           |
-| `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`) |
+| `kazari_user_sign_ins_total`                | counter | `kazari_sign_in_method` (`oidc`, `password`, `passkey`, `api_key`), `kazari_sign_in_result` (`ok`, `not_admitted`, `failed`, `delayed`) |
+| `kazari_user_link_operations_total`         | counter | `kazari_user_link_purpose` (`invite`, `reset`, `setup`), `kazari_user_link_operation` (`create`, `use`, `revoke`) |
+| `kazari_user_password_hash_duration_seconds` | histogram | `kazari_user_password_operation` (`hash`, `verify`): the time includes the wait for a free slot |
 | `kazari_oauth_token_requests_total`         | counter | `kazari_oauth_grant_type`, `error_type` (the RFC 6749 error code)                       |
 | `kazari_oauth_client_registrations_total`   | counter | `kazari_oauth_registration_method` (`dcr`, `cimd`), `error_type`                        |
 
@@ -224,12 +404,18 @@ These describe the server itself:
 | `kazari_job_duration_seconds`                  | histogram | `kazari_job_name`, `error_type`                                           |
 | `kazari_job_last_success_timestamp_seconds`    | gauge     | `kazari_job_name`                                                         |
 | `kazari_certificate_expiry_timestamp_seconds`  | gauge     | None: the served certificate; absent in proxy mode                        |
+| `kazari_backup_duration_seconds`               | histogram | `error_type` (`backup_running`, `no_space`, `canceled`, `internal`) on a backup that was refused, failed or lost its reader |
+| `kazari_backup_size_bytes`                     | histogram | None: the content of each archive written                                 |
+| `kazari_backup_last_success_timestamp_seconds` | gauge     | None: absent until this process has written a backup                      |
+| `kazari_ready_checks`                          | gauge     | `kazari_ready_check`, `kazari_ready_status` (`ok`, `warn`, `fail`, `skip`): the findings of the last readiness run |
+| `kazari_ready_timestamp_seconds`               | gauge     | None: when the readiness checks last ran; absent until they have          |
+| `kazari_update_available`                      | gauge     | None: `1` when a newer release is known, `0` when not; absent until a check has answered |
 | `otel_sdk_exporter_span_exported_total`, `otel_sdk_exporter_metric_data_point_exported_total`, `otel_sdk_exporter_log_exported_total` | counter | `otel_component_type`, `server_address`, `error_type`: items exported over OTLP, and failures |
 | `go_*`                                         | various   | The Go runtime: `go_memory_used_bytes`, `go_goroutine_count`, `go_schedule_duration_seconds` and others |
 | `process_*`                                    | various   | CPU, memory and file descriptors of the process                           |
 | `target_info`                                  | gauge     | The service: `service_name`, `service_version`, `service_instance_id`, `host_name` |
 
-`kazari_surface` is `site` (artifact pages), `api`, `mcp`, `admin`, `apex` (the base domain itself) or `redirect` (the plain-HTTP listener that redirects to HTTPS). `http_route` is the route that matched, such as `/v1/artifacts/{slug}` or `/{path...}` for an artifact's files; it is absent when no route matched. `error_type` is set on failures only, and `kazari_error_code` is Kazari's error code, such as `version_conflict` or `quota_exceeded`.
+`kazari_surface` is `site` (artifact pages), `api`, `mcp`, `admin` (the admin API and the dashboard), `account` (the account pages under `/account/`), `apex` (the rest of the base domain itself) or `redirect` (the plain-HTTP listener that redirects to HTTPS). `http_route` is the route that matched, such as `/v1/artifacts/{slug}` or `/{path...}` for an artifact's files; it is absent when no route matched. `error_type` is set on failures only, and `kazari_error_code` is Kazari's error code, such as `version_conflict` or `quota_exceeded`.
 
 A histogram's `_count` counts requests, calls or runs, so no separate counter exists: the request rate is `rate(http_server_request_duration_seconds_count[5m])`.
 
@@ -271,8 +457,8 @@ groups:
       - alert: KazariCertificateExpiring
         expr: kazari_certificate_expiry_timestamp_seconds - time() < 14 * 86400
       - alert: KazariJobNotSucceeding
-        # three intervals of the slowest job, gc, which runs hourly
-        expr: time() - kazari_job_last_success_timestamp_seconds > 3 * 3600
+        # three intervals of gc, the slowest job but the daily update-check
+        expr: time() - kazari_job_last_success_timestamp_seconds{kazari_job_name!="update-check"} > 3 * 3600
       - alert: KazariServerErrors
         expr: sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) > 0.1
       - alert: KazariRefusedAuthentications
@@ -283,15 +469,20 @@ groups:
             / sum by (gen_ai_tool_name) (rate(mcp_server_operation_duration_seconds_count[1h])) > 0.2
       - alert: KazariTelemetryExportFailing
         expr: sum(rate(otel_sdk_exporter_span_exported_total{error_type!=""}[15m])) > 0
+      - alert: KazariBackupOverdue
+        # for a timer that takes a backup every day
+        expr: time() - kazari_backup_last_success_timestamp_seconds > 2 * 86400
+      - alert: KazariReadinessCheckFailing
+        expr: sum by (kazari_ready_check) (kazari_ready_checks{kazari_ready_status="fail"}) > 0
 ```
 
-`KazariJobNotSucceeding` uses the hourly `gc` job; with other `lifecycle` intervals, use three of the longest. A tool's error ratio is worth reading by `kazari_error_code`: `version_conflict` means agents edit concurrently, `anchor_mismatch` that they edit from stale reads.
+`KazariJobNotSucceeding` uses the hourly `gc` job; with other `lifecycle` intervals, use three of the longest. It leaves out `update-check`, which runs once a day and whose failure changes nothing on the instance. A tool's error ratio is worth reading by `kazari_error_code`: `version_conflict` means agents edit concurrently, `anchor_mismatch` that they edit from stale reads.
 
-### Upgrading from 0.2
+### Upgrading from before 0.6
 
-Kazari 0.3 renamed every metric, and `https://admin.<base>/metrics` now needs the token described above. Update the scrape job and these queries:
+Kazari 0.6.0 renamed every metric, and since then `https://admin.<base>/metrics` needs the token described above. When upgrading from a release before 0.6.0, update the scrape job and these queries:
 
-| 0.2                                                    | 0.3                                                                                                       |
+| Before 0.6.0                                           | Since 0.6.0                                                                                               |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
 | `kazari_http_requests_total{surface, method, status}`  | `http_server_request_duration_seconds_count{kazari_surface, http_request_method, http_response_status_code}` |
 | `kazari_http_request_duration_seconds{surface}`        | `http_server_request_duration_seconds`, with the buckets of the semantic conventions                      |
@@ -328,13 +519,15 @@ On `mcp.`, each JSON-RPC method gets its own span under the request's, named as 
 
 Below the request, each change or lookup has a span named for the operation, the same whether it came over REST or MCP: `artifact.create`, `artifact.edit`, `upload.append_chunk`, `oauth.token` and so on, with the slug, version, file count and size. Under those come a span per store method, such as `ArtifactStore.AddVersion`, and per blob read or write (`blob.put`, `blob.open`), which show where a request's time went. A fetch for an import, a file named by URL, a client metadata document or the identity provider adds a `GET` client span per attempt, redirects included, with the host and the URL's query values hidden.
 
+The pages Kazari renders itself are traced the same way. A dashboard request is `GET /people/{handle}` or `POST /system/backup` on the `admin` surface, an account page `POST /account/keys` on the `account` surface, and a sign-in `POST /oauth/signin` on `mcp`, each with the operations it ran below it: `user.invite`, `user.redeem_link`, `user.check_password`, `oauth.redeem`, `oauth.end_sessions`, `backup.write` with the archive's file count and size, and `preflight.ready` with how many checks failed or warned. A readiness run can outlive the request that started it; its span ends when the run does. The update check's request to GitHub is a client span under `job update-check`.
+
 An MCP client can also pass `traceparent` in a request's `params._meta`. The tool span then joins that trace, with a link to the HTTP request's span.
 
 A server error (`5xx`) marks the span as failed, with `error.type` set to Kazari's error code. A panic adds an `exception` event. Requests for `/health`, `/v1/health` and `/metrics` are counted but not traced.
 
 ### Sampling
 
-By default, Kazari keeps every trace that starts on `api.`, `mcp.`, `admin.` or the admin socket, and one in a hundred on artifact hosts and the base domain. Errors on artifact hosts are still counted in full by the metrics; to keep every failing page view as a trace, sample in the collector instead ([`telemetry.traces`](configuration.md#telemetrytraces)).
+By default, Kazari keeps every trace that starts on `api.`, `mcp.`, `admin.`, the admin socket or the account pages under `/account/`, and one in a hundred on artifact hosts and the rest of the base domain. Errors on artifact hosts are still counted in full by the metrics; to keep every failing page view as a trace, sample in the collector instead ([`telemetry.traces`](configuration.md#telemetrytraces)).
 
 A trace is kept or dropped whole: a span's children follow its decision.
 
@@ -350,17 +543,17 @@ It receives OTLP on ports 4317 (gRPC) and 4318 (HTTP), keeps every trace with an
 
 ### Joining a caller's trace
 
-On `api.`, `mcp.` and `admin.`, a request with a W3C `traceparent` header continues the caller's trace, so an agent runtime or proxy that traces its own requests sees Kazari's spans under them. Artifact hosts and the base domain ignore the header: their visitors are anonymous, and a parent they sent would decide sampling. Kazari never sends `traceparent` to the sites it fetches.
+On `api.`, `mcp.`, `admin.` and the account pages, a request with a W3C `traceparent` header continues the caller's trace, so an agent runtime or proxy that traces its own requests sees Kazari's spans under them. Artifact hosts and the rest of the base domain ignore the header: their visitors are anonymous, and a parent they sent would decide sampling. Kazari never sends `traceparent` to the sites it fetches.
 
 ### What spans never contain
 
-Spans never contain who made a request: no handle, email, OIDC subject, client IP or credential id (API key prefix, OAuth grant id). On the admin API, the handle and key prefix in `url.path` read `REDACTED`. Query strings keep their keys and hide every value, because share tokens and OAuth codes travel there. Request and response bodies, file contents and credentials are never recorded. The audit log and the access log keep who did what, on the server.
+Spans never contain who made a request: no handle, email, OIDC subject, client IP or credential id (API key prefix, OAuth grant id). On the admin API, the dashboard and the account pages, the handle, key prefix and other ids in `url.path` read `REDACTED`. Query strings keep their keys and hide every value, because share tokens, OAuth codes and the tokens of invite, reset and setup links travel there. Request and response bodies, file contents and credentials are never recorded. The audit log and the access log keep who did what, on the server.
 
 Spans do contain slugs, versions, file paths, OAuth client ids and control-plane user agents. Traces often go to a hosted vendor, so treat them as you would the access log.
 
 ## Scheduled jobs
 
-Kazari runs four maintenance jobs on its own:
+Kazari runs five maintenance jobs on its own:
 
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -368,8 +561,9 @@ Kazari runs four maintenance jobs on its own:
 | `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
+| `update-check`   | 1 day                                              | Asks GitHub for the newest release, so the dashboard can say when the instance is behind ([the update check](#the-update-check)) |
 
-`gc` spares recent blobs so that a publish in progress never loses one. The unreferenced blobs it finds are those of purged or hard-deleted artifacts and of a publish that a crash interrupted, since a failed publish deletes its own. It also removes temporary files a crash left behind: blob writes and spilled bundles older than an hour.
+`gc` spares recent blobs so that a publish in progress never loses one. The unreferenced blobs it finds are those of purged or hard-deleted artifacts and of a publish that a crash interrupted, since a failed publish deletes its own. It also removes temporary files a crash left behind: blob writes, spilled bundles and database copies of a backup older than an hour. While a [backup](#taking-a-backup) is being written, `gc` skips its run and logs `gc: skipped, a backup is running`.
 
 Each interval is jittered by ±10%, and the first run comes after a random delay of up to 10% of the interval. A job never runs twice at once.
 
@@ -392,6 +586,19 @@ kazari admin jobs run sweep
 
 # the same through the admin API
 curl -X POST -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" https://admin.art.example.com/v1/jobs/gc/run
+```
+
+### The update check
+
+The `update-check` job is the one request Kazari makes on its own account. Once a day it asks `https://api.github.com/repos/PeterBooker/kazari/releases/latest` for the newest release and compares its version with the running one.
+
+The request carries nothing about the instance: no version, no domain and no identifier, only the `User-Agent` `kazari`. When a newer release exists, the server logs `a newer release is available`, and the dashboard's Overview and System pages say so. A check that fails is logged as a failed job run and changes nothing else.
+
+The job exists only in a build with a release version, so a build from source does not have it. To turn the check off, set `admin.update_check` to `false`:
+
+```yaml
+admin:
+  update_check: false
 ```
 
 ## Lifecycle
@@ -474,7 +681,26 @@ To block a user, disable them:
 kazari admin users update ana --disable
 ```
 
-Disabling a user revokes every API key at once, makes every OAuth access and refresh token fail, revokes every share link they created on any artifact, and refuses sign-in with the "No access" page. Links they gave to outside reviewers end too: a reviewer who still needs the page needs a new link from someone else. `--enable` lets them sign in again, but revoked keys and links stay revoked.
+Disabling a user revokes every API key at once, makes every OAuth access and refresh token fail, ends their browser sessions, revokes every share link they created on any artifact, and refuses their sign-in. An invite or reset link that was waiting for them stops working too. Links they gave to outside reviewers end too: a reviewer who still needs the page needs a new link from someone else. `--enable` lets them sign in again, but revoked keys and links stay revoked.
+
+Kazari has no command that deletes a user. A person who leaves is disabled and their pages are [handed over](#handing-over-a-users-pages), so the audit log and the versions they published keep naming a handle that exists.
+
+### What Kazari refuses
+
+Two changes to a user are refused, whichever way they are asked for:
+
+- **The last active admin cannot be disabled or demoted.** The request fails with `409 last_admin`. Make another person an admin first.
+- **Nobody disables or demotes their own account.** The request fails with `403 forbidden`. Ask another admin.
+
+The admin socket and the admin token are no person, so the second rule never stops them. An admin who is locked out is let back in on the server ([a locked-out admin](dashboard.md#the-only-admin-cannot-sign-in)).
+
+### Signing a user out
+
+To end a user's browser sessions without touching their keys or connected apps, for example after a laptop was lost:
+
+```sh
+kazari admin users sign-out ana
+```
 
 ### Revoking one API key
 
@@ -501,13 +727,21 @@ The command prints the new key once. Put it wherever the old one is stored befor
 
 A person rotates their own keys with [`kazari keys rotate`](cli.md#keys). An OAuth grant approved with the old key ends with it, so its client must connect again with the new key. To make every key expire, set [`auth.tokens.max_key_ttl`](configuration.md#authtokens).
 
-### Handing over a disabled user's pages
+### Handing over a user's pages
 
 A disabled user's artifacts keep serving, apart from any [service worker](#service-workers) they uploaded. To hand one over to another user, transfer it:
 
 ```sh
 kazari admin transfer q3-report peter
 ```
+
+To hand over everything a user owns at once, soft-deleted pages included, name the user and the new owner:
+
+```sh
+kazari admin users transfer ana peter
+```
+
+The command prints how many pages moved and their slugs. Their versions then count against the new owner's quota, and the audit log records an `artifact.transfer` for each.
 
 ## Responding to abuse
 
@@ -519,6 +753,8 @@ kazari admin users update ana --disable
 ```
 
 `hide` deletes nothing, and the audit log records it as `artifact.visibility`. It is not a lock: the owner, or under the `shared` policy any writer, can publish the page again. That is why disabling the owner usually goes with it.
+
+**Take down** on a page's page in the [dashboard](dashboard.md#taking-a-page-down) does both in one step.
 
 ### Removing the content for good
 
@@ -538,6 +774,8 @@ Blobs written in the last hour survive one more `gc` run.
 
 Kazari records every change with its time, actor, action, slug and details. The actor is a handle, `admin` for the admin token and the admin socket, or `scheduler` for jobs; no user can have either of those handles.
 
+Events about a person's account also carry a subject: the handle of that person, whoever acted. A reset link an admin made for `ana` has the admin as actor and `ana` as subject, and so does a key the admin issued her. Sign-ins, keys, passwords, links, grants, sessions and user changes have one; artifact events do not. Older events got theirs from their details at the upgrade that added it, except a grant revoked by id whose tokens were already gone.
+
 Artifact events also carry `credential`, the credential that acted: `api_key:<prefix>`, `oauth:<grant>`, `admin_token`, or `local` for the admin socket. An `oauth:` credential has one id per grant, the same across refreshes.
 
 The actions, with the details each records:
@@ -555,14 +793,26 @@ The actions, with the details each records:
 | `artifact.purge`      | Purged, by `rm --hard` or the sweep (`reason: retention`)            |
 | `artifact.free`       | Tombstone removed, slug free                                         |
 | `artifact.transfer`   | Owner changed (`from`, `to`)                                         |
-| `user.create`         | User created by an admin, or provisioned at sign-in (`via: identity`) |
+| `user.create`         | User created by an admin, provisioned at sign-in (`via: identity`) or created with the setup link (`via: setup`) |
 | `user.update`         | User changed, identity linked or unlinked, or renamed at upgrade (`handle`, `renamed_from`) |
 | `key.issue`           | API key issued (`prefix`, `label`, `scopes`; `slugs`, `expires_at` and `issued_by` when it has them) |
 | `key.rotate`          | API key replaced (`prefix`, `new_prefix`, `old_expires_at`, and the new key's details) |
 | `key.revoke`          | API key revoked (`prefix`; `issued_by` when revoking the key it was issued with did it) |
-| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.grant`         | Consent approved (`client_id`, `scopes`, `via: oidc`, `password` or `api_key`, and `key_prefix` for `api_key`); `password` stands for any sign-in to a built-in account, a passkey's too |
 | `oauth.revoke`        | OAuth grant revoked (`grant`, or `user` for all of a user's; `reason: refresh_replay` when Kazari revoked it because a retired refresh token was presented again) |
-| `oauth.signin`        | A browser signed in to view `members` pages (`via: oidc` or `api_key`, and `key_prefix` for `api_key`) |
+| `oauth.signin`        | A browser signed in (`via: oidc`, `password`, `passkey` or `api_key`, and `key_prefix` for `api_key`) |
+| `dashboard.signin`    | An admin opened a session on the dashboard (`credential`)            |
+| `session.revoke`      | A person's browser sessions ended (`user`, `sessions`)               |
+| `invite.create`       | Invite, reset or setup link made (`id`, `purpose`, `expires_at`; `handle` unless `setup`; `revoke_all` when set) |
+| `invite.use`          | Link used to set a password (the same details)                       |
+| `invite.revoke`       | Link revoked before it was used (the same details)                   |
+| `password.set`        | Password set (`handle`, `via: invite`, `reset`, `setup`, `change` or `recovery`) |
+| `recovery.create`     | A new set of recovery codes made, ending the old one (`handle`, `codes`) |
+| `passkey.create`      | A passkey added on the account page (`handle`, `id`, `name`)         |
+| `passkey.delete`      | A passkey removed (`handle`, `id`, `name`)                           |
+| `recovery.use`        | A recovery code used to set a password (`handle`, `left`)            |
+| `backup.create`       | Backup written (`files`, `bytes`; `certificates` is `true` when the archive holds `certmagic/`) |
+| `audit.export`        | The log exported as CSV from the dashboard                           |
 | `share_link.create`   | Share link created (`prefix`, `expires_at`)                          |
 | `share_link.revoke`   | Share link revoked (`prefix`; `created_by` when disabling its creator did it) |
 
@@ -570,13 +820,17 @@ An event is written just after the change it describes, outside its transaction,
 
 ### Reading the log
 
-To read the log, filter it by time, slug or actor:
+To read the log, filter it by time, slug, actor, subject or action:
 
 ```sh
 kazari admin audit --since 24h
 kazari admin audit --slug q3-report --limit 50
+kazari admin audit --actor ana --action key. --since 168h
+kazari admin audit --subject ana --since 720h
 curl -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "https://admin.art.example.com/v1/audit?actor=ana&since=2026-10-01T00:00:00Z"
 ```
+
+`--action` takes an exact action such as `key.issue`, or a prefix ending in a dot such as `artifact.`, and can be repeated. When more events match than one page holds, stderr prints the `--cursor` for the next page. The dashboard's [Activity page](dashboard.md#activity) shows the same log with the same filters.
 
 ## Troubleshooting
 

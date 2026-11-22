@@ -1,0 +1,35 @@
+{{/* The form that adds a person, the confirmation page and the page that shows a new link or key once. */}}
+
+{{define "people-invite"}}{{template "theme/shell" .Shell}}<div class="page page-narrow">
+<header class="head">
+<p class="crumb"><a href="/people">People</a> / {{if .Data.Local}}Invite{{else}}Add{{end}}</p>
+<div class="head-row"><h1 class="title">{{if .Data.Local}}Invite a person{{else}}Add a person{{end}}</h1></div>
+<p class="lede">{{if .Data.Local}}You get a link to copy and send. They open it, set a password and can then sign in. Kazari sends no email.{{else}}People sign in at the identity provider on this instance. Adding someone here first lets you choose their handle, role and quota before they do.{{end}}</p>
+</header>
+{{with .Data.Errors}}<div class="notice tone-danger" role="alert"><p class="notice-title">{{template "icon/alert"}}Nobody was added</p><p>Correct the marked {{if eq (len .) 1}}field{{else}}fields{{end}} and send the form again.</p></div>{{end}}
+<form class="form-grid" method="post" action="/invites/new">
+{{template "token" .}}
+<div class="field"><label for="invite-handle">Handle</label>
+<input class="input input-mono" id="invite-handle" name="handle" type="text" value="{{.Data.Handle}}" required minlength="2" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="invite-handle-help{{if .Data.Errors.handle}} invite-handle-err{{end}}"{{if .Data.Errors.handle}} aria-invalid="true"{{end}}>
+{{with .Data.Errors.handle}}<p class="error" id="invite-handle-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="invite-handle-help">The short name they are listed with and can sign in with: 2 to 32 characters of a-z, 0-9, _ and -. It cannot be changed later.</p></div>
+<div class="field"><label for="invite-name">Name <span class="optional">(optional)</span></label>
+<input class="input" id="invite-name" name="name" type="text" value="{{.Data.Name}}" autocomplete="off"></div>
+<div class="field span-2"><label for="invite-email">Email <span class="optional">(optional)</span></label>
+<input class="input" id="invite-email" name="email" type="email" value="{{.Data.Email}}" autocomplete="off" aria-describedby="invite-email-help{{if .Data.Errors.email}} invite-email-err{{end}}"{{if .Data.Errors.email}} aria-invalid="true"{{end}}>
+{{with .Data.Errors.email}}<p class="error" id="invite-email-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="invite-email-help">A second name for the account, which they can sign in with. Kazari sends nothing to it.</p></div>
+<div class="field"><label for="invite-role">Role</label>
+<select class="input" id="invite-role" name="role" aria-describedby="invite-role-help{{if .Data.Errors.role}} invite-role-err{{end}}"{{if .Data.Errors.role}} aria-invalid="true"{{end}}>
+<option value="member"{{if ne .Data.Role "admin"}} selected{{end}}>Member</option>
+<option value="admin"{{if eq .Data.Role "admin"}} selected{{end}}>Admin</option>
+</select>
+{{with .Data.Errors.role}}<p class="error" id="invite-role-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="invite-role-help">An admin can open this dashboard and change everything on the instance.</p></div>
+<div class="field"><label for="invite-quota">Quota <span class="optional">(optional)</span></label>
+<input class="input" id="invite-quota" name="quota" type="text" value="{{.Data.Quota}}" autocomplete="off" spellcheck="false" aria-describedby="invite-quota-help{{if .Data.Errors.quota}} invite-quota-err{{end}}"{{if .Data.Errors.quota}} aria-invalid="true"{{end}}>
+{{with .Data.Errors.quota}}<p class="error" id="invite-quota-err">{{template "icon/alert"}}<span>{{.}}</span></p>{{end}}
+<p class="help" id="invite-quota-help">A size such as 500 MiB or 2 GiB; 0 is no limit. Empty gets the instance default{{if .Data.DefaultQuota}}, {{bytes .Data.DefaultQuota}}{{else}}, which is no limit{{end}}.</p></div>
+<div class="actions span-2"><button type="submit" class="btn btn-primary">{{if .Data.Local}}Invite and show the link{{else}}Add the person{{end}}</button><a class="link" href="/people">Cancel</a></div>
+</form>
+</div>{{template "theme/shell-close"}}{{end}}

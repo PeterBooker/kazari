@@ -1,6 +1,6 @@
 # Kazari
 
-Self-hosted artifact host: one Go binary serves each artifact as a static site at `<slug>.<base-domain>` under a wildcard certificate, plus a REST API (`api.`), an MCP server with OAuth 2.1 (`mcp.`), an admin API (`admin.`, and a Unix socket in the data directory for the CLI on the same host) and a CLI. `docs/` is the operator documentation, `site/` the Hugo website at <https://kazari.io/>, which also publishes `docs/` and the files in `deploy/` under `/deploy/`.
+Self-hosted artifact host: one Go binary serves each artifact as a static site at `<slug>.<base-domain>` under a wildcard certificate, plus a REST API (`api.`), an MCP server with OAuth 2.1 and the sign-in pages (`mcp.`), an admin API and a web dashboard (`admin.`, and a Unix socket in the data directory for the CLI on the same host), account pages on the apex (`/account/`) and a CLI. `docs/` is the operator documentation, `site/` the Hugo website at <https://kazari.io/>, which also publishes `docs/` and the files in `deploy/` under `/deploy/`.
 
 ## Commands
 
@@ -47,6 +47,7 @@ goreleaser release --snapshot --clean --skip=publish,sign,sbom
 
 - `cmd/kazari` is a thin main that calls `internal/cli`, where kong parses every command: `serve` builds `internal/app`, `check` runs `internal/preflight`, everything else is a client of the REST API. Only `internal/app` knows every package; it wires constructors from `config.Config`. Packages export `New(deps..., Options)` and never read globals or config files.
 - Packages are named for what they provide (`artifact`, `site`, `sqlite`, `upload`), never for a layer. Interfaces are small and owned by the consumer (`artifact.Store`, `site.Resolver`, `blob.Store`, `oauth.IdentityProvider`); `sqlite` implements them and passes the conformance suites `artifact/storetest` and `blob/blobtest`.
+- The pages Kazari renders itself (`dashboard` on the admin host, `account` on the apex, the sign-in pages in `oauth`, the `gate`) are `html/template` on `internal/theme`, with no inline style or script and no build step; `internal/session` is the browser session of the admin host and the apex. The dashboard does nothing the admin API and the CLI cannot: an operation it needs gets a route and a command too.
 - `internal/api` holds wire types only; `internal/present` converts domain types to them and maps errors to HTTP statuses in one place, for both `httpapi` and `mcpserver`.
 - Errors carry a code (`artifact.Error`); compare with `errors.Is` against the sentinels.
 - Time is injected (`Options.Now`). Tests use a fixed clock and the scheduler's `Trigger`, never sleeps; they run against real SQLite in `t.TempDir()`, a real `blob.FS` and `httptest`.

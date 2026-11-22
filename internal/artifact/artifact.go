@@ -148,8 +148,49 @@ type ListQuery struct {
 	Metadata map[string]string // every pair must match
 	Stale    string            // "", "include" (default), "exclude", "only"
 	Deleted  string            // "", "exclude" (default), "include", "only"
-	Cursor   string
-	Limit    int // 0 = store default (50); capped at 200
+	// Published keeps only the artifacts that are not unpublished, whatever
+	// their visibility.
+	Published bool
+	// Search keeps the artifacts whose slug or name contains it, ignoring
+	// ASCII case; at most MaxSearchLen bytes.
+	Search string
+	// Visibility is "", public, unlisted or members (that visibility, and
+	// not unpublished), or unpublished.
+	Visibility string
+	Cursor     string
+	Limit      int // 0 = store default (50); capped at 200
+}
+
+// MaxSearchLen bounds ListQuery.Search.
+const MaxSearchLen = 100
+
+// Validate reports ErrInvalidArgument for a filter value outside its set.
+// Metadata keys and the cursor are checked where they are used.
+func (q ListQuery) Validate() error {
+	switch q.Mine {
+	case "", "created", "updated", "any":
+	default:
+		return Errorf(ErrInvalidArgument, "mine must be created, updated or any")
+	}
+	switch q.Stale {
+	case "", "include", "exclude", "only":
+	default:
+		return Errorf(ErrInvalidArgument, "stale must be include, exclude or only")
+	}
+	switch q.Deleted {
+	case "", "exclude", "include", "only":
+	default:
+		return Errorf(ErrInvalidArgument, "deleted must be exclude, include or only")
+	}
+	switch Visibility(q.Visibility) {
+	case "", Public, Unlisted, Members, Unpublished:
+	default:
+		return Errorf(ErrInvalidArgument, "visibility must be public, unlisted, members or unpublished")
+	}
+	if len(q.Search) > MaxSearchLen {
+		return Errorf(ErrInvalidArgument, "the search text is longer than %d bytes", MaxSearchLen)
+	}
+	return nil
 }
 
 // ListPage is one page of a listing.

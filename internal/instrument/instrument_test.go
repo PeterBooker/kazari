@@ -3,7 +3,9 @@ package instrument
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +90,35 @@ func TestRedactAdminPath(t *testing.T) {
 		"/v1/users":                        "/v1/users",
 		"/v1/artifacts/q3-report/transfer": "/v1/artifacts/q3-report/transfer",
 		"/metrics":                         "/metrics",
+		"/v1/users/peter/sessions":         "/v1/users/REDACTED/sessions",
+		"/v1/users/peter/links":            "/v1/users/REDACTED/links",
+		"/v1/invites":                      "/v1/invites",
+		"/v1/invites/7":                    "/v1/invites/REDACTED",
+		// The dashboard, on the same host.
+		"/":                                      "/",
+		"/people":                                "/people",
+		"/people/peter":                          "/people/REDACTED",
+		"/people/peter/disable":                  "/people/REDACTED/disable",
+		"/people/peter/keys":                     "/people/REDACTED/keys",
+		"/people/peter/keys/ab12cd34/revoke":     "/people/REDACTED/keys/REDACTED/revoke",
+		"/people/peter/apps/42/revoke":           "/people/REDACTED/apps/REDACTED/revoke",
+		"/people/peter/identities/unlink":        "/people/REDACTED/identities/unlink",
+		"/invites/new":                           "/invites/new",
+		"/invites/7/revoke":                      "/invites/REDACTED/revoke",
+		"/pages/q3-report":                       "/pages/q3-report",
+		"/pages/q3-report/links":                 "/pages/q3-report/links",
+		"/pages/q3-report/links/ab12cd34/revoke": "/pages/q3-report/links/REDACTED/revoke",
+		"/pages/q3-report/versions/3/publish":    "/pages/q3-report/versions/3/publish",
+		"/system/jobs/gc/run":                    "/system/jobs/gc/run",
+		"/users/peter":                           "/users/peter",
+		"/v1/people/peter":                       "/v1/people/peter",
+		// The account pages.
+		"/account/":                     "/account/",
+		"/account/keys":                 "/account/keys",
+		"/account/keys/ab12cd34/rotate": "/account/keys/REDACTED/rotate",
+		"/account/apps/42/revoke":       "/account/apps/REDACTED/revoke",
+		"/account/invite":               "/account/invite",
+		"/v1/account/keys/ab12cd34":     "/v1/account/keys/ab12cd34",
 	} {
 		if got := RedactAdminPath(in); got != want {
 			t.Errorf("RedactAdminPath(%q) = %q, want %q", in, got, want)
@@ -135,5 +166,31 @@ func TestMinLevel(t *testing.T) {
 	h := MinLevel(slog.DiscardHandler, slog.LevelWarn)
 	if h.Enabled(context.Background(), slog.LevelInfo) || !MinLevel(slog.NewTextHandler(nil, &slog.HandlerOptions{Level: slog.LevelDebug}), slog.LevelWarn).Enabled(context.Background(), slog.LevelError) {
 		t.Error("MinLevel does not filter by level")
+	}
+}
+
+// An exception event says what kind of thing failed and nothing of what it
+// failed on: the message of a wrapped store error names a handle or a key.
+func TestEndExceptionCarriesNoMessage(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	defer tp.Shutdown(context.Background())
+	_, span := tp.Tracer("test").Start(context.Background(), "UserStore.PasswordHash")
+	End(span, fmt.Errorf(`sqlite: password of "ana": %w`, fmt.Errorf("query: %w", context.DeadlineExceeded)), "")
+	events := rec.Ended()[0].Events()
+	if len(events) != 1 || events[0].Name != "exception" {
+		t.Fatalf("events = %v, want one exception", events)
+	}
+	var kind string
+	for _, kv := range events[0].Attributes {
+		if strings.Contains(kv.Value.String(), "ana") {
+			t.Errorf("exception attribute %s = %q names the person", kv.Key, kv.Value.String())
+		}
+		if kv.Key == "exception.type" {
+			kind = kv.Value.AsString()
+		}
+	}
+	if kind != "context.deadlineExceededError" {
+		t.Errorf("exception.type = %q, want the root cause's type", kind)
 	}
 }

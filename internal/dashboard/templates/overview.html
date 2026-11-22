@@ -1,0 +1,100 @@
+{{define "overview"}}{{template "theme/shell" .Shell}}
+<div class="page">
+
+<header class="head">
+<div class="head-row">
+<h1 class="title">Overview <b>of {{.Data.BaseDomain}}</b></h1>
+<span class="ja" lang="ja" aria-hidden="true">概要</span>
+</div>
+</header>
+
+{{template "flash" .}}
+<section class="box section" aria-labelledby="attention">
+<h2 class="h2" id="attention">Needs attention</h2>
+{{if .Data.Attention}}<ul class="attention">
+{{range .Data.Attention}}<li><span class="status tone-{{.Tone}}">{{.Label}}</span><p>{{.Text}}</p><a href="{{.Href}}">{{.Link}}</a></li>
+{{end}}</ul>
+{{else}}<p class="soft">Nothing needs attention right now.</p>
+{{end}}</section>
+
+{{if .Data.New}}{{template "overview-start" .}}
+{{end}}
+<section class="tiles" aria-label="Counts">
+<div class="box tile"><span class="label">People</span><span class="big">{{.Data.People.Total}}</span>
+<ul class="dash soft"><li>{{.Data.People.Active}} active, {{.Data.People.Invited}} invited, {{.Data.People.Disabled}} disabled</li><li>{{howmany .Data.People.Admins "admin"}}</li></ul>
+<a class="link" href="/people">All people</a></div>
+<div class="box tile"><span class="label">Pages</span><span class="big">{{.Data.Pages.Total}}</span>
+<ul class="dash soft"><li>{{.Data.Pages.Live}} live, {{.Data.Pages.Stale}} stale, {{.Data.Pages.Unpublished}} unpublished, {{.Data.Pages.Bin}} in the bin</li>
+<li>{{.Data.Pages.Public}} public, {{.Data.Pages.Unlisted}} unlisted, {{.Data.Pages.Members}} for members</li></ul>
+<a class="link" href="/pages">All pages</a></div>
+<div class="box tile"><span class="label">Storage</span><span class="big">{{bytes .Data.Storage.Counted}}</span>
+<ul class="dash soft"><li>Counted against quotas, in {{howmany .Data.Storage.Versions "version"}}</li><li>{{bytes .Data.Storage.Stored}} on disk, each file stored once</li></ul>
+{{if .Data.Storage.HasDisk}}<div class="usage"><span class="soft">{{bytes .Data.Storage.DiskFree}} free of {{bytes .Data.Storage.DiskSize}} on the data disk</span>
+<meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Data.Storage.DiskUsed}}">{{.Data.Storage.DiskUsed}}% used</meter></div>
+{{end}}</div>
+<div class="box tile"><span class="label">Certificate</span>
+{{if not .Data.Cert.NotAfter.IsZero}}<span class="big">{{.Data.Cert.Left}}</span>
+<ul class="dash soft"><li><span class="mono">*.{{.Data.BaseDomain}}</span>, mode <span class="mono">{{.Data.Cert.Mode}}</span></li><li>Expires {{when .Data.Cert.NotAfter}}</li></ul>
+{{else if .Data.Cert.Proxy}}<span class="big">Proxy</span>
+<ul class="dash soft"><li>A proxy in front of Kazari holds the certificate. Kazari serves plain HTTP to it.</li></ul>
+{{else}}<span class="big">—</span>
+<ul class="dash soft"><li>No certificate is served yet{{with .Data.Cert.Mode}}, mode <span class="mono">{{.}}</span>{{end}}.</li></ul>
+{{end}}<a class="link" href="/system#health">Health checks</a></div>
+</section>
+
+{{if .Data.Jobs}}<section class="section" aria-labelledby="jobs">
+<div class="section-head">
+<h2 class="h2" id="jobs">Jobs</h2>
+<a class="link" href="/system#jobs">Run a job</a>
+</div>
+<table class="table">
+<thead><tr><th>Job</th><th>Last run</th><th>Result</th><th>Next run</th></tr></thead>
+<tbody>
+{{range .Data.Jobs}}<tr><td data-label="Job"><span class="mono">{{.Name}}</span></td>
+<td data-label="Last run">{{if .LastRun}}{{when .LastRun}}{{else}}<span class="soft">not yet</span>{{end}}</td>
+<td data-label="Result">{{if .Running}}<span class="status tone-note">Running</span>{{else if .LastError}}<span class="status tone-danger">Failed</span>{{else if .LastRun}}<span class="status tone-ok">Succeeded</span>{{else}}<span class="status tone-neutral">Waiting</span>{{end}}</td>
+<td data-label="Next run">{{if .NextRun}}{{when .NextRun}}{{else}}<span class="soft">on demand</span>{{end}}</td></tr>
+{{end}}</tbody>
+</table>
+</section>
+{{end}}
+<section class="section" aria-labelledby="recent">
+<div class="section-head">
+<h2 class="h2" id="recent">Recent activity</h2>
+<a class="link" href="/activity">All activity</a>
+</div>
+{{if .Data.Events}}{{template "events" .Data.Events}}
+{{else}}<div class="empty"><p>Nothing has happened yet. Every publish, sign-in and change to a person or a page is listed here.</p></div>
+{{end}}</section>
+
+</div>
+{{template "theme/shell-close"}}{{end}}
+
+{{define "overview-start"}}<section class="box section" aria-labelledby="start">
+<h2 class="h2" id="start">Getting started</h2>
+<p class="soft">This instance is new. Three steps and the first page is live.</p>
+<ol class="steps">
+<li><strong>{{if .Data.LocalAccounts}}Invite a person{{else}}Add a person{{end}}</strong>{{if .Data.Invited.Done}} <span class="status tone-ok">Done</span>{{end}}
+{{if .Data.LocalAccounts}}<span class="soft">You get a link to copy and send. It works once, and Kazari sends no email.</span>
+{{if not .Data.Invited.Done}}<a class="btn btn-primary" href="/invites/new">Invite a person</a>{{else}}<a class="link" href="/invites/new">Invite another</a>{{end}}
+{{else}}<span class="soft">People sign in at your identity provider. Whoever it admits appears under People at their first sign-in.</span>
+<a class="link" href="/people">See people</a>{{end}}</li>
+<li><strong>Connect an agent</strong>{{if .Data.Connected.Done}} <span class="status tone-ok">Done</span>{{end}}
+<span class="soft">Add this address as a connector in your AI agent, then sign in when it asks.</span>
+<div class="copy"><label class="sr-only" for="connector">Connector address</label><input class="input input-mono" id="connector" type="text" readonly value="{{.Data.MCPURL}}">
+<button type="button" class="btn" data-copy-target="connector" hidden>Copy the address</button></div>
+<details class="more"><summary>From a terminal</summary>
+<p class="soft">Claude Code adds the connector with one command:</p>
+<div class="snippet"><pre><code id="connector-cli">claude mcp add --transport http kazari {{.Data.MCPURL}}</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="connector-cli" hidden>Copy the command</button></div>
+<p class="soft">The <span class="mono">kazari</span> command line publishes a directory with an API key, which you issue on a person's page:</p>
+<div class="snippet"><pre><code id="kazari-cli">export KAZARI_URL={{.Data.CLIURL}}
+export KAZARI_TOKEN=kzk_...
+kazari publish ./site --slug hello</code></pre>
+<button type="button" class="btn btn-sm" data-copy-target="kazari-cli" hidden>Copy the commands</button></div>
+</details></li>
+<li><strong>Publish a first page</strong>{{if .Data.Shipped.Done}} <span class="status tone-ok">Done</span>{{end}}
+<span class="soft">Ask the agent for a page and tell it to publish with Kazari. It answers with the page's address.</span>
+<a class="link" href="/pages">See pages</a></li>
+</ol>
+</section>{{end}}

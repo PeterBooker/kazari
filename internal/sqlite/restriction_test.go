@@ -145,7 +145,7 @@ func TestUserStoreKeyLineage(t *testing.T) {
 		t.Helper()
 		k := &user.APIKey{UserHandle: handle, Prefix: prefix, Hash: "h-" + prefix, Scopes: []string{"artifacts:read"},
 			Slugs: slugs, IssuedBy: issuedBy, CreatedAt: userT0}
-		if err := s.CreateKey(ctx, k); err != nil {
+		if err := s.CreateKey(ctx, k, 0); err != nil {
 			t.Fatalf("CreateKey(%s): %v", prefix, err)
 		}
 		return k
@@ -182,7 +182,7 @@ func TestUserStoreKeyLineage(t *testing.T) {
 		"another user's key":     {UserHandle: "alice", Prefix: "orphan02", IssuedBy: "bobsbobs", CreatedAt: userT0},
 		"a key for another user": {UserHandle: "bob", Prefix: "orphan03", IssuedBy: "rootroot", CreatedAt: userT0},
 	} {
-		if err := s.CreateKey(ctx, k); !errors.Is(err, user.ErrKeyNotFound) {
+		if err := s.CreateKey(ctx, k, 0); !errors.Is(err, user.ErrKeyNotFound) {
 			t.Errorf("CreateKey issued by %s: err = %v, want ErrKeyNotFound", name, err)
 		}
 		if _, _, err := s.GetKey(ctx, k.Prefix); !errors.Is(err, user.ErrKeyNotFound) {
@@ -230,7 +230,7 @@ func TestUserStoreRotateKey(t *testing.T) {
 		{UserHandle: "alice", Prefix: "foreverk", CreatedAt: userT0},
 		{UserHandle: "alice", Prefix: "soonsoon", ExpiresAt: &soon, CreatedAt: userT0},
 	} {
-		if err := s.CreateKey(ctx, k); err != nil {
+		if err := s.CreateKey(ctx, k, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -245,7 +245,7 @@ func TestUserStoreRotateKey(t *testing.T) {
 
 	ends := userT0.Add(24 * time.Hour)
 	next := &user.APIKey{UserHandle: "alice", Prefix: "nextnext", Slugs: []string{"weekly-*"}, CreatedAt: userT0}
-	if err := s.RotateKey(ctx, "foreverk", next, ends); err != nil {
+	if err := s.RotateKey(ctx, "foreverk", next, ends, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := expiry("foreverk"); got == nil || !got.Equal(ends) {
@@ -255,7 +255,7 @@ func TestUserStoreRotateKey(t *testing.T) {
 		t.Errorf("new key = %+v, %v", got, err)
 	}
 
-	if err := s.RotateKey(ctx, "soonsoon", &user.APIKey{UserHandle: "alice", Prefix: "aftersoo", CreatedAt: userT0}, ends); err != nil {
+	if err := s.RotateKey(ctx, "soonsoon", &user.APIKey{UserHandle: "alice", Prefix: "aftersoo", CreatedAt: userT0}, ends, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := expiry("soonsoon"); !got.Equal(soon) {
@@ -267,7 +267,7 @@ func TestUserStoreRotateKey(t *testing.T) {
 		"another user's key": {"foreverk", "bob"},
 	} {
 		orphan := &user.APIKey{UserHandle: k.handle, Prefix: "orphanok", CreatedAt: userT0}
-		if err := s.RotateKey(ctx, k.prefix, orphan, userT0); !errors.Is(err, user.ErrKeyNotFound) {
+		if err := s.RotateKey(ctx, k.prefix, orphan, userT0, 0); !errors.Is(err, user.ErrKeyNotFound) {
 			t.Errorf("RotateKey of %s: err = %v, want ErrKeyNotFound", name, err)
 		}
 		if _, _, err := s.GetKey(ctx, "orphanok"); !errors.Is(err, user.ErrKeyNotFound) {

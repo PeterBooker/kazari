@@ -20,7 +20,7 @@ import (
 var apexPage string
 
 type hosts struct {
-	api, mcp, admin, apex, site http.Handler
+	api, mcp, admin, apex, account, site http.Handler
 }
 
 func (a *App) routes(h hosts) http.Handler {
@@ -28,6 +28,10 @@ func (a *App) routes(h hosts) http.Handler {
 	mux.Handle(a.cfg.Host("api")+"/", h.api)
 	mux.Handle(a.cfg.Host("mcp")+"/", h.mcp)
 	mux.Handle(a.cfg.Host("admin")+"/", h.admin)
+	// The account pages share the apex's host and nothing else: they are a
+	// surface of their own, traced and counted as control plane.
+	mux.Handle(a.cfg.Host("")+"/account", h.account)
+	mux.Handle(a.cfg.Host("")+"/account/", h.account)
 	mux.Handle(a.cfg.Host("")+"/", h.apex)
 	mux.Handle("/", h.site)
 	return normalizeHost(mux)
@@ -40,8 +44,9 @@ var probePaths = []string{"/health", "/v1/health", "/metrics"}
 
 func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
 	observe := middleware.ObserveOptions{
-		ControlPlane: name == instrument.SurfaceAPI || name == instrument.SurfaceMCP || name == instrument.SurfaceAdmin,
-		Skip:         probePaths,
+		ControlPlane: name == instrument.SurfaceAPI || name == instrument.SurfaceMCP || name == instrument.SurfaceAdmin ||
+			name == instrument.SurfaceAccount,
+		Skip: probePaths,
 	}
 	// On an artifact host these are pages like any other.
 	var probes []string

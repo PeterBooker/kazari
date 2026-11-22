@@ -1828,6 +1828,110 @@ func TestTransfer(t *testing.T) {
 	}
 }
 
+func TestTransferAll(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteShared})
+	alice := e.user(t, "alice")
+	bob := e.user(t, "bob")
+	root := artifact.Actor{Handle: "root", Admin: true}
+	e.create(t, alice, "one")
+	e.create(t, alice, "two")
+	e.create(t, bob, "kept")
+	if err := e.svc.Delete(e.ctx, alice, "two", false); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name     string
+		actor    artifact.Actor
+		from, to string
+		want     error
+	}{
+		{"by a member", bob, "alice", "bob", artifact.ErrForbidden},
+		{"by the owner", alice, "alice", "bob", artifact.ErrForbidden},
+		{"by a restricted admin credential", artifact.Actor{Handle: "root", Admin: true, Slugs: []string{"one"}}, "alice", "bob", artifact.ErrForbidden},
+		{"to the same owner", root, "alice", "alice", artifact.ErrInvalidArgument},
+		{"without a new owner", root, "alice", "", artifact.ErrInvalidArgument},
+		{"from an unknown user", root, "nobody", "bob", artifact.ErrInvalidArgument},
+		{"to an unknown user", root, "alice", "nobody", artifact.ErrInvalidArgument},
+	} {
+		_, err := e.svc.TransferAll(e.ctx, tt.actor, tt.from, tt.to)
+		wantErr(t, "transfer all "+tt.name, err, tt.want)
+	}
+
+	e.clock.Advance(time.Minute)
+	before := len(e.rec.Events)
+	moved, err := e.svc.TransferAll(e.ctx, root, "alice", "bob")
+	if err != nil {
+		t.Fatalf("TransferAll: %v", err)
+	}
+	if diff := cmp.Diff([]string{"one", "two"}, moved); diff != "" {
+		t.Fatalf("moved (-want +got):\n%s", diff)
+	}
+	events := e.rec.Events[before:]
+	if len(events) != 2 {
+		t.Fatalf("audit events = %+v, want one per artifact", events)
+	}
+	for i, ev := range events {
+		if ev.Action != audit.ArtifactTransfer || ev.Actor != "root" || ev.Slug != moved[i] ||
+			ev.Details["from"] != "alice" || ev.Details["to"] != "bob" {
+			t.Errorf("audit event %d = %+v", i, ev)
+		}
+	}
+	page, err := e.svc.List(e.ctx, root, artifact.ListQuery{All: true, Owner: "bob", Deleted: "include"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(page.Items); got != 3 {
+		t.Errorf("bob owns %d artifacts, want 3", got)
+	}
+	if n, err := e.svc.Usage(e.ctx, "alice"); err != nil || n != 0 {
+		t.Errorf("Usage(alice) = %d, %v; want 0", n, err)
+	}
+
+	moved, err = e.svc.TransferAll(e.ctx, root, "alice", "bob")
+	if err != nil || len(moved) != 0 {
+		t.Errorf("second TransferAll = %v, %v; want nothing to move", moved, err)
+	}
+}
+
+func TestListSearchAndVisibility(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteShared})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "q3-report")
+	e.create(t, alice, "roadmap")
+	unlisted := artifact.Unlisted
+	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "roadmap", Visibility: &unlisted}); err != nil {
+		t.Fatal(err)
+	}
+
+	list := func(q artifact.ListQuery) []string {
+		t.Helper()
+		page, err := e.svc.List(e.ctx, alice, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, len(page.Items))
+		for i, a := range page.Items {
+			out[i] = a.Slug
+		}
+		return out
+	}
+	if diff := cmp.Diff([]string{"q3-report"}, list(artifact.ListQuery{Search: "  Q3  "})); diff != "" {
+		t.Errorf("search, trimmed and case-insensitive (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"roadmap"}, list(artifact.ListQuery{Visibility: "unlisted"})); diff != "" {
+		t.Errorf("visibility (-want +got):\n%s", diff)
+	}
+	if got := list(artifact.ListQuery{Visibility: "unpublished"}); len(got) != 0 {
+		t.Errorf("unpublished = %v, want none", got)
+	}
+
+	_, err := e.svc.List(e.ctx, alice, artifact.ListQuery{Visibility: "private"})
+	wantErr(t, "unknown visibility", err, artifact.ErrInvalidArgument)
+	_, err = e.svc.List(e.ctx, alice, artifact.ListQuery{Search: strings.Repeat("x", artifact.MaxSearchLen+1)})
+	wantErr(t, "long search", err, artifact.ErrInvalidArgument)
+}
+
 func TestContentTypeValidation(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice := e.user(t, "alice")
