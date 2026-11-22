@@ -23,8 +23,6 @@ var overviewFuncs = template.FuncMap{
 	"howmany": howMany,
 }
 
-const releasesURL = "https://github.com/PeterBooker/kazari/releases"
-
 // quotaHighPct is the share of a quota past which a person is listed. The
 // certificate's and the disk's thresholds are the health checks' own, so
 // the two never disagree.

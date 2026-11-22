@@ -65,6 +65,7 @@ const (
 	docsConfigURL    = "https://kazari.io/docs/configuration/"
 	docsUpgradeURL   = "https://kazari.io/docs/ops/#upgrading"
 	docsBackupURL    = "https://kazari.io/docs/ops/#backing-up-and-restoring"
+	docsChangelogURL = "https://kazari.io/docs/changelog/"
 	redactedSetting  = "***"
 	generalSection   = "general"
 	backupTimeLayout = "20060102-150405"
@@ -233,7 +234,7 @@ type systemData struct {
 	Backup     *backupView // nil without a backup service
 	Diagnostic string
 	// The addresses the page links to.
-	DocsURL, ConfigURL, UpgradeURL, BackupDocsURL, ReleasesURL string
+	DocsURL, ConfigURL, UpgradeURL, BackupDocsURL, ChangelogURL string
 }
 
 func (s *server) system(w http.ResponseWriter, r *http.Request, c *request) error {
@@ -241,7 +242,7 @@ func (s *server) system(w http.ResponseWriter, r *http.Request, c *request) erro
 	d := systemData{
 		Build: s.o.Build, Started: s.o.Started, DataDir: s.o.DataDir, MCPURL: s.o.MCPURL, TLSMode: s.o.TLSMode,
 		Update:  s.updateView(),
-		DocsURL: docsURL, ConfigURL: docsConfigURL, UpgradeURL: docsUpgradeURL, BackupDocsURL: docsBackupURL, ReleasesURL: releasesURL,
+		DocsURL: docsURL, ConfigURL: docsConfigURL, UpgradeURL: docsUpgradeURL, BackupDocsURL: docsBackupURL, ChangelogURL: docsChangelogURL,
 	}
 	if s.d.Ready != nil {
 		d.HasReady = true
