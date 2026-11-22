@@ -197,7 +197,7 @@ func TestErrorDetail(t *testing.T) {
 	t.Run("a body over the limit names the limit", func(t *testing.T) {
 		err := &http.MaxBytesError{Limit: 10}
 		_, body := present.Error(err)
-		if want := "request body exceeds 10 bytes"; body.Message != want {
+		if want := "request body exceeds 10 B"; body.Message != want {
 			t.Errorf("Error(%v).Message = %q, want %q", err, body.Message, want)
 		}
 	})

@@ -4,7 +4,7 @@
 #
 #   curl -fsSL https://kazari.io/install.sh | sh
 #
-#   KAZARI_VERSION=0.3.0 ...   installs that release instead of the latest
+#   KAZARI_VERSION=<version> ...   installs that release instead of the latest
 #   KAZARI_BINDIR=~/bin ...    installs there instead of /usr/local/bin
 #
 # It installs only the binary. The deb and rpm packages on the release

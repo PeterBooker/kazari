@@ -166,7 +166,7 @@ A run whose credential has ended gets `401` on every request, and may report onl
 
 - `kazari admin keys list ana` shows whether the key expired or was revoked.
 - `kazari admin grants list ana` shows the user's connections, with the last refresh and the expiry of each. A connection that is not listed has lapsed or was revoked.
-- `kazari admin audit --since 720h` shows `oauth.revoke` and `key.revoke` events, with the reason where Kazari ended a connection itself.
+- `kazari admin audit --since 30d` shows `oauth.revoke` and `key.revoke` events, with the reason where Kazari ended a connection itself.
 
 If the run reaches the server and a call fails with `forbidden`, the message names the scope the key lacks or the slug patterns it is restricted to.
 
@@ -489,7 +489,7 @@ upload_offset_mismatch: ... (current=<n>: resend this path from offset <n>)
 
 An agent with a shell but no Kazari credential sends a whole site in one request instead of chunk by chunk. That is the case in a sandbox whose MCP connection is signed in while its shell is not, and whose files are too large to pass through tool calls:
 
-1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`. A single file goes the same way: `zip ../logo.zip logo.png`.
+1. Archive the files from inside the page's directory, so paths start at the page root: `zip -r ../site.zip .` or `tar czf ../site.tar.gz .`. A single file needs no archive: use the file itself in the steps below, and give its path in the artifact as `archive_path` in step 2, such as `logo.png`.
 2. Call `begin_upload` with `archive_sha256` (`sha256sum site.zip`) and `archive_bytes` (`wc -c < site.zip`). The result carries `archive_url`.
 3. Send the archive with `curl --fail-with-body -T site.zip '<archive_url>'`. No credential is needed: the token in the URL stands for one.
 4. Call `create_artifact` or `update_artifact` with `upload_id`, as after chunks.

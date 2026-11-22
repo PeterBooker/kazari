@@ -4,7 +4,6 @@ package present
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -538,7 +537,7 @@ func Error(err error) (int, api.Error) {
 		return http.StatusUnauthorized, api.Error{Code: api.CodeUnauthorized, Message: "wrong name or password"}
 	}
 	if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: fmt.Sprintf("request body exceeds %d bytes", mbe.Limit)}
+		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: "request body exceeds " + artifact.FormatBytes(mbe.Limit)}
 	}
 	return http.StatusInternalServerError, api.Error{Code: api.CodeInternal, Message: "internal error"}
 }

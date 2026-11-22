@@ -196,7 +196,8 @@ sudo systemctl stop kazari
 sudo rsync -a --delete /backup/kazari/blobs/ /var/lib/private/kazari/blobs/
 sudo rm -f /var/lib/private/kazari/kazari.db-wal /var/lib/private/kazari/kazari.db-shm
 sudo cp /backup/kazari/kazari.db /var/lib/private/kazari/kazari.db
-sudo rsync -a /backup/kazari/certmagic/ /var/lib/private/kazari/certmagic/
+# only when the backup holds the certificates
+if sudo test -d /backup/kazari/certmagic; then sudo rsync -a /backup/kazari/certmagic/ /var/lib/private/kazari/certmagic/; fi
 sudo chown -R --reference=/var/lib/private/kazari /var/lib/private/kazari
 sudo systemctl start kazari
 ```
@@ -927,8 +928,8 @@ To read the log, filter it by time, slug, actor, subject or action:
 ```sh
 kazari admin audit --since 24h
 kazari admin audit --slug q3-report --limit 50
-kazari admin audit --actor ana --action key. --since 168h
-kazari admin audit --subject ana --since 720h
+kazari admin audit --actor ana --action key. --since 1w
+kazari admin audit --subject ana --since 30d
 curl -H "Authorization: Bearer $KAZARI_ADMIN_TOKEN" "https://admin.art.example.com/v1/audit?actor=ana&since=2026-10-01T00:00:00Z"
 ```
 

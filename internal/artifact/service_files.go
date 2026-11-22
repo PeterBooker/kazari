@@ -104,6 +104,9 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 // putFile records the blob row so the garbage collector's grace window
 // starts now.
 func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64, put *[]string) (File, error) {
+	if n, ok := knownSize(in.Content); ok && n > s.opts.MaxFileBytes {
+		return File{}, Errorf(ErrTooLarge, "file %q is %s, over the %s file limit", p, FormatBytes(n), FormatBytes(s.opts.MaxFileBytes))
+	}
 	fileLeft := s.opts.MaxFileBytes
 	var r io.Reader = &limitReader{r: in.Content, left: &fileLeft,
 		err: Errorf(ErrTooLarge, "file %q is over the %s file limit", p, FormatBytes(s.opts.MaxFileBytes))}
@@ -197,6 +200,15 @@ func (l *limitReader) Read(p []byte) (int, error) {
 		return 0, l.err
 	}
 	return n, err
+}
+
+// knownSize is r's size when r can tell it without being read: inline
+// content, staged and bundled files and zip entries can, a stream cannot.
+func knownSize(r io.Reader) (int64, bool) {
+	if v, ok := r.(interface{ Size() int64 }); ok {
+		return v.Size(), true
+	}
+	return 0, false
 }
 
 // FormatBytes writes n in the largest binary unit that keeps it whole or to

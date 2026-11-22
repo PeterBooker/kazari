@@ -134,7 +134,7 @@ func (s *Service) Begin(ctx context.Context, owner string) (u *Upload, err error
 // hash. The digest is required, not optional, because the URL will pass
 // through a model's context and logs: bound to the bytes, it lets whoever
 // holds it stage nothing the owner does not already have.
-func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64) (u *Upload, token string, err error) {
+func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int64, path string) (u *Upload, token string, err error) {
 	ctx, span := s.span(ctx, "upload.begin_archive", "")
 	defer func() { endBegin(span, u, err) }()
 	sum = strings.ToLower(sum)
@@ -145,10 +145,17 @@ func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int6
 		return nil, "", artifact.Errorf(artifact.ErrInvalidArgument, "archive_bytes must be the size of the archive")
 	}
 	if size > s.opts.MaxTotalBytes {
-		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %d bytes", s.opts.MaxTotalBytes)
+		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %s", artifact.FormatBytes(s.opts.MaxTotalBytes))
+	}
+	if path != "" {
+		clean, err := artifact.ValidatePath(path)
+		if err != nil {
+			return nil, "", err
+		}
+		path = clean
 	}
 	token = randomText(tokenBytes)
-	u, err = s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size})
+	u, err = s.begin(ctx, owner, &Archive{TokenHash: hashToken(token), SHA256: sum, Bytes: size, Path: path})
 	if err != nil {
 		return nil, "", err
 	}
@@ -208,7 +215,7 @@ func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offse
 	}
 	if int64(len(chunk)) > s.opts.MaxChunkBytes {
 		return StagedFile{}, artifact.Errorf(artifact.ErrTooLarge,
-			"chunk larger than %d bytes", s.opts.MaxChunkBytes)
+			"chunk larger than %s", artifact.FormatBytes(s.opts.MaxChunkBytes))
 	}
 	size := int64(len(chunk))
 
@@ -245,7 +252,7 @@ func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offse
 	}
 	if u.Bytes+size > s.opts.MaxTotalBytes {
 		return StagedFile{}, artifact.Errorf(artifact.ErrTooLarge,
-			"upload larger than %d bytes", s.opts.MaxTotalBytes)
+			"upload larger than %s", artifact.FormatBytes(s.opts.MaxTotalBytes))
 	}
 
 	if err := s.write(id, f, chunk); err != nil {
@@ -486,7 +493,7 @@ func (s *Service) writeNew(id string, index int, r io.Reader, left int64) (int64
 	case err != nil:
 		return 0, fmt.Errorf("upload: stage %s: %w", id, err)
 	case n > left:
-		return 0, artifact.Errorf(artifact.ErrTooLarge, "upload larger than %d bytes", s.opts.MaxTotalBytes)
+		return 0, artifact.Errorf(artifact.ErrTooLarge, "upload larger than %s", artifact.FormatBytes(s.opts.MaxTotalBytes))
 	}
 	return n, nil
 }

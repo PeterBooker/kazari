@@ -125,10 +125,12 @@ func updateSchema() *jsonschema.Schema {
 }
 
 // BeginUploadInput is the input of begin_upload. Without the archive fields
-// the upload takes chunks; with both it also takes one archive at archive_url.
+// the upload takes chunks; with both it also takes one archive, or with
+// archive_path one file, at archive_url.
 type BeginUploadInput struct {
-	ArchiveSHA256 string `json:"archive_sha256,omitempty" jsonschema:"hex SHA-256 of the zip or tar.gz you will PUT to archive_url; with archive_bytes, asks for that URL"`
-	ArchiveBytes  int64  `json:"archive_bytes,omitempty" jsonschema:"size of that archive in bytes"`
+	ArchiveSHA256 string `json:"archive_sha256,omitempty" jsonschema:"hex SHA-256 of the zip or tar.gz, or the one file, you will PUT to archive_url; with archive_bytes, asks for that URL"`
+	ArchiveBytes  int64  `json:"archive_bytes,omitempty" jsonschema:"size of that body in bytes"`
+	ArchivePath   string `json:"archive_path,omitempty" jsonschema:"send one file instead of an archive, staged at this path, such as logo.png"`
 }
 
 // ChunkInput is the input of upload_chunk.
@@ -486,7 +488,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 	register(b, s, p, &mcp.Tool{Name: "begin_upload", Annotations: annotations("Begin upload", false, false, false)},
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in BeginUploadInput) (api.Upload, string, error) {
 			if in.ArchiveSHA256 != "" || in.ArchiveBytes != 0 {
-				u, token, err := b.d.Uploads.BeginArchive(ctx, p.Handle, in.ArchiveSHA256, in.ArchiveBytes)
+				u, token, err := b.d.Uploads.BeginArchive(ctx, p.Handle, in.ArchiveSHA256, in.ArchiveBytes, in.ArchivePath)
 				if err != nil {
 					return api.Upload{}, "", err
 				}

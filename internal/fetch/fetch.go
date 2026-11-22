@@ -298,7 +298,7 @@ func failed(u string, err error) error {
 }
 
 func tooLarge(u string, limit int64) error {
-	return artifact.Errorf(artifact.ErrFetchFailed, "%s is larger than %d bytes", u, limit)
+	return artifact.Errorf(artifact.ErrFetchFailed, "%s is larger than %s", u, artifact.FormatBytes(limit))
 }
 
 // Transport dials public addresses only. The check runs on the resolved
