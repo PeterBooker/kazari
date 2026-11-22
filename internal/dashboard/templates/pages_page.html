@@ -53,7 +53,13 @@
 <form method="post" action="/pages/{{.Page.Slug}}/keep">{{template "token" $}}
 <div class="actions"><button type="submit" class="btn btn-primary">Keep the page</button></div></form>
 {{else}}
-<p class="soft">Nothing is due. A page only moves to the bin when someone marks it stale or deletes it.</p>
+<p class="soft">Nothing is due. Mark a page stale when it is no longer needed: it keeps serving for a while, then moves to the bin by itself unless someone keeps it.</p>
+<form class="form" method="post" action="/pages/{{.Page.Slug}}/stale">{{template "token" $}}
+<div class="field"><label for="stale-days">Moves to the bin after, in days <span class="optional">(optional)</span></label>
+<input class="input" id="stale-days" name="days" type="number" inputmode="numeric" min="1" max="3650" step="1" value="{{.StaleDays}}" aria-describedby="stale-days-help{{if .StaleErr}} stale-days-err{{end}}"{{if .StaleErr}} aria-invalid="true"{{end}}>
+{{with .StaleErr}}<p class="error" id="stale-days-err">{{template "icon/alert"}}<span>{{.}}</span></p>
+{{end}}<p class="help" id="stale-days-help">Empty means the instance's usual grace period.</p></div>
+<div class="actions"><button type="submit" class="btn">Mark stale…</button></div></form>
 {{end}}
 </section>
 </div>
@@ -95,7 +101,7 @@
 </tr>
 {{end}}</tbody>
 </table>
-{{else}}<div class="empty"><p>This page has no share link. Create one below when someone outside the instance needs to open it.</p></div>{{end}}
+{{end}}{{if and (eq (print .Page.Artifact.Visibility) "members") (ne .Page.State.Key "unpublished")}}{{if not .Links}}<div class="empty"><p>This page has no share link. Create one below when someone outside the instance needs to open it.</p></div>{{end}}
 <form class="filters" method="post" action="/pages/{{.Page.Slug}}/links">
 {{template "token" $}}
 <div class="field field-search"><label for="link-label">Who it is for <span class="optional">(optional)</span></label><input class="input" id="link-label" name="label" type="text" maxlength="200" value="{{.LinkLabel}}"{{if .LinkErr.label}} aria-invalid="true" aria-describedby="link-label-err"{{end}}>
@@ -105,7 +111,13 @@
 <button type="submit" class="btn">Create a share link</button>
 </form>
 <p class="help">The link is shown once, on the next page. At most {{.MaxLinkDays}} days.</p>
-</section>
+{{else}}<div class="notice tone-note">
+<p class="notice-title">{{if eq .Page.State.Key "unpublished"}}The page is unpublished{{else}}Anyone with the address can open this page{{end}}</p>
+<p>{{if eq .Page.State.Key "unpublished"}}A share link would open nothing while the page is unpublished.{{else}}It needs no share link. To share it with chosen people only, make it members-only first.{{end}}</p>
+<form class="inline" method="post" action="/pages/{{.Page.Slug}}/visibility">{{template "token" $}}<input type="hidden" name="visibility" value="members">
+<button type="submit" class="btn">{{if eq .Page.State.Key "unpublished"}}Publish it, members only{{else}}Make it members only{{end}}</button></form>
+</div>
+{{end}}</section>
 {{end}}
 
 <section class="section" aria-labelledby="page-activity">
@@ -118,6 +130,7 @@
 
 <section class="section" aria-labelledby="page-actions">
 <h2 class="h2" id="page-actions">Hand over, hide and remove</h2>
+<p class="soft">Four ways to take a page offline, from the mildest: <b>hide</b> it and keep everything, to show again at any time; move it to <b>the bin</b>, where it can be restored for {{span .Retention}} before it is removed for good; <b>take it down</b>, which hides it at once and can also disable its owner; or <b>remove it for good</b>, which deletes every version now.</p>
 <div class="cols">
 <div class="box section">
 <h3 class="h3">Hand over</h3>

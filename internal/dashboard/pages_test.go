@@ -753,3 +753,53 @@ func TestPageShareLinkFieldErrors(t *testing.T) {
 	}
 	strictMarkup(t, "a refused share link", r.body)
 }
+
+// A share link is offered only where it opens something the address alone
+// does not: a members page that is published. Elsewhere the page says why,
+// with the change that would make one useful.
+func TestPageShareLinkOnlyForMembers(t *testing.T) {
+	e, b := pagesEnv(t)
+	for _, tt := range []struct {
+		slug, want string
+		form       bool
+	}{
+		{"members-one", "Create a share link", true},
+		{"live-one", "Make it members only", false},
+		{"hidden-one", "Publish it, members only", false},
+	} {
+		r := b.get("/pages/" + tt.slug)
+		strictMarkup(t, tt.slug, r.body)
+		if got := strings.Contains(r.body, `action="/pages/`+tt.slug+`/links"`); got != tt.form || !strings.Contains(r.body, tt.want) {
+			t.Errorf("%s: the share-link form shown = %t, want %t, with %q", tt.slug, got, tt.form, tt.want)
+		}
+	}
+	r := b.submit("/pages/live-one/visibility", url.Values{"visibility": {"members"}})
+	if !strings.Contains(r.body, `action="/pages/live-one/links"`) || e.page("live-one").Visibility != artifact.Members {
+		t.Error("making a page members only does not offer the share link")
+	}
+}
+
+// Marking a page stale from the dashboard starts its grace period.
+func TestPageMarkStale(t *testing.T) {
+	e, b := pagesEnv(t)
+	r := b.get("/pages/live-one")
+	for _, want := range []string{`action="/pages/live-one/stale"`, "Four ways to take a page offline", "restored for 30 days"} {
+		if !strings.Contains(r.body, want) {
+			t.Errorf("a live page's page lacks %q", want)
+		}
+	}
+	r = b.post("/pages/live-one/stale", url.Values{"days": {"soon"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Enter a whole number of days from 1 to 3650.") || !strings.Contains(r.body, `value="soon"`) {
+		t.Errorf("stale for soon: status %d", r.StatusCode)
+	}
+	r = b.submit("/pages/live-one/stale", url.Values{"days": {"3"}})
+	a := e.page("live-one")
+	if a.ExpiresAt == nil || !a.ExpiresAt.Equal(t0.Add(3*24*time.Hour)) || !strings.Contains(r.body, "The page is marked stale.") {
+		t.Errorf("stale for 3 days left %+v", a)
+	}
+	b.submit("/pages/live-one/keep", nil)
+	b.submit("/pages/live-one/stale", url.Values{"days": {""}})
+	if a := e.page("live-one"); a.ExpiresAt == nil || !a.ExpiresAt.Equal(t0.Add(14*24*time.Hour)) {
+		t.Errorf("stale with no days left %+v, want the default grace", a)
+	}
+}

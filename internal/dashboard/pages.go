@@ -19,6 +19,7 @@ var pagesFlashes = map[string]string{
 	"page-visibility":          "Who can open the page is changed.",
 	"page-hidden":              "The page is hidden. Its address answers 404 until it is published again.",
 	"page-kept":                "The stale mark is cleared. The page stays.",
+	"page-stale":               "The page is marked stale. It keeps serving until the date under Lifecycle, then moves to the bin.",
 	"page-binned":              "The page is in the bin. It can be restored until it is removed for good.",
 	"page-restored":            "The page is restored from the bin.",
 	"page-handed-over":         "The page has a new owner.",
@@ -40,6 +41,7 @@ func (s *server) pagesRoutes(mux *http.ServeMux) {
 	s.action(mux, "POST /pages/{slug}/visibility", s.pagesVisibility)
 	s.action(mux, "POST /pages/{slug}/hide", s.pagesHide)
 	s.action(mux, "POST /pages/{slug}/keep", s.pagesKeep)
+	s.action(mux, "POST /pages/{slug}/stale", s.pagesStale)
 	s.action(mux, "POST /pages/{slug}/bin", s.pagesToBin)
 	s.action(mux, "POST /pages/{slug}/restore", s.pagesRestore)
 	s.action(mux, "POST /pages/{slug}/owner", s.pagesHandOver)
@@ -321,6 +323,11 @@ type pageData struct {
 	// LinkErr names what is wrong with a field of that form, by the
 	// field's name.
 	LinkErr map[string]string
+	// StaleDays is what was typed into the stale form, StaleErr why it was
+	// refused.
+	StaleDays, StaleErr string
+	// Retention is how long a page stays in the bin.
+	Retention time.Duration
 }
 
 const (
@@ -341,7 +348,7 @@ func (s *server) pageView(ctx context.Context, c *request, slug string) (*pageDa
 	u := s.d.Links.ArtifactURL(a.Slug)
 	d := &pageData{
 		Page: s.pageRow(a), URL: u, Host: hostOf(u), Visibilities: visibilities,
-		MaxLinkDays: s.maxLinkDays(), LinkDays: min(defaultLinkDays, s.maxLinkDays()),
+		MaxLinkDays: s.maxLinkDays(), LinkDays: min(defaultLinkDays, s.maxLinkDays()), Retention: s.o.Retention,
 	}
 	for _, v := range versions {
 		vu := s.d.Links.VersionURL(a.Slug, v.Number)
@@ -412,6 +419,34 @@ func (s *server) pagesKeep(w http.ResponseWriter, r *http.Request, c *request) e
 		return pageErr(err)
 	}
 	return s.done(w, r, pagePath(slug), "page-kept")
+}
+
+// maxStaleDays bounds the grace period of the stale form: ten years, past
+// which marking a page stale says nothing.
+const maxStaleDays = 3650
+
+// pagesStale marks the page stale: it keeps serving for the grace period,
+// then moves to the bin. Empty is the instance's default grace.
+func (s *server) pagesStale(w http.ResponseWriter, r *http.Request, c *request) error {
+	ctx, slug := r.Context(), r.PathValue("slug")
+	typed := strings.TrimSpace(r.PostForm.Get("days"))
+	var grace time.Duration
+	if typed != "" {
+		days, err := strconv.Atoi(typed)
+		if err != nil || days < 1 || days > maxStaleDays {
+			d, err := s.pageView(ctx, c, slug)
+			if err != nil {
+				return err
+			}
+			d.StaleDays, d.StaleErr = typed, "Enter a whole number of days from 1 to "+strconv.Itoa(maxStaleDays)+"."
+			return s.render(w, r, c, http.StatusUnprocessableEntity, "pages_page", page{Title: d.Page.Slug, Nav: "pages"}, d)
+		}
+		grace = time.Duration(days) * 24 * time.Hour
+	}
+	if _, err := s.d.Artifacts.MarkStale(ctx, c.actor, slug, grace); err != nil {
+		return pageErr(err)
+	}
+	return s.done(w, r, pagePath(slug), "page-stale")
 }
 
 func (s *server) pagesToBin(w http.ResponseWriter, r *http.Request, c *request) error {
