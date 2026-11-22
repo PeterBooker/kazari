@@ -10,11 +10,12 @@ builds:
       - CGO_ENABLED=0
     flags:
       - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w
       - -X github.com/PeterBooker/kazari/internal/buildinfo.version={{.Version}}
       - -X github.com/PeterBooker/kazari/internal/buildinfo.commit={{.Commit}}
-      - -X github.com/PeterBooker/kazari/internal/buildinfo.date={{.Date}}
+      - -X github.com/PeterBooker/kazari/internal/buildinfo.date={{.CommitDate}}
     goos:
       - linux
       - darwin
@@ -29,15 +30,29 @@ archives:
   - id: default
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The commit's time and a fixed owner on every entry, so that the same
+    # commit gives the same archive.
+    builds_info: &reproducible
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - README.md
-      - deploy/kazari.yaml
-      - deploy/kazari.reference.yaml
-      - deploy/kazari.env.example
-      - deploy/kazari.service
-      - deploy/compose.yml
-      - deploy/Caddyfile
+      - src: LICENSE
+        info: *reproducible
+      - src: README.md
+        info: *reproducible
+      - src: deploy/kazari.yaml
+        info: *reproducible
+      - src: deploy/kazari.reference.yaml
+        info: *reproducible
+      - src: deploy/kazari.env.example
+        info: *reproducible
+      - src: deploy/kazari.service
+        info: *reproducible
+      - src: deploy/compose.yml
+        info: *reproducible
+      - src: deploy/Caddyfile
+        info: *reproducible
 
 # deb and rpm packages: the binary, the unit, the two configuration files
 # (kept on upgrade) and the reference files under /usr/share/doc/kazari.
@@ -54,6 +69,7 @@ nfpms:
     license: MIT
     formats: [deb, rpm]
     bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
     contents:
       - src: deploy/kazari.service
         dst: /usr/lib/systemd/system/kazari.service
