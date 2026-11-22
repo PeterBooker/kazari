@@ -317,8 +317,10 @@ var nextStepOrder = []string{
 // nextSteps is the model's next step per error code, shown after tool errors and in the skill.
 func (t texts) nextSteps(o Options) map[string]string {
 	return map[string]string{
-		api.CodeVersionConflict: "Someone published since you read it: read the artifact again (get_artifact, or read_file " +
-			"for the file), redo your change on the new content and retry with expected_version set to the new latest_version.",
+		api.CodeVersionConflict: "If the message says every edit still applies, resend the same call with expected_version " +
+			"set to the number it gives. Otherwise someone published since you read it: read the artifact again (get_artifact, " +
+			"or read_file for the file), redo your change on the new content and retry with expected_version set to the new " +
+			"latest_version.",
 		api.CodePublishedNotLatest: "An earlier version was published again, usually a rollback. Ask the user which version " +
 			"to change unless they already said: set base_version to the published version to fix the page people see, or " +
 			"to the latest to carry on from it, then call again.",
@@ -330,13 +332,14 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeSlugTaken: "Pick another slug and call create_artifact again. To change the existing artifact, use edit_file " +
 			"or update_artifact on it instead.",
 		api.CodeInvalidSlug:     "Choose a slug that follows the slug rules in the create_artifact description.",
-		api.CodeInvalidPath:     "Use a relative path without \"..\", a leading \"/\" or a trailing \"/\", such as assets/app.js.",
+		api.CodeInvalidPath:     "Use a file path inside the artifact without \"..\" or a trailing \"/\", such as assets/app.js.",
 		api.CodeInvalidMetadata: "Fix the key or value the message names; the metadata rules are in the create_artifact description.",
 		api.CodeInvalidArgument: "Fix the argument the message names, then call again.",
 		api.CodeNotFound: "Check the slug: list_artifacts with mine \"any\" lists the artifacts you created or updated, and " +
 			"deleted \"include\" adds soft-deleted ones. If get_artifact shows deleted_at, the artifact is soft-deleted: " +
 			"update_artifact with restore: true brings it back.",
-		api.CodeFileNotFound:    "Call get_artifact with include_files: it lists the paths in each version.",
+		api.CodeFileNotFound: "Check the path: get_artifact with include_files lists the paths in each version. To add a " +
+			"file that does not exist yet, send it whole in files[] of update_artifact.",
 		api.CodeVersionNotFound: "Call get_artifact: it lists the versions that exist.",
 		api.CodeGone: "The artifact was purged and cannot be restored. Publish the content again under a new slug; the old " +
 			"one stays blocked for a while.",

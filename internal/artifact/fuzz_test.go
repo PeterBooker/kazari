@@ -65,8 +65,8 @@ func FuzzValidatePath(f *testing.F) {
 		if !fs.ValidPath(clean) || clean == "." {
 			t.Errorf("ValidatePath(%q) = %q, want a rooted-nowhere path without empty, . or .. elements", p, clean)
 		}
-		if clean != path.Clean(p) {
-			t.Errorf("ValidatePath(%q) = %q, want %q", p, clean, path.Clean(p))
+		if want := strings.TrimPrefix(path.Clean(p), "/"); clean != want {
+			t.Errorf("ValidatePath(%q) = %q, want %q", p, clean, want)
 		}
 		if !utf8.ValidString(clean) || strings.ContainsFunc(clean, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
 			t.Errorf("ValidatePath(%q) = %q, want an error for its characters", p, clean)

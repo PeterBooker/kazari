@@ -62,7 +62,8 @@ func ValidateSlug(slug string, reserved []string) error {
 }
 
 // ValidatePath returns p cleaned, rejecting anything that could escape or
-// confuse the serving path, and paths under ReservedDir.
+// confuse the serving path, and paths under ReservedDir. Leading slashes are
+// dropped: "/index.html" is the file at the root, as a browser reads it.
 func ValidatePath(p string) (string, error) {
 	if p == "" {
 		return "", Errorf(ErrInvalidPath, "empty path")
@@ -70,8 +71,9 @@ func ValidatePath(p string) (string, error) {
 	if len(p) > PathMaxBytes {
 		return "", Errorf(ErrInvalidPath, "path longer than %d bytes", PathMaxBytes)
 	}
-	if strings.HasPrefix(p, "/") {
-		return "", Errorf(ErrInvalidPath, "path %q is absolute", p)
+	orig := p
+	if p = strings.TrimLeft(p, "/"); p == "" {
+		return "", Errorf(ErrInvalidPath, "path %q names the root directory, not a file", orig)
 	}
 	if strings.HasSuffix(p, "/") {
 		return "", Errorf(ErrInvalidPath, "path %q names a directory", p)

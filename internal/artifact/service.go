@@ -232,6 +232,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_
 		if in.Delete {
 			return nil, nil, Errorf(ErrInvalidArgument, "cannot delete %q from a new artifact", in.Path)
 		}
+		if len(in.Edits) > 0 {
+			return nil, nil, Errorf(ErrInvalidArgument, "cannot edit %q in a new artifact; send its content", in.Path)
+		}
 	}
 	// Fail before streaming when the slug is taken; the store's unique
 	// constraint is the real guard.
@@ -448,9 +451,13 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			return nil, nil, err
 		}
 	}
-	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now}
+	inputs, edited, err := s.applyFileEdits(ctx, base, baseNumber, req.Files)
+	if err != nil {
+		return nil, nil, err
+	}
+	v = &Version{Label: req.Label, CreatedBy: actor.Handle, CreatedAt: now, Edited: edited}
 	err = s.holdBlobs(ctx, func(put *[]string) error {
-		files, size, err := s.buildFiles(ctx, base, req.Files, quota, put)
+		files, size, err := s.buildFiles(ctx, base, inputs, quota, put)
 		if err != nil {
 			return err
 		}
@@ -475,7 +482,11 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		})
 	})
 	if errors.Is(err, errNoChange) {
-		return s.unchanged(ctx, actor, req)
+		got, uv, err := s.unchanged(ctx, actor, req)
+		if uv != nil {
+			uv.Edited = edited
+		}
+		return got, uv, err
 	}
 	if err != nil {
 		return nil, nil, err

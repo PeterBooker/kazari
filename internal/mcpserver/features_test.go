@@ -92,7 +92,8 @@ func TestEditFile(t *testing.T) {
 
 	msg := fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{{"old_text": "Q4", "new_text": "Q1"}}})
-	if !strings.HasPrefix(msg, "version_conflict: latest version is 4, expected 1\nNext step: Someone published since you read it") {
+	if !strings.HasPrefix(msg, "version_conflict: latest version is 4, expected 1; every edit still applies to version 4 as sent: "+
+		"resend the same edits with expected_version 4\nNext step: If the message says every edit still applies") {
 		t.Errorf("stale edit = %q", msg)
 	}
 	msg = fails(t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html",
@@ -176,7 +177,7 @@ func TestSkill(t *testing.T) {
 	}
 	for _, s := range []string{"---\nname: kazari\ndescription: \"Publish, edit and retire", "\n---\n\n# Kazari\n", "art.test", "edit_file",
 		"anchors: true", "https://cdn.jsdelivr.net", "25 MiB", "claude mcp add --transport http kazari https://mcp.art.test/",
-		"| `version_conflict` | Someone published"} {
+		"| `version_conflict` | If the message says every edit still applies"} {
 		if !strings.Contains(md, s) {
 			t.Errorf("skill lacks %q", s)
 		}

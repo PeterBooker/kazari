@@ -69,11 +69,19 @@ type Version struct {
 	SizeBytes int64
 	Files     []File // sorted by Path; empty unless requested
 
-	// Unchanged and Warnings describe the publish that returned the version
-	// and are never stored. Unchanged means the files matched the latest
-	// version, which is returned instead of a new one.
+	// Unchanged, Warnings and Edited describe the publish that returned the
+	// version and are never stored. Unchanged means the files matched the
+	// latest version, which is returned instead of a new one. Edited is how
+	// the edits of each FileInput with Edits applied.
 	Unchanged bool
 	Warnings  []string
+	Edited    []FileEdits
+}
+
+// FileEdits reports the edits an update applied to one file.
+type FileEdits struct {
+	Path     string
+	Outcomes []EditOutcome
 }
 
 // File is one entry of a version.
@@ -84,12 +92,15 @@ type File struct {
 	ContentType string
 }
 
-// FileInput is a file being added to or removed from a version.
+// FileInput is a file being added to or removed from a version. On update,
+// Edits instead of Content changes the base version's text file at Path, as
+// Service.Edit does, so one version can hold edits to several files.
 type FileInput struct {
 	Path        string
 	Content     io.Reader // nil with Delete=true removes the path on update
 	ContentType string    // optional; derived from the extension, then sniffed
 	Delete      bool
+	Edits       []Edit
 }
 
 // Actor is who is calling the service.

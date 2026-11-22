@@ -273,7 +273,7 @@ func TestAppendChunk(t *testing.T) {
 			name: "invalid paths",
 			steps: []step{
 				{path: "../escape", data: "x", wantErr: artifact.ErrInvalidPath},
-				{path: "/abs", data: "x", wantErr: artifact.ErrInvalidPath},
+				{path: "/", data: "x", wantErr: artifact.ErrInvalidPath},
 				{path: "dir/", data: "x", wantErr: artifact.ErrInvalidPath},
 				{path: "", data: "x", wantErr: artifact.ErrInvalidPath},
 			},
