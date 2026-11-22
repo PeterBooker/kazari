@@ -32,6 +32,7 @@
 # TYPE kazari_upload_count gauge
 # TYPE kazari_user_count gauge
 # TYPE kazari_user_link_operations counter
+# TYPE kazari_views_requests counter
 # TYPE mcp_server_operation_duration_seconds histogram
 # TYPE process_cpu_seconds counter
 # TYPE process_max_fds gauge

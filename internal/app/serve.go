@@ -129,7 +129,9 @@ func (a *App) Run(ctx context.Context) (err error) {
 	g.Go(func() error {
 		<-gctx.Done()
 		defer stopBG()
-		return shutdown(context.WithoutCancel(ctx), servers)
+		err := shutdown(context.WithoutCancel(ctx), servers)
+		a.flushViews(context.WithoutCancel(ctx))
+		return err
 	})
 
 	err = g.Wait()
@@ -139,6 +141,19 @@ func (a *App) Run(ctx context.Context) (err error) {
 		a.log.Info("kazari stopped")
 	}
 	return err
+}
+
+// flushViews writes the views the servers counted since the last flush, once
+// they have stopped counting.
+func (a *App) flushViews(ctx context.Context) {
+	if a.views == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+	defer cancel()
+	if err := a.views.Flush(ctx); err != nil {
+		a.log.Warn("views not saved at shutdown", "err", err)
+	}
 }
 
 // firstRunHint tells an operator watching a fresh instance how to create

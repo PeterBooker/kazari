@@ -689,6 +689,7 @@ func TestValidateErrors(t *testing.T) {
 		{"reserved slug case", func(c *Config) { c.Serve.ReservedSlugs = []string{"API"} }, "serve.reserved_slugs:"},
 		{"default visibility", func(c *Config) { c.Serve.DefaultVisibility = "private" }, "serve.default_visibility: must be one of public, unlisted, members"},
 		{"share link lifetime", func(c *Config) { c.Serve.ShareLinkMaxTTL = 0 }, "serve.share_link_max_ttl: must be greater than 0"},
+		{"analytics retention", func(c *Config) { c.Analytics.Retention = Duration(23 * time.Hour) }, "analytics.retention: must be at least 24h"},
 		{"write policy", func(c *Config) { c.Auth.WritePolicy = "anyone" }, "auth.write_policy: must be one of shared, owner"},
 		{"access ttl", func(c *Config) { c.Auth.Tokens.AccessTTL = 0 }, "auth.tokens.access_ttl: must be greater than 0"},
 		{"refresh ttl", func(c *Config) { c.Auth.Tokens.RefreshTTL = Duration(time.Minute) }, "auth.tokens.refresh_ttl: must not be shorter than auth.tokens.access_ttl"},

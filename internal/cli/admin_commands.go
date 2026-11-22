@@ -610,7 +610,7 @@ func (c *AdminJobsListCmd) Run(r *runner) error {
 
 // AdminJobsRunCmd runs one job.
 type AdminJobsRunCmd struct {
-	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup or update-check."`
+	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup, update-check, views-flush or views-prune."`
 }
 
 func (c *AdminJobsRunCmd) Run(r *runner) error {

@@ -17,6 +17,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 var now = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -131,7 +132,8 @@ func request(method, target string, header http.Header, cookies ...*http.Cookie)
 
 func (fx *fixture) allow(r *http.Request, p *artifact.Published, host string) (bool, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
-	return fx.g.Allow(rec, r, p, host), rec
+	_, ok := fx.g.Allow(rec, r, p, host)
+	return ok, rec
 }
 
 func cookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
@@ -253,6 +255,34 @@ func TestAllowWithCookies(t *testing.T) {
 	fx.sessions.err = errors.New("database down")
 	if ok, rec := fx.allow(request(http.MethodGet, "/", nil, view), team, "team"); ok || rec.Code != http.StatusInternalServerError {
 		t.Fatalf("store failure: ok %v, status %d", ok, rec.Code)
+	}
+}
+
+func TestAllowSaysWhoWasLetIn(t *testing.T) {
+	fx := newFixture()
+	tests := []struct {
+		name   string
+		p      *artifact.Published
+		cookie *http.Cookie
+		want   views.Access
+		ok     bool
+	}{
+		{"public", public, nil, views.Access{Via: views.ViaPublic}, true},
+		{"member", team, &http.Cookie{Name: "__Host-kazari_view", Value: viewToken}, views.Access{Via: views.ViaMember, Handle: "alice"}, true},
+		{"share link", team, &http.Cookie{Name: "__Host-kazari_view", Value: linkToken}, views.Access{Via: views.ViaShareLink}, true},
+		{"nobody", team, nil, views.Access{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cookies []*http.Cookie
+			if tt.cookie != nil {
+				cookies = append(cookies, tt.cookie)
+			}
+			got, ok := fx.g.Allow(httptest.NewRecorder(), request(http.MethodGet, "/", nil, cookies...), tt.p, tt.p.Slug)
+			if got != tt.want || ok != tt.ok {
+				t.Errorf("Allow(%s) = %+v, %v; want %+v, %v", tt.name, got, ok, tt.want, tt.ok)
+			}
+		})
 	}
 }
 

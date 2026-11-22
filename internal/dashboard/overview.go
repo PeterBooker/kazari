@@ -171,6 +171,10 @@ func jobConsequence(name string) string {
 		return "Expired sign-ins and tokens stay in the database until it runs."
 	case "update-check":
 		return "The dashboard does not know whether a newer version exists."
+	case "views-flush":
+		return "Page views are held in memory, up to a limit, until it runs."
+	case "views-prune":
+		return "Old view counts stay in the database until it runs."
 	}
 	return "It runs again on its schedule."
 }

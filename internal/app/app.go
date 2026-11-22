@@ -54,11 +54,16 @@ import (
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 const (
 	uploadsExpireEvery = 10 * time.Minute
 	oauthCleanupEvery  = time.Hour
+	// A minute of views is what a crash loses; the write it costs is one
+	// short transaction whatever the traffic.
+	viewsFlushEvery    = time.Minute
+	viewsPruneEvery    = 24 * time.Hour
 	updateCheckEvery   = 24 * time.Hour
 	updateCheckTimeout = 15 * time.Second
 	staleTempAge       = time.Hour // older temp files are crash leftovers
@@ -112,6 +117,7 @@ type App struct {
 	obs        *middleware.Observer
 	sched      *scheduler.Scheduler
 	users      *user.Service
+	views      *views.Recorder // nil with analytics off
 	ready      *preflight.Checker
 	stderr     io.Writer
 	certs      certs.Source // nil in proxy mode
@@ -383,6 +389,12 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		DBPath: cfg.DBPath(), BlobDir: cfg.BlobDir(), CertDir: cfg.CertStorageDir(), TempDir: tempDir(cfg),
 		Now: now, Logger: log, Audit: auditStore, Telemetry: tel,
 	})
+	var viewsSvc *views.Service
+	if cfg.Analytics.Enabled {
+		viewStore := sqlite.NewViewStore(a.db)
+		viewsSvc = views.New(viewStore, views.Options{Retention: cfg.Analytics.Retention.Std(), Now: now})
+		a.views = views.NewRecorder(viewStore, views.RecorderOptions{Readers: cfg.Analytics.Readers, Now: now, Telemetry: tel})
+	}
 	jobs := []scheduler.Job{
 		{Name: "sweep", Every: cfg.Lifecycle.SweepInterval.Std(), Run: func(ctx context.Context) error {
 			rep, err := arts.Sweep(ctx)
@@ -428,6 +440,17 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			}
 			return err
 		}},
+	}
+	if a.views != nil {
+		jobs = append(jobs,
+			scheduler.Job{Name: "views-flush", Every: viewsFlushEvery, Run: a.views.Flush},
+			scheduler.Job{Name: "views-prune", Every: viewsPruneEvery, Run: func(ctx context.Context) error {
+				n, err := viewsSvc.Prune(ctx)
+				if n > 0 {
+					log.InfoContext(ctx, "views pruned", "rows", n)
+				}
+				return err
+			}})
 	}
 	// The one call Kazari makes on its own account: a failure is the
 	// scheduler's to log, and never anything an admin is asked to act on.
@@ -533,7 +556,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
 	}, mcpOpts)
-	siteH := site.NewHandler(arts, blobs, site.Options{
+	siteOpts := site.Options{
 		BaseDomain:       cfg.BaseDomain,
 		ReservedSlugs:    cfg.Serve.ReservedSlugs,
 		DefaultCSP:       cfg.Serve.CSP,
@@ -548,7 +571,11 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			Logger:          log,
 			Telemetry:       tel,
 		}),
-	})
+	}
+	if a.views != nil {
+		siteOpts.Views = a.views
+	}
+	siteH := site.NewHandler(arts, blobs, siteOpts)
 	accountDeps := account.Deps{
 		Sessions: oauthSvc, Users: users, Grants: oauthSvc, Artifacts: arts, Audit: auditStore, Links: links, Logger: log,
 	}
