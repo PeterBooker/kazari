@@ -608,7 +608,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	if cfg.DashboardEnabled() {
 		deps := dashboard.Deps{
 			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
-			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Links: links, Logger: log,
+			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
 		}
 		// Assigned only when there is one: a nil *update.Checker in the
 		// interface would not be a nil interface.
@@ -635,6 +635,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			MaxKeyTTL:       cfg.Auth.Tokens.MaxKeyTTL.Std(),
 			MaxShareLinkTTL: cfg.Serve.ShareLinkMaxTTL.Std(),
 			DefaultQuota:    int64(cfg.Limits.DefaultUserQuota),
+			ViewReaders:     cfg.Analytics.Readers,
 			Telemetry:       tel,
 		}))
 	}

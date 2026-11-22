@@ -20,7 +20,7 @@
 {{if .Filter.Set}}<a class="link" href="/pages">Clear</a>{{end}}
 </form>
 {{if .Rows}}<table class="table">
-<thead><tr><th>Page</th><th>Owner</th><th>Open to</th><th>Status</th><th class="num">Versions</th><th class="num">Size</th><th>Updated</th><th>Next step</th></tr></thead>
+<thead><tr><th>Page</th><th>Owner</th><th>Open to</th><th>Status</th><th class="num">Versions</th><th class="num">Size</th>{{if .ViewsOn}}<th class="num">Views, 30 days</th>{{end}}<th>Updated</th><th>Next step</th></tr></thead>
 <tbody>
 {{range .Rows}}<tr>
 <td data-label="Page"><a class="mono" href="/pages/{{.Slug}}">{{.Slug}}</a>{{if and .Name (ne .Name .Slug)}} <span class="soft">{{.Name}}</span>{{end}}</td>
@@ -29,7 +29,8 @@
 <td data-label="Status" class="nowrap"><span class="status {{.State.Tone}}">{{.State.Label}}</span></td>
 <td class="num" data-label="Versions">{{.LatestVersion}}</td>
 <td class="num" data-label="Size">{{bytes .SizeBytes}}</td>
-<td data-label="Updated" class="nowrap">{{when .UpdatedAt}}</td>
+{{if $.Data.ViewsOn}}<td class="num" data-label="Views, 30 days">{{.Views}}</td>
+{{end}}<td data-label="Updated" class="nowrap">{{when .UpdatedAt}}</td>
 <td data-label="Next step">{{if .Step}}{{.Step}} on {{day .StepAt}}{{else}}<span class="soft">None</span>{{end}}</td>
 </tr>
 {{end}}</tbody>

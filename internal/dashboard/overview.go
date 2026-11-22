@@ -246,6 +246,7 @@ type overviewData struct {
 	Storage                     storageView
 	Cert                        certView
 	Jobs                        []scheduler.JobStatus
+	Views                       viewsPanel
 	Events                      []audit.Event
 	BaseDomain                  string
 }
@@ -310,6 +311,9 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		return err
 	}
 	d.Pages = countPages(census)
+	if d.Views, err = s.viewsPanel(ctx); err != nil {
+		return err
+	}
 	versions, blobs, err := s.d.Artifacts.Storage(ctx)
 	if err != nil {
 		return err

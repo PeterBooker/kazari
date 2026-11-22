@@ -26,6 +26,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 var t0 = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
@@ -60,6 +61,7 @@ type env struct {
 	oauth     *oauth.Service
 	audit     *sqlite.AuditStore
 	jobs      *scheduler.Scheduler
+	views     *views.Recorder
 	admin     *httptest.Server // the dashboard
 	signIn    *httptest.Server // the sign-in host
 	deps      dashboard.Deps
@@ -146,7 +148,10 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	})
 	e.signIn.Config.Handler = e.oauth.Handler()
 
+	viewStore := sqlite.NewViewStore(db)
+	e.views = views.NewRecorder(viewStore, views.RecorderOptions{Readers: true, Now: e.clock.Now})
 	deps := dashboard.Deps{
+		Views:    views.New(viewStore, views.Options{Now: e.clock.Now}),
 		Sessions: e.oauth, Users: e.users, Artifacts: e.artifacts, Grants: e.oauth, Audit: e.audit, Recorder: e.audit,
 		Jobs: e.jobs, Links: present.Links{URL: func(sub string) string {
 			if sub == "" {
@@ -158,7 +163,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	e.opts = dashboard.Options{
 		URL: adminURL, SignInURL: signInURL + oauth.PathSignIn, AccountURL: "https://art.test/account/",
 		MCPURL: "https://mcp.art.test/", APIURL: "https://api.art.test/v1", BaseDomain: "art.test",
-		LocalAccounts: true, InsecureCookies: true, Now: e.clock.Now, Started: t0, DataDir: dir,
+		LocalAccounts: true, InsecureCookies: true, Now: e.clock.Now, Started: t0, DataDir: dir, ViewReaders: true,
 		Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour, MaxShareLinkTTL: 90 * 24 * time.Hour,
 	}
 	if mutate != nil {
