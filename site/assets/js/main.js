@@ -15,14 +15,32 @@ document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
   }
 });
 
+const live = document.createElement("p");
+live.className = "sr-only";
+live.setAttribute("aria-live", "polite");
+document.body.append(live);
+const announce = (text) => {
+  live.textContent = text;
+  setTimeout(() => { if (live.textContent === text) live.textContent = ""; }, 3000);
+};
+
 const navToggle = document.querySelector(".nav-toggle");
-navToggle?.addEventListener("click", () => {
-  const open = document.body.classList.toggle("nav-open");
+// The open menu covers the page, so what it covers must not take focus.
+const behindNav = document.querySelectorAll(".docs-main, .site-footer");
+const setNav = (open) => {
+  document.body.classList.toggle("nav-open", open);
   navToggle.setAttribute("aria-expanded", String(open));
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && document.body.classList.contains("nav-open")) navToggle?.click();
-});
+  for (const el of behindNav) el.inert = open;
+};
+if (navToggle) {
+  navToggle.addEventListener("click", () => setNav(!document.body.classList.contains("nav-open")));
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !document.body.classList.contains("nav-open") || document.querySelector("dialog[open]")) return;
+    setNav(false);
+    navToggle.focus();
+  });
+  matchMedia("(max-width: 920px)").addEventListener("change", (e) => { if (!e.matches) setNav(false); });
+}
 
 const copyIcon = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
 const checkIcon = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
@@ -39,8 +57,11 @@ for (const block of document.querySelectorAll(".code")) {
       await navigator.clipboard.writeText(code.innerText.replace(/\n$/, ""));
       button.classList.add("copied");
       button.innerHTML = checkIcon;
+      announce("Copied");
       setTimeout(() => { button.classList.remove("copied"); button.innerHTML = copyIcon; }, 1600);
-    } catch {}
+    } catch {
+      announce("Could not copy. Select the code and copy it.");
+    }
   });
   block.append(button);
 }
@@ -59,9 +80,10 @@ for (const tabs of document.querySelectorAll("[data-tabs]")) {
   list.forEach((tab, i) => {
     tab.addEventListener("click", () => select(tab));
     tab.addEventListener("keydown", (e) => {
-      const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
-      if (!step) return;
-      const next = list[(i + step + list.length) % list.length];
+      const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: list.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      const next = list[(to + list.length) % list.length];
       select(next);
       next.focus();
     });
@@ -89,6 +111,7 @@ const dialog = document.querySelector(".search-dialog");
 const input = dialog?.querySelector("input");
 const results = dialog?.querySelector(".search-results");
 const empty = dialog?.querySelector(".search-empty");
+const status = dialog?.querySelector("[data-search-status]");
 const indexURL = document.currentScript?.dataset.index ?? document.querySelector("script[data-index]")?.dataset.index;
 let index = null;
 let selected = -1;
@@ -109,6 +132,7 @@ function openSearch() {
 
 document.querySelectorAll("[data-search-open]").forEach((b) => b.addEventListener("click", openSearch));
 dialog?.querySelector("[data-search-close]")?.addEventListener("click", () => dialog.close());
+dialog?.addEventListener("close", () => input.setAttribute("aria-expanded", "false"));
 dialog?.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
 document.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
@@ -139,7 +163,9 @@ function runSearch() {
   const terms = input.value.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
   results.innerHTML = "";
   selected = -1;
-  if (!terms.length) { empty.hidden = true; return; }
+  input.removeAttribute("aria-activedescendant");
+  input.setAttribute("aria-expanded", "false");
+  if (!terms.length) { empty.hidden = true; status.textContent = ""; return; }
   const all = (s) => terms.every((t) => s.includes(t));
   const found = [];
   for (const page of index) {
@@ -156,9 +182,11 @@ function runSearch() {
   found.sort((a, b) => b.score - a.score);
   const top = found.slice(0, 12);
   empty.hidden = top.length > 0;
+  status.textContent = top.length ? `${top.length} ${top.length === 1 ? "result" : "results"}` : "No results";
+  input.setAttribute("aria-expanded", String(top.length > 0));
   results.innerHTML = top.map((r, i) => `
-    <li role="option" id="r-${i}" aria-selected="false">
-      <a href="${r.url}">
+    <li role="none">
+      <a href="${r.url}" role="option" id="r-${i}" aria-selected="false" tabindex="-1">
         <span class="r-path">${escapeHTML(r.path)}</span>
         <span class="r-title">${mark(r.title, terms)}</span>
         ${r.text ? `<span class="r-snippet">${mark(r.text, terms)}</span>` : ""}
@@ -168,10 +196,10 @@ function runSearch() {
 }
 
 function move(to) {
-  const items = [...results.children];
+  const items = [...results.querySelectorAll('[role="option"]')];
   if (!items.length) return;
   selected = (to + items.length) % items.length;
-  items.forEach((li, i) => li.setAttribute("aria-selected", String(i === selected)));
+  items.forEach((a, i) => a.setAttribute("aria-selected", String(i === selected)));
   items[selected].scrollIntoView({ block: "nearest" });
   input.setAttribute("aria-activedescendant", items[selected].id);
 }
@@ -182,7 +210,7 @@ input?.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp") { e.preventDefault(); move(selected - 1); }
   else if (e.key === "Enter") {
     e.preventDefault();
-    const link = results.children[selected]?.querySelector("a");
+    const link = results.querySelectorAll('[role="option"]')[selected];
     if (link) { dialog.close(); location.href = link.href; }
   }
 });

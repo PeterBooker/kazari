@@ -20,19 +20,19 @@
 {{if .Data.New}}{{template "overview-start" .}}
 {{end}}
 <section class="tiles" aria-label="Counts">
-<div class="box tile"><span class="label">People</span><span class="big">{{.Data.People.Total}}</span>
+<div class="box tile"><h2 class="label">People</h2><span class="big">{{.Data.People.Total}}</span>
 <ul class="dash soft"><li>{{.Data.People.Active}} active, {{.Data.People.Invited}} invited, {{.Data.People.Disabled}} disabled</li><li>{{howmany .Data.People.Admins "admin"}}</li></ul>
 <a class="link" href="/people">All people</a></div>
-<div class="box tile"><span class="label">Pages</span><span class="big">{{.Data.Pages.Total}}</span>
+<div class="box tile"><h2 class="label">Pages</h2><span class="big">{{.Data.Pages.Total}}</span>
 <ul class="dash soft"><li>{{.Data.Pages.Live}} live, {{.Data.Pages.Stale}} stale, {{.Data.Pages.Unpublished}} unpublished, {{.Data.Pages.Bin}} in the bin</li>
 <li>{{.Data.Pages.Public}} public, {{.Data.Pages.Unlisted}} unlisted, {{.Data.Pages.Members}} for members</li></ul>
 <a class="link" href="/pages">All pages</a></div>
-<div class="box tile"><span class="label">Storage</span><span class="big">{{bytes .Data.Storage.Counted}}</span>
+<div class="box tile"><h2 class="label">Storage</h2><span class="big">{{bytes .Data.Storage.Counted}}</span>
 <ul class="dash soft"><li>Counted against quotas, in {{howmany .Data.Storage.Versions "version"}}</li><li>{{bytes .Data.Storage.Stored}} on disk, each file stored once</li></ul>
 {{if .Data.Storage.HasDisk}}<div class="usage"><span class="soft">{{bytes .Data.Storage.DiskFree}} free of {{bytes .Data.Storage.DiskSize}} on the data disk</span>
-<meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Data.Storage.DiskUsed}}">{{.Data.Storage.DiskUsed}}% used</meter></div>
+<meter min="0" max="100" low="75" high="90" optimum="0" value="{{.Data.Storage.DiskUsed}}" aria-label="Data disk used">{{.Data.Storage.DiskUsed}}% used</meter></div>
 {{end}}</div>
-<div class="box tile"><span class="label">Certificate</span>
+<div class="box tile"><h2 class="label">Certificate</h2>
 {{if not .Data.Cert.NotAfter.IsZero}}<span class="big">{{.Data.Cert.Left}}</span>
 <ul class="dash soft"><li><span class="mono">*.{{.Data.BaseDomain}}</span>, mode <span class="mono">{{.Data.Cert.Mode}}</span></li><li>Expires {{when .Data.Cert.NotAfter}}</li></ul>
 {{else if .Data.Cert.Proxy}}<span class="big">Proxy</span>

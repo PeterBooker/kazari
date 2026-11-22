@@ -129,6 +129,10 @@ p, li { text-wrap: pretty; }
   padding: .5rem 1rem; border-radius: 999px; background: var(--surface); color: var(--text);
 }
 .skip-link:focus { top: .75rem; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .container { max-width: 1240px; margin: 0 auto; padding: 0 var(--gutter); }
 
 .kicker, .nav-group h2, .docs-toc h2, .footer-links h2 {
@@ -497,7 +501,7 @@ p, li { text-wrap: pretty; }
 .prose h2, .prose h3, .prose h4 { position: relative; }
 .prose h2 code, .prose h3 code, .prose h4 code { font-size: .85em; }
 .anchor {
-  margin-left: .4rem; color: var(--border-strong); text-decoration: none; font-weight: 400;
+  margin-left: .4rem; color: var(--muted); text-decoration: none; font-weight: 400;
   opacity: 0; transition: opacity .15s;
 }
 .prose :is(h2, h3, h4):hover .anchor, .anchor:focus-visible { opacity: 1; }
@@ -566,7 +570,7 @@ p, li { text-wrap: pretty; }
 .search-results { margin: 0; padding: .5rem; list-style: none; overflow-y: auto; }
 .search-results:empty { display: none; }
 .search-results a { display: grid; gap: .15rem; padding: .65rem .85rem; border-radius: 10px; color: var(--text); text-decoration: none; }
-.search-results [aria-selected="true"] a { background: var(--season-soft); }
+.search-results a[aria-selected="true"] { background: var(--season-soft); }
 .search-results .r-path { font: 400 .72rem var(--font-mono); letter-spacing: .03em; color: var(--muted); }
 .search-results .r-title { font-weight: 600; font-size: .95rem; }
 .search-results .r-snippet { font-size: .85rem; color: var(--text-soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -582,7 +586,8 @@ p, li { text-wrap: pretty; }
   .features { grid-template-columns: repeat(2, 1fr); column-gap: 2rem; }
   .ruled-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 2rem; border-top: 0; }
   .ruled-4 > * { padding-left: 0; padding-right: 0; border-left: 0; border-top: 1px solid var(--border); }
-  .hide-md, .season-label .sekki-name { display: none; }
+  .hide-md { display: none; }
+  .season-label .sekki-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 @media (max-width: 920px) {
   :root { --gutter: 1.5rem; }
@@ -616,7 +621,8 @@ p, li { text-wrap: pretty; }
   :root { --gutter: 1rem; --header-h: 60px; }
   .header-inner { gap: 1rem; }
   .brand { letter-spacing: .1em; }
-  .hide-sm, .search-label, .search-button kbd { display: none; }
+  .hide-sm, .search-button kbd { display: none; }
+  .search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .search-button { width: 40px; padding: 0; justify-content: center; border-color: transparent; background: none; margin-right: 0; }
   .hero .container { padding-top: 4rem; }
   .hero-ghost { top: .5rem; }

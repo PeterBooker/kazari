@@ -31,18 +31,22 @@
   document.querySelectorAll("[data-copy-target]").forEach(function (button) {
     var target = document.getElementById(button.getAttribute("data-copy-target"));
     if (!target) return;
-    var label = button.textContent;
+    var label = button.textContent, timer;
+    function show(word, said, ms) {
+      clearTimeout(timer);
+      button.textContent = word;
+      live.textContent = said;
+      timer = setTimeout(function () {
+        button.textContent = label;
+        live.textContent = "";
+      }, ms);
+    }
     button.hidden = false;
     button.addEventListener("click", function () {
       copy(target).then(function () {
-        button.textContent = "Copied";
-        live.textContent = "Copied";
-        setTimeout(function () {
-          button.textContent = label;
-          live.textContent = "";
-        }, 2000);
+        show("Copied", "Copied", 2000);
       }, function () {
-        live.textContent = "Could not copy. Select the text and copy it.";
+        show("Could not copy", "Could not copy. Select the text and copy it.", 5000);
       });
     });
   });
