@@ -109,48 +109,30 @@ signs:
       - --yes
     artifacts: checksum
 
-dockers:
-  - id: amd64
-    use: buildx
-    goos: linux
-    goarch: amd64
+# One multi-platform image, built from the binaries above and pushed with an
+# SBOM attached. A snapshot loads one image per platform instead, tagged
+# <version>-amd64 and <version>-arm64.
+dockers_v2:
+  - id: image
+    ids: [kazari]
     dockerfile: deploy/Dockerfile.goreleaser
-    image_templates:
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
-    build_flag_templates:
-      - --platform=linux/amd64
-      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/kazari
-      - --label=org.opencontainers.image.version={{ .Version }}
-      - --label=org.opencontainers.image.revision={{ .FullCommit }}
-      - --label=org.opencontainers.image.licenses=MIT
-  - id: arm64
-    use: buildx
-    goos: linux
-    goarch: arm64
-    dockerfile: deploy/Dockerfile.goreleaser
-    image_templates:
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
-    build_flag_templates:
-      - --platform=linux/arm64
-      - --label=org.opencontainers.image.source=https://github.com/PeterBooker/kazari
-      - --label=org.opencontainers.image.version={{ .Version }}
-      - --label=org.opencontainers.image.revision={{ .FullCommit }}
-      - --label=org.opencontainers.image.licenses=MIT
-
-docker_manifests:
-  - name_template: ghcr.io/peterbooker/kazari:{{ .Version }}
-    image_templates:
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
-  - name_template: ghcr.io/peterbooker/kazari:latest
-    image_templates:
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-amd64
-      - ghcr.io/peterbooker/kazari:{{ .Version }}-arm64
+    images:
+      - ghcr.io/peterbooker/kazari
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .IsSnapshot }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.source: https://github.com/PeterBooker/kazari
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: MIT
 
 docker_signs:
   - cmd: cosign
     args: [sign, --yes, "${artifact}@${digest}"]
-    artifacts: manifests
 
 changelog:
   use: github
