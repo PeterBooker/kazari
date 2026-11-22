@@ -42,7 +42,6 @@ jobs:
           go-version-file: go.mod
           # A cache could be written by a run that built other code.
           cache: false
-      - uses: docker/setup-qemu-action@v4.4.0
       - uses: docker/setup-buildx-action@v4.4.1
       - uses: docker/login-action@v4.7.0
         with:

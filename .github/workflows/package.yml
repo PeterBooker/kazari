@@ -47,4 +47,4 @@ jobs:
           cache: true
       - run: go run "github.com/goreleaser/goreleaser/v2@$GORELEASER_VERSION" release --snapshot --clean --skip=publish,sign,sbom
       - name: Start the image that would be released
-        run: .github/scripts/smoke-image.sh "$(jq -r '[.[] | select(.type == "Docker Image" and .goarch == "amd64")][0].name' dist/artifacts.json)"
+        run: .github/scripts/smoke-image.sh "$(jq -r '[.[] | select(.type == "Docker Image" and .extra.Platforms == ["linux/amd64"])][0].name' dist/artifacts.json)"
