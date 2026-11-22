@@ -536,8 +536,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: tel}, jobs...)
 	ready := preflight.NewChecker(cfg, preflight.ReadyOptions{
-		Options: preflight.Options{HTTPClient: opts.OIDCClient},
-		Now:     now, CertNotAfter: a.certNotAfter, CertError: a.certError, Started: now(), Providers: tel,
+		HTTPClient: opts.OIDCClient,
+		Now:        now, CertNotAfter: a.certNotAfter, CertError: a.certError, Started: now(), Providers: tel,
 	}, 0)
 	a.ready = ready
 

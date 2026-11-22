@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,12 +124,8 @@ func TestEmptyVariableLeavesOIDCOff(t *testing.T) {
 	base := map[string]string{"KAZARI_BASE_DOMAIN": "art.kazari.test", "KAZARI_TLS_MODE": "self-signed"}
 	vars := func(extra map[string]string) map[string]string {
 		m := map[string]string{}
-		for k, v := range base {
-			m[k] = v
-		}
-		for k, v := range extra {
-			m[k] = v
-		}
+		maps.Copy(m, base)
+		maps.Copy(m, extra)
 		return m
 	}
 	c, err := LoadWith("", env(vars(map[string]string{"KAZARI_AUTH_OIDC_CLIENT_SECRET": "", "KAZARI_AUTH_OIDC_ADMIN_EMAILS": " "})))

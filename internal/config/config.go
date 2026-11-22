@@ -702,9 +702,11 @@ func describeDecodeError(err error, n *yaml.Node, t reflect.Type) string {
 	if want := describeType(t); want != "" && !sameShape(n, t) {
 		return "want " + want + ", got " + describeNode(n)
 	}
-	msgs := make([]string, len(te.Errors))
-	for i, e := range te.Errors {
-		msgs[i] = yamlLine.ReplaceAllString(e, "")
+	var msgs []string
+	for _, e := range te.Errors {
+		if m := yamlLine.ReplaceAllString(e, ""); !slices.Contains(msgs, m) {
+			msgs = append(msgs, m)
+		}
 	}
 	return strings.Join(msgs, "; ")
 }
