@@ -17,10 +17,10 @@ import (
 type peopleInviteData struct {
 	Handle, Name, Email, Role, Quota string
 	// Suggestion is a handle that would do, made from what was typed.
-	Suggestion string
-	Errors     map[string]string
-	Local                            bool // built-in accounts: the person gets an invite link
-	DefaultQuota                     int64
+	Suggestion   string
+	Errors       map[string]string
+	Local        bool // built-in accounts: the person gets an invite link
+	DefaultQuota int64
 }
 
 func (s *server) peopleInviteTitle() string {
