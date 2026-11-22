@@ -721,6 +721,15 @@ func TestRunAdmin(t *testing.T) {
 		"POST /v1/users/ann/transfer":          record(api.TransferredArtifacts{Transferred: []string{"demo", "notes"}}),
 		"GET /v1/health":                       record(api.Health{Status: "ok", Version: "1.2.3"}),
 		"GET /v1/artifacts":                    record(api.ArtifactList{Items: []api.Artifact{demo}}),
+		"GET /v1/views": record(api.ViewSummary{From: "2026-09-30", To: "2026-10-01",
+			Days:   []api.ViewDay{{Day: "2026-09-30"}, {Day: "2026-10-01", Views: 3, Visitors: 2, MemberViews: 1}},
+			Totals: api.ViewTotals{Views: 3, Visitors: 2, MemberViews: 1},
+			Top:    []api.ArtifactViewTotals{{Slug: "demo", Views: 3, Visitors: 2, MemberViews: 1}}}),
+		"GET /v1/artifacts/demo/views": record(api.ArtifactViews{Slug: "demo", From: "2026-10-01", To: "2026-10-01",
+			Days:    []api.ViewDay{{Day: "2026-10-01", Views: 3, Visitors: 2, MemberViews: 1, LinkViews: 1}},
+			Totals:  api.ViewTotals{Views: 3, Visitors: 2, MemberViews: 1, LinkViews: 1},
+			Files:   []api.ViewFile{{Path: "index.html", Views: 3}},
+			Readers: []api.ViewReader{{Handle: "bob", Name: "Bob B", FirstAt: t0, LastAt: t0, Views: 1}}}),
 	})
 	tests := []struct {
 		args       []string
@@ -783,6 +792,20 @@ func TestRunAdmin(t *testing.T) {
 			wantQuery: "deleted=only&owner=peter&q=q3+report&visibility=members",
 			wantOut: "OWNER  SLUG  VERSION  VISIBILITY  STATE  SIZE     UPDATED                    NAME\n" +
 				"peter  demo  2/3      public      live   1.5 KiB  2026-10-01T15:00:00+02:00  Demo page\n"},
+		{args: []string{"views", "--days", "2"}, wantQuery: "days=2",
+			wantOut: "2026-09-30 to 2026-10-01: 3 views, 2 daily visitors, 1 by members, 0 by share link\n\n" +
+				"SLUG  VIEWS  VISITORS  MEMBERS  SHARE LINKS\n" +
+				"demo  3      2         1        0\n\n" +
+				"DAY         VIEWS  VISITORS\n" +
+				"2026-10-01  3      2\n"},
+		{args: []string{"views", "demo", "--days", "1"}, wantQuery: "days=1",
+			wantOut: "demo, 2026-10-01 to 2026-10-01: 3 views, 2 daily visitors, 1 by members, 1 by share link\n\n" +
+				"FILE        VIEWS\n" +
+				"index.html  3\n\n" +
+				"DAY         VIEWS  VISITORS\n" +
+				"2026-10-01  3      2\n\n" +
+				"READER  NAME   VIEWS  FIRST OPENED               LAST OPENED\n" +
+				"bob     Bob B  1      2026-10-01T14:00:00+02:00  2026-10-01T14:00:00+02:00\n"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {

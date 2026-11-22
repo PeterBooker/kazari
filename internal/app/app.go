@@ -531,6 +531,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Ready:     ready,
 		Settings:  cfg.Redacted,
 		Metrics:   a.tel.MetricsHandler(),
+		Views:     viewsSvc,
 		Links:     links,
 		Logger:    log,
 	}

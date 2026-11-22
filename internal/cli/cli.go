@@ -60,7 +60,7 @@ type CLI struct {
 	Skill      SkillCmd      `cmd:"" help:"Print the instance's Agent Skill (SKILL.md)."`
 	Me         MeCmd         `cmd:"" help:"Show the caller's identity."`
 	Keys       KeysCmd       `cmd:"" help:"List, issue, rotate and revoke the caller's API keys."`
-	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, invites, keys, identities, grants, artifacts, jobs, audit, backup, readiness."`
+	Admin      AdminCmd      `cmd:"" help:"Administer the instance: users, invites, keys, identities, grants, artifacts, jobs, audit, views, backup, readiness."`
 	Version    VersionCmd    `cmd:"" help:"Print the version."`
 	Help       HelpCmd       `cmd:"" help:"Show help for a command."`
 }

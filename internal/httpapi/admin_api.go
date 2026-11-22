@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/user"
+	"github.com/PeterBooker/kazari/internal/views"
 )
 
 // GrantStore lists and revokes OAuth grants. RevokeGrant returns an error
@@ -29,7 +30,7 @@ type GrantStore interface {
 
 // AdminDeps are the collaborators of the admin API. Jobs, Grants, Audit,
 // Sessions, Backup, Ready, Settings and Metrics may be nil; their routes are
-// then absent.
+// then absent. Views is nil with analytics off; its routes then say so.
 type AdminDeps struct {
 	Artifacts *artifact.Service
 	Users     *user.Service
@@ -43,6 +44,7 @@ type AdminDeps struct {
 	Updates   Updates               // the update check's answer, on GET /v1/ready
 	Settings  func() map[string]any // effective config, secrets redacted
 	Metrics   http.Handler          // mounted at /metrics, behind AdminOptions.MetricsToken
+	Views     *views.Service
 	Links     present.Links
 	Logger    *slog.Logger
 }
@@ -122,6 +124,8 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 	handle("GET /v1/artifacts", h.listArtifacts)
 	handle("POST /v1/artifacts/{slug}/transfer", h.transfer)
 	handle("POST /v1/artifacts/{slug}/hide", h.hide)
+	handle("GET /v1/views", h.viewSummary)
+	handle("GET /v1/artifacts/{slug}/views", h.artifactViews)
 	if d.Settings != nil {
 		handle("GET /v1/settings", h.settings)
 	}
@@ -509,5 +513,50 @@ func (h *adminAPI) listAudit(w http.ResponseWriter, r *http.Request, _ auth.Prin
 		out.Events = append(out.Events, present.AuditEvent(e))
 	}
 	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// DefaultViewDays is the range of a views report without ?days.
+const DefaultViewDays = 30
+
+// viewDays reads ?days, or DefaultViewDays; the service checks the range.
+func (h *adminAPI) viewDays(r *http.Request) (int, error) {
+	if h.d.Views == nil {
+		return 0, &statusError{status: http.StatusNotFound, code: api.CodeNotFound,
+			msg: "analytics is off on this instance; set analytics.enabled to count page views"}
+	}
+	if r.URL.Query().Get("days") == "" {
+		return DefaultViewDays, nil
+	}
+	days, err := strconv.Atoi(r.URL.Query().Get("days"))
+	if err != nil {
+		return 0, invalid("days must be a whole number")
+	}
+	return days, nil
+}
+
+func (h *adminAPI) viewSummary(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
+	days, err := h.viewDays(r)
+	if err != nil {
+		return err
+	}
+	s, err := h.d.Views.Summary(r.Context(), days)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, present.ViewSummary(s))
+	return nil
+}
+
+func (h *adminAPI) artifactViews(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
+	days, err := h.viewDays(r)
+	if err != nil {
+		return err
+	}
+	rep, err := h.d.Views.Report(r.Context(), r.PathValue("slug"), days)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, present.ArtifactViews(rep))
 	return nil
 }
