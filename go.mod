@@ -4,12 +4,14 @@ go 1.27.4
 
 require (
 	github.com/alecthomas/kong v1.16.1
+	github.com/andybalholm/brotli v1.3.0
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-logr/logr v1.4.4
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.3
+	github.com/klauspost/compress v1.20.5
 	github.com/libdns/cloudflare v0.2.2
 	github.com/libdns/digitalocean v0.0.0-20250606071607-dfa7af5c2e31
 	github.com/libdns/duckdns v0.3.0

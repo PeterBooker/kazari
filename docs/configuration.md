@@ -317,6 +317,7 @@ How artifacts are served:
 | `reserved_slugs`     | string list | see below | Slugs no artifact can take or be served under, besides `api`, `mcp` and `admin`. Each must be non-empty and lower-case. |
 | `default_visibility` | string      | `public`  | Visibility of an artifact created without one: `public`, `unlisted` or `members`. |
 | `share_link_max_ttl` | duration    | `90d`     | The longest a share link can stay valid.                                         |
+| `compression_cache`  | size        | `64MiB`   | Memory for [compressed](#compression) text files; `0` sends every file as stored. |
 
 #### The default CSP
 
@@ -357,11 +358,15 @@ Share links last 7 days unless asked otherwise, or `share_link_max_ttl` if that 
 
 #### Compression
 
-Kazari compresses text files itself, so pages load faster without a proxy that does it. There is no key to set: a file from 1 KiB to 4 MiB is sent gzip-compressed to every client whose `Accept-Encoding` allows gzip. Text of every kind (HTML, CSS, plain text, CSV), JavaScript, JSON, XML, SVG, WebAssembly and TrueType and OpenType fonts qualify. Images, WOFF fonts, archives and media are compressed already and are sent as stored, and so is a larger file, which would cost tens of milliseconds of CPU on every request.
+Kazari compresses text files itself, so pages load faster without a proxy that does it. A file from 1 KiB to 4 MiB is sent compressed to every client whose `Accept-Encoding` allows Brotli (`br`), zstd or gzip. Text of every kind (HTML, CSS, plain text, CSV), JavaScript, JSON, XML, SVG, WebAssembly and TrueType and OpenType fonts qualify. Images, WOFF fonts, archives and media are compressed already and are sent as stored, and so is a larger file, whose first request would wait tens of milliseconds for it.
 
-The compressed answer has its own `ETag`, the stored file's hash with `-gzip` appended, and every answer for such a file carries `Vary: Accept-Encoding`, so a cache in front keeps the two forms apart. A request with a `Range` or `If-Range` header gets the stored bytes, and so does an `If-Match` that names the stored file's `ETag`.
+A client gets the coding it weighs highest in `Accept-Encoding`. Among codings of equal weight, one already compressed comes first, then Brotli, zstd and gzip, in that order. Browsers weigh them all the same, so they get Brotli.
 
-A proxy in front leaves the compressed answers as they are. One that compresses on its own, such as Caddy's `encode`, still compresses the rest: files under 1 KiB or over 4 MiB, and range requests.
+Each file is compressed the first time it is asked for in a coding, and the result is kept in memory, up to `serve.compression_cache` in all (64 MiB by default). When that is full, the file sent least recently is dropped first. Many requests for the same file at once share one compression. At most one compression runs per CPU at a time. A request that finds them all busy does not wait: it gets a coding of the file already in memory, if it accepts one, or else the stored bytes. Set `compression_cache: 0` to send every file as stored.
+
+Each compressed answer has its own `ETag`, the stored file's hash with `-br`, `-zstd` or `-gzip` appended. Every answer for such a file carries `Vary: Accept-Encoding`, so a cache in front keeps the forms apart. Compressed answers have a `Content-Length` and answer `Range` requests with ranges of the compressed bytes. An `If-Range` or an `If-Match` that names the `ETag` of one form gets that form, and one that names the stored file's `ETag` gets the stored bytes, so a client holding part of a file goes on with the same bytes.
+
+A proxy in front leaves the compressed answers as they are. One that compresses on its own, such as Caddy's `encode`, still compresses the rest: files under 1 KiB or over 4 MiB.
 
 ### `fetch`
 
@@ -655,7 +660,7 @@ Kazari checks all of these together at startup. The error lists every failure as
   - `files` needs `tls.cert_file` and `tls.key_file`.
 - Every number and duration in `limits`, `lifecycle` and `fetch` is greater than 0, and `fetch.budget` is at least `fetch.timeout`.
 - `limits.max_file_bytes` and `limits.max_chunk_bytes` do not exceed `limits.max_version_bytes`.
-- `serve.default_visibility` is `public`, `unlisted` or `members`, and `serve.share_link_max_ttl` is greater than 0.
+- `serve.default_visibility` is `public`, `unlisted` or `members`, `serve.share_link_max_ttl` is greater than 0, and `serve.compression_cache` is not negative.
 - `auth.write_policy` is `shared` or `owner`.
 - `auth.tokens.access_ttl` is greater than 0 and `auth.tokens.refresh_ttl` is at least as long. `auth.tokens.refresh_reuse_window` is between 0 and `5m`, and `auth.tokens.max_key_ttl` is not negative.
 - `auth.admin_token`, when set, is at least 32 characters, unless `base_domain` is `localhost` or ends in `.localhost`: a development instance that only its own machine can reach.

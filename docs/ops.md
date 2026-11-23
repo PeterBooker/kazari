@@ -448,6 +448,18 @@ These describe MCP and what agents do:
 | `kazari_blob_writes_total`               | counter   | `kazari_blob_existing` (`true`, `false`): whether the content was already stored                         |
 | `kazari_fetch_body_size_bytes`           | histogram | `kazari_fetch_purpose`                                                                                   |
 
+These describe [compression](configuration.md#compression) of the files served:
+
+| Metric                                            | Type    | Labels                                                                                   |
+| ------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `kazari_site_compression_cache_lookups_total`     | counter | `kazari_compression_cache_result` (`hit`, `miss`): whether a compressed file was in memory |
+| `kazari_site_compression_cache_evictions_total`   | counter | None: compressed files dropped to stay within `serve.compression_cache`                   |
+| `kazari_site_compression_cache_usage_bytes`       | gauge   | None: memory the compressed files hold                                                     |
+| `kazari_site_compressions_total`                  | counter | `kazari_compression_coding` (`br`, `zstd`, `gzip`)                                         |
+| `kazari_site_compression_busy_total`              | counter | None: responses sent as stored because every compression slot was taken                   |
+
+Evictions that keep pace with compressions mean the cache is too small for the files in demand: raise `serve.compression_cache`. A busy count that keeps rising means compressions are holding every CPU.
+
 These describe sign-in and access:
 
 | Metric                                      | Type    | Labels                                                                                  |

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
@@ -30,7 +32,55 @@ type coding struct {
 }
 
 var codings = []*coding{
+	{name: "br", encode: encodeBrotli},
+	{name: "zstd", encode: encodeZstd},
 	{name: "gzip", encode: encodeGzip},
+}
+
+// brotliLevel is quick enough to compress on demand and still smaller than
+// gzip; the best level takes seconds for a large file.
+const brotliLevel = 5
+
+var brotliWriters sync.Pool
+
+func encodeBrotli(src []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.Grow(len(src) / 4)
+	bw, _ := brotliWriters.Get().(*brotli.Writer)
+	if bw == nil {
+		bw = brotli.NewWriterLevel(&buf, brotliLevel)
+	} else {
+		bw.Reset(&buf)
+	}
+	defer func() {
+		bw.Reset(io.Discard)
+		brotliWriters.Put(bw)
+	}()
+	if _, err := bw.Write(src); err != nil {
+		return nil, err
+	}
+	if err := bw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// zstdWindow is the largest window a browser accepts over HTTP (RFC 8878
+// section 7.2, RFC 9659): a frame that needs more is refused.
+const zstdWindow = 8 << 20
+
+// zstdEncoder is shared, as EncodeAll is safe for concurrent use, and made
+// on first use, so an instance with compression off allocates nothing.
+var zstdEncoder = sync.OnceValues(func() (*zstd.Encoder, error) {
+	return zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression), zstd.WithWindowSize(zstdWindow))
+})
+
+func encodeZstd(src []byte) ([]byte, error) {
+	enc, err := zstdEncoder()
+	if err != nil {
+		return nil, err
+	}
+	return enc.EncodeAll(src, make([]byte, 0, len(src)/4)), nil
 }
 
 // gzipLevel is the default ratio: a file is compressed once while it stays

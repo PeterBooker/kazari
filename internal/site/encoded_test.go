@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/PeterBooker/kazari/internal/instrument/instrumenttest"
 )
 
@@ -24,6 +27,16 @@ func decode(t *testing.T, name string, b []byte) string {
 		if err != nil {
 			t.Fatalf("gzip.NewReader: %v", err)
 		}
+		r = zr
+	case "br":
+		r = brotli.NewReader(bytes.NewReader(b))
+	case "zstd":
+		// The window a browser allows, so a frame that needs more fails here.
+		zr, err := zstd.NewReader(bytes.NewReader(b), zstd.WithDecoderMaxWindow(8<<20))
+		if err != nil {
+			t.Fatalf("zstd.NewReader: %v", err)
+		}
+		defer zr.Close()
 		r = zr
 	default:
 		t.Fatalf("decode: no decoder for %q", name)
