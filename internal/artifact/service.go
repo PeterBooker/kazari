@@ -81,6 +81,10 @@ type Options struct {
 	// kazari.csp to it, as the serving path does.
 	CSP              string
 	AllowCSPOverride bool
+	// CheckCacheEntries and CheckCacheBytes bound the cache of what those
+	// checks parse out of pages and stylesheets.
+	CheckCacheEntries int
+	CheckCacheBytes   int64
 	// Pages takes the snapshots Import publishes; nil disables Import.
 	Pages PageSource
 	// Passwords hashes and checks share-link passwords; nil refuses a link
@@ -125,6 +129,12 @@ func (o Options) withDefaults() Options {
 	if o.MaxShareLinkTTL <= 0 {
 		o.MaxShareLinkTTL = DefaultMaxShareLinkTTL
 	}
+	if o.CheckCacheEntries <= 0 {
+		o.CheckCacheEntries = DefaultCheckCacheEntries
+	}
+	if o.CheckCacheBytes <= 0 {
+		o.CheckCacheBytes = DefaultCheckCacheBytes
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -146,6 +156,7 @@ type Service struct {
 
 	tracer trace.Tracer
 	m      metrics
+	refs   *refCache
 
 	// blobMu orders publishes against the garbage collector: a Put of stored
 	// content writes nothing, so the blob looks unreferenced until its
@@ -167,8 +178,9 @@ func New(store Store, index BlobIndex, blobs blob.Store, quotas QuotaSource, rec
 		rec = audit.Nop{}
 	}
 	meter := opts.Telemetry.Meter(scope)
-	s := &Service{store: store, index: index, blobs: blobs, quotas: quotas, rec: rec, opts: opts.withDefaults(),
-		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter)}
+	opts = opts.withDefaults()
+	s := &Service{store: store, index: index, blobs: blobs, quotas: quotas, rec: rec, opts: opts,
+		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter), refs: newRefCache(opts.CheckCacheEntries, opts.CheckCacheBytes)}
 	s.observeCensus(meter)
 	return s
 }

@@ -24,10 +24,16 @@ func CheckPage(policy string, override bool, page string, data []byte, paths ...
 		have[p] = true
 	}
 	c := checker{have: have, policy: csp.Parse(policy), checkCSP: policy != "", override: override, seen: map[string]bool{}}
-	if checkKind(page) == "css" {
-		c.css(page, page, data)
-	} else {
-		c.html(page, data)
+	kind := checkKind(page)
+	if kind == "" {
+		kind = "html"
 	}
+	c.check(page, parseRefs(kind, page, data))
 	return c.out
+}
+
+// CheckCacheSize is the entries and the estimated bytes the cache of the
+// checks after a publish holds.
+func CheckCacheSize(s *Service) (entries int, bytes int64) {
+	return s.refs.size()
 }

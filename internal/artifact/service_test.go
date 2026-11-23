@@ -59,7 +59,7 @@ type env struct {
 	clock   *clock
 }
 
-func newEnv(t *testing.T, opts artifact.Options) *env {
+func newEnv(t testing.TB, opts artifact.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -103,7 +103,7 @@ func (e *env) storedBytes(t *testing.T) int64 {
 	return total
 }
 
-func (e *env) user(t *testing.T, handle string) artifact.Actor {
+func (e *env) user(t testing.TB, handle string) artifact.Actor {
 	t.Helper()
 	_, err := e.db.ExecContext(e.ctx,
 		`INSERT INTO user (handle, role, quota_bytes, created_at) VALUES (?, 'member', 0, ?)`,
