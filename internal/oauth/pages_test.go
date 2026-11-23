@@ -133,6 +133,16 @@ func TestEveryPageUnderTheStrictPolicy(t *testing.T) {
 		t.Errorf("consent: %d primary buttons, want 1", n)
 	}
 
+	code, err := e.signin.LinkCode(t.Context(), "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, body = e.get(signInQuery("demo", "/") + "&" + signin.ParamHandoff + "=" + code)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `name="handoff"`) {
+		t.Fatalf("continue a handed-over sign-in: status %d:\n%s", resp.StatusCode, body)
+	}
+	e.checkPage("continue a handed-over sign-in", resp, body, "https://demo.art.test")
+
 	resp, body = e.get(signin.PathSignOut)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `action="/oauth/signout"`) {
 		t.Fatalf("sign-out: status %d:\n%s", resp.StatusCode, body)

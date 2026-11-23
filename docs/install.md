@@ -319,7 +319,7 @@ It works once, until 14:05 UTC. For a fresh one run: kazari admin setup-link
 
 The link is written to standard error, beside the log and not as a log record. It shows in `journalctl -u kazari` and `docker compose logs`, and is not among the logs Kazari exports over OTLP.
 
-Open the link in a browser. The page asks for a handle, an optional name and email, and a password of at least 15 characters. It creates the admin, signs you in and opens your [account page](identity.md#the-account-page), with the connector address for your agent and a link to the [dashboard](dashboard.md). The dashboard opens with the same sign-in, without a second password.
+Open the link in a browser. The page asks for a handle, an optional name and email, and a password of at least 15 characters. It creates the admin, asks you to continue as the new handle, then signs you in and opens your [account page](identity.md#the-account-page), with the connector address for your agent and a link to the [dashboard](dashboard.md). The dashboard opens with the same sign-in, without a second password.
 
 The link works once and for 1 hour, and only while the instance has no user.
 

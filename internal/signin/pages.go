@@ -129,3 +129,16 @@ type signInPage struct {
 }
 
 func (p signInPage) TabTitle() string { return p.Title }
+
+// handoffPage asks a person whose sign-in another page handed over, after
+// they set a password with a link, to continue as Handle. Its form posts
+// the code back with the target it goes on to.
+type handoffPage struct {
+	Handle string
+	Code   string
+	Host   string
+	Path   string
+	Nonce  string
+}
+
+func (p handoffPage) TabTitle() string { return "Continue as " + p.Handle }

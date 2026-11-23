@@ -89,14 +89,17 @@ func TestChromiumSignIn(t *testing.T) {
 	c.fill("#confirm", testPassword)
 	c.click(`form[action="/account/setup"] button[type="submit"]`)
 
+	c.wait("the sign-in host asking to continue as peter", onSignIn+` && `+heading("Continue as peter"))
+	c.shot("2-continue")
+	c.click(`form[action="/oauth/signin"] button[type="submit"]`)
 	c.wait("the account's welcome after setup", `location.origin === `+quote(apex)+` && location.pathname === "/account/" && `+
 		`document.body.textContent.includes("Welcome, Peter")`)
-	c.shot("2-welcome")
+	c.shot("3-welcome")
 	// The setup link signed the browser in at the sign-in host, so the
 	// dashboard opens with no form.
 	c.open(admin + "/")
 	c.wait("the dashboard after the setup link's sign-in", onDashboard)
-	c.shot("3-dashboard")
+	c.shot("4-dashboard")
 
 	c.open(apex + "/account/")
 	c.wait("the account page with its passkey form shown",
@@ -106,7 +109,7 @@ func TestChromiumSignIn(t *testing.T) {
 	c.click(`form[data-passkey="create"] button[type="submit"]`)
 	c.wait("the account page to say the passkey is added",
 		`!!document.querySelector(".flash") && document.querySelector(".flash").textContent.includes("The passkey is added")`)
-	c.shot("4-passkey-added")
+	c.shot("5-passkey-added")
 	var held struct {
 		Credentials []struct {
 			Resident bool `json:"isResidentCredential"`
@@ -119,14 +122,14 @@ func TestChromiumSignIn(t *testing.T) {
 
 	c.click(`form[action="/account/signout"] button[type="submit"]`)
 	c.wait("the signed-out page", heading("Signed out"))
-	c.shot("5-signed-out")
+	c.shot("6-signed-out")
 
 	c.open(admin + "/")
 	c.wait("the sign-in page with its passkey form shown", onSignIn+` && !!document.querySelector('form[data-passkey="get"]:not([hidden])')`)
-	c.shot("6-sign-in-again")
+	c.shot("7-sign-in-again")
 	c.click(`form[data-passkey="get"] button[type="submit"]`)
 	c.wait("the dashboard after the passkey sign-in", onDashboard)
-	c.shot("7-dashboard-by-passkey")
+	c.shot("8-dashboard-by-passkey")
 
 	// The page an MCP client's authorisation opens takes the passkey too,
 	// and the browser follows the approval back to the client.
@@ -168,10 +171,10 @@ func TestChromiumSignIn(t *testing.T) {
 	}.Encode())
 	c.wait("the sign-in page of the authorisation",
 		heading("Sign in to connect Routine")+` && !!document.querySelector('form[data-passkey="get"]:not([hidden])')`)
-	c.shot("8-authorise-sign-in")
+	c.shot("9-authorise-sign-in")
 	c.click(`form[data-passkey="get"] button[type="submit"]`)
 	c.wait("the consent page", heading("Authorise Routine"))
-	c.shot("9-consent")
+	c.shot("10-consent")
 	c.click(`form[action="/oauth/consent"] button[value="approve"]`)
 	c.wait("the client's callback page", `location.origin === `+quote(callback.URL)+` && `+heading("Connected"))
 	select {

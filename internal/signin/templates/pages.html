@@ -15,6 +15,21 @@
 </form>
 {{template "theme/door-close" .Foot}}{{end}}
 
+{{define "handoff"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">Continue as {{.Handle}}</h1>
+<p>Your password is set. Continue to sign in to this Kazari instance as <strong>{{.Handle}}</strong> in this browser.</p>
+<form method="post" action="/oauth/signin">
+<input type="hidden" name="handoff" value="{{.Code}}">
+<input type="hidden" name="host" value="{{.Host}}">
+<input type="hidden" name="path" value="{{.Path}}">
+<input type="hidden" name="nonce" value="{{.Nonce}}">
+<input type="hidden" name="login" value="{{.Handle}}">
+<div class="actions">
+<button type="submit" class="btn btn-primary">Continue</button>
+</div>
+</form>
+<p class="help">Not {{.Handle}}, or did not just set a password? Close this page.</p>
+{{end}}{{template "theme/door-close" .Foot}}{{end}}
+
 {{define "signin"}}{{template "theme/door" .Page}}{{with .V}}<h1 class="title">{{.Title}}</h1>
 {{if .Site}}<div class="notice tone-note">
 <p class="notice-title">Not a member?</p>
