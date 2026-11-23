@@ -39,6 +39,7 @@ var slugRoutes = map[string]slugCase{
 	"POST /v1/artifacts/{slug}/stale":                  {"/stale", nil, http.StatusOK},
 	"DELETE /v1/artifacts/{slug}/stale":                {"/stale", nil, http.StatusOK},
 	"GET /v1/artifacts/{slug}/files/{path...}":         {"/files/index.html", nil, http.StatusOK},
+	"GET /v1/artifacts/{slug}/bundle":                  {"/bundle", nil, http.StatusOK},
 	"POST /v1/artifacts/{slug}/share-links":            {"/share-links", nil, http.StatusCreated},
 	"GET /v1/artifacts/{slug}/share-links":             {"/share-links", nil, http.StatusOK},
 	"DELETE /v1/artifacts/{slug}/share-links/{prefix}": {"/share-links/aaaaaaaa", nil, http.StatusNotFound},

@@ -1157,6 +1157,8 @@ func TestDeleteAndRestore(t *testing.T) {
 	wantErr(t, "restore purged", err, artifact.ErrGone)
 	_, _, err = e.svc.OpenFile(e.ctx, alice, "demo", "index.html", 0)
 	wantErr(t, "OpenFile purged", err, artifact.ErrGone)
+	_, _, err = e.svc.OpenVersion(e.ctx, alice, "demo", 0)
+	wantErr(t, "OpenVersion purged", err, artifact.ErrGone)
 	wantErr(t, "delete purged", e.svc.Delete(e.ctx, alice, "demo", false), artifact.ErrGone)
 	p, err = e.svc.ResolvePublished(e.ctx, "demo")
 	if err != nil {
@@ -2087,7 +2089,62 @@ func TestTextFieldLimits(t *testing.T) {
 	}
 }
 
-func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
+func TestOpenVersion(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	e.create(t, alice, "demo", "index.html", "one", "css/a.css", "a{}")
+	if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Stage: true, Files: files("index.html", "two")}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		version int
+		number  int
+		files   map[string]string
+	}{
+		{"zero is the published version", 0, 1, map[string]string{"css/a.css": "a{}", "index.html": "one"}},
+		{"a staged version", 2, 2, map[string]string{"css/a.css": "a{}", "index.html": "two"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, open, err := e.svc.OpenVersion(e.ctx, alice, "demo", tt.version)
+			if err != nil {
+				t.Fatalf("OpenVersion(demo, %d): %v", tt.version, err)
+			}
+			if v.Number != tt.number {
+				t.Errorf("OpenVersion(demo, %d) = version %d, want %d", tt.version, v.Number, tt.number)
+			}
+			got := map[string]string{}
+			var paths []string
+			for _, f := range v.Files {
+				rc, err := open(e.ctx, f)
+				if err != nil {
+					t.Fatalf("open %s: %v", f.Path, err)
+				}
+				b, err := io.ReadAll(rc)
+				rc.Close()
+				if err != nil {
+					t.Fatalf("read %s: %v", f.Path, err)
+				}
+				got[f.Path] = string(b)
+				paths = append(paths, f.Path)
+			}
+			if diff := cmp.Diff(tt.files, got); diff != "" {
+				t.Errorf("OpenVersion(demo, %d) files (-want +got):\n%s", tt.version, diff)
+			}
+			if !slices.IsSorted(paths) {
+				t.Errorf("OpenVersion(demo, %d) files in order %v, want sorted by path", tt.version, paths)
+			}
+		})
+	}
+	_, _, err := e.svc.OpenVersion(e.ctx, alice, "demo", 9)
+	wantErr(t, "OpenVersion of a missing version", err, artifact.ErrVersionNotFound)
+	_, _, err = e.svc.OpenVersion(e.ctx, alice, "missing", 0)
+	wantErr(t, "OpenVersion of a missing artifact", err, artifact.ErrNotFound)
+}
+
+func TestGetOpenFileAndOpenVersionHideOfflineArtifacts(t *testing.T) {
 	e := newEnv(t, artifact.Options{})
 	alice, bob, carol, dave := e.user(t, "alice"), e.user(t, "bob"), e.user(t, "carol"), e.user(t, "dave")
 	root := artifact.Actor{Handle: "root", Admin: true}
@@ -2107,6 +2164,8 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 				rc.Close()
 			}
 			errs = append(errs, err)
+			_, _, err = e.svc.OpenVersion(e.ctx, actor, "demo", version)
+			errs = append(errs, err)
 		}
 		for _, err := range errs {
 			if err != nil && !errors.Is(err, artifact.ErrNotFound) {
@@ -2114,8 +2173,8 @@ func TestGetAndOpenFileHideOfflineArtifacts(t *testing.T) {
 			}
 			oks = append(oks, err == nil)
 		}
-		if !slices.Equal(oks, []bool{oks[0], oks[0], oks[0]}) {
-			t.Fatalf("Get and OpenFile disagree for %q: %v", actor.Handle, errs)
+		if !slices.Equal(oks, []bool{oks[0], oks[0], oks[0], oks[0], oks[0]}) {
+			t.Fatalf("Get, OpenFile and OpenVersion disagree for %q: %v", actor.Handle, errs)
 		}
 		return oks[0]
 	}

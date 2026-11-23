@@ -190,6 +190,7 @@ The user API's base URL is `https://api.<base>/v1`. These are its routes, with t
 | `POST`   | `/artifacts/{slug}/stale`                | write  | `200` stale result          |
 | `DELETE` | `/artifacts/{slug}/stale`                | write  | `200` publish result        |
 | `GET`    | `/artifacts/{slug}/files/{path...}`      | read   | `200` file bytes            |
+| `GET`    | `/artifacts/{slug}/bundle`               | read   | `200` `tar.gz` of a version |
 | `POST`   | `/artifacts/{slug}/share-links`          | share  | `201` new share link        |
 | `GET`    | `/artifacts/{slug}/share-links`          | read   | `200` share links           |
 | `DELETE` | `/artifacts/{slug}/share-links/{prefix}` | share  | `204`                       |
@@ -659,6 +660,26 @@ Add `?anchors=true` to get a text file as `text/plain` with every line prefixed 
 A binary file with `?anchors=true` is `422 invalid_argument`.
 
 Files of an unpublished or soft-deleted artifact are readable only by admins, its owner and the users who created or updated it, so an owner can recover content before the purge. Anyone else gets `404 not_found`.
+
+### Download a version: `GET /artifacts/{slug}/bundle`
+
+Streams every file of the published version as a gzip-compressed tar, the form a [multipart publish](#multipart-body-with-a-bundle) takes. Add `?version=N` to download another version, a staged one included:
+
+```sh
+curl -sS -H "Authorization: Bearer $KAZARI_TOKEN" -o q3-report.tar.gz \
+  'https://api.art.example.com/v1/artifacts/q3-report/bundle?version=4'
+```
+
+The response carries these headers:
+
+- `Content-Type: application/gzip`;
+- `Content-Disposition: attachment; filename="q3-report-v4.tar.gz"`;
+- `Kazari-Version: 4`, the version the archive holds, which a request without `version` does not know in advance;
+- `Cache-Control: no-store`.
+
+The archive holds one regular file per path, in path order, with mode `0644` and the version's creation time, so the same version always gives the same bytes. If a file cannot be read once the archive has started, the connection is cut, and the client sees an incomplete download rather than a shorter archive.
+
+The same people can download a version as can [read its files](#read-a-file-get-artifactsslugfilespath). [`kazari pull`](cli.md#pull) downloads and unpacks it.
 
 ### Share links
 

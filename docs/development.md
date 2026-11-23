@@ -99,7 +99,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run   # the
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
 shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check   # the release configuration
-.github/scripts/smoke.sh ./kazari                         # start the binary, publish a page, fetch it
+.github/scripts/smoke.sh ./kazari                         # start the binary, publish, fetch, pull and redeploy a page
 
 goreleaser release --snapshot --clean --skip=publish,sign,sbom   # local release dry run
 ```

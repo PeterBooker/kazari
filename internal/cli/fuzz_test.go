@@ -1,6 +1,11 @@
 package cli
 
 import (
+	"archive/tar"
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,6 +52,46 @@ func FuzzNormalizeURL(f *testing.F) {
 		}
 		if strings.HasSuffix(got, "/") {
 			t.Errorf("normalizeURL(%q) = %q, which ends in /", raw, got)
+		}
+	})
+}
+
+// FuzzExtractBundle mutates the tar inside the gzip stream, where the names
+// and types are, rather than the compressed bytes.
+func FuzzExtractBundle(f *testing.F) {
+	f.Add(rawTar(f, tarEntry{Name: "index.html", Content: "<h1>x</h1>"}, tarEntry{Name: "a/b.css", Content: "b{}"}))
+	f.Add(rawTar(f, tarEntry{Name: "../escape", Content: "x"}))
+	f.Add(rawTar(f, tarEntry{Name: "link", Type: tar.TypeSymlink}))
+	f.Add(rawTar(f, tarEntry{Name: "a", Type: tar.TypeDir}, tarEntry{Name: "a", Content: "x"}))
+	f.Add(rawTar(f, tarEntry{Name: "a", Content: "xx"}, tarEntry{Name: "./a", Content: "y"}))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		archive := gz(t, raw)
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "out")
+		pulled, size, err := extractBundle(bytes.NewReader(archive), dir)
+		entries, rerr := os.ReadDir(parent)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "out") {
+			t.Fatalf("extractBundle wrote beside its directory: %v", entries)
+		}
+		if err != nil {
+			return
+		}
+		var sum int64
+		for _, p := range pulled {
+			fi, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p)))
+			if err != nil || !fi.Mode().IsRegular() {
+				t.Fatalf("extractBundle reported %q, which is not a regular file in the directory: %v", p, err)
+			}
+			sum += fi.Size()
+		}
+		if sum != size {
+			t.Errorf("extractBundle reported %d bytes, the files hold %d", size, sum)
+		}
+		if _, _, err := extractBundle(bytes.NewReader(archive), dir); errors.Is(err, errUnsafeEntry) {
+			t.Errorf("extractBundle refused an archive the second time that it took the first: %v", err)
 		}
 	})
 }

@@ -73,6 +73,7 @@ type CLI struct {
 	Logout     LogoutCmd     `cmd:"" help:"Remove the key from the client configuration."`
 	Publish    PublishCmd    `cmd:"" help:"Publish a directory or a file as a new artifact."`
 	Deploy     DeployCmd     `cmd:"" help:"Make an artifact match a directory: create it, or add a version that also deletes the files gone from the directory."`
+	Pull       PullCmd       `cmd:"" help:"Write a version's files to a directory, to change them and deploy the directory again."`
 	Import     ImportCmd     `cmd:"" help:"Copy a web page into a new artifact."`
 	Update     UpdateCmd     `cmd:"" help:"Add files from a directory as a new version, keeping the others, and/or change fields."`
 	Get        GetCmd        `cmd:"" help:"Show an artifact and its versions."`

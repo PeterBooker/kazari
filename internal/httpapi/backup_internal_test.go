@@ -24,7 +24,7 @@ func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
 // and frees the backup for the next caller.
 func TestArchiveWriterRenewsTheWriteDeadline(t *testing.T) {
 	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
-	out := &archiveWriter{w: rec, body: middleware.Streaming(rec, backupStall), name: "kazari.tar"}
+	out := &archiveWriter{w: rec, body: middleware.Streaming(rec, downloadStall), name: "kazari.tar", contentType: "application/x-tar"}
 	began := time.Now()
 	for range 3 {
 		if _, err := out.Write([]byte("part of the archive")); err != nil {
@@ -38,8 +38,8 @@ func TestArchiveWriterRenewsTheWriteDeadline(t *testing.T) {
 		t.Fatalf("deadlines set = %d, want one per write", len(rec.deadlines))
 	}
 	for _, d := range rec.deadlines {
-		if d.Before(began.Add(backupStall)) || d.After(time.Now().Add(backupStall)) {
-			t.Errorf("deadline %v is not %v after its write", d, backupStall)
+		if d.Before(began.Add(downloadStall)) || d.After(time.Now().Add(downloadStall)) {
+			t.Errorf("deadline %v is not %v after its write", d, downloadStall)
 		}
 	}
 }

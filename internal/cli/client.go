@@ -601,6 +601,25 @@ func (c *Client) ReadFile(ctx context.Context, slug, path string, version int, a
 	return resp.Body, resp.Header.Get("Content-Type"), nil
 }
 
+// Bundle downloads a version's files as a gzip-compressed tar, 0 meaning the
+// published version, and returns the version it holds.
+func (c *Client) Bundle(ctx context.Context, slug string, version int) (io.ReadCloser, int, error) {
+	q := url.Values{}
+	if version > 0 {
+		q.Set("version", strconv.Itoa(version))
+	}
+	resp, err := c.send(ctx, request{method: http.MethodGet, path: "/artifacts/" + seg(slug) + "/bundle", query: q})
+	if err != nil {
+		return nil, 0, err
+	}
+	n, err := strconv.Atoi(resp.Header.Get(api.VersionHeader))
+	if err != nil {
+		resp.Body.Close()
+		return nil, 0, fmt.Errorf("GET /artifacts/%s/bundle: the response names no version in %s", slug, api.VersionHeader)
+	}
+	return resp.Body, n, nil
+}
+
 // Edit applies edits to one text file of the latest version and publishes
 // it; a positive ExpectedVersion fails with version_conflict if stale.
 func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*api.EditResult, error) {

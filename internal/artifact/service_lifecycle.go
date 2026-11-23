@@ -388,17 +388,8 @@ func (s *Service) Delete(ctx context.Context, actor Actor, slug string, hard boo
 func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, version int) (_ File, _ io.ReadSeekCloser, err error) {
 	ctx, span := s.span(ctx, "artifact.open_file", slug)
 	defer func() { endSpan(span, err) }()
-	if err := checkSlug(actor, slug); err != nil {
-		return File{}, nil, err
-	}
-	a, err := s.store.Get(ctx, slug)
+	a, err := s.readableArtifact(ctx, actor, slug)
 	if err != nil {
-		return File{}, nil, err
-	}
-	if a.PurgedAt != nil {
-		return File{}, nil, ErrGone
-	}
-	if err := s.checkReadable(ctx, actor, a); err != nil {
 		return File{}, nil, err
 	}
 	clean, err := ValidatePath(p)
@@ -422,7 +413,53 @@ func (s *Service) OpenFile(ctx context.Context, actor Actor, slug, p string, ver
 		}
 		return f, rc, nil
 	}
-	return File{}, nil, Errorf(ErrFileNotFound, "no file %q in version %d", clean, version)
+	return File{}, nil, Errorf(ErrFileNotFound, "no file %q in version %d", clean, v.Number)
+}
+
+// FileOpener opens the content of one of a version's files.
+type FileOpener func(ctx context.Context, f File) (io.ReadCloser, error)
+
+// OpenVersion returns a version with its Files, 0 meaning the published one,
+// and an opener for their content, to the actors OpenFile serves.
+func (s *Service) OpenVersion(ctx context.Context, actor Actor, slug string, version int) (_ *Version, _ FileOpener, err error) {
+	ctx, span := s.span(ctx, "artifact.open_version", slug)
+	defer func() { endSpan(span, err) }()
+	a, err := s.readableArtifact(ctx, actor, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	if version == 0 {
+		version = a.PublishedVersion
+	}
+	v, err := s.store.GetVersion(ctx, slug, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	open := func(ctx context.Context, f File) (io.ReadCloser, error) {
+		rc, err := s.blobs.Open(ctx, f.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("artifact: open %s/%s: %w", slug, f.Path, err)
+		}
+		return rc, nil
+	}
+	return v, open, nil
+}
+
+func (s *Service) readableArtifact(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
+	if err := checkSlug(actor, slug); err != nil {
+		return nil, err
+	}
+	a, err := s.store.Get(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	if a.PurgedAt != nil {
+		return nil, ErrGone
+	}
+	if err := s.checkReadable(ctx, actor, a); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 // WorkerControlled reports whether the person who uploaded the version's file

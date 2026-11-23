@@ -387,6 +387,33 @@ To save version 1 of a page:
 kazari files cat q3-report index.html --version 1 > old-index.html
 ```
 
+### pull
+
+```text
+kazari pull <slug> [dir|-] [--version N] [--force]
+```
+
+Writes the files of the published version, or of version `N`, to a directory, to change them locally and [`deploy`](#deploy) the directory again. The directory defaults to `./<slug>`, so `kazari pull q3-report` and `kazari deploy q3-report` work on the same files. It must be empty or not exist yet.
+
+To edit the published page locally and publish the result:
+
+```sh
+kazari pull q3-report
+kazari deploy q3-report --label "fix chart"
+```
+
+It prints `pulled version 5 of q3-report to q3-report: 14 files, 312.0 KiB`. A staged version can be pulled by its number. The files of an unpublished or soft-deleted artifact can be pulled by the same people who can [read them](api.md#read-a-file-get-artifactsslugfilespath).
+
+`--force` writes into a directory that is not empty: the files the version holds replace those at the same paths, and other files stay. A symlink on the way to a pulled path stops the pull instead of being written through.
+
+If the version holds files that `deploy` would leave out, such as dotfiles or names that look like secrets, stderr lists them. A mirrored deploy would delete them from the artifact, so list them with `!` in `.kazariignore` to keep sending them ([what is sent](#what-is-sent)).
+
+To write the archive to standard output instead, as `tar.gz`, pass `-`:
+
+```sh
+kazari pull q3-report - > q3-report.tar.gz
+```
+
 ### edit
 
 ```text
