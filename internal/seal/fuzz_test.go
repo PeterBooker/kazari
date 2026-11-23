@@ -13,11 +13,11 @@ import (
 // one Seal made; one Seal made opens once, with its payload.
 func FuzzOpen(f *testing.F) {
 	now := func() time.Time { return t0 }
-	o := seal.NewOnce(time.Hour, now)
 	f.Add("form", []byte("payload"), "")
 	f.Add("", []byte{}, "AAAAAAAAAAA.AAAA")
 	f.Add("x", []byte{0, 1, 2}, "....")
 	f.Fuzz(func(t *testing.T, purpose string, payload []byte, value string) {
+		o := seal.NewOnce(time.Hour, now)
 		if _, err := o.Open(purpose, value); err == nil {
 			t.Fatalf("Open(%q, %q) took a value Seal did not make", purpose, value)
 		} else if !errors.Is(err, seal.ErrExpired) {
