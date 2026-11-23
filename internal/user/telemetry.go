@@ -5,7 +5,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/errcode"

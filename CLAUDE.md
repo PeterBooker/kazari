@@ -19,6 +19,7 @@ go mod tidy -diff
 go fix -diff ./...
 go vet ./...                    # also with GOOS/GOARCH set to linux/arm64 and darwin/arm64
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run    # the linters in .golangci.yml, staticcheck among them
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest fmt --diff    # import groups: standard, third-party, this module
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check

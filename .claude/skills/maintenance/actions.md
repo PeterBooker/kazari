@@ -59,6 +59,7 @@ done
 
 ```sh
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<the pinned version> run
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<the pinned version> fmt --diff
 pipx run zizmor==<the pinned version> .
 go run github.com/rhysd/actionlint/cmd/actionlint@<the pinned version>
 gh actions-lock --verify

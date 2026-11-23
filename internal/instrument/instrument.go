@@ -18,9 +18,9 @@ import (
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/PeterBooker/kazari/internal/errcode"
-	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Providers are the meter and tracer providers a package's Options carry.
