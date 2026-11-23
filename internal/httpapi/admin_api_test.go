@@ -379,7 +379,7 @@ func httpapiAdmin(t *testing.T, d httpapi.AdminDeps) string {
 }
 
 func TestAdminIPRateLimit(t *testing.T) {
-	e := newEnv(t, config{admin: httpapi.AdminOptions{IPRatePerMinute: 2}})
+	e := newEnv(t, config{adminIPRate: 2})
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "guess-1"}), http.StatusUnauthorized, api.CodeUnauthorized)
 	e.apiErr(e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: "guess-2"}), http.StatusUnauthorized, api.CodeUnauthorized)
 	resp := e.send(req{method: http.MethodGet, url: e.a("/v1/users"), token: adminToken})

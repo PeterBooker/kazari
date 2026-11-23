@@ -65,6 +65,9 @@ type config struct {
 	updates  httpapi.Updates
 	// noViews turns analytics off.
 	noViews bool
+	// userIPRate and adminIPRate are the per-IP limits a minute of the user
+	// and admin APIs; 0, as tests make many requests from one IP, is none.
+	userIPRate, adminIPRate int
 }
 
 type env struct {
@@ -133,12 +136,6 @@ func newEnv(t *testing.T, c config) *env {
 		viewRec = views.NewRecorder(vs, views.RecorderOptions{Readers: true, Now: now})
 	}
 
-	if c.user.IPRatePerMinute == 0 {
-		c.user.IPRatePerMinute = -1 // tests make many requests from one IP
-	}
-	if c.admin.IPRatePerMinute == 0 {
-		c.admin.IPRatePerMinute = -1
-	}
 	c.admin.AdminToken = adminToken
 	c.admin.Now = now
 	c.user.TempDir = dir
@@ -146,6 +143,7 @@ func newEnv(t *testing.T, c config) *env {
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: art, ShareLinks: artifact.NewShareLinks(store, art), Uploads: uploads, Users: users, Auth: authn, Links: links,
 		Writes: ratelimit.New(c.writeRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential}), Fetch: fc,
+		IPs: ratelimit.New(c.userIPRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP}),
 	}, c.user))
 	t.Cleanup(userSrv.Close)
 	admSrv := httptest.NewServer(httpapi.NewAdminAPI(httpapi.AdminDeps{
@@ -165,6 +163,7 @@ func newEnv(t *testing.T, c config) *env {
 		}),
 		Views: viewSvc,
 		Links: links,
+		IPs:   ratelimit.New(c.adminIPRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP}),
 	}, c.admin))
 	t.Cleanup(admSrv.Close)
 

@@ -445,6 +445,12 @@ func (a *App) jobs(p *parts, opts Options) []scheduler.Job {
 	return jobs
 }
 
+// ipLimiter is a per-IP budget for one surface, applied before
+// authentication.
+func (p *parts) ipLimiter() *ratelimit.Limiter {
+	return ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: p.now, Scope: ratelimit.ScopeIP, Telemetry: p.tel})
+}
+
 // surfaces builds the handler of every host the router serves, and those of
 // the admin listener and socket.
 func (a *App) surfaces(p *parts) hosts {
@@ -472,7 +478,7 @@ func (a *App) surfaces(p *parts) hosts {
 	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: p.arts, Uploads: p.uploads, Users: p.users, Auth: p.authn, Links: p.links, Logger: log, Writes: writes, Fetch: p.fetcher,
-		ShareLinks: p.shares,
+		ShareLinks: p.shares, IPs: p.ipLimiter(),
 	}, httpapi.UserOptions{
 		MaxBodyBytes: p.limits.MaxVersionBytes + 1<<20,
 		Limits:       p.limits,
@@ -522,8 +528,7 @@ func (a *App) surfaces(p *parts) hosts {
 	})
 	// The link pages take a token from anyone who has the address, so they
 	// get the per-IP budget every other surface has before authentication.
-	accountIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
-	accountLimit := ratelimit.Middleware(accountIPs, ratelimit.IPKey, nil)
+	accountLimit := ratelimit.Middleware(p.ipLimiter(), ratelimit.IPKey, nil)
 	front := account.NewFront(account.FrontOptions{
 		URL: u.apexOrigin, MCPURL: u.mcp, APIURL: u.api, AdminURL: u.dashboard,
 	})
@@ -535,8 +540,7 @@ func (a *App) surfaces(p *parts) hosts {
 	}
 	// One per-IP budget for OAuth and MCP, applied before authentication
 	// like the user API's.
-	mcpIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
-	mcpLimit := ratelimit.Middleware(mcpIPs, ratelimit.IPKey, nil)
+	mcpLimit := ratelimit.Middleware(p.ipLimiter(), ratelimit.IPKey, nil)
 	return hosts{
 		api:     a.surface(instrument.SurfaceAPI, true, apiHost(front.API, apiH)),
 		mcp:     a.surface(instrument.SurfaceMCP, true, mcpLimit(frontPage(front.Connector, mcpMux(p.oauth.Handler(), mcpH)))),
@@ -568,6 +572,7 @@ func (a *App) adminHost(p *parts, grants grantsAndSessions) http.Handler {
 		Updates:   p.updates,
 		Links:     p.links,
 		Logger:    log,
+		IPs:       p.ipLimiter(),
 	}
 	if cfg.AdminSocketPath() != "" {
 		a.adminLocal = a.surface(instrument.SurfaceAdmin, true, httpapi.NewAdminAPI(adminDeps,

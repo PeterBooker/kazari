@@ -25,8 +25,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
-
 // UserDeps are the collaborators of the user API. Every field is required
 // unless its comment says otherwise.
 type UserDeps struct {
@@ -40,6 +38,8 @@ type UserDeps struct {
 	// Writes is shared with the MCP server so a key has one write budget on
 	// both; nil disables it.
 	Writes *ratelimit.Limiter
+	// IPs limits each client IP before authentication; nil disables it.
+	IPs *ratelimit.Limiter
 	// Fetch downloads files named by url; nil refuses them.
 	Fetch *fetch.Client
 }
@@ -54,15 +54,12 @@ type UserOptions struct {
 	// /v1/uploads. MaxChunkBytes caps one upload chunk; its default is the
 	// upload service's.
 	artifact.Limits
-	// IPRatePerMinute applies per client IP, before authentication. 0 means
-	// DefaultIPRatePerMinute; negative disables it.
-	IPRatePerMinute int
 	// TempDir holds spilled multipart bundles and archives. Default: os.TempDir().
 	TempDir string
 	// APIBaseURL is the REST root an upload's archive URL is built on, e.g.
 	// https://api.<base>/v1.
 	APIBaseURL string
-	// Now clocks the rate limiters. Default: time.Now.
+	// Now decides whether a share link is active. Default: time.Now.
 	Now func() time.Time
 	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
 	Skill     string
@@ -76,9 +73,6 @@ func (o UserOptions) withDefaults(d UserDeps) UserOptions {
 	o.Limits = o.Limits.WithDefaults()
 	if o.MaxBodyBytes <= 0 {
 		o.MaxBodyBytes = o.MaxVersionBytes + 1<<20
-	}
-	if o.IPRatePerMinute == 0 {
-		o.IPRatePerMinute = DefaultIPRatePerMinute
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -121,7 +115,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 		receive.ServeHTTP(w, r)
 	})
 	open.Handle("/", protected)
-	return h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(open)
+	return h.limit(d.IPs, ratelimit.IPKey)(open)
 }
 
 // route is one route behind the bearer check: the scope it needs ("" for
