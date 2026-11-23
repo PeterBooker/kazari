@@ -122,9 +122,10 @@ var restricted = []struct {
 	{path: "internal/config", only: []string{"cmd/kazari", "internal/app", "internal/cli", "internal/dashboard", "internal/preflight"}},
 	// The wire types are for what answers a client and for the CLI; a
 	// domain package names an error code with internal/errcode. The rate
-	// limiter answers a client itself.
+	// limiter answers a client itself, and intake reads the files a request
+	// carries.
 	{path: "internal/api", only: []string{"internal/account", "internal/app", "internal/cli", "internal/httpapi",
-		"internal/mcpserver", "internal/present", "internal/ratelimit"}},
+		"internal/intake", "internal/mcpserver", "internal/present", "internal/ratelimit"}},
 	{path: "database/sql", only: []string{"internal/sqlite"}},
 	{path: "github.com/ncruces/go-sqlite3", only: []string{"internal/sqlite"}},
 	{path: "github.com/alecthomas/kong", only: []string{"internal/cli"}},
