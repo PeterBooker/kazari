@@ -186,8 +186,21 @@ type beginner interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) (err error) {
-	tx, err := db.BeginTx(ctx, nil)
+// inTx runs fn in a transaction that takes the write lock as it begins
+// (_txlock=immediate), so it never fails part way when another writer
+// commits first.
+func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) error {
+	return runTx(ctx, db, nil, fn)
+}
+
+// readTx runs fn in a deferred, query-only transaction: one snapshot that
+// neither waits for a writer nor holds one up.
+func readTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) error {
+	return runTx(ctx, db, &sql.TxOptions{ReadOnly: true}, fn)
+}
+
+func runTx(ctx context.Context, db beginner, opts *sql.TxOptions, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}

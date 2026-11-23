@@ -373,7 +373,7 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKe
 	ctx, end := s.db.op(ctx, "UserStore.ListKeys")
 	defer func() { end(err) }()
 	var keys []user.APIKey
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -550,7 +550,7 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user
 	ctx, end := s.db.op(ctx, "UserStore.ListIdentities")
 	defer func() { end(err) }()
 	var ids []user.Identity
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err

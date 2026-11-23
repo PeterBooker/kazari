@@ -105,7 +105,7 @@ func (s *UserStore) ListPasskeys(ctx context.Context, handle string) (_ []user.P
 	ctx, end := s.db.op(ctx, "UserStore.ListPasskeys")
 	defer func() { end(err) }()
 	out := []user.Passkey{}
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := userLookupID(ctx, tx, handle); err != nil {
 			return err
 		}

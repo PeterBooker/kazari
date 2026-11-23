@@ -71,7 +71,7 @@ func (s *UploadStore) Get(ctx context.Context, id string) (_ *upload.Upload, err
 	ctx, end := s.db.op(ctx, "UploadStore.Get")
 	defer func() { end(err) }()
 	var u *upload.Upload
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx,
 			`SELECT `+uploadColumns+`
 			 FROM upload u JOIN user usr ON usr.id = u.owner_id
