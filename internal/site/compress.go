@@ -16,13 +16,7 @@ const minCompressSize = 1024
 // gzipLevel is near the default ratio at a fraction of the cost of the best.
 const gzipLevel = 5
 
-var gzipWriters = sync.Pool{New: func() any {
-	w, err := gzip.NewWriterLevel(io.Discard, gzipLevel)
-	if err != nil {
-		panic(err)
-	}
-	return w
-}}
+var gzipWriters sync.Pool
 
 // compressible reports whether f is sent gzip-encoded to clients that accept
 // it. Formats that are compressed already gain nothing.
@@ -157,9 +151,14 @@ func writeGzip(w http.ResponseWriter, r *http.Request, status int, rc io.Reader)
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	gz := gzipWriters.Get().(*gzip.Writer)
+	gz, _ := gzipWriters.Get().(*gzip.Writer)
+	if gz == nil {
+		// The level is a valid constant, so this cannot fail.
+		gz, _ = gzip.NewWriterLevel(w, gzipLevel)
+	} else {
+		gz.Reset(w)
+	}
 	defer gzipWriters.Put(gz)
-	gz.Reset(w)
 	if _, err := io.Copy(gz, rc); err != nil {
 		return err
 	}
