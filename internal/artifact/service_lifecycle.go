@@ -267,10 +267,8 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 	if err := checkSlug(actor, slug); err != nil {
 		return nil, err
 	}
-	switch v {
-	case string(Public), string(Unlisted), string(Members), Unpublished:
-	default:
-		return nil, Errorf(ErrInvalidArgument, "visibility must be %q, %q, %q or %q%s", Public, Unlisted, Members, Unpublished, VisibilityHint(v))
+	if err := checkVisibility(v); err != nil {
+		return nil, err
 	}
 	return s.modify(ctx, actor, slug, false, audit.ArtifactVisibility, func(a *Artifact) (map[string]string, error) {
 		if v == Unpublished {
@@ -284,6 +282,14 @@ func (s *Service) SetVisibility(ctx context.Context, actor Actor, slug string, v
 		}
 		return map[string]string{"visibility": v}, nil
 	})
+}
+
+func checkVisibility(v string) error {
+	switch v {
+	case string(Public), string(Unlisted), string(Members), Unpublished:
+		return nil
+	}
+	return Errorf(ErrInvalidArgument, "visibility must be %q, %q, %q or %q%s", Public, Unlisted, Members, Unpublished, VisibilityHint(v))
 }
 
 // Transfer gives the artifact to newOwner. Only admins may, whatever the

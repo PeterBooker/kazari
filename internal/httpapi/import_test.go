@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/httpapi"
 )
 
 func pageServer(t *testing.T) *httptest.Server {
@@ -73,6 +74,19 @@ func TestFilesFromURL(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("failed create left an artifact: %d", resp.StatusCode)
 	}
+}
+
+// Files named by url are capped together at the version size, not at the
+// size of an upload.
+func TestFilesFromURLCap(t *testing.T) {
+	srv := pageServer(t)
+	files := []api.FileInput{{Path: "data.json", URL: srv.URL + "/data.json"}}
+
+	e := newEnv(t, config{user: httpapi.UserOptions{MaxTotalBytes: 4}})
+	e.expect(e.postJSON(e.alice, api.CreateArtifactRequest{Slug: "fits", Files: files}), http.StatusCreated, nil)
+
+	e = newEnv(t, config{user: httpapi.UserOptions{MaxVersionBytes: 4}})
+	e.apiErr(e.postJSON(e.alice, api.CreateArtifactRequest{Slug: "over", Files: files}), http.StatusBadGateway, api.CodeFetchFailed)
 }
 
 func TestImportPage(t *testing.T) {

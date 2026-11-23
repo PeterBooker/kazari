@@ -84,22 +84,21 @@ func argShape(tool string) string {
 // normalizeArgs rewrites raw when it holds a known slip: an integer as a
 // string, edit fields under other tools' names, edits sent at the top level
 // or as one object, and files sent as a map of path to content. Anything it
-// cannot read is returned as it is, for the SDK to refuse.
+// cannot read is returned as it is, for the SDK to refuse. Values stay raw
+// JSON, so the content of large files is neither decoded nor re-encoded.
 func normalizeArgs(tool string, raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var args map[string]any
-	if err := dec.Decode(&args); err != nil || args == nil {
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &args); err != nil || args == nil {
 		return raw
 	}
 	changed := numbers(args)
 	switch tool {
 	case "edit_file":
 		if _, has := args["edits"]; !has {
-			edit := map[string]any{}
+			edit := map[string]json.RawMessage{}
 			for _, f := range editFields {
 				if v, ok := args[f]; ok {
 					edit[f] = v
@@ -107,19 +106,17 @@ func normalizeArgs(tool string, raw json.RawMessage) json.RawMessage {
 				}
 			}
 			if len(edit) > 0 {
-				args["edits"], changed = []any{edit}, true
+				list, err := json.Marshal([]map[string]json.RawMessage{edit})
+				if err != nil {
+					return raw
+				}
+				args["edits"], changed = list, true
 			}
 		}
 		changed = editList(args) || changed
 	case "update_artifact", "create_artifact":
 		changed = fileList(args) || changed
-		if files, ok := args["files"].([]any); ok {
-			for _, f := range files {
-				if m, ok := f.(map[string]any); ok {
-					changed = editList(m) || changed
-				}
-			}
-		}
+		changed = fileEdits(args) || changed
 	}
 	if !changed {
 		return raw
@@ -131,64 +128,162 @@ func normalizeArgs(tool string, raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-func numbers(args map[string]any) bool {
+// kind is the first byte of a JSON value: '{', '[', '"', a digit, '-', 't', 'f' or 'n'.
+func kind(v json.RawMessage) byte {
+	v = bytes.TrimLeft(v, " \t\r\n")
+	if len(v) == 0 {
+		return 0
+	}
+	return v[0]
+}
+
+func numbers(args map[string]json.RawMessage) bool {
 	changed := false
 	for _, k := range numberArgs {
-		if s, ok := args[k].(string); ok {
-			if _, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
-				args[k], changed = json.Number(strings.TrimSpace(s)), true
-			}
+		v, ok := args[k]
+		if !ok || kind(v) != '"' {
+			continue
+		}
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			continue
+		}
+		if _, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+			args[k], changed = json.RawMessage(strings.TrimSpace(s)), true
 		}
 	}
 	return changed
 }
 
 // editList makes m["edits"] a list and renames aliased fields in each edit.
-func editList(m map[string]any) bool {
+func editList(m map[string]json.RawMessage) bool {
 	changed := false
-	if one, ok := m["edits"].(map[string]any); ok {
-		m["edits"], changed = []any{one}, true
+	if kind(m["edits"]) == '{' {
+		m["edits"], changed = append(append(json.RawMessage{'['}, m["edits"]...), ']'), true
 	}
-	list, _ := m["edits"].([]any)
-	for _, e := range list {
-		edit, ok := e.(map[string]any)
-		if !ok {
+	if kind(m["edits"]) != '[' {
+		return changed
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(m["edits"], &list) != nil {
+		return changed
+	}
+	renamed := false
+	for i, e := range list {
+		if kind(e) != '{' {
 			continue
 		}
+		var edit map[string]json.RawMessage
+		if json.Unmarshal(e, &edit) != nil {
+			continue
+		}
+		aliased := false
 		for alias, name := range editAliases {
 			if v, ok := edit[alias]; ok {
 				if _, taken := edit[name]; !taken {
 					edit[name] = v
 				}
 				delete(edit, alias)
-				changed = true
+				aliased = true
 			}
 		}
+		if !aliased {
+			continue
+		}
+		out, err := json.Marshal(edit)
+		if err != nil {
+			continue
+		}
+		list[i], renamed = out, true
 	}
-	return changed
+	if !renamed {
+		return changed
+	}
+	out, err := json.Marshal(list)
+	if err != nil {
+		return changed
+	}
+	m["edits"] = out
+	return true
 }
 
 // fileList turns files sent as {path: content} or {path: {...}} into the list
 // the tools take.
-func fileList(args map[string]any) bool {
-	files, ok := args["files"].(map[string]any)
-	if !ok {
+func fileList(args map[string]json.RawMessage) bool {
+	if kind(args["files"]) != '{' {
 		return false
 	}
-	list := make([]any, 0, len(files))
+	var files map[string]json.RawMessage
+	if json.Unmarshal(args["files"], &files) != nil {
+		return false
+	}
+	list := make([]json.RawMessage, 0, len(files))
 	for _, path := range slices.Sorted(maps.Keys(files)) {
-		switch v := files[path].(type) {
-		case string:
-			list = append(list, map[string]any{"path": path, "content": v})
-		case map[string]any:
-			if _, has := v["path"]; !has {
-				v["path"] = path
+		v := files[path]
+		var entry map[string]json.RawMessage
+		switch kind(v) {
+		case '"':
+			entry = map[string]json.RawMessage{"content": v}
+		case '{':
+			if json.Unmarshal(v, &entry) != nil {
+				return false
 			}
-			list = append(list, v)
 		default:
 			return false
 		}
+		if _, has := entry["path"]; !has {
+			p, err := json.Marshal(path)
+			if err != nil {
+				return false
+			}
+			entry["path"] = p
+		}
+		out, err := json.Marshal(entry)
+		if err != nil {
+			return false
+		}
+		list = append(list, out)
 	}
-	args["files"] = list
+	out, err := json.Marshal(list)
+	if err != nil {
+		return false
+	}
+	args["files"] = out
+	return true
+}
+
+// fileEdits applies editList to each file. Only files whose JSON names
+// "edits" are decoded, so a call that sends content alone is not copied.
+func fileEdits(args map[string]json.RawMessage) bool {
+	if kind(args["files"]) != '[' || !bytes.Contains(args["files"], []byte(`"edits"`)) {
+		return false
+	}
+	var files []json.RawMessage
+	if json.Unmarshal(args["files"], &files) != nil {
+		return false
+	}
+	changed := false
+	for i, f := range files {
+		if kind(f) != '{' || !bytes.Contains(f, []byte(`"edits"`)) {
+			continue
+		}
+		var m map[string]json.RawMessage
+		if json.Unmarshal(f, &m) != nil || !editList(m) {
+			continue
+		}
+		out, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		files[i], changed = out, true
+	}
+	if !changed {
+		return false
+	}
+	out, err := json.Marshal(files)
+	if err != nil {
+		return false
+	}
+	args["files"] = out
 	return true
 }

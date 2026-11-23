@@ -112,7 +112,7 @@ systemd's `LoadCredential=` is an alternative: it copies each file into `/run/cr
 
 ## Proxy examples
 
-In proxy mode the proxy obtains the wildcard certificate and forwards every host to Kazari on `127.0.0.1:8080`, with the `Host` header unchanged. Whichever proxy you use, raise its request body limit to at least `limits.max_version_bytes` (50 MiB by default), or large publishes are refused by the proxy before Kazari sees them. The proxy needs no compression of its own: Kazari [compresses text files](configuration.md#compression) itself.
+In proxy mode the proxy obtains the wildcard certificate and forwards every host to Kazari on `127.0.0.1:8080`, with the `Host` header unchanged. Whichever proxy you use, raise its request body limit to at least a third more than `limits.max_version_bytes` (about 70 MiB for the default 50 MiB), since inline files arrive in base64, or large publishes are refused by the proxy before Kazari sees them. The proxy needs no compression of its own: Kazari [compresses text files](configuration.md#compression) itself.
 
 ### Caddy
 
@@ -146,7 +146,7 @@ server {
 
     ssl_certificate     /etc/kazari/lego/certificates/art.example.com.crt;
     ssl_certificate_key /etc/kazari/lego/certificates/art.example.com.key;
-    client_max_body_size 64m;
+    client_max_body_size 70m;
 
     location / {
         proxy_pass http://127.0.0.1:8080;

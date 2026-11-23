@@ -23,6 +23,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
@@ -39,7 +40,8 @@ const (
 // bodyOverhead leaves room for the JSON-RPC envelope and non-content arguments.
 const bodyOverhead = 1 << 20
 
-// Deps are the services the MCP server calls.
+// Deps are the services the MCP server calls. Every field is required unless
+// its comment says otherwise.
 type Deps struct {
 	Artifacts *artifact.Service
 	Uploads   *upload.Service
@@ -95,7 +97,7 @@ type Options struct {
 	Telemetry instrument.Providers
 }
 
-func (o Options) withDefaults(d Deps) Options {
+func (o Options) withDefaults() Options {
 	if o.InlineGuidanceBytes <= 0 {
 		o.InlineGuidanceBytes = DefaultInlineGuidanceBytes
 	}
@@ -110,9 +112,6 @@ func (o Options) withDefaults(d Deps) Options {
 	}
 	if o.MaxChunkBytes <= 0 {
 		o.MaxChunkBytes = upload.DefaultMaxChunkBytes
-		if d.Uploads != nil {
-			o.MaxChunkBytes = d.Uploads.MaxChunkBytes()
-		}
 	}
 	if o.MaxTotalBytes <= 0 {
 		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
@@ -148,10 +147,14 @@ type builder struct {
 	preview      string
 	previewUI    map[string]any
 	obs          *observer
+	intake       *intake.Intake
 }
 
 func newBuilder(d Deps, o Options) *builder {
-	o = o.withDefaults(d)
+	if o.MaxChunkBytes <= 0 {
+		o.MaxChunkBytes = d.Uploads.MaxChunkBytes()
+	}
+	o = o.withDefaults()
 	log := d.Logger
 	if log == nil {
 		log = slog.Default()
@@ -170,6 +173,8 @@ func newBuilder(d Deps, o Options) *builder {
 		preview:      preview,
 		previewUI:    ui,
 		obs:          newObserver(o.Telemetry, toolNames(text, o)),
+		intake: intake.New(intake.Deps{Uploads: d.Uploads, Fetch: d.Fetch, Logger: log},
+			intake.Options{MaxFileBytes: o.MaxFileBytes, MaxVersionBytes: o.MaxVersionBytes}),
 	}
 }
 
@@ -275,8 +280,7 @@ func NewHandler(d Deps, o Options) http.Handler {
 // bodyLimit fits a whole version or a full chunk in base64, whichever is larger;
 // the services enforce the real limits.
 func (b *builder) bodyLimit() int64 {
-	n := max(b.o.MaxVersionBytes, b.o.MaxChunkBytes)
-	return (n+2)/3*4 + bodyOverhead
+	return intake.EncodedLen(max(b.o.MaxVersionBytes, b.o.MaxChunkBytes)) + bodyOverhead
 }
 
 // refuseBatches answers a JSON-RPC batch with 400 before the SDK reads it. The

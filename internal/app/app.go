@@ -570,15 +570,16 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
 	}, httpapi.UserOptions{
-		MaxBodyBytes:  int64(cfg.Limits.MaxVersionBytes) + 1<<20,
-		MaxChunkBytes: int64(cfg.Limits.MaxChunkBytes),
-		MaxFileBytes:  int64(cfg.Limits.MaxFileBytes),
-		MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
-		Now:           now,
-		TempDir:       tempDir(cfg),
-		APIBaseURL:    apiBase,
-		Skill:         mcpserver.Skill(links, mcpOpts),
-		Telemetry:     tel,
+		MaxBodyBytes:    int64(cfg.Limits.MaxVersionBytes) + 1<<20,
+		MaxVersionBytes: int64(cfg.Limits.MaxVersionBytes),
+		MaxChunkBytes:   int64(cfg.Limits.MaxChunkBytes),
+		MaxFileBytes:    int64(cfg.Limits.MaxFileBytes),
+		MaxTotalBytes:   int64(cfg.Limits.MaxVersionBytes),
+		Now:             now,
+		TempDir:         tempDir(cfg),
+		APIBaseURL:      apiBase,
+		Skill:           mcpserver.Skill(links, mcpOpts),
+		Telemetry:       tel,
 	})
 	adminDeps := httpapi.AdminDeps{
 		Artifacts: arts,

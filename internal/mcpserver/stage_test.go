@@ -64,3 +64,20 @@ func TestStagedVersionTools(t *testing.T) {
 	}
 	ok[mcpserver.ShareLinkResult](t, cs, "create_share_link", map[string]any{"slug": "demo", "version": 3})
 }
+
+// stage without files is refused, not dropped while the visibility is set.
+func TestStageWithVisibilityOnly(t *testing.T) {
+	e := newEnv(t)
+	cs := e.connect(t, member)
+	ok[mcpserver.WriteResult](t, cs, "create_artifact", map[string]any{
+		"slug": "demo", "name": "Demo", "description": "x",
+		"files": []map[string]any{{"path": "index.html", "content": "<p>one</p>"}},
+	})
+	if msg := fails(t, cs, "update_artifact", map[string]any{"slug": "demo", "visibility": "members", "stage": true}); !strings.HasPrefix(msg, "invalid_argument: stage ") {
+		t.Errorf("update_artifact with visibility and stage = %q, want invalid_argument about stage", msg)
+	}
+	detail, _ := ok[api.ArtifactDetail](t, cs, "get_artifact", map[string]any{"slug": "demo"})
+	if detail.Artifact.Visibility != "public" {
+		t.Errorf("visibility after a refused update = %q, want public", detail.Artifact.Visibility)
+	}
+}

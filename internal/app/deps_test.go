@@ -60,6 +60,7 @@ var layers = map[string]layer{
 	"internal/mcpserver": surface,
 	"internal/site":      surface,
 
+	"internal/intake":  convert,
 	"internal/present": convert,
 
 	"internal/artifact":  domain,

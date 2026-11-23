@@ -47,7 +47,7 @@ const (
 // Skill returns the instance's SKILL.md, generated from o so it states the real
 // limits, CSP and URL shapes. The REST API serves it at GET /v1/skill.
 func Skill(links present.Links, o Options) string {
-	return newTexts(links, o.withDefaults(Deps{})).skill
+	return newTexts(links, o.withDefaults()).skill
 }
 
 // skillFrontmatter feeds both SKILL.md (as YAML) and skills/list (as JSON), so the two agree.

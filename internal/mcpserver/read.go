@@ -90,78 +90,72 @@ func (b *builder) readInline(ctx context.Context, actor artifact.Actor, slug, pa
 }
 
 func (b *builder) addReadFile(s *mcp.Server, p auth.Principal, actor artifact.Actor) {
-	if !p.HasScope(auth.ScopeRead) {
-		return
+	register(b, s, p, &mcp.Tool{Name: "read_file", Annotations: annotations("Read file", true, false, true)},
+		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in ReadFileInput) (ReadFileResult, string, error) {
+			out, err := b.readFile(ctx, actor, in)
+			return out, "", err
+		})
+}
+
+// readFile returns the result of read_file with its content blocks.
+func (b *builder) readFile(ctx context.Context, actor artifact.Actor, in ReadFileInput) (ReadFileResult, error) {
+	a, _, err := b.d.Artifacts.Get(ctx, actor, in.Slug)
+	if err != nil {
+		return ReadFileResult{}, err
 	}
-	t := &mcp.Tool{
-		Name:        "read_file",
-		Description: b.text.tools["read_file"],
-		Annotations: annotations("Read file", true, false, true),
+	version := in.Version
+	if version == 0 {
+		version = a.PublishedVersion
 	}
-	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (res *mcp.CallToolResult, out ReadFileResult, err error) {
-		defer b.recoverTool(ctx, t.Name, func(e error) { res, out, err = nil, ReadFileResult{}, e })
-		if err := requireScope(p, auth.ScopeRead); err != nil {
-			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
-		}
-		a, _, err := b.d.Artifacts.Get(ctx, actor, in.Slug)
+	head := func(path, what string) *mcp.TextContent {
+		return &mcp.TextContent{Text: readHeader(path, version, a.PublishedVersion, a.LatestVersion, what)}
+	}
+	if in.StartLine > 0 || in.EndLine > 0 {
+		w, note, err := b.readWindow(ctx, actor, in, version, a.LatestVersion)
 		if err != nil {
-			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, b.notFound(ctx, actor, req, err))
+			return ReadFileResult{}, err
 		}
-		version := in.Version
-		if version == 0 {
-			version = a.PublishedVersion
+		w.blocks = []mcp.Content{head(w.Path, fmt.Sprintf("lines %d-%d of %d", w.StartLine, w.EndLine, w.TotalLines)),
+			&mcp.TextContent{Text: w.Content}}
+		if note != "" {
+			w.blocks = append(w.blocks, &mcp.TextContent{Text: note})
 		}
-		head := func(path, what string) *mcp.TextContent {
-			return &mcp.TextContent{Text: readHeader(path, version, a.PublishedVersion, a.LatestVersion, what)}
+		return w, nil
+	}
+	fc, err := b.readInline(ctx, actor, in.Slug, in.Path, version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
+	f := fc.file
+	out := ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash,
+		Version: version, LatestVersion: a.LatestVersion}
+	switch {
+	case errors.Is(err, errTooLargeToInline):
+		out.Encoding = "url"
+		out.URL, err = b.downloadURL(ctx, actor, in.Slug, f.Path, version)
+		if err != nil {
+			return ReadFileResult{}, err
 		}
-		if in.StartLine > 0 || in.EndLine > 0 {
-			w, note, err := b.readWindow(ctx, actor, in, version, a.LatestVersion)
-			if err != nil {
-				return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
-			}
-			content := []mcp.Content{head(w.Path, fmt.Sprintf("lines %d-%d of %d", w.StartLine, w.EndLine, w.TotalLines)),
-				&mcp.TextContent{Text: w.Content}}
-			if note != "" {
-				content = append(content, &mcp.TextContent{Text: note})
-			}
-			return &mcp.CallToolResult{Content: content}, w, nil
+		msg := fmt.Sprintf("%s is %d bytes (%s, sha256 %s), too large to return inline. Download it from %s "+
+			"with the API key as a bearer token.", f.Path, f.Size, f.ContentType, f.Hash, out.URL)
+		out.blocks = []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)), &mcp.TextContent{Text: msg}}
+	case err != nil:
+		return ReadFileResult{}, err
+	case fc.text:
+		out.Encoding = "utf8"
+		body := string(fc.data)
+		if in.Anchors {
+			body, out.Anchored = artifact.AnchorLines(body), true
 		}
-		fc, err := b.readInline(ctx, actor, in.Slug, in.Path, version, b.o.MaxInlineReadBytes, MaxInlineBlobBytes)
-		f := fc.file
-		out = ReadFileResult{Path: f.Path, ContentType: f.ContentType, Size: f.Size, Hash: f.Hash,
-			Version: version, LatestVersion: a.LatestVersion}
-		switch {
-		case errors.Is(err, errTooLargeToInline):
-			out.Encoding = "url"
-			out.URL, err = b.downloadURL(ctx, actor, in.Slug, f.Path, version)
-			if err != nil {
-				return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
-			}
-			msg := fmt.Sprintf("%s is %d bytes (%s, sha256 %s), too large to return inline. Download it from %s "+
-				"with the API key as a bearer token.", f.Path, f.Size, f.ContentType, f.Hash, out.URL)
-			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)),
-				&mcp.TextContent{Text: msg}}}, out, nil
-		case err != nil:
-			return nil, ReadFileResult{}, b.toolError(ctx, t.Name, err)
-		case fc.text:
-			out.Encoding = "utf8"
-			body := string(fc.data)
-			if in.Anchors {
-				body, out.Anchored = artifact.AnchorLines(body), true
-			}
-			out.Content = body
-			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, lineCount(fc.data)),
-				&mcp.TextContent{Text: body}}}, out, nil
-		default:
-			out.Encoding = "base64"
-			return &mcp.CallToolResult{Content: []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)+" "+f.ContentType),
-				&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
-					URI:      fileURI(in.Slug, f.Path),
-					MIMEType: f.ContentType,
-					Blob:     fc.data,
-				}}}}, out, nil
-		}
-	})
+		out.Content = body
+		out.blocks = []mcp.Content{head(f.Path, lineCount(fc.data)), &mcp.TextContent{Text: body}}
+	default:
+		out.Encoding = "base64"
+		out.blocks = []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)+" "+f.ContentType),
+			&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+				URI:      fileURI(in.Slug, f.Path),
+				MIMEType: f.ContentType,
+				Blob:     fc.data,
+			}}}
+	}
+	return out, nil
 }
 
 // readHeader is the first line of every read: which version was read, and

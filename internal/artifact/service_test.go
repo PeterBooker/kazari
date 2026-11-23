@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
@@ -1086,6 +1087,134 @@ func TestVisibility(t *testing.T) {
 	ev := e.rec.Events[1]
 	if ev.Action != audit.ArtifactVisibility || ev.Details["visibility"] != "unlisted" {
 		t.Fatalf("visibility audit = %+v", ev)
+	}
+}
+
+func TestVisibilityOnly(t *testing.T) {
+	members := artifact.Members
+	cases := []struct {
+		name string
+		req  artifact.UpdateRequest
+		want bool
+	}{
+		{"visibility alone", artifact.UpdateRequest{Visibility: &members, Label: "l", KeepStale: true}, true},
+		{"no visibility", artifact.UpdateRequest{}, false},
+		{"name", artifact.UpdateRequest{Visibility: &members, Name: new("n")}, false},
+		{"description", artifact.UpdateRequest{Visibility: &members, Description: new("d")}, false},
+		{"metadata", artifact.UpdateRequest{Visibility: &members, Metadata: map[string]*string{"k": nil}}, false},
+		{"restore", artifact.UpdateRequest{Visibility: &members, Restore: true}, false},
+		{"stage", artifact.UpdateRequest{Visibility: &members, Stage: true}, false},
+		{"expected version", artifact.UpdateRequest{Visibility: &members, ExpectedVersion: 1}, false},
+		{"files", artifact.UpdateRequest{Visibility: &members, Files: files("a.txt", "a")}, false},
+	}
+	for _, c := range cases {
+		if got := c.req.VisibilityOnly(); got != c.want {
+			t.Errorf("%s: VisibilityOnly() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Update applies a visibility as SetVisibility does, after everything else,
+// and refuses it before anything else is written.
+func TestUpdateVisibility(t *testing.T) {
+	type state struct {
+		Name        string
+		Visibility  artifact.Visibility
+		Unpublished bool
+		Deleted     bool
+		Latest      int
+	}
+	cases := []struct {
+		name    string
+		prepare func(e *env, alice artifact.Actor)
+		req     artifact.UpdateRequest
+		wantErr error
+		want    state
+		actions []string
+	}{
+		{
+			name:    "unpublished",
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Visibility(artifact.Unpublished))},
+			want:    state{Name: "Demo", Visibility: artifact.Public, Unpublished: true, Latest: 1},
+			actions: []string{audit.ArtifactVisibility},
+		},
+		{
+			name: "republished",
+			prepare: func(e *env, alice artifact.Actor) {
+				if _, err := e.svc.SetVisibility(e.ctx, alice, "demo", artifact.Unpublished); err != nil {
+					t.Fatal(err)
+				}
+			},
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Members)},
+			want:    state{Name: "Demo", Visibility: artifact.Members, Latest: 1},
+			actions: []string{audit.ArtifactVisibility},
+		},
+		{
+			name:    "with files",
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Unlisted), Files: files("index.html", "two")},
+			want:    state{Name: "Demo", Visibility: artifact.Unlisted, Latest: 2},
+			actions: []string{audit.ArtifactUpdate, audit.ArtifactVisibility},
+		},
+		{
+			name: "after a restore",
+			prepare: func(e *env, alice artifact.Actor) {
+				if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+					t.Fatal(err)
+				}
+			},
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Members), Restore: true},
+			want:    state{Name: "Demo", Visibility: artifact.Members, Latest: 1},
+			actions: []string{audit.ArtifactRestore, audit.ArtifactUpdate, audit.ArtifactVisibility},
+		},
+		{
+			name:    "stage without files",
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Members), Stage: true},
+			wantErr: artifact.ErrInvalidArgument,
+			want:    state{Name: "Demo", Visibility: artifact.Public, Latest: 1},
+		},
+		{
+			name:    "version conflict",
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Members), ExpectedVersion: 7},
+			wantErr: artifact.ErrVersionConflict,
+			want:    state{Name: "Demo", Visibility: artifact.Public, Latest: 1},
+		},
+		{
+			name:    "invalid with a name",
+			req:     artifact.UpdateRequest{Visibility: ptr(artifact.Visibility("private")), Name: new("Renamed")},
+			wantErr: artifact.ErrInvalidArgument,
+			want:    state{Name: "Demo", Visibility: artifact.Public, Latest: 1},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, artifact.Options{})
+			alice := e.user(t, "alice")
+			if _, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "demo", Name: "Demo",
+				Files: files("index.html", "one")}); err != nil {
+				t.Fatal(err)
+			}
+			if c.prepare != nil {
+				c.prepare(e, alice)
+			}
+			before := len(e.rec.Events)
+			c.req.Slug = "demo"
+			_, _, err := e.svc.Update(e.ctx, alice, c.req)
+			if !errors.Is(err, c.wantErr) {
+				t.Fatalf("Update(%+v) = %v, want %v", c.req, err, c.wantErr)
+			}
+			a, _, err := e.svc.Get(e.ctx, alice, "demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := state{Name: a.Name, Visibility: a.Visibility, Unpublished: a.UnpublishedAt != nil,
+				Deleted: a.DeletedAt != nil, Latest: a.LatestVersion}
+			if diff := cmp.Diff(c.want, got); diff != "" {
+				t.Errorf("after Update(%+v) (-want +got):\n%s", c.req, diff)
+			}
+			if diff := cmp.Diff(c.actions, e.actions()[before:], cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("audit of Update(%+v) (-want +got):\n%s", c.req, diff)
+			}
+		})
 	}
 }
 

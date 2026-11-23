@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -18,83 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 const manifestLimit = 64 << 10
 
 const spillPrefix = "kazari-bundle-"
-
-// inlineFiles returns the files of a JSON body, with those named by url
-// downloaded; the func it returns removes the downloads.
-func (h *userAPI) inlineFiles(ctx context.Context, in []api.FileInput, allowDelete bool) ([]artifact.FileInput, func(), error) {
-	dl := h.d.Fetch.Downloads(ctx, h.o.MaxFileBytes, h.o.MaxTotalBytes)
-	out := make([]artifact.FileInput, 0, len(in))
-	for _, f := range in {
-		var (
-			fi  artifact.FileInput
-			err error
-		)
-		switch {
-		case f.Delete && !allowDelete:
-			err = invalid("cannot delete %q when creating an artifact", f.Path)
-		case f.Delete:
-			fi = artifact.FileInput{Path: f.Path, Delete: true}
-		case f.URL != "" && f.Content != "":
-			err = invalid("file %q has both url and content", f.Path)
-		case f.URL != "":
-			fi, err = dl.Add(f.Path, f.URL, f.ContentType)
-		default:
-			fi, err = inlineFile(f)
-		}
-		if err != nil {
-			dl.Close()
-			return nil, nil, err
-		}
-		out = append(out, fi)
-	}
-	return out, dl.Close, nil
-}
-
-func inlineFile(f api.FileInput) (artifact.FileInput, error) {
-	var content io.Reader
-	switch f.Encoding {
-	case "", "utf8":
-		content = strings.NewReader(f.Content)
-	case "base64":
-		b, err := base64.StdEncoding.DecodeString(f.Content)
-		if err != nil {
-			return artifact.FileInput{}, invalid("file %q: invalid base64: %v", f.Path, err)
-		}
-		content = bytes.NewReader(b)
-	default:
-		return artifact.FileInput{}, invalid("file %q: encoding must be utf8 or base64, not %q", f.Path, f.Encoding)
-	}
-	return artifact.FileInput{Path: f.Path, Content: content, ContentType: f.ContentType}, nil
-}
-
-// withUpload merges upload id's staged files under inline. The caller must
-// call done once the publish has succeeded or failed; only a success
-// consumes the upload.
-func (h *userAPI) withUpload(ctx context.Context, owner, id string, inline []artifact.FileInput) ([]artifact.FileInput, func(consumed bool), error) {
-	if id == "" {
-		return inline, func(bool) {}, nil
-	}
-	if h.d.Uploads == nil {
-		return nil, nil, invalid("chunked uploads are not enabled")
-	}
-	staged, release, err := h.d.Uploads.Files(ctx, owner, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	done := func(consumed bool) {
-		if err := release(consumed); err != nil {
-			h.log.ErrorContext(ctx, "httpapi: upload cleanup failed", "upload", id, "err", err)
-		}
-	}
-	return artifact.MergeFiles(inline, staged), done, nil
-}
 
 func readManifest(mr *multipart.Reader, v any) error {
 	p, err := mr.NextPart()
@@ -172,11 +100,7 @@ func (h *userAPI) readZipBundle(r io.Reader) (*bundle, error) {
 		}
 		return nil, errors.Join(err, b.Close())
 	}
-	maxFiles := artifact.DefaultMaxFiles
-	if h.d.Uploads != nil {
-		maxFiles = h.d.Uploads.MaxFiles()
-	}
-	if b.files, err = readZip(f, n, maxFiles); err != nil {
+	if b.files, err = readZip(f, n, h.d.Uploads.MaxFiles()); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
 	return b, nil

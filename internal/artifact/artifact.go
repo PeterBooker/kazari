@@ -156,10 +156,12 @@ type CreateRequest struct {
 // UpdateRequest changes fields and, unless Files is empty, adds a version.
 // Nil pointers leave a field alone.
 type UpdateRequest struct {
-	Slug            string
-	Name            *string
-	Description     *string
-	Metadata        map[string]*string // nil value deletes the key
+	Slug        string
+	Name        *string
+	Description *string
+	Metadata    map[string]*string // nil value deletes the key
+	// Visibility is applied last, as SetVisibility applies it, so it also
+	// takes Unpublished and a restore comes first.
 	Visibility      *Visibility
 	Label           string
 	ExpectedVersion int // compared with LatestVersion; 0 = no check
@@ -171,6 +173,13 @@ type UpdateRequest struct {
 	// Stage adds the version without publishing it; it needs Files.
 	Stage bool
 	Files []FileInput
+}
+
+// VisibilityOnly reports whether r changes the visibility and nothing else,
+// which needs no more than the right to share.
+func (r UpdateRequest) VisibilityOnly() bool {
+	return r.Visibility != nil && len(r.Files) == 0 && r.Name == nil && r.Description == nil && len(r.Metadata) == 0 &&
+		!r.Restore && !r.Stage && r.ExpectedVersion == 0
 }
 
 // ListQuery filters a listing. Viewer sees public artifacts plus any it

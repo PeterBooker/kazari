@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 )
@@ -245,7 +246,11 @@ type ReadFileResult struct {
 	StartLine  int `json:"start_line,omitempty"`
 	EndLine    int `json:"end_line,omitempty"`
 	TotalLines int `json:"total_lines,omitempty"`
+
+	blocks []mcp.Content
 }
+
+func (r ReadFileResult) content() []mcp.Content { return r.blocks }
 
 // handler returns a tool's structured result and a one-line summary for the text content.
 type handler[In, Out any] func(ctx context.Context, req *mcp.CallToolRequest, in In) (Out, string, error)
@@ -258,7 +263,8 @@ func (*inputRequired) Error() string { return "mcpserver: input required" }
 
 // register adds a tool when p holds scope: a tool the credential cannot use
 // would only cost the model tokens and a failed call. Its text content is
-// the summary line followed by the result's JSON.
+// the summary line followed by the result's JSON, unless the result is
+// contentful.
 func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.Tool, scope string, h handler[In, Out]) {
 	if !p.HasScope(scope) {
 		return
@@ -282,6 +288,9 @@ func register[In, Out any](b *builder, s *mcp.Server, p auth.Principal, t *mcp.T
 		}
 		if err != nil {
 			return nil, zero, b.toolError(ctx, t.Name, b.notFound(ctx, present.Actor(p), req, err))
+		}
+		if c, ok := any(out).(contentful); ok {
+			return &mcp.CallToolResult{Content: c.content()}, out, nil
 		}
 		if w, ok := any(out).(warned); ok {
 			for _, line := range w.warningLines() {
@@ -411,27 +420,23 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 		auth.ScopeWrite, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateInput) (WriteResult, string, error) {
 			// Models fill optional fields with "": that leaves the
 			// visibility alone rather than changing it.
-			vis := ""
-			if in.Visibility != nil {
-				vis = *in.Visibility
-			}
-			if err := present.RequireShare(p, vis); err != nil {
-				return WriteResult{}, "", err
-			}
-			if vis != "" {
-				if err := checkVisibility(vis); err != nil {
+			var vis *artifact.Visibility
+			if in.Visibility != nil && *in.Visibility != "" {
+				if err := present.RequireShare(p, *in.Visibility); err != nil {
 					return WriteResult{}, "", err
 				}
+				vis = (*artifact.Visibility)(in.Visibility)
 			}
-			files, done, err := b.files(ctx, p, in.UploadID, in.Files)
+			files, done, err := b.files(ctx, p, in.UploadID, updateFiles(in.Files))
 			if err != nil {
 				return WriteResult{}, "", err
 			}
-			a, v, err := b.update(ctx, actor, artifact.UpdateRequest{
+			a, v, err := arts.Update(ctx, actor, artifact.UpdateRequest{
 				Slug:            in.Slug,
 				Name:            in.Name,
 				Description:     in.Description,
 				Metadata:        in.Metadata,
+				Visibility:      vis,
 				Label:           in.Label,
 				ExpectedVersion: in.ExpectedVersion,
 				BaseVersion:     in.BaseVersion,
@@ -439,7 +444,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				Restore:         in.Restore,
 				Stage:           in.Stage,
 				Files:           files,
-			}, vis)
+			})
 			done(err == nil)
 			if err != nil {
 				return WriteResult{}, "", err
@@ -447,7 +452,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if v == nil {
 				res := writeResult(links.Result(a, 0))
 				line := "Updated fields, no new version. " + publishedLine(res)
-				if vis != "" {
+				if vis != nil {
 					line = visibilityLine(res)
 				}
 				return res, line, nil
@@ -514,7 +519,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return api.ChunkResult{}, "", err
 			}
-			f, err := b.d.Uploads.AppendChunk(ctx, p.Handle, in.UploadID, in.Path, in.Offset, strings.NewReader(data), in.ContentType)
+			f, err := b.d.Uploads.AppendChunk(ctx, p.Handle, in.UploadID, in.Path, in.Offset, data, in.ContentType)
 			if err != nil {
 				return api.ChunkResult{}, "", err
 			}
@@ -843,36 +848,17 @@ func (b *builder) detail(ctx context.Context, actor artifact.Actor, slug string,
 	return d, nil
 }
 
-// files merges the inline files with uploadID's staged ones, inline winning on a
-// path clash. Call done once the publish has succeeded or failed: it removes
-// the downloads, and the upload only when consumed, so a refused call can be
-// corrected and sent again with the same upload_id.
-func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, raw []UpdateFileInput) ([]artifact.FileInput, func(consumed bool), error) {
-	release := func(bool) error { return nil }
-	var staged []artifact.FileInput
-	if uploadID != "" {
-		files, r, err := b.d.Uploads.Files(ctx, p.Handle, uploadID)
-		if err != nil {
-			return nil, nil, err
+// files returns the files of a call, inline, downloaded and staged in
+// uploadID; done is intake.Intake.Files'.
+func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, files []intake.File) ([]artifact.FileInput, func(consumed bool), error) {
+	for _, f := range files {
+		if f.Content != nil {
+			if err := checkText(f.Path, *f.Content, f.Encoding); err != nil {
+				return nil, nil, err
+			}
 		}
-		staged, release = files, r
 	}
-	inline, closeDownloads, err := b.inlineFiles(ctx, raw)
-	if err != nil {
-		b.release(ctx, uploadID, release, false)
-		return nil, nil, err
-	}
-	done := func(consumed bool) {
-		closeDownloads()
-		b.release(ctx, uploadID, release, consumed)
-	}
-	return artifact.MergeFiles(inline, staged), done, nil
-}
-
-func (b *builder) release(ctx context.Context, uploadID string, release func(bool) error, consumed bool) {
-	if err := release(consumed); err != nil {
-		b.log.ErrorContext(ctx, "mcp upload cleanup failed", "upload", uploadID, "err", err)
-	}
+	return b.intake.Files(ctx, intake.Call{Owner: p.Handle, UploadID: uploadID, Files: files})
 }
 
 func edits(in []EditInput) []artifact.Edit {
@@ -883,85 +869,24 @@ func edits(in []EditInput) []artifact.Edit {
 	return out
 }
 
-// checkVisibility refuses a visibility before any upload or download is
-// opened for the call.
-func checkVisibility(v string) error {
-	if v == artifact.Unpublished {
-		return nil
-	}
-	_, err := artifact.ParseVisibility(v)
-	return err
-}
-
-// update applies req, then a visibility through SetVisibility, so
-// "unpublished" works as in set_visibility; a call that only sets the
-// visibility changes nothing else.
-func (b *builder) update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest, vis string) (*artifact.Artifact, *artifact.Version, error) {
-	only := vis != "" && len(req.Files) == 0 && req.Name == nil && req.Description == nil && len(req.Metadata) == 0 &&
-		!req.Restore && req.ExpectedVersion == 0
-	var (
-		a   *artifact.Artifact
-		v   *artifact.Version
-		err error
-	)
-	if !only {
-		if a, v, err = b.d.Artifacts.Update(ctx, actor, req); err != nil {
-			return nil, nil, err
-		}
-	}
-	if vis != "" {
-		if a, err = b.d.Artifacts.SetVisibility(ctx, actor, req.Slug, vis); err != nil {
-			return nil, nil, err
-		}
-	}
-	return a, v, nil
-}
-
-func createFiles(in []FileInput) []UpdateFileInput {
-	out := make([]UpdateFileInput, len(in))
+func createFiles(in []FileInput) []intake.File {
+	out := make([]intake.File, len(in))
 	for i, f := range in {
-		out[i] = UpdateFileInput{Path: f.Path, Content: f.Content, Encoding: f.Encoding, ContentType: f.ContentType, URL: f.URL}
+		out[i] = intake.File{Path: f.Path, Content: f.Content, Encoding: f.Encoding, ContentType: f.ContentType, URL: f.URL}
 	}
 	return out
 }
 
-// inlineFiles returns the files of a call, with those named by url
-// downloaded; the func it returns removes the downloads.
-func (b *builder) inlineFiles(ctx context.Context, in []UpdateFileInput) ([]artifact.FileInput, func(), error) {
-	dl := b.d.Fetch.Downloads(ctx, b.o.MaxFileBytes, b.o.MaxVersionBytes)
-	out := make([]artifact.FileInput, 0, len(in))
-	for _, f := range in {
-		var (
-			fi  artifact.FileInput
-			err error
-		)
-		switch {
-		case f.Delete:
-			fi = artifact.FileInput{Path: f.Path, Delete: true}
-		case len(f.Edits) > 0 && (f.URL != "" || f.Content != nil):
-			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has edits and also content or url; give one", f.Path)
-		case len(f.Edits) > 0:
-			fi = artifact.FileInput{Path: f.Path, Edits: edits(f.Edits), ContentType: f.ContentType}
-		case f.URL != "" && f.Content != nil:
-			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has both url and content", f.Path)
-		case f.URL != "":
-			fi, err = dl.Add(f.Path, f.URL, f.ContentType)
-		case f.Content == nil:
-			err = artifact.Errorf(artifact.ErrInvalidArgument, "file %q has no content: give content (\"\" for an empty "+
-				"file), url, edits or delete: true", f.Path)
-		default:
-			var data string
-			if data, err = decode(f.Path, *f.Content, f.Encoding); err == nil {
-				fi = artifact.FileInput{Path: f.Path, Content: strings.NewReader(data), ContentType: f.ContentType}
-			}
+func updateFiles(in []UpdateFileInput) []intake.File {
+	out := make([]intake.File, len(in))
+	for i, f := range in {
+		out[i] = intake.File{Path: f.Path, Content: f.Content, Encoding: f.Encoding, ContentType: f.ContentType, URL: f.URL,
+			Delete: f.Delete}
+		if len(f.Edits) > 0 {
+			out[i].Edits = edits(f.Edits)
 		}
-		if err != nil {
-			dl.Close()
-			return nil, nil, err
-		}
-		out = append(out, fi)
 	}
-	return out, dl.Close, nil
+	return out
 }
 
 // binaryExts are the extensions whose content is never text, so base64
@@ -970,38 +895,22 @@ var binaryExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gi
 	".ico": true, ".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".pdf": true, ".zip": true, ".mp4": true,
 	".webm": true, ".mp3": true}
 
-// decode returns raw bytes in a string; base64 may be unpadded, contain line
-// breaks and start with a data: URL's "data:<type>;base64,".
-func decode(path, content, encoding string) (string, error) {
-	switch strings.ToLower(encoding) {
-	case "", "utf8", "utf-8", "text":
-		if encoding == "" && binaryExts[strings.ToLower(pathpkg.Ext(path))] && looksBase64(content) {
-			return "", artifact.Errorf(artifact.ErrInvalidArgument, "content of %q looks like base64, but encoding is "+
-				"not set, so it would be stored as text: add encoding: \"base64\"", path)
-		}
-		return content, nil
-	case "base64":
-		if rest, ok := strings.CutPrefix(content, "data:"); ok {
-			if _, data, ok := strings.Cut(rest, ";base64,"); ok {
-				content = data
-			}
-		}
-		s := strings.Map(func(r rune) rune {
-			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
-				return -1
-			}
-			return r
-		}, content)
-		data, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			data, err = base64.RawStdEncoding.DecodeString(strings.TrimRight(s, "="))
-		}
-		if err != nil {
-			return "", artifact.Errorf(artifact.ErrInvalidArgument, "content of %q is not valid base64", path)
-		}
-		return string(data), nil
+// decode is intake.Decode after checkText.
+func decode(path, content, encoding string) (io.Reader, error) {
+	if err := checkText(path, content, encoding); err != nil {
+		return nil, err
 	}
-	return "", artifact.Errorf(artifact.ErrInvalidArgument, "encoding of %q must be utf8 or base64, not %q", path, encoding)
+	return intake.Decode(path, content, encoding)
+}
+
+// checkText refuses base64 sent without an encoding for a binary file: a
+// slip a model makes, which would store the file as text.
+func checkText(path, content, encoding string) error {
+	if encoding == "" && binaryExts[strings.ToLower(pathpkg.Ext(path))] && looksBase64(content) {
+		return artifact.Errorf(artifact.ErrInvalidArgument, "content of %q looks like base64, but encoding is "+
+			"not set, so it would be stored as text: add encoding: \"base64\"", path)
+	}
+	return nil
 }
 
 // looksBase64 reports whether s is base64 or a base64 data: URL.

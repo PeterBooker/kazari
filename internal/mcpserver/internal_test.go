@@ -88,39 +88,25 @@ func TestSize(t *testing.T) {
 	}
 }
 
-func TestDecode(t *testing.T) {
-	for _, c := range []struct{ content, enc, want string }{
-		{"hi", "", "hi"},
-		{"hi", "utf8", "hi"},
-		{"aGk=", "base64", "hi"},
-		{"aGk", "base64", "hi"},
-		{"aG\nk=", "base64", "hi"},
-	} {
-		got, err := decode("p", c.content, c.enc)
-		if err != nil || got != c.want {
-			t.Errorf("decode(%q, %q) = %q, %v", c.content, c.enc, got, err)
-		}
-	}
-	if _, err := decode("p", "x", "hex"); err == nil {
-		t.Errorf("decode with encoding hex: no error")
-	}
+// checkText refuses base64 sent as text for a binary file, and nothing else.
+func TestCheckText(t *testing.T) {
 	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg=="
-	for _, c := range []struct{ path, content, enc, want string }{
-		{"img/a.png", "data:image/png;base64," + png, "base64", "\x89PNG"},
-		{"img/a.PNG", png, "base64", "\x89PNG"},
-		{"notes.txt", png, "", png[:4]},
-		{"img/a.png", "a short caption", "", "a short"},
-		{"img/a.png", "caption text", "", "caption"},
-	} {
-		got, err := decode(c.path, c.content, c.enc)
-		if err != nil || !strings.HasPrefix(got, c.want) {
-			t.Errorf("decode(%q, %.20q, %q) = %.20q, %v; want it to start with %q", c.path, c.content, c.enc, got, err, c.want)
-		}
+	cases := []struct {
+		name, path, content, enc string
+		refused                  bool
+	}{
+		{"base64 image", "img/a.png", png, "", true},
+		{"data URL", "img/a.png", "data:image/png;base64," + png, "", true},
+		{"upper-case extension", "img/a.PNG", png, "", true},
+		{"with encoding", "img/a.png", png, "base64", false},
+		{"text file", "notes.txt", png, "", false},
+		{"caption", "img/a.png", "a short caption", "", false},
+		{"short word", "img/a.png", "caption text", "", false},
 	}
-	for _, content := range []string{png, "data:image/png;base64," + png} {
-		_, err := decode("img/a.png", content, "")
-		if err == nil || !strings.Contains(err.Error(), `add encoding: "base64"`) {
-			t.Errorf("decode(img/a.png, %.20q, \"\") = %v, want an error naming encoding base64", content, err)
+	for _, c := range cases {
+		err := checkText(c.path, c.content, c.enc)
+		if refused := err != nil && strings.Contains(err.Error(), `add encoding: "base64"`); refused != c.refused || (err != nil && !refused) {
+			t.Errorf("%s: checkText(%q, %.20q, %q) = %v, want refused %v", c.name, c.path, c.content, c.enc, err, c.refused)
 		}
 	}
 }
@@ -164,7 +150,7 @@ func TestObserverBoundsMethods(t *testing.T) {
 
 func TestToolNames(t *testing.T) {
 	for _, fetch := range []bool{true, false} {
-		names := toolNames(newTexts(present.Links{URL: func(string) string { return "" }}, Options{Fetch: fetch}.withDefaults(Deps{})), Options{Fetch: fetch})
+		names := toolNames(newTexts(present.Links{URL: func(string) string { return "" }}, Options{Fetch: fetch}.withDefaults()), Options{Fetch: fetch})
 		want := 19
 		if !fetch {
 			want = 18
