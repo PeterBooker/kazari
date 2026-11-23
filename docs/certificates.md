@@ -152,7 +152,6 @@ server {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
     }
 }
@@ -165,7 +164,7 @@ server {
 }
 ```
 
-`$proxy_add_x_forwarded_for` appends the address nginx saw to `X-Forwarded-For`, and Kazari reads that last entry with the default `listen.client_ip_header`. To read `X-Real-IP` instead, set `client_ip_header: X-Real-IP`.
+nginx sets `X-Real-IP` to the address it saw, the header Kazari reads with the default `listen.client_ip_header`.
 
 Reload nginx after each renewal, since it reads the files at start.
 
@@ -195,7 +194,7 @@ Traefik's own documentation covers the resolver's `dnsChallenge` settings for ea
 
 ### Cloudflare Tunnel
 
-A tunnel reaches a server with no open ports: a `*` CNAME record pointing at the tunnel and one published hostname `*.art.example.com` route every subdomain to Kazari in proxy mode. Cloudflare's free Universal SSL certificates cover one label under the zone, so they serve `*.example.com` but not `*.art.example.com`. A base domain with two labels under the zone needs Cloudflare's Advanced Certificate Manager or a certificate you upload; a base domain directly under the zone, such as `example.com` itself or `art.example.com` as the zone, does not.
+A tunnel reaches a server with no open ports: a `*` CNAME record pointing at the tunnel and one published hostname `*.art.example.com` route every subdomain to Kazari in proxy mode. The tunnel passes the client's address in `X-Forwarded-For`, so set `listen.client_ip_header: X-Forwarded-For`. Cloudflare's free Universal SSL certificates cover one label under the zone, so they serve `*.example.com` but not `*.art.example.com`. A base domain with two labels under the zone needs Cloudflare's Advanced Certificate Manager or a certificate you upload; a base domain directly under the zone, such as `example.com` itself or `art.example.com` as the zone, does not.
 
 ## Troubleshooting
 

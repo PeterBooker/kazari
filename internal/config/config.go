@@ -66,8 +66,8 @@ type Listen struct {
 	HTTP string `yaml:"http"`
 	// Plain HTTP only, trusting X-Forwarded-* from a TLS-terminating proxy.
 	ProxyMode bool `yaml:"proxy_mode"`
-	// In proxy mode, the one header that carries the client's address:
-	// X-Forwarded-For (its last entry) or X-Real-IP.
+	// In proxy mode, the one header the proxy sets to the client's address:
+	// X-Real-IP or X-Forwarded-For (its last entry).
 	ClientIPHeader string `yaml:"client_ip_header"`
 }
 
@@ -244,7 +244,7 @@ func Default() Config {
 		Listen: Listen{
 			HTTPS:          ":443",
 			HTTP:           ":80",
-			ClientIPHeader: "X-Forwarded-For",
+			ClientIPHeader: "X-Real-IP",
 		},
 		TLS: TLS{
 			Mode:        "acme",

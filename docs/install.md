@@ -168,7 +168,7 @@ Because the service user is dynamic, `/etc/kazari/kazari.yaml` must be world-rea
 
 ## Running behind a reverse proxy
 
-If something else already terminates TLS on the host, run Kazari in *proxy mode*. It then serves plain HTTP on `listen.http` only, and takes the client IP from the header `listen.client_ip_header` names: by default the last `X-Forwarded-For` entry, the one the proxy in front added.
+If something else already terminates TLS on the host, run Kazari in *proxy mode*. It then serves plain HTTP on `listen.http` only, and takes the client IP from the header `listen.client_ip_header` names, `X-Real-IP` by default.
 
 Turn on proxy mode and bind the plain listener to the loopback address, in place of the `tls` section:
 
@@ -184,10 +184,10 @@ listen:
 
 In proxy mode Kazari needs no DNS provider token. Public URLs still use `https`, since `external_scheme` defaults to `https`. The proxy must hold a certificate for `art.example.com` and `*.art.example.com` and forward every host to Kazari with the `Host` header intact; [proxy examples](certificates.md#proxy-examples) has Caddy, nginx and Traefik configurations.
 
-The proxy must also pass the client's address in the header `listen.client_ip_header` names. Caddy and Traefik set `X-Forwarded-For`, the default, on their own, and the nginx example sets it. For a proxy that passes the address only in `X-Real-IP`, set `client_ip_header: X-Real-IP` under `listen`; Kazari then ignores `X-Forwarded-For`.
+`listen.client_ip_header` is the header your proxy sets to the client's address. The `Caddyfile` in `deploy/` and the Caddy and nginx examples set `X-Real-IP`, the default. A proxy that only appends to `X-Forwarded-For`, such as Caddy without the `header_up X-Real-IP` line or a load balancer, needs `client_ip_header: X-Forwarded-For` under `listen`; Kazari then reads the last entry, the one that proxy added. Kazari reads only the header you name and ignores the other.
 
 > [!WARNING]
-> Use proxy mode behind exactly one proxy, and do not expose the plain port. A client that reaches the port directly can set its own `X-Forwarded-For` and pick its own IP. Behind a chain of two proxies, such as a CDN and then a proxy, the per-IP limits apply to the outer proxy's address.
+> Use proxy mode behind exactly one proxy, and do not expose the plain port. A client that reaches the port directly can set the header Kazari reads and pick its own IP. Behind a chain of two proxies, such as a CDN and then a proxy, the per-IP limits apply to the outer proxy's address.
 
 ## Checking the setup
 

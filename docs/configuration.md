@@ -233,13 +233,13 @@ Where Kazari accepts connections:
 | `https`            | string | `:443`            | TLS listener address. Required unless `proxy_mode` is on.                |
 | `http`             | string | `:80`             | Plain HTTP listener; `""` disables it.                                   |
 | `proxy_mode`       | bool   | `false`           | Serve plain HTTP behind one TLS-terminating proxy.                       |
-| `client_ip_header` | string | `X-Forwarded-For` | In proxy mode, the header that carries the client's address: `X-Forwarded-For` or `X-Real-IP`. |
+| `client_ip_header` | string | `X-Real-IP`       | In proxy mode, the header your proxy sets to the client's address: `X-Real-IP` or `X-Forwarded-For`. |
 
 Each address is `host:port`. A bare port such as `8080` fails validation: write `127.0.0.1:8080` for this machine only, or `:8080` for every address.
 
 Outside proxy mode, the `http` listener answers `/health` and redirects every request for the base domain or its subdomains to HTTPS with a `301`. In proxy mode it is the only listener, and it is required.
 
-In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the one header `client_ip_header` names, and ignores the other. With `X-Forwarded-For` it reads the last entry, the one your proxy added; with `X-Real-IP`, the whole value. Without a valid address there, it uses the address of the connection. Caddy and Traefik set `X-Forwarded-For` by default; nginx sets it with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, as in the [nginx example](certificates.md#nginx). Choose `X-Real-IP` only for a proxy that sets that header and not `X-Forwarded-For`. Bind `http` where only the proxy reaches it, such as `127.0.0.1:8080`; `kazari check` warns about an address that is neither loopback nor private. `/health` answers on any `Host` outside the base domain, so a probe can target the backend by its address. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
+In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the one header `client_ip_header` names, and ignores the other. With `X-Real-IP` it reads the whole value; with `X-Forwarded-For`, the last entry, the one your proxy added. Without a valid address there, it uses the address of the connection. The `Caddyfile` in `deploy/` and the [Caddy](certificates.md#caddy) and [nginx](certificates.md#nginx) examples set `X-Real-IP`. A proxy that only appends to `X-Forwarded-For`, such as Caddy without the `header_up X-Real-IP` line or a load balancer, needs `client_ip_header: X-Forwarded-For`. Bind `http` where only the proxy reaches it, such as `127.0.0.1:8080`; `kazari check` warns about an address that is neither loopback nor private. `/health` answers on any `Host` outside the base domain, so a probe can target the backend by its address. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
 
 ### `tls`
 

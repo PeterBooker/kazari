@@ -36,8 +36,8 @@ listen:
   # listen.http to the proxy's side, such as "127.0.0.1:8080"
   proxy_mode: false
   # In proxy mode, the one header the proxy sets to the client's address:
-  # X-Forwarded-For (its last entry) or X-Real-IP. The other is ignored.
-  client_ip_header: X-Forwarded-For
+  # X-Real-IP, or X-Forwarded-For (its last entry). The other is ignored.
+  client_ip_header: X-Real-IP
 
 tls:
   mode: acme                         # acme | files | self-signed

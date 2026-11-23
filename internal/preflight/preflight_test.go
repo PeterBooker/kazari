@@ -213,12 +213,12 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe = %q, want %q", got, want)
 	}
 	local := config.Local()
-	if got := Describe(local, config.Origin{}); got != "environment only, base domain kazari.localhost, mode proxy, client IP from X-Forwarded-For, data in .data" {
+	if got := Describe(local, config.Origin{}); got != "environment only, base domain kazari.localhost, mode proxy, client IP from X-Real-IP, data in .data" {
 		t.Errorf("Describe(local) = %q", got)
 	}
-	local.Listen.ClientIPHeader = "X-Real-IP"
-	if got, want := Describe(local, config.Origin{}), "environment only, base domain kazari.localhost, mode proxy, client IP from X-Real-IP, data in .data"; got != want {
-		t.Errorf("Describe(local, X-Real-IP) = %q, want %q", got, want)
+	local.Listen.ClientIPHeader = "X-Forwarded-For"
+	if got, want := Describe(local, config.Origin{}), "environment only, base domain kazari.localhost, mode proxy, client IP from X-Forwarded-For, data in .data"; got != want {
+		t.Errorf("Describe(local, X-Forwarded-For) = %q, want %q", got, want)
 	}
 }
 
