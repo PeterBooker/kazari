@@ -312,7 +312,7 @@ Put the client secret in the environment file, not the YAML:
 KAZARI_AUTH_OIDC_CLIENT_SECRET=the-client-secret
 ```
 
-At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server starts anyway and serves its pages, logs `identity provider unreachable` with the error, and tries again every 30 seconds through the `oidc-discovery` job. Until it succeeds, sign-in answers `503` with "Sign-in is temporarily unavailable". Kazari requests the scopes `openid email profile`.
+At startup, Kazari discovers the provider from `<issuer>/.well-known/openid-configuration`. If discovery fails, the server starts anyway and serves its pages, logs `identity provider unreachable` with the error, and tries again every 30 seconds through the `oidc-discovery` job. Until it succeeds, sign-in answers `503` with "Sign-in is temporarily unavailable". Each request to the provider, for discovery, the token exchange or its signing keys, gives up after 10 seconds without an answer. Kazari requests the scopes `openid email profile`.
 
 `kazari check` and `kazari admin ready` fetch the discovery document too, and fail with what to fix when the issuer cannot be reached or names itself differently.
 

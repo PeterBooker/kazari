@@ -39,6 +39,7 @@ type fakeOP struct {
 	down            bool   // discovery answers 503
 	claims          map[string]any
 	signer          *rsa.PrivateKey
+	keysHeld        chan struct{} // non-nil: the key endpoint answers once it is closed
 }
 
 func newFakeOP(t *testing.T) *fakeOP {
@@ -71,6 +72,16 @@ func newFakeOP(t *testing.T) *fakeOP {
 		})
 	})
 	mux.HandleFunc("GET /jwks", func(w http.ResponseWriter, r *http.Request) {
+		op.mu.Lock()
+		held := op.keysHeld
+		op.mu.Unlock()
+		if held != nil {
+			select {
+			case <-held:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		pub := op.key.PublicKey
 		writeJSON(w, map[string]any{"keys": []map[string]string{{
 			"kty": "RSA", "kid": "test", "use": "sig", "alg": "RS256",
@@ -252,6 +263,39 @@ func TestExchange(t *testing.T) {
 				t.Errorf("identity (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestExchangeKeysNotAnswering(t *testing.T) {
+	op := newFakeOP(t)
+	held := make(chan struct{})
+	op.mu.Lock()
+	op.claims, op.keysHeld = op.baseClaims(), held
+	op.mu.Unlock()
+	p, err := oidc.New(t.Context(), oidc.WithTimeout(oidc.Config{
+		Issuer:      op.srv.URL,
+		ClientID:    clientID,
+		RedirectURL: "https://mcp.art.example/oauth/callback",
+	}, 50*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	done := make(chan error, 1)
+	wg.Go(func() {
+		_, err := p.Exchange(context.Background(), "good-code", nonce, verifier)
+		done <- err
+	})
+	t.Cleanup(wg.Wait)
+	t.Cleanup(func() { close(held) })
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "verify") {
+			t.Errorf("Exchange with a key endpoint that does not answer = %v, want a verify error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("Exchange with a key endpoint that does not answer did not return within 10s")
 	}
 }
 

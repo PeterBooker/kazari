@@ -43,6 +43,12 @@ var googleConsumerDomains = []string{"gmail.com", "googlemail.com"}
 // email_verified, but the tenant's mail addresses are verified.
 const entraHost = "login.microsoftonline.com"
 
+// requestTimeout bounds each request to the provider. go-oidc fetches the
+// signing keys detached from the sign-in's context, and every later sign-in
+// waits on that fetch, so only the client's timeout ends one that never
+// answers.
+const requestTimeout = 10 * time.Second
+
 // Config describes the upstream provider.
 type Config struct {
 	Issuer       string
@@ -59,6 +65,8 @@ type Config struct {
 	Telemetry               instrument.Providers
 	// Fetch records the requests to the provider; nil records nothing.
 	Fetch *fetch.Observer
+
+	timeout time.Duration
 }
 
 func (c Config) check() error {
@@ -92,12 +100,13 @@ func New(ctx context.Context, cfg Config) (_ *Provider, err error) {
 	if len(cfg.Scopes) == 0 {
 		cfg.Scopes = DefaultScopes
 	}
-	if cfg.HTTPClient == nil && cfg.Fetch != nil {
-		cfg.HTTPClient = &http.Client{Transport: cfg.Fetch.Transport(http.DefaultTransport)}
+	if cfg.HTTPClient == nil {
+		if cfg.timeout <= 0 {
+			cfg.timeout = requestTimeout
+		}
+		cfg.HTTPClient = &http.Client{Timeout: cfg.timeout, Transport: cfg.Fetch.Transport(http.DefaultTransport)}
 	}
-	if cfg.HTTPClient != nil {
-		ctx = gooidc.ClientContext(ctx, cfg.HTTPClient)
-	}
+	ctx = gooidc.ClientContext(ctx, cfg.HTTPClient)
 	if cfg.InsecureSkipIssuerCheck {
 		ctx = gooidc.InsecureIssuerURLContext(ctx, cfg.Issuer)
 	}
@@ -156,11 +165,7 @@ func (p *Provider) Exchange(ctx context.Context, code, nonce, codeVerifier strin
 	if code == "" {
 		return auth.Identity{}, errors.New("oidc: callback has no code")
 	}
-	ctx = fetch.WithPurpose(ctx, fetch.PurposeOIDC)
-	if p.client != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, p.client)
-		ctx = gooidc.ClientContext(ctx, p.client)
-	}
+	ctx = gooidc.ClientContext(fetch.WithPurpose(ctx, fetch.PurposeOIDC), p.client)
 	tok, err := p.exchange(ctx, code, codeVerifier)
 	if err != nil {
 		return auth.Identity{}, fmt.Errorf("oidc: exchange code: %w", err)
