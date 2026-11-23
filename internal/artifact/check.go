@@ -437,7 +437,7 @@ func PageTitle(data []byte) string {
 				return r
 			}, string(z.Text()))
 			title = strings.Join(strings.Fields(title), " ")
-			title = truncate(title, NameMaxBytes)
+			title = strings.TrimRight(truncate(title, NameMaxBytes), " ")
 			if ValidateName(title) != nil {
 				return ""
 			}
