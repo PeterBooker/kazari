@@ -1064,6 +1064,33 @@ func (s *ArtifactStore) BlobReferenced(ctx context.Context, hash string) (_ bool
 	return referenced, nil
 }
 
+func (s *ArtifactStore) KnownBlobs(ctx context.Context, hashes []string) (_ map[string]bool, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.KnownBlobs")
+	defer func() { end(err) }()
+	known := map[string]bool{}
+	if len(hashes) == 0 {
+		return known, nil
+	}
+	list, err := json.Marshal(hashes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT hash FROM blob WHERE hash IN (SELECT value FROM json_each(?))`, string(list))
+	found, err := collect(rows, err, func(row rowScanner) (string, error) {
+		var h string
+		err := row.Scan(&h)
+		return h, err
+	})
+	if err != nil {
+		return nil, artifactErr("known blobs", err)
+	}
+	for _, h := range found {
+		known[h] = true
+	}
+	return known, nil
+}
+
 func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlob")
 	defer func() { end(err) }()

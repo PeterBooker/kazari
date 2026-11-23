@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -533,6 +534,41 @@ func TestAdminListener(t *testing.T) {
 	pub := client(in.app.Addrs().HTTP)
 	wantStatus(t, get(t, pub, "http://admin.localhost/metrics"), http.StatusNotFound, "public admin /metrics")
 	wantStatus(t, do(t, pub, http.MethodGet, "http://admin.localhost/v1/users", adminToken, ""), http.StatusNotFound, "public admin /v1/users")
+}
+
+// A blob file that no row records, as a crash in the middle of a publish
+// leaves it, goes at the gc job's daily sweep once it is a day old.
+func TestGCSweepsOrphanBlobs(t *testing.T) {
+	cfg := testConfig(t)
+	in := start(t, cfg)
+	write := func(content string, age time.Duration) string {
+		t.Helper()
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+		p := filepath.Join(cfg.BlobDir(), hash[:2], hash)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mtime := in.clock.Now().Add(-age)
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	old := write("left by a crash", 48*time.Hour)
+	recent := write("being published", time.Minute)
+
+	if err := in.app.Scheduler().Trigger(context.Background(), "gc"); err != nil {
+		t.Fatalf("trigger gc: %v", err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("old file no row records after gc: Stat err = %v, want it removed", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Errorf("recent file after gc: %v, want it kept", err)
+	}
 }
 
 func TestWriteBudgetShared(t *testing.T) {

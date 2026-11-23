@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,15 +224,62 @@ func (f *FS) RemoveStaleTemp(before time.Time) (int, error) {
 	return n, errors.Join(errs...)
 }
 
+// List yields every stored blob, and nothing a Put has not finished. It
+// walks dir/<hash[0:2]>/ in order, skipping temp files and any name that is
+// not a blob where Open would find it. An error ends the sequence.
+func (f *FS) List(ctx context.Context) iter.Seq2[Info, error] {
+	return func(yield func(Info, error) bool) {
+		prefixes, err := os.ReadDir(f.dir)
+		if err != nil {
+			yield(Info{}, fmt.Errorf("blob: list: %w", err))
+			return
+		}
+		for _, p := range prefixes {
+			if !p.IsDir() || len(p.Name()) != 2 || !lowerHex(p.Name()) {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				yield(Info{}, err)
+				return
+			}
+			entries, err := os.ReadDir(filepath.Join(f.dir, p.Name()))
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				yield(Info{}, fmt.Errorf("blob: list: %w", err))
+				return
+			}
+			for _, e := range entries {
+				if !e.Type().IsRegular() || !ValidHash(e.Name()) || e.Name()[:2] != p.Name() {
+					continue
+				}
+				fi, err := e.Info()
+				if errors.Is(err, os.ErrNotExist) {
+					continue // deleted since the directory was read
+				}
+				if err != nil {
+					yield(Info{}, fmt.Errorf("blob: list: %w", err))
+					return
+				}
+				if !yield(Info{Hash: e.Name(), Size: fi.Size(), ModTime: fi.ModTime()}, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
 func (f *FS) path(hash string) string {
 	return filepath.Join(f.dir, hash[:2], hash)
 }
 
 // ValidHash reports whether s is 64 lower-case hex characters.
 func ValidHash(s string) bool {
-	if len(s) != sha256.Size*2 {
-		return false
-	}
+	return len(s) == sha256.Size*2 && lowerHex(s)
+}
+
+func lowerHex(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {

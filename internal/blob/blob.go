@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 // ErrNotFound is returned by Open and Stat for an unknown hash.
@@ -20,4 +21,12 @@ type Store interface {
 	Stat(ctx context.Context, hash string) (size int64, err error)
 	// Delete of an unknown hash is not an error.
 	Delete(ctx context.Context, hash string) error
+}
+
+// Info describes a stored blob, as a listing yields it. ModTime is when it
+// was last written: a Put of content already stored leaves it as it was.
+type Info struct {
+	Hash    string
+	Size    int64
+	ModTime time.Time
 }

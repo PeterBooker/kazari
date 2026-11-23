@@ -334,3 +334,11 @@ type SweepReport struct {
 	Freed           int // tombstones removed
 	VersionsDeleted int // past an artifact's MetaKeepVersions
 }
+
+// OrphanReport counts what one SweepOrphans removed. Ran is false when the
+// last sweep was too recent to run another.
+type OrphanReport struct {
+	Ran     bool
+	Removed int   // blob files no row recorded
+	Bytes   int64 // their size
+}

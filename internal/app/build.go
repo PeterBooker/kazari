@@ -389,6 +389,10 @@ func (a *App) jobs(p *parts, opts Options) []scheduler.Job {
 			if n > 0 {
 				log.InfoContext(ctx, "gc", "blobs_deleted", n)
 			}
+			orphans, oerr := p.arts.SweepOrphans(ctx)
+			if orphans.Removed > 0 {
+				log.InfoContext(ctx, "gc", "orphans_removed", orphans.Removed, "orphan_bytes", orphans.Bytes)
+			}
 			cutoff := now().Add(-staleTempAge)
 			puts, perr := p.blobs.RemoveStaleTemp(cutoff)
 			spills, serr := httpapi.RemoveStaleSpills(tempDir(cfg), cutoff)
@@ -397,7 +401,7 @@ func (a *App) jobs(p *parts, opts Options) []scheduler.Job {
 			if puts+spills+downloads+copies > 0 {
 				log.InfoContext(ctx, "gc", "temp_files_removed", puts+spills+downloads+copies)
 			}
-			return errors.Join(err, perr, serr, derr, berr)
+			return errors.Join(err, oerr, perr, serr, derr, berr)
 		}},
 		{Name: "uploads-expire", Every: uploadsExpireEvery, Run: func(ctx context.Context) error {
 			n, err := p.uploads.ExpireStale(ctx)

@@ -302,7 +302,7 @@ How long stale and deleted artifacts last, and how often the jobs that retire th
 | `retention`      | duration | `720h` (30 days)   | Time a soft-deleted artifact stays restorable before the sweep purges it.         |
 | `tombstone`      | duration | `2160h` (90 days)  | Time a purged slug stays reserved, answering `410`, before it is freed.           |
 | `sweep_interval` | duration | `15m`              | How often the `sweep` job runs.                                                   |
-| `gc_interval`    | duration | `1h`               | How often the `gc` job deletes unreferenced blobs.                                |
+| `gc_interval`    | duration | `1h`               | How often the `gc` job deletes unreferenced blobs. Its orphan sweep runs once a day whatever the interval. |
 
 [The page lifecycle](ops.md#lifecycle) shows how these combine.
 
