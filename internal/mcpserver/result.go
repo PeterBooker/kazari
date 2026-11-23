@@ -78,6 +78,10 @@ type warned interface{ warningLines() []string }
 
 func (r WriteResult) warningLines() []string { return r.Warnings }
 
+// contentful is a result that brings its own content blocks, in place of
+// the summary and the JSON.
+type contentful interface{ content() []mcp.Content }
+
 // resultMeta is a result with _meta for the preview, which hosts show the
 // user but not the model.
 type resultMeta interface{ meta() mcp.Meta }

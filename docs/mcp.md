@@ -443,7 +443,7 @@ The result has `staged: true`, and its first line says where the version opens:
 Staged version 5 at https://q3-report--v5.art.example.com/, which only people signed in to this instance can open; https://q3-report.art.example.com/ still serves version 4 until publish_version 5
 ```
 
-A staged change builds on the latest version, so further staged changes carry on from the first without `base_version`. `publish_version` with the staged version's number makes it live. Share links do not open a staged version, and `create_share_link` refuses one with `invalid_argument` ([staging a version](api.md#staging-a-version)).
+A staged change builds on the latest version, so further staged changes carry on from the first without `base_version`. `publish_version` with the staged version's number makes it live. Staging needs files or edits: `update_artifact` with `stage` and no files fails with `invalid_argument`, even when it also sets the visibility. Share links do not open a staged version, and `create_share_link` refuses one with `invalid_argument` ([staging a version](api.md#staging-a-version)).
 
 ### Edit results
 

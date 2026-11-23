@@ -52,6 +52,36 @@ func TestCreateJSON(t *testing.T) {
 	}
 }
 
+// Inline base64 is read as over MCP: unpadded, broken into lines, as a data:
+// URL, and with the encoding's name in any case.
+func TestCreateJSONLenientBase64(t *testing.T) {
+	e := newEnv(t, config{})
+	png := []byte{0x89, 'P', 'N', 'G', 0, 1, 2, 3}
+	padded := base64.StdEncoding.EncodeToString(png)
+	sent := map[string]api.FileInput{
+		"unpadded.png": {Content: base64.RawStdEncoding.EncodeToString(png), Encoding: "base64"},
+		"spaced.png":   {Content: padded[:4] + " \t" + padded[4:], Encoding: "base64"},
+		"data.png":     {Content: "data:image/png;base64," + padded, Encoding: "Base64"},
+		"notes.txt":    {Content: "plain", Encoding: "UTF-8"},
+	}
+	var files []api.FileInput
+	for path, f := range sent {
+		f.Path = path
+		files = append(files, f)
+	}
+	e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "demo", Files: files},
+		http.StatusCreated, nil)
+	for path := range sent {
+		want := string(png)
+		if path == "notes.txt" {
+			want = "plain"
+		}
+		if got := e.read(e.alice, "demo", path, 0); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestCreateMultipart(t *testing.T) {
 	e := newEnv(t, config{})
 	html := "<!doctype html><h1>bundle</h1>"
@@ -246,10 +276,15 @@ func TestCreateErrors(t *testing.T) {
 }
 
 func TestBodyCaps(t *testing.T) {
-	e := newEnv(t, config{user: httpapi.UserOptions{MaxBodyBytes: 512}})
-	body := mustJSON(t, api.CreateArtifactRequest{Slug: "big", Files: []api.FileInput{{Path: "a.txt", Content: strings.Repeat("x", 600)}}})
+	e := newEnv(t, config{user: httpapi.UserOptions{MaxBodyBytes: 1024}})
+	body := mustJSON(t, api.CreateArtifactRequest{Slug: "big", Files: []api.FileInput{{Path: "a.txt", Content: strings.Repeat("x", 1400)}}})
 	e.apiErr(e.send(req{method: http.MethodPost, url: e.u("/v1/artifacts"), token: e.alice,
 		body: bytes.NewReader(body), contentType: "application/json"}), 413, api.CodeTooLarge)
+
+	// The cap is the body limit in base64, so base64 can carry nearly as many bytes as a bundle.
+	e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "fits", Files: []api.FileInput{
+		{Path: "a.bin", Content: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, 900)), Encoding: "base64"}}},
+		http.StatusCreated, nil)
 
 	mp, ct := multipartBody(t, part{"manifest", []byte(`{"slug":"bomb"}`)},
 		part{"bundle", tarGz(t, tarEntry{name: "a.txt", body: strings.Repeat("0", 4096)})})

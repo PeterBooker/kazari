@@ -26,9 +26,6 @@ import (
 // to the declared digest, so whoever holds a leaked URL can stage nothing but
 // bytes the owner already has.
 func (h *userAPI) receiveArchive(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
-	if h.d.Uploads == nil {
-		return artifact.ErrUploadNotFound
-	}
 	ctx := r.Context()
 	id, token := r.PathValue("id"), r.URL.Query().Get("token")
 	u, err := h.d.Uploads.Archive(ctx, id, token)

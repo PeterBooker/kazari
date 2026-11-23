@@ -252,7 +252,9 @@ At least one file is required.
 
 Text fields must be valid UTF-8, without control characters (C0, DEL, C1) and without the bidirectional override and isolate characters (U+202A to U+202E, U+2066 to U+2069). `description` can contain newlines and tabs. The same rules apply to updates and over MCP, and a violation is `422 invalid_argument`.
 
-The whole JSON body is capped at `limits.max_version_bytes` plus 1 MiB. Base64 content is a third larger than the bytes it carries, so it reaches the cap sooner: send anything large as a bundle or a chunked upload.
+Base64 content can be unpadded, can contain line breaks, spaces and tabs, and can start with a `data:<type>;base64,` prefix, which is dropped. `encoding` is read in any case, and `utf-8` and `text` also mean UTF-8. An unknown encoding or invalid base64 is `422 invalid_argument`.
+
+A JSON body with files is capped at the base64 size of `limits.max_version_bytes` plus 1 MiB, a third more than that sum, so a whole version fits inline in base64. Base64 still costs a third more to send than a bundle: send anything large as a bundle or a chunked upload.
 
 #### Files named by URL
 

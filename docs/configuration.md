@@ -282,7 +282,7 @@ Sizes, counts and rates per version, user and credential:
 | `upload_ttl`            | duration | `1h`    | How long an upload, and the archive URL of one, stays open before the `uploads-expire` job removes it. |
 | `max_open_uploads`      | integer  | `5`     | Open uploads per user.                                                   |
 
-`max_version_bytes` also bounds a request body and a bundle's decompressed tar stream, each with 1 MiB of headroom, one upload, and the archive sent to an upload's archive URL.
+`max_version_bytes` also bounds a request body and a bundle's decompressed tar stream, each with 1 MiB of headroom, one upload, the files one request names by URL, and the archive sent to an upload's archive URL. A JSON body with inline files, over the API or MCP, can be a third larger than the version and its headroom, the size of both in base64.
 
 `write_rate_per_minute` allows a burst of the same size. It is one budget across the user API and the MCP write tools. Beyond it, the API answers `429` and MCP returns a `rate_limited` error.
 

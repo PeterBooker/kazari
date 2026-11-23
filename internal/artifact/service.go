@@ -387,8 +387,10 @@ func (s *Service) ownerQuota(ctx context.Context, actor Actor, owner string) (in
 }
 
 // Update changes fields and, unless req.Files is empty, adds a version of
-// the latest files plus the changes; otherwise the version is nil.
-func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (_ *Artifact, v *Version, err error) {
+// the latest files plus the changes; otherwise the version is nil. The
+// visibility comes last, through SetVisibility; a request that only sets it
+// changes nothing else.
+func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (a *Artifact, v *Version, err error) {
 	ctx, span := s.span(ctx, "artifact.update", req.Slug)
 	defer func() {
 		if len(req.Files) > 0 {
@@ -397,7 +399,24 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		versionAttrs(span, v)
 		endSpan(span, err)
 	}()
-	return s.update(ctx, actor, req)
+	if req.Visibility == nil {
+		return s.update(ctx, actor, req)
+	}
+	vis := string(*req.Visibility)
+	if err := checkVisibility(vis); err != nil {
+		return nil, nil, err
+	}
+	if !req.VisibilityOnly() {
+		fields := req
+		fields.Visibility = nil
+		if _, v, err = s.update(ctx, actor, fields); err != nil {
+			return nil, nil, err
+		}
+	}
+	if a, err = s.SetVisibility(ctx, actor, req.Slug, vis); err != nil {
+		return nil, nil, err
+	}
+	return a, v, nil
 }
 
 // update is Update without its span and count, for Edit, which publishes
@@ -565,7 +584,7 @@ func (s *Service) unchanged(ctx context.Context, actor Actor, req UpdateRequest)
 	fields.Files = nil
 	var got *Artifact
 	var err error
-	if req.Name == nil && req.Description == nil && req.Visibility == nil && len(req.Metadata) == 0 && !req.Restore {
+	if req.Name == nil && req.Description == nil && len(req.Metadata) == 0 && !req.Restore {
 		got, err = s.store.Get(ctx, req.Slug)
 	} else {
 		got, _, err = s.update(ctx, actor, fields)
@@ -710,18 +729,6 @@ func (s *Service) applyFields(a *Artifact, req UpdateRequest) error {
 			return err
 		}
 		a.Description = *req.Description
-	}
-	if req.Visibility != nil {
-		// ParseVisibility reads "" as public, the create default; here it
-		// would quietly open a members page to everyone.
-		if *req.Visibility == "" {
-			return Errorf(ErrInvalidArgument, "visibility must be %q, %q or %q", Public, Unlisted, Members)
-		}
-		vis, err := ParseVisibility(string(*req.Visibility))
-		if err != nil {
-			return err
-		}
-		a.Visibility = vis
 	}
 	if len(req.Metadata) > 0 {
 		m := maps.Clone(a.Metadata)

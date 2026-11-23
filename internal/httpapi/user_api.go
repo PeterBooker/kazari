@@ -16,6 +16,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
@@ -25,7 +26,8 @@ import (
 
 const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
 
-// UserDeps are the collaborators of the user API.
+// UserDeps are the collaborators of the user API. Every field is required
+// unless its comment says otherwise.
 type UserDeps struct {
 	Artifacts *artifact.Service
 	Uploads   *upload.Service
@@ -42,10 +44,13 @@ type UserDeps struct {
 
 // UserOptions tunes the user API. Zero fields take the defaults noted.
 type UserOptions struct {
-	// MaxBodyBytes caps JSON bodies with inline files, the multipart stream
-	// and a bundle's uncompressed size. Default: the default version size
-	// plus 1 MiB.
+	// MaxBodyBytes caps the multipart stream and a bundle's uncompressed
+	// size, and a JSON body with inline files at its size in base64.
+	// Default: MaxVersionBytes plus 1 MiB.
 	MaxBodyBytes int64
+	// MaxVersionBytes caps the files one request names by url, together.
+	// Default: artifact.DefaultMaxVersionBytes.
+	MaxVersionBytes int64
 	// MaxChunkBytes caps one upload chunk. Default: the upload service's.
 	MaxChunkBytes int64
 	// MaxFileBytes caps a file named by url. Default: artifact.DefaultMaxFileBytes.
@@ -69,14 +74,14 @@ type UserOptions struct {
 }
 
 func (o UserOptions) withDefaults(d UserDeps) UserOptions {
+	if o.MaxVersionBytes <= 0 {
+		o.MaxVersionBytes = artifact.DefaultMaxVersionBytes
+	}
 	if o.MaxBodyBytes <= 0 {
-		o.MaxBodyBytes = artifact.DefaultMaxVersionBytes + 1<<20
+		o.MaxBodyBytes = o.MaxVersionBytes + 1<<20
 	}
 	if o.MaxChunkBytes <= 0 {
-		o.MaxChunkBytes = upload.DefaultMaxChunkBytes
-		if d.Uploads != nil {
-			o.MaxChunkBytes = d.Uploads.MaxChunkBytes()
-		}
+		o.MaxChunkBytes = d.Uploads.MaxChunkBytes()
 	}
 	if o.MaxTotalBytes <= 0 {
 		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
@@ -95,8 +100,9 @@ func (o UserOptions) withDefaults(d UserDeps) UserOptions {
 
 type userAPI struct {
 	base
-	d UserDeps
-	o UserOptions
+	d      UserDeps
+	o      UserOptions
+	intake *intake.Intake
 }
 
 // NewUserAPI returns the /v1 handler of the api host. Every route requires a
@@ -104,7 +110,9 @@ type userAPI struct {
 // artifacts:delete.
 func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
-	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o}
+	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o,
+		intake: intake.New(intake.Deps{Uploads: d.Uploads, Fetch: d.Fetch, Logger: d.Logger},
+			intake.Options{MaxFileBytes: o.MaxFileBytes, MaxVersionBytes: o.MaxVersionBytes})}
 
 	mux := http.NewServeMux()
 	for _, rt := range h.routes() {
@@ -224,23 +232,28 @@ func (h *userAPI) createArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	return unsupported()
 }
 
+// jsonFilesLimit caps a JSON body with inline files, which carries binary
+// content in base64.
+func (h *userAPI) jsonFilesLimit() int64 { return intake.EncodedLen(h.o.MaxBodyBytes) }
+
 func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	var req api.CreateArtifactRequest
-	if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
+	if err := decodeJSON(w, r, h.jsonFilesLimit(), &req, false); err != nil {
 		return err
 	}
 	if err := present.RequireShare(p, req.Visibility); err != nil {
 		return err
 	}
-	files, closeDownloads, err := h.inlineFiles(r.Context(), req.Files, false)
+	if req.SourceURL != "" && req.UploadID != "" {
+		return invalid("source_url cannot be combined with upload_id")
+	}
+	files, done, err := h.intake.Files(r.Context(), intake.Call{Owner: p.Handle, UploadID: req.UploadID,
+		Files: intake.FromWire(req.Files), Create: true})
 	if err != nil {
 		return err
 	}
-	defer closeDownloads()
 	if req.SourceURL != "" {
-		if req.UploadID != "" {
-			return invalid("source_url cannot be combined with upload_id")
-		}
+		defer done(false)
 		a, v, rep, err := h.d.Artifacts.Import(r.Context(), present.Actor(p), artifact.ImportRequest{
 			URL:         req.SourceURL,
 			Slug:        req.Slug,
@@ -257,10 +270,6 @@ func (h *userAPI) createJSON(w http.ResponseWriter, r *http.Request, p auth.Prin
 		}
 		writeJSON(w, http.StatusCreated, h.links.Imported(a, v, rep))
 		return nil
-	}
-	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
-	if err != nil {
-		return err
 	}
 	err = h.create(w, r, p, artifact.CreateRequest{
 		Slug:        req.Slug,
@@ -366,7 +375,7 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	}
 	switch mediaType(r) {
 	case "application/json":
-		if err := decodeJSON(w, r, h.o.MaxBodyBytes, &req, false); err != nil {
+		if err := decodeJSON(w, r, h.jsonFilesLimit(), &req, false); err != nil {
 			return err
 		}
 	case "multipart/form-data":
@@ -385,19 +394,14 @@ func (h *userAPI) updateArtifact(w http.ResponseWriter, r *http.Request, p auth.
 	default:
 		return unsupported()
 	}
-	files, closeDownloads, err := h.inlineFiles(r.Context(), req.Files, true)
-	if err != nil {
-		return err
-	}
-	defer closeDownloads()
+	call := intake.Call{Owner: p.Handle, UploadID: req.UploadID, Files: intake.FromWire(req.Files)}
 	if bundle != nil {
-		bf := bundle.files
+		call.Bundle = bundle.files
 		if req.Mirror {
-			bf = stripTopDir(bf)
+			call.Bundle = stripTopDir(call.Bundle)
 		}
-		files = artifact.MergeFiles(files, bf)
 	}
-	files, done, err := h.withUpload(r.Context(), p.Handle, req.UploadID, files)
+	files, done, err := h.intake.Files(r.Context(), call)
 	if err != nil {
 		return err
 	}
@@ -524,64 +528,42 @@ func (h *userAPI) patchArtifact(w http.ResponseWriter, r *http.Request, p auth.P
 	return h.update(w, r, p, req, nil)
 }
 
-// update applies visibility through SetVisibility, so "unpublished" works and
-// the others re-publish, and last, so a restore comes first.
+// update makes one Update of req, which applies the visibility last. A
+// request that only sets the visibility needs artifacts:share alone, as
+// set_visibility does.
 func (h *userAPI) update(w http.ResponseWriter, r *http.Request, p auth.Principal, req api.UpdateArtifactRequest, files []artifact.FileInput) error {
-	slug := r.PathValue("slug")
 	expected, err := expectedVersion(r, req.ExpectedVersion)
 	if err != nil {
 		return err
 	}
+	ur := artifact.UpdateRequest{
+		Slug:            r.PathValue("slug"),
+		Name:            req.Name,
+		Description:     req.Description,
+		Metadata:        req.Metadata,
+		Visibility:      (*artifact.Visibility)(req.Visibility),
+		Label:           req.Label,
+		ExpectedVersion: expected,
+		BaseVersion:     req.BaseVersion,
+		KeepStale:       req.KeepStale,
+		Restore:         req.Restore,
+		Stage:           req.Stage,
+		Files:           files,
+	}
 	if req.Visibility != nil {
-		if !p.HasScope(auth.ScopeShare) {
-			return artifact.Errorf(artifact.ErrForbidden, "scope %q required to change visibility", auth.ScopeShare)
-		}
-		switch *req.Visibility {
-		case string(artifact.Public), string(artifact.Unlisted), string(artifact.Members), artifact.Unpublished:
-		default:
-			return invalid("visibility must be public, unlisted, members or unpublished")
+		if err := present.RequireShare(p, *req.Visibility); err != nil {
+			return err
 		}
 	}
-	actor := present.Actor(p)
-	visibilityOnly := req.Visibility != nil && len(files) == 0 && req.Name == nil && req.Description == nil &&
-		len(req.Metadata) == 0 && !req.Restore && !req.Stage && expected == 0
-	if !visibilityOnly && !p.HasScope(auth.ScopeWrite) {
+	if !ur.VisibilityOnly() && !p.HasScope(auth.ScopeWrite) {
 		return artifact.Errorf(artifact.ErrForbidden, "scope %q required", auth.ScopeWrite)
 	}
-
-	var (
-		a *artifact.Artifact
-		v *artifact.Version
-	)
-	if !visibilityOnly {
-		a, v, err = h.d.Artifacts.Update(r.Context(), actor, artifact.UpdateRequest{
-			Slug:            slug,
-			Name:            req.Name,
-			Description:     req.Description,
-			Metadata:        req.Metadata,
-			Label:           req.Label,
-			ExpectedVersion: expected,
-			BaseVersion:     req.BaseVersion,
-			KeepStale:       req.KeepStale,
-			Restore:         req.Restore,
-			Stage:           req.Stage,
-			Files:           files,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	if req.Visibility != nil {
-		if a, err = h.d.Artifacts.SetVisibility(r.Context(), actor, slug, *req.Visibility); err != nil {
-			return err
-		}
+	a, v, err := h.d.Artifacts.Update(r.Context(), present.Actor(p), ur)
+	if err != nil {
+		return err
 	}
 	if v != nil {
-		res := h.links.Published(a, v)
-		if req.Visibility != nil {
-			res.Artifact = h.links.Artifact(a)
-		}
-		writeJSON(w, http.StatusOK, res)
+		writeJSON(w, http.StatusOK, h.links.Published(a, v))
 		return nil
 	}
 	writeJSON(w, http.StatusOK, h.links.Result(a, 0))
@@ -849,9 +831,6 @@ func setUntrustedHeaders(hdr http.Header) {
 }
 
 func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if h.d.Uploads == nil {
-		return invalid("chunked uploads are not enabled")
-	}
 	var req api.BeginUploadRequest
 	if err := decodeJSON(w, r, jsonLimit, &req, true); err != nil {
 		return err
@@ -875,9 +854,6 @@ func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 }
 
 func (h *userAPI) uploadChunk(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if h.d.Uploads == nil {
-		return invalid("chunked uploads are not enabled")
-	}
 	s := r.URL.Query().Get("offset")
 	if s == "" {
 		return invalid("offset is required")
@@ -901,9 +877,6 @@ func (h *userAPI) uploadChunk(w http.ResponseWriter, r *http.Request, p auth.Pri
 }
 
 func (h *userAPI) abortUpload(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	if h.d.Uploads == nil {
-		return invalid("chunked uploads are not enabled")
-	}
 	if err := h.d.Uploads.Abort(r.Context(), p.Handle, r.PathValue("id")); err != nil {
 		return err
 	}
@@ -922,7 +895,7 @@ func (h *userAPI) me(w http.ResponseWriter, r *http.Request, p auth.Principal) e
 
 func (h *userAPI) myKeys(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
 	out := []api.APIKey{}
-	if p.Source == auth.SourceAPIKey && h.d.Users != nil {
+	if p.Source == auth.SourceAPIKey {
 		keys, err := h.d.Users.ListKeys(r.Context(), p.Handle)
 		if err != nil {
 			return err
@@ -939,7 +912,7 @@ func (h *userAPI) myKeys(w http.ResponseWriter, r *http.Request, p auth.Principa
 // person's keys. A key made or renewed with an OAuth token would outlive
 // the connection it came from, and any connected agent could mint one.
 func (h *userAPI) keyHolder(p auth.Principal) error {
-	if p.Source != auth.SourceAPIKey || h.d.Users == nil {
+	if p.Source != auth.SourceAPIKey {
 		return artifact.Errorf(artifact.ErrForbidden,
 			"an API key is required: an OAuth connection cannot issue, rotate or revoke keys")
 	}

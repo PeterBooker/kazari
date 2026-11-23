@@ -709,6 +709,7 @@ func TestWriteRateLimit(t *testing.T) {
 func TestToolPanicRecovered(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Uploads = nil // begin_upload now dereferences a nil service
+	e.opts.MaxChunkBytes = 1 << 20
 	cs := e.connect(t, member)
 	if msg := fails(t, cs, "begin_upload", map[string]any{}); !strings.HasPrefix(msg, "internal: internal error\nNext step: ") {
 		t.Errorf("panicking tool = %q", msg)
