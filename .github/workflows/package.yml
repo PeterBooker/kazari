@@ -30,6 +30,11 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Check that both Dockerfiles build the same runtime image
+        # Only the lines that bring the binary and the data directory in may differ.
+        run: |
+          runtime() { sed -n '/^FROM gcr.io\/distroless/,$p' "$1" | grep -v -e '^#' -e '^ARG ' -e '^COPY '; }
+          diff <(runtime deploy/Dockerfile) <(runtime deploy/Dockerfile.goreleaser)
       - run: docker build --file deploy/Dockerfile --tag kazari:dev .
       - run: .github/scripts/smoke-image.sh kazari:dev
 

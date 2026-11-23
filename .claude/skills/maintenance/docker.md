@@ -3,7 +3,7 @@
 | Image | In | Rule |
 | ----- | -- | ---- |
 | `golang:<minor>-alpine` | `deploy/Dockerfile` | the `go.mod` minor |
-| `gcr.io/distroless/static-debianNN:nonroot` | both Dockerfiles | same image and digest in both |
+| `gcr.io/distroless/static-debianNN:nonroot` | both Dockerfiles | same image and digest in both, which `package.yml` checks |
 | `busybox:<minor>` | `deploy/Dockerfile.goreleaser` | the latest minor; it only creates an empty data directory |
 
 ## Check
