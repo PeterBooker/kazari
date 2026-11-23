@@ -32,6 +32,46 @@ type Options struct {
 type DB struct {
 	*sql.DB
 	tracer trace.Tracer
+	stmt   statements
+}
+
+// statements are the queries of serving a page, prepared once: the driver
+// otherwise parses a statement on every call, which cost a page request more
+// than running it.
+type statements struct {
+	resolvePublished *sql.Stmt
+	resolveVersion   *sql.Stmt
+	files            *sql.Stmt
+	fileOrigin       *sql.Stmt
+}
+
+func (s *statements) prepare(ctx context.Context, db *sql.DB) error {
+	for _, q := range []struct {
+		stmt  **sql.Stmt
+		query string
+	}{
+		{&s.resolvePublished, artifactResolvePublished},
+		{&s.resolveVersion, artifactResolveVersion},
+		{&s.files, artifactFiles},
+		{&s.fileOrigin, artifactFileOrigin},
+	} {
+		stmt, err := db.PrepareContext(ctx, q.query)
+		if err != nil {
+			return errors.Join(fmt.Errorf("sqlite: prepare: %w", err), s.close())
+		}
+		*q.stmt = stmt
+	}
+	return nil
+}
+
+func (s *statements) close() error {
+	var errs []error
+	for _, stmt := range []*sql.Stmt{s.resolvePublished, s.resolveVersion, s.files, s.fileOrigin} {
+		if stmt != nil {
+			errs = append(errs, stmt.Close())
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Open opens or creates the database at path and applies pending migrations.
@@ -57,8 +97,18 @@ func Open(ctx context.Context, path string, o Options) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
+	out := &DB{DB: db, tracer: o.Telemetry.Tracer(scope)}
+	if err := out.stmt.prepare(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	observePool(o.Telemetry.Meter(scope), db)
-	return &DB{DB: db, tracer: o.Telemetry.Tracer(scope)}, nil
+	return out, nil
+}
+
+// Close closes the prepared statements and then the database.
+func (db *DB) Close() error {
+	return errors.Join(db.stmt.close(), db.DB.Close())
 }
 
 const maxOpenConns = 8

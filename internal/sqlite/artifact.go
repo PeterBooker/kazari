@@ -335,9 +335,11 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 	return nil, artifact.ErrVersionNotFound
 }
 
+const artifactFiles = `SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file
+	WHERE version_id = ? ORDER BY path`
+
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file WHERE version_id = ? ORDER BY path`, versionID)
+	rows, err := s.db.stmt.files.QueryContext(ctx, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -794,9 +796,13 @@ const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(
 	%s, a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
 
 var (
-	artifactResolvePublished = fmt.Sprintf(artifactResolveSelect, "0")
-	artifactResolveVersion   = fmt.Sprintf(artifactResolveSelect,
-		"COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0)")
+	artifactResolvePublished = fmt.Sprintf(artifactResolveSelect, "0") + `
+		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
+		WHERE a.slug = ?`
+	artifactResolveVersion = fmt.Sprintf(artifactResolveSelect,
+		"COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0)") + `
+		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
+		WHERE a.slug = ?`
 )
 
 func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
@@ -823,9 +829,7 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolvePublished")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolvePublished+`
-		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
-		WHERE a.slug = ?`, slug))
+	p, err := scanArtifactPublished(s.db.stmt.resolvePublished.QueryRowContext(ctx, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
@@ -840,9 +844,7 @@ func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *a
 func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolveVersion")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveVersion+`
-		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
-		WHERE a.slug = ?`, number, slug))
+	p, err := scanArtifactPublished(s.db.stmt.resolveVersion.QueryRowContext(ctx, number, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
@@ -870,18 +872,20 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ []artifac
 	return files, nil
 }
 
+const artifactFileOrigin = `
+	SELECT cur.uploaded_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
+	FROM version_file cur
+	JOIN version cv ON cv.id = cur.version_id
+	JOIN artifact a ON a.id = cv.artifact_id
+	JOIN user owner ON owner.id = a.owner_id
+	LEFT JOIN user u ON u.handle = cur.uploaded_by
+	WHERE cur.version_id = ? AND cur.path = ?`
+
 func (s *ArtifactStore) FileOrigin(ctx context.Context, versionID int64, path string) (_ *artifact.FileOrigin, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.FileOrigin")
 	defer func() { end(err) }()
 	var o artifact.FileOrigin
-	err = s.db.QueryRowContext(ctx, `
-		SELECT cur.uploaded_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
-		FROM version_file cur
-		JOIN version cv ON cv.id = cur.version_id
-		JOIN artifact a ON a.id = cv.artifact_id
-		JOIN user owner ON owner.id = a.owner_id
-		LEFT JOIN user u ON u.handle = cur.uploaded_by
-		WHERE cur.version_id = ? AND cur.path = ?`, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
+	err = s.db.stmt.fileOrigin.QueryRowContext(ctx, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
