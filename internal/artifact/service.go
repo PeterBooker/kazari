@@ -419,9 +419,15 @@ func (s *Service) Update(ctx context.Context, actor Actor, req UpdateRequest) (a
 	return a, v, nil
 }
 
-// update is Update without its span and count, for Edit, which publishes
-// through it under its own.
-func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_ *Artifact, v *Version, err error) {
+// update is Update without its span and count.
+func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (*Artifact, *Version, error) {
+	return s.change(ctx, actor, req, false)
+}
+
+// change is update, and for edit an Edit of the one file in req.Files: the
+// version must build on the latest it read, and the edits must change the
+// file.
+func (s *Service) change(ctx context.Context, actor Actor, req UpdateRequest, edit bool) (_ *Artifact, v *Version, err error) {
 	if err := checkSlug(actor, req.Slug); err != nil {
 		return nil, nil, err
 	}
@@ -494,6 +500,10 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
 		return nil, nil, Errorf(ErrVersionConflict, "latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	}
+	expected := req.ExpectedVersion
+	if edit && expected == 0 {
+		expected = a.LatestVersion
+	}
 	baseNumber, err := baseVersion(a, req.BaseVersion, req.Stage)
 	if err != nil {
 		return nil, nil, err
@@ -517,7 +527,7 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 			return nil, nil, err
 		}
 	}
-	inputs, edited, err := s.applyFileEdits(ctx, base, baseNumber, req.Files)
+	inputs, edited, err := s.applyFileEdits(ctx, base, baseNumber, req.Files, edit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -541,7 +551,7 @@ func (s *Service) update(ctx context.Context, actor Actor, req UpdateRequest) (_
 		if v.Label == "" {
 			v.Label = changeLabel(base, files)
 		}
-		return s.store.AddVersion(ctx, req.Slug, v, req.ExpectedVersion, quotaBytes, func(a *Artifact) error {
+		return s.store.AddVersion(ctx, req.Slug, v, expected, quotaBytes, func(a *Artifact) error {
 			if err := apply(a); err != nil {
 				return err
 			}

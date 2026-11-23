@@ -115,70 +115,49 @@ func (s *Service) Edit(ctx context.Context, actor Actor, req EditRequest) (_ *Ar
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	for attempt := 1; ; attempt++ {
-		a, v, out, err := s.editOnce(ctx, actor, req, clean)
-		if CodeOf(err) == ErrVersionConflict.Code && req.ExpectedVersion == 0 && attempt < editAttempts {
-			s.m.editRetries.Add(ctx, 1)
-			continue // a publish raced the read: re-apply to the newer content
-		}
-		return a, v, out, err
-	}
-}
-
-func (s *Service) editOnce(ctx context.Context, actor Actor, req EditRequest, clean string) (*Artifact, *Version, []EditOutcome, error) {
-	a, err := s.store.Get(ctx, req.Slug)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	involved, err := s.involved(ctx, actor, req.Slug)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if err := s.checkWritable(actor, a, involved, false); err != nil {
-		return nil, nil, nil, err
-	}
-	if req.ExpectedVersion != 0 && req.ExpectedVersion != a.LatestVersion {
-		return nil, nil, nil, s.editConflict(ctx, a, req, clean)
-	}
-	base, err := baseVersion(a, req.BaseVersion, req.Stage)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	data, f, err := s.readText(ctx, a.Slug, base, clean)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	edited, out, err := ApplyEdits(clean, data, req.Edits, s.opts.MaxFileBytes)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if edited == data {
-		return nil, nil, nil, Errorf(ErrInvalidArgument, "the edits leave %q unchanged", clean)
-	}
 	label := req.Label
 	if label == "" {
 		label = editLabel(clean, len(req.Edits))
 	}
-	got, v, err := s.update(ctx, actor, UpdateRequest{
-		Slug:            a.Slug,
+	ureq := UpdateRequest{
+		Slug:            req.Slug,
 		Label:           label,
-		ExpectedVersion: a.LatestVersion,
-		BaseVersion:     base, // the version the edits were applied to
+		ExpectedVersion: req.ExpectedVersion,
+		BaseVersion:     req.BaseVersion,
 		KeepStale:       req.KeepStale,
 		Stage:           req.Stage,
-		Files:           []FileInput{{Path: clean, Content: strings.NewReader(edited), ContentType: f.ContentType}},
-	})
-	if err != nil {
-		return nil, nil, nil, err
+		Files:           []FileInput{{Path: clean, Edits: req.Edits}},
 	}
-	return got, v, out, nil
+	for attempt := 1; ; attempt++ {
+		a, v, err := s.change(ctx, actor, ureq, true)
+		if CodeOf(err) == ErrVersionConflict.Code {
+			if req.ExpectedVersion != 0 {
+				return nil, nil, nil, s.editConflict(ctx, req, clean, err)
+			}
+			if attempt < editAttempts {
+				s.m.editRetries.Add(ctx, 1)
+				continue // a publish raced the read: re-apply to the newer content
+			}
+		}
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if len(v.Edited) > 0 {
+			out = v.Edited[0].Outcomes
+		}
+		return a, v, out, nil
+	}
 }
 
 // editConflict is the version_conflict of an edit sent with an old
 // expected_version. It says whether the edits still apply as sent to the
 // version they would now change, so a caller whose edits do not touch what
 // changed resends them without a new read.
-func (s *Service) editConflict(ctx context.Context, a *Artifact, req EditRequest, p string) error {
+func (s *Service) editConflict(ctx context.Context, req EditRequest, p string, conflict error) error {
+	a, err := s.store.Get(ctx, req.Slug)
+	if err != nil {
+		return conflict
+	}
 	msg := fmt.Sprintf("latest version is %d, expected %d", a.LatestVersion, req.ExpectedVersion)
 	number := req.BaseVersion
 	if number <= 0 || number > a.LatestVersion {
@@ -241,8 +220,9 @@ func (s *Service) fileText(ctx context.Context, f File) (string, error) {
 
 // applyFileEdits returns inputs with each entry that carries Edits turned
 // into the edited content of that file of the base version, and how the
-// edits applied.
-func (s *Service) applyFileEdits(ctx context.Context, base map[string]File, number int, inputs []FileInput) ([]FileInput, []FileEdits, error) {
+// edits applied. For an Edit, edits that leave the file as it was are
+// refused.
+func (s *Service) applyFileEdits(ctx context.Context, base map[string]File, number int, inputs []FileInput, edit bool) ([]FileInput, []FileEdits, error) {
 	var out []FileInput
 	var edited []FileEdits
 	for i, in := range inputs {
@@ -257,7 +237,10 @@ func (s *Service) applyFileEdits(ctx context.Context, base map[string]File, numb
 			return nil, nil, err
 		}
 		f, ok := base[p]
-		if !ok {
+		switch {
+		case !ok && edit:
+			return nil, nil, Errorf(ErrFileNotFound, "no file %q in version %d; to add it, send its whole content as a new file", p, number)
+		case !ok:
 			return nil, nil, Errorf(ErrFileNotFound, "no file %q in version %d to edit; to add it, send its whole content", p, number)
 		}
 		data, err := s.fileText(ctx, f)
@@ -267,6 +250,9 @@ func (s *Service) applyFileEdits(ctx context.Context, base map[string]File, numb
 		text, outs, err := ApplyEdits(p, data, in.Edits, s.opts.MaxFileBytes)
 		if err != nil {
 			return nil, nil, err
+		}
+		if edit && text == data {
+			return nil, nil, Errorf(ErrInvalidArgument, "the edits leave %q unchanged", p)
 		}
 		if out == nil {
 			out = slices.Clone(inputs)
