@@ -45,7 +45,7 @@ func TestArtifactMetrics(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
-	e := newEnv(t, artifact.Options{Telemetry: instrument.Providers{MeterProvider: mp}})
+	e := newEnv(t, artifact.Options{Telemetry: instrument.Providers{MeterProvider: mp}, Pages: &fakePages{}})
 	alice := e.user(t, "alice")
 	ctx := instrument.WithSurface(e.ctx, instrument.SurfaceAPI)
 
@@ -66,9 +66,12 @@ func TestArtifactMetrics(t *testing.T) {
 		Edits: []artifact.Edit{{OldText: "x", NewText: "y"}}}); err == nil {
 		t.Fatal("an edit against a stale version succeeded")
 	}
+	if _, _, _, err := e.svc.Import(ctx, alice, artifact.ImportRequest{URL: "https://example.test/", Slug: "copy"}); err != nil {
+		t.Fatal(err)
+	}
 
 	publishes := counts(t, reader, "kazari.artifact.publishes", "kazari.publish.kind", "error.type")
-	for k, want := range map[string]int64{"create/": 1, "update/": 1, "edit/": 1, "rollback/": 1, "edit/version_conflict": 1} {
+	for k, want := range map[string]int64{"create/": 1, "import/": 1, "update/": 1, "edit/": 1, "rollback/": 1, "edit/version_conflict": 1} {
 		if publishes[k] != want {
 			t.Errorf("publishes[%s] = %d, want %d (all %v)", k, publishes[k], want, publishes)
 		}
