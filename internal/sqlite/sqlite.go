@@ -55,7 +55,7 @@ func (s *statements) prepare(ctx context.Context, db *sql.DB) error {
 		{&s.file, artifactFile},
 		{&s.fileOrigin, artifactFileOrigin},
 	} {
-		stmt, err := db.PrepareContext(ctx, q.query)
+		stmt, err := db.PrepareContext(ctx, q.query) //nolint:sqlclosecheck // DB.Close closes it
 		if err != nil {
 			return errors.Join(fmt.Errorf("sqlite: prepare: %w", err), s.close())
 		}
