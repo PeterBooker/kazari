@@ -22,6 +22,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -58,11 +59,13 @@ var errorRows = []struct {
 		elsewhere: "a marker the share-link forms match; the refusals it marks carry invalid_argument"},
 	{name: "artifact.ErrTooManyUploads", err: artifact.ErrTooManyUploads, status: http.StatusForbidden, code: api.CodeTooManyUploads},
 	{name: "artifact.ErrDigestMismatch", err: artifact.ErrDigestMismatch, status: http.StatusUnprocessableEntity, code: api.CodeDigestMismatch},
-	{name: "artifact.ErrEditNotFound", err: artifact.ErrEditNotFound, status: http.StatusUnprocessableEntity, code: api.CodeEditNotFound},
-	{name: "artifact.ErrEditAmbiguous", err: artifact.ErrEditAmbiguous, status: http.StatusUnprocessableEntity, code: api.CodeEditAmbiguous},
-	{name: "artifact.ErrAnchorMismatch", err: artifact.ErrAnchorMismatch, status: http.StatusConflict, code: api.CodeAnchorMismatch},
+	{name: "textedit.ErrNotFound", err: textedit.ErrNotFound, status: http.StatusUnprocessableEntity, code: api.CodeEditNotFound},
+	{name: "textedit.ErrAmbiguous", err: textedit.ErrAmbiguous, status: http.StatusUnprocessableEntity, code: api.CodeEditAmbiguous},
+	{name: "textedit.ErrAnchorMismatch", err: textedit.ErrAnchorMismatch, status: http.StatusConflict, code: api.CodeAnchorMismatch},
+	{name: "textedit.ErrInvalid", err: textedit.ErrInvalid, status: http.StatusUnprocessableEntity, code: api.CodeInvalidArgument},
+	{name: "textedit.ErrTooLarge", err: textedit.ErrTooLarge, status: http.StatusRequestEntityTooLarge, code: api.CodeTooLarge},
 	{name: "artifact.ErrFetchFailed", err: artifact.ErrFetchFailed, status: http.StatusBadGateway, code: api.CodeFetchFailed},
-	{name: "artifact.ErrFileRead", err: artifact.ErrFileRead, elsewhere: "httpapi: it ends a body that is already being streamed"},
+	{name: "textedit.ErrFileRead", err: textedit.ErrFileRead, elsewhere: "httpapi: it ends a body that is already being streamed"},
 
 	{name: "auth.ErrInvalidToken", err: auth.ErrInvalidToken, status: http.StatusUnauthorized, code: api.CodeUnauthorized},
 
@@ -148,7 +151,7 @@ func sentinels(t *testing.T, pkg string) []string {
 
 func TestErrorRowForEverySentinel(t *testing.T) {
 	var want []string
-	for _, pkg := range []string{"artifact", "audit", "auth", "backup", "scheduler", "upload", "user"} {
+	for _, pkg := range []string{"artifact", "audit", "auth", "backup", "scheduler", "textedit", "upload", "user"} {
 		want = append(want, sentinels(t, pkg)...)
 	}
 	if len(want) == 0 {

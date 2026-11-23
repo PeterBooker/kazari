@@ -43,7 +43,7 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	e.clock.Advance(2 * time.Hour)
 
 	pb := &parkBlobs{FS: e.blobs, parked: make(chan struct{}), release: make(chan struct{})}
-	svc := artifact.New(e.store, pb, e.rec, artifact.Options{Now: e.clock.Now})
+	svc := artifact.New(e.store, e.store, pb, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
 	created := make(chan error, 1)
 	go func() {
 		_, _, err := svc.Create(e.ctx, bob, artifact.CreateRequest{Slug: "new-page", Files: files("index.html", content)})
@@ -293,7 +293,7 @@ func TestUpdateKeepsConcurrentChanges(t *testing.T) {
 			e.user(t, "root")
 			e.create(t, alice, "demo")
 			hs := &hookStore{ArtifactStore: e.store}
-			svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Now: e.clock.Now})
+			svc := artifact.New(hs, hs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
 			hs.before = func() {
 				if err := tt.landing(e, alice); err != nil {
 					t.Errorf("concurrent request: %v", err)
@@ -325,7 +325,7 @@ func TestSweepSparesArtifactRestoredSinceListing(t *testing.T) {
 	}
 	e.clock.Advance(2 * time.Hour)
 	hs := &hookStore{ArtifactStore: e.store}
-	svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Retention: time.Hour, Now: e.clock.Now})
+	svc := artifact.New(hs, hs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Retention: time.Hour, Now: e.clock.Now})
 	hs.before = func() {
 		if _, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Restore: true}); err != nil {
 			t.Errorf("restore: %v", err)
@@ -356,7 +356,7 @@ func TestSweepSkipsArtifactChangedSinceListing(t *testing.T) {
 	}
 	e.clock.Advance(2 * time.Hour)
 	hs := &hookStore{ArtifactStore: e.store}
-	svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Now: e.clock.Now})
+	svc := artifact.New(hs, hs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
 	hs.before = func() {
 		if _, err := e.svc.UnmarkStale(e.ctx, alice, "demo"); err != nil {
 			t.Errorf("UnmarkStale: %v", err)
@@ -405,7 +405,7 @@ func TestUpdateOnBaseDeletedMeanwhile(t *testing.T) {
 	}
 	e.clock.Advance(2 * time.Hour) // past the collector's grace for version 1's blobs
 	hs := &getVersionHook{ArtifactStore: e.store, n: 2}
-	svc := artifact.New(hs, e.blobs, e.rec, artifact.Options{Now: e.clock.Now})
+	svc := artifact.New(hs, hs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
 	// The base is read first, the latest second.
 	hs.before = func() {
 		if _, err := svc.DeleteVersion(e.ctx, alice, "demo", 1); err != nil {

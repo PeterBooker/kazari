@@ -68,7 +68,7 @@ func TestOwnPage(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || m == nil || !strings.Contains(body, "Shown once") {
 		t.Fatalf("a share link: status %d: %s", resp.StatusCode, body)
 	}
-	links, err := e.arts.ListShareLinks(ctx, ana, "notes")
+	links, err := e.shares.ListShareLinks(ctx, ana, "notes")
 	if err != nil || len(links) != 1 || links[0].Label != "the client" || !links[0].ExpiresAt.Equal(t0.Add(7*24*time.Hour)) {
 		t.Fatalf("share links = %+v, %v", links, err)
 	}
@@ -84,7 +84,7 @@ func TestOwnPage(t *testing.T) {
 	}
 	resp, body = b.form("/account/pages/notes/links/"+links[0].Prefix+"/revoke", nil)
 	done(t, "revoke", resp, body, "notes")
-	if links, _ := e.arts.ListShareLinks(ctx, ana, "notes"); links[0].RevokedAt == nil {
+	if links, _ := e.shares.ListShareLinks(ctx, ana, "notes"); links[0].RevokedAt == nil {
 		t.Error("the share link was not revoked")
 	}
 
@@ -266,7 +266,7 @@ func TestOwnPageShareLinkPassword(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "and the password") || strings.Contains(body, "open sesame please") {
 		t.Fatalf("a link with a password: status %d, want the link shown once, its password never:\n%s", resp.StatusCode, body)
 	}
-	links, err := e.arts.ListShareLinks(t.Context(), artifact.Actor{Handle: "ana"}, "notes")
+	links, err := e.shares.ListShareLinks(t.Context(), artifact.Actor{Handle: "ana"}, "notes")
 	if err != nil || len(links) != 1 || !links[0].HasPassword {
 		t.Fatalf("links after creating one with a password = %+v, %v", links, err)
 	}

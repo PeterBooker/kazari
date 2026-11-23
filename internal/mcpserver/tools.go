@@ -22,6 +22,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // FileInput is an inline file of create_artifact. Content is a pointer so an
@@ -636,7 +637,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 					"version %d of %s is staged, and a share link does not open a staged version; publish it with "+
 						"publish_version first, or leave out version", in.Version, a.Slug)
 			}
-			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl, in.Password)
+			l, token, err := b.d.ShareLinks.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl, in.Password)
 			if err != nil {
 				return ShareLinkResult{}, "", err
 			}
@@ -666,7 +667,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "list_share_links", Annotations: annotations("List share links", true, false, true)},
 		auth.ScopeRead, func(ctx context.Context, _ *mcp.CallToolRequest, in ListShareLinksInput) (api.ShareLinkList, string, error) {
-			ls, err := arts.ListShareLinks(ctx, actor, in.Slug)
+			ls, err := b.d.ShareLinks.ListShareLinks(ctx, actor, in.Slug)
 			if err != nil {
 				return api.ShareLinkList{}, "", err
 			}
@@ -682,7 +683,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 
 	register(b, s, p, &mcp.Tool{Name: "revoke_share_link", Annotations: annotations("Revoke share link", false, true, true)},
 		auth.ScopeShare, func(ctx context.Context, _ *mcp.CallToolRequest, in RevokeShareLinkInput) (api.OK, string, error) {
-			if err := arts.RevokeShareLink(ctx, actor, in.Slug, in.Prefix); err != nil {
+			if err := b.d.ShareLinks.RevokeShareLink(ctx, actor, in.Slug, in.Prefix); err != nil {
 				return api.OK{}, "", err
 			}
 			return api.OK{OK: true}, fmt.Sprintf("Revoked share link %s of %s; browsers that opened it lose access on "+
@@ -861,10 +862,10 @@ func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, 
 	return b.intake.Files(ctx, intake.Call{Owner: p.Handle, UploadID: uploadID, Files: files})
 }
 
-func edits(in []EditInput) []artifact.Edit {
-	out := make([]artifact.Edit, len(in))
+func edits(in []EditInput) []textedit.Edit {
+	out := make([]textedit.Edit, len(in))
 	for i, e := range in {
-		out[i] = artifact.Edit(e)
+		out[i] = textedit.Edit(e)
 	}
 	return out
 }

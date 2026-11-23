@@ -10,6 +10,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // counts sums a counter's points by the given attribute keys, joined by /.
@@ -53,7 +54,7 @@ func TestArtifactMetrics(t *testing.T) {
 	if _, _, err := e.svc.Update(ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: files("index.html", "<h1>Two</h1>\n")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := e.svc.Edit(ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", Edits: []artifact.Edit{
+	if _, _, _, err := e.svc.Edit(ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", Edits: []textedit.Edit{
 		{OldText: "<h1>Two</h1>", NewText: "<h1>Three</h1>"},
 		{OldText: "<h1>Three</h1>   ", NewText: "<h1>Four</h1>"},
 	}}); err != nil {
@@ -63,7 +64,7 @@ func TestArtifactMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, _, err := e.svc.Edit(ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", ExpectedVersion: 1,
-		Edits: []artifact.Edit{{OldText: "x", NewText: "y"}}}); err == nil {
+		Edits: []textedit.Edit{{OldText: "x", NewText: "y"}}}); err == nil {
 		t.Fatal("an edit against a stale version succeeded")
 	}
 	if _, _, _, err := e.svc.Import(ctx, alice, artifact.ImportRequest{URL: "https://example.test/", Slug: "copy"}); err != nil {

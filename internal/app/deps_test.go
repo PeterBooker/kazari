@@ -99,6 +99,7 @@ var layers = map[string]layer{
 	"internal/dirlock":    leaf,
 	"internal/disk":       leaf,
 	"internal/instrument": leaf,
+	"internal/textedit":   leaf,
 	"internal/theme":      leaf,
 
 	"internal/errcode": base,

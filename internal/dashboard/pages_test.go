@@ -400,7 +400,7 @@ func TestPageShareLinkPassword(t *testing.T) {
 		t.Fatalf("a link with a password: status %d, want the link shown once with a note on the password, and never the password:\n%s",
 			r.StatusCode, r.body)
 	}
-	links, err := e.artifacts.ListShareLinks(t.Context(), artifact.Actor{Handle: "boss", Admin: true}, "members-one")
+	links, err := e.shares.ListShareLinks(t.Context(), artifact.Actor{Handle: "boss", Admin: true}, "members-one")
 	if err != nil || len(links) != 1 || !links[0].HasPassword {
 		t.Fatalf("links after creating one with a password = %+v, %v", links, err)
 	}
@@ -437,7 +437,7 @@ func TestPageShareLink(t *testing.T) {
 			t.Errorf("the link is in a cookie: %s", ck)
 		}
 	}
-	l, err := e.artifacts.CheckShareLink(ctx, "members-one", token)
+	l, err := e.shares.CheckShareLink(ctx, "members-one", token)
 	if err != nil || l.Label != "for the client" || !l.ExpiresAt.Equal(t0.Add(3*24*time.Hour)) || l.CreatedBy != "boss" {
 		t.Fatalf("the link shown opens nothing: %+v, %v", l, err)
 	}
@@ -458,7 +458,7 @@ func TestPageShareLink(t *testing.T) {
 			t.Errorf("days %q: status %d", days, r.StatusCode)
 		}
 	}
-	if links, _ := e.artifacts.ListShareLinks(ctx, boss, "members-one"); len(links) != 1 {
+	if links, _ := e.shares.ListShareLinks(ctx, boss, "members-one"); len(links) != 1 {
 		t.Errorf("refused forms created links: %d", len(links))
 	}
 
@@ -467,11 +467,11 @@ func TestPageShareLink(t *testing.T) {
 	if !strings.Contains(r.body, "The link stops opening the page at once.") || !strings.Contains(r.body, "This cannot be undone.") {
 		t.Errorf("the revoke confirmation: %s", r.body)
 	}
-	if _, err := e.artifacts.CheckShareLink(ctx, "members-one", token); err != nil {
+	if _, err := e.shares.CheckShareLink(ctx, "members-one", token); err != nil {
 		t.Fatalf("opening the confirmation revoked the link: %v", err)
 	}
 	r = b.submit("/pages/members-one/links/"+l.Prefix+"/revoke", nil)
-	if _, err := e.artifacts.CheckShareLink(ctx, "members-one", token); !errors.Is(err, artifact.ErrLinkNotFound) {
+	if _, err := e.shares.CheckShareLink(ctx, "members-one", token); !errors.Is(err, artifact.ErrLinkNotFound) {
 		t.Errorf("the link after its revoke: %v", err)
 	}
 	if !strings.Contains(r.body, "The share link is revoked.") || !strings.Contains(r.body, `<span class="status tone-danger">Revoked</span>`) {
@@ -665,7 +665,7 @@ func hostilePages(t *testing.T) (*env, *browser) {
 	if _, _, err := e.artifacts.Update(ctx, boss, artifact.UpdateRequest{Slug: "members-one", Name: &name, Description: &desc}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour, ""); err != nil {
+	if _, _, err := e.shares.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{DisplayName: new(hostileScript)}); err != nil {
@@ -726,7 +726,7 @@ func TestPagesMarkup(t *testing.T) {
 	}
 	strictMarkup(t, "a new share link", b.post("/pages/members-one/links", url.Values{"days": {"1"}}).body)
 	strictMarkup(t, "an error page", b.navigate("/pages/no-such-page").body)
-	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour, "")
+	l, _, err := e.shares.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}

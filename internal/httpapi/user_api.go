@@ -20,6 +20,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -29,12 +30,13 @@ const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
 // UserDeps are the collaborators of the user API. Every field is required
 // unless its comment says otherwise.
 type UserDeps struct {
-	Artifacts *artifact.Service
-	Uploads   *upload.Service
-	Users     *user.Service
-	Auth      auth.Authenticator // API keys and OAuth tokens, already chained
-	Links     present.Links
-	Logger    *slog.Logger
+	Artifacts  *artifact.Service
+	ShareLinks *artifact.ShareLinks
+	Uploads    *upload.Service
+	Users      *user.Service
+	Auth       auth.Authenticator // API keys and OAuth tokens, already chained
+	Links      present.Links
+	Logger     *slog.Logger
 	// Writes is shared with the MCP server so a key has one write budget on
 	// both; nil disables it.
 	Writes *ratelimit.Limiter
@@ -600,9 +602,9 @@ func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	if err != nil {
 		return err
 	}
-	edits := make([]artifact.Edit, len(req.Edits))
+	edits := make([]textedit.Edit, len(req.Edits))
 	for i, e := range req.Edits {
-		edits[i] = artifact.Edit(e)
+		edits[i] = textedit.Edit(e)
 	}
 	a, v, outs, err := h.d.Artifacts.Edit(r.Context(), present.Actor(p), artifact.EditRequest{
 		Slug:            r.PathValue("slug"),
@@ -644,7 +646,7 @@ func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth
 		return err
 	}
 	actor, slug := present.Actor(p), r.PathValue("slug")
-	l, token, err := h.d.Artifacts.CreateShareLink(r.Context(), actor, slug, req.Label, ttl, req.Password)
+	l, token, err := h.d.ShareLinks.CreateShareLink(r.Context(), actor, slug, req.Label, ttl, req.Password)
 	if err != nil {
 		return err
 	}
@@ -657,7 +659,7 @@ func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth
 }
 
 func (h *userAPI) listShareLinks(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	ls, err := h.d.Artifacts.ListShareLinks(r.Context(), present.Actor(p), r.PathValue("slug"))
+	ls, err := h.d.ShareLinks.ListShareLinks(r.Context(), present.Actor(p), r.PathValue("slug"))
 	if err != nil {
 		return err
 	}
@@ -666,7 +668,7 @@ func (h *userAPI) listShareLinks(w http.ResponseWriter, r *http.Request, p auth.
 }
 
 func (h *userAPI) revokeShareLink(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	err := h.d.Artifacts.RevokeShareLink(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("prefix"))
+	err := h.d.ShareLinks.RevokeShareLink(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("prefix"))
 	if err != nil {
 		return err
 	}
@@ -800,7 +802,7 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 // size of the file, and from the blob because a client that stops reading
 // keeps the handler running: the file must not be in memory for that long.
 func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.ReadSeeker) error {
-	text, err := artifact.AnchorableText(rc)
+	text, err := textedit.AnchorableText(rc)
 	if err != nil {
 		return err
 	}
@@ -814,7 +816,7 @@ func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.ReadSeeker) err
 	hdr.Set("Content-Type", "text/plain; charset=utf-8")
 	setUntrustedHeaders(hdr)
 	// Any other failed write is the client going away.
-	if err := artifact.StreamAnchored(w, rc); errors.Is(err, artifact.ErrFileRead) {
+	if err := textedit.StreamAnchored(w, rc); errors.Is(err, textedit.ErrFileRead) {
 		// The status has gone out; ending normally would pass off part of the
 		// file as all of it.
 		panic(http.ErrAbortHandler)

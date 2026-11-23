@@ -66,7 +66,7 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (_
 	ctx, span := s.span(ctx, "artifact.import", req.Slug)
 	defer func() {
 		s.published(ctx, publishImport, v, err)
-		s.countOutcome(ctx, s.m.imports, err)
+		countOutcome(ctx, s.m.imports, err)
 		versionAttrs(span, v)
 		importAttrs(span, report)
 		endSpan(span, err)

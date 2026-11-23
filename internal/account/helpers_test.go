@@ -73,14 +73,15 @@ type envOptions struct {
 // env is an instance without an identity provider: the apex with the
 // account pages and the sign-in host, each on its own origin.
 type env struct {
-	t     *testing.T
-	clock *clock
-	users *user.Service
-	oauth *oauth.Service
-	audit *sqlite.AuditStore
-	arts  *artifact.Service
-	apex  *httptest.Server
-	mcp   *httptest.Server
+	t      *testing.T
+	clock  *clock
+	users  *user.Service
+	oauth  *oauth.Service
+	audit  *sqlite.AuditStore
+	arts   *artifact.Service
+	shares *artifact.ShareLinks
+	apex   *httptest.Server
+	mcp    *httptest.Server
 }
 
 func newEnv(t *testing.T, eo envOptions) *env {
@@ -120,10 +121,12 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	if eo.shared {
 		policy = artifact.WriteShared
 	}
-	e.arts = artifact.New(sqlite.NewArtifactStore(db), blobs, e.audit, artifact.Options{
-		Quotas: e.users, Passwords: e.users, Now: e.clock.Now, WritePolicy: policy, DefaultGrace: 14 * 24 * time.Hour,
+	store := sqlite.NewArtifactStore(db)
+	e.arts = artifact.New(store, store, blobs, e.users, e.audit, artifact.Options{
+		Passwords: e.users, Now: e.clock.Now, WritePolicy: policy, DefaultGrace: 14 * 24 * time.Hour,
 		Retention: 30 * 24 * time.Hour, MaxShareLinkTTL: 30 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
+	e.shares = artifact.NewShareLinks(store, e.arts)
 	var (
 		passwords oauth.Passwords
 		keys      *passkey.Service
@@ -168,7 +171,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		grants = eo.grants(grants)
 	}
 	deps := account.Deps{
-		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.arts, Audit: e.audit,
+		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.arts, ShareLinks: e.shares, Audit: e.audit,
 		Links: present.Links{URL: func(sub string) string {
 			if sub == "" {
 				return "https://art.test/"

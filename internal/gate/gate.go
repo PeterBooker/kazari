@@ -75,7 +75,7 @@ type Sessions interface {
 	EndView(ctx context.Context, host, token string) error
 }
 
-// Links checks share links. artifact.Service implements it; every method
+// Links checks share links. artifact.ShareLinks implements it; every method
 // returns artifact.ErrLinkNotFound for a token or cookie that does not open
 // slug, and UnlockShareLink artifact.ErrForbidden for a wrong password.
 type Links interface {

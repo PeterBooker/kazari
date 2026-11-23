@@ -77,18 +77,19 @@ type Updates interface {
 // Deps are the dashboard's collaborators. Audit, Jobs, Ready, Backup,
 // Updates and Settings may be nil; what they show is then left out.
 type Deps struct {
-	Sessions  session.Provider
-	Users     *user.Service
-	Artifacts *artifact.Service
-	Grants    Grants
-	Audit     audit.Reader
-	Recorder  audit.Recorder
-	Jobs      *scheduler.Scheduler
-	Ready     Readiness
-	Backup    Backups
-	Updates   Updates
-	Settings  func() map[string]any // the effective configuration, secrets redacted
-	Views     *views.Service        // nil with analytics off
+	Sessions   session.Provider
+	Users      *user.Service
+	Artifacts  *artifact.Service
+	ShareLinks *artifact.ShareLinks
+	Grants     Grants
+	Audit      audit.Reader
+	Recorder   audit.Recorder
+	Jobs       *scheduler.Scheduler
+	Ready      Readiness
+	Backup     Backups
+	Updates    Updates
+	Settings   func() map[string]any // the effective configuration, secrets redacted
+	Views      *views.Service        // nil with analytics off
 	// Flags remembers what an admin put away, such as the getting-started
 	// list; nil offers nothing to put away.
 	Flags  Flags

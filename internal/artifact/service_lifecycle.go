@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.opentelemetry.io/otel/attribute"
 	"io"
 	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 )
@@ -506,7 +507,15 @@ func (s *Service) ResolveVersion(ctx context.Context, slug string, n int) (*Publ
 
 // Files returns a version's file map keyed by path.
 func (s *Service) Files(ctx context.Context, versionID int64) (map[string]File, error) {
-	return s.store.Files(ctx, versionID)
+	files, err := s.store.Files(ctx, versionID)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]File, len(files))
+	for _, f := range files {
+		m[f.Path] = f
+	}
+	return m, nil
 }
 
 // ListFiles sets Files on vs, which Get returns newest first, from the first
@@ -523,17 +532,15 @@ func (s *Service) ListFiles(ctx context.Context, vs []Version, before int) (int,
 		if before != 0 && vs[i].Number >= before {
 			continue
 		}
-		m, err := s.store.Files(ctx, vs[i].ID)
+		files, err := s.store.Files(ctx, vs[i].ID)
 		if err != nil {
 			return 0, err
 		}
-		if last != 0 && listed+len(m) > MaxListedFiles {
+		if last != 0 && listed+len(files) > MaxListedFiles {
 			return last, nil
 		}
-		files := slices.Collect(maps.Values(m))
-		slices.SortFunc(files, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
 		vs[i].Files = files
-		listed += len(m)
+		listed += len(files)
 		last = vs[i].Number
 	}
 	return 0, nil
@@ -670,7 +677,7 @@ func (s *Service) CollectGarbage(ctx context.Context) (n int, err error) {
 func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool, error) {
 	s.blobMu.Lock()
 	defer s.blobMu.Unlock()
-	hashes, err := s.store.UnreferencedBlobs(ctx, before, gcBatch)
+	hashes, err := s.index.UnreferencedBlobs(ctx, before, gcBatch)
 	if err != nil {
 		return 0, false, err
 	}
@@ -685,7 +692,7 @@ func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool
 			}
 			continue
 		}
-		if err := s.store.DeleteBlob(ctx, h); err != nil {
+		if err := s.index.DeleteBlob(ctx, h); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("artifact: gc blob row %s: %w", h, err)
 			}
@@ -720,7 +727,7 @@ func (s *Service) Storage(ctx context.Context) (versions, blobs Totals, err erro
 	if versions, err = s.store.VersionTotals(ctx); err != nil {
 		return Totals{}, Totals{}, err
 	}
-	if blobs, err = s.store.BlobTotals(ctx); err != nil {
+	if blobs, err = s.index.BlobTotals(ctx); err != nil {
 		return Totals{}, Totals{}, err
 	}
 	return versions, blobs, nil

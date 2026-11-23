@@ -26,9 +26,6 @@ var (
 	ErrLinkNotFound       = errcode.New(errcode.LinkNotFound, "share link not found")
 	ErrTooManyUploads     = errcode.New(errcode.TooManyUploads, "too many open uploads")
 	ErrDigestMismatch     = errcode.New(errcode.DigestMismatch, "the archive does not match the digest the upload was begun with")
-	ErrEditNotFound       = errcode.New(errcode.EditNotFound, "text to replace not found")
-	ErrEditAmbiguous      = errcode.New(errcode.EditAmbiguous, "text to replace matches more than once")
-	ErrAnchorMismatch     = errcode.New(errcode.AnchorMismatch, "anchor does not match the file")
 	ErrFetchFailed        = errcode.New(errcode.FetchFailed, "could not fetch the URL")
 )
 

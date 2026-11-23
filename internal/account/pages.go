@@ -189,7 +189,7 @@ func (s *server) ownPage(r *http.Request, v visit) (*ownPageData, error) {
 	case a.DeletedAt != nil:
 		d.Changeable = d.Mine
 	default:
-		links, err := s.d.Artifacts.ListShareLinks(ctx, actor, a.Slug)
+		links, err := s.d.ShareLinks.ListShareLinks(ctx, actor, a.Slug)
 		switch {
 		case errors.Is(err, artifact.ErrForbidden):
 		case err != nil:
@@ -282,7 +282,7 @@ func (s *server) createLink(w http.ResponseWriter, r *http.Request, v visit, act
 	if password != "" && artifact.CheckLinkPassword(password) != nil {
 		return refuse("password")
 	}
-	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour, password)
+	l, token, err := s.d.ShareLinks.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour, password)
 	switch {
 	case errors.Is(err, artifact.ErrLinkPassword):
 		return refuse("password")
@@ -300,7 +300,7 @@ func (s *server) createLink(w http.ResponseWriter, r *http.Request, v visit, act
 
 // ownLinkOf finds the page's share link the path names.
 func (s *server) ownLinkOf(r *http.Request, actor artifact.Actor) (*artifact.ShareLink, error) {
-	links, err := s.d.Artifacts.ListShareLinks(r.Context(), actor, r.PathValue("slug"))
+	links, err := s.d.ShareLinks.ListShareLinks(r.Context(), actor, r.PathValue("slug"))
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +338,7 @@ func (s *server) revokeLinkPage(w http.ResponseWriter, r *http.Request, v visit)
 }
 
 func (s *server) revokeLink(w http.ResponseWriter, r *http.Request, _ visit, actor artifact.Actor) error {
-	if err := s.d.Artifacts.RevokeShareLink(r.Context(), actor, r.PathValue("slug"), r.PathValue("prefix")); err != nil {
+	if err := s.d.ShareLinks.RevokeShareLink(r.Context(), actor, r.PathValue("slug"), r.PathValue("prefix")); err != nil {
 		return err
 	}
 	return s.pageDone(w, r, "link-revoked")

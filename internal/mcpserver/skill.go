@@ -15,9 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // copyStep is the workflow step for import_page.
@@ -173,8 +173,8 @@ func (t texts) skillText(o Options) string {
 		"the `base_version` an edit of that text needs.\n"+
 		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
 		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
-		"the note says where to continue when the window was cut short.\n\n", artifact.MaxEdits, artifact.ExcerptContext,
-		artifact.ExcerptFullLines, size(o.MaxInlineReadBytes))
+		"the note says where to continue when the window was cut short.\n\n", textedit.MaxEdits, textedit.ExcerptContext,
+		textedit.ExcerptFullLines, size(o.MaxInlineReadBytes))
 
 	b.WriteString("## Authoring conventions\n\n")
 	fmt.Fprintf(&b, "- Build a self-contained `index.html`; it is served at %s. Extra files (CSS, JavaScript, images) are "+

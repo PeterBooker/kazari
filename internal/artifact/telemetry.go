@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/artifact"
@@ -67,7 +68,11 @@ func newMetrics(m metric.Meter) metrics {
 
 // span starts a service span under a recording parent.
 func (s *Service) span(ctx context.Context, name, slug string) (context.Context, trace.Span) {
-	ctx, span := instrument.StartChild(ctx, s.tracer, name)
+	return startSpan(ctx, s.tracer, name, slug)
+}
+
+func startSpan(ctx context.Context, tracer trace.Tracer, name, slug string) (context.Context, trace.Span) {
+	ctx, span := instrument.StartChild(ctx, tracer, name)
 	if slug != "" && span.IsRecording() {
 		span.SetAttributes(slugKey.String(slug))
 	}
@@ -114,25 +119,26 @@ func (s *Service) published(ctx context.Context, kind string, v *Version, err er
 }
 
 // edited counts each applied edit by kind and match.
-func (s *Service) edited(ctx context.Context, out []EditOutcome) {
+func (s *Service) edited(ctx context.Context, out []textedit.Outcome) {
 	for _, o := range out {
 		kind := "text"
-		if o.Match == MatchAnchor {
+		if o.Match == textedit.MatchAnchor {
 			kind = "anchor"
 		}
-		s.m.edits.Add(ctx, 1, metric.WithAttributes(editKindKey.String(kind),
-			editMatchKey.String(instrument.OneOf(o.Match, MatchExact, MatchTrailingWhitespace, MatchIndentation, MatchAnchor))))
+		match := instrument.OneOf(o.Match,
+			textedit.MatchExact, textedit.MatchTrailingWhitespace, textedit.MatchIndentation, textedit.MatchAnchor)
+		s.m.edits.Add(ctx, 1, metric.WithAttributes(editKindKey.String(kind), editMatchKey.String(match)))
 	}
 }
 
-func (s *Service) countOutcome(ctx context.Context, c metric.Int64Counter, err error, attrs ...attribute.KeyValue) {
+func countOutcome(ctx context.Context, c metric.Int64Counter, err error, attrs ...attribute.KeyValue) {
 	if err != nil {
 		attrs = append(attrs, errorType(err))
 	}
 	c.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
-func editAttrs(span trace.Span, out []EditOutcome) {
+func editAttrs(span trace.Span, out []textedit.Outcome) {
 	if len(out) > 0 && span.IsRecording() {
 		matches := make([]string, len(out))
 		for i, o := range out {
@@ -220,7 +226,7 @@ func (s *Service) census(ctx context.Context) (census, error) {
 	if c.versions, err = s.store.VersionTotals(ctx); err != nil {
 		return census{}, err
 	}
-	if c.blobs, err = s.store.BlobTotals(ctx); err != nil {
+	if c.blobs, err = s.index.BlobTotals(ctx); err != nil {
 		return census{}, err
 	}
 	return c, nil

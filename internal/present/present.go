@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -272,7 +273,7 @@ func RequireShare(p auth.Principal, visibility string) error {
 }
 
 // Edit converts the outcome of an edit of path that produced version.
-func (l Links) Edit(a *artifact.Artifact, v *artifact.Version, path string, outs []artifact.EditOutcome) api.EditResult {
+func (l Links) Edit(a *artifact.Artifact, v *artifact.Version, path string, outs []textedit.Outcome) api.EditResult {
 	r := api.EditResult{URL: l.ArtifactURL(a.Slug), Version: v.Number, VersionURL: l.VersionURL(a.Slug, v.Number),
 		Staged: v.Staged, Path: path,
 		Edits: make([]api.EditOutcome, 0, len(outs)), Warnings: v.Warnings, Artifact: l.Artifact(a)}

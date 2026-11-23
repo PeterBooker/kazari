@@ -8,6 +8,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 )
 
@@ -229,14 +230,14 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			fmt.Sprintf("One call takes text edits or anchor edits, not both, at most %d. expected_version: the "+
 				"latest_version you last saw; if someone published since, the call fails with version_conflict, which "+
 				"says whether every edit still applies to the newer version and the number to resend with. Without it, "+
-				"edits that still apply are applied to the newest content. %s", artifact.MaxEdits, baseVersion),
+				"edits that still apply are applied to the newest content. %s", textedit.MaxEdits, baseVersion),
 			fmt.Sprintf("The result has the new version, version_url, latest_version, warnings when the page will not "+
 				"render as written and, per edit, start_line, end_line and an anchored excerpt of the new text with %d "+
 				"lines around it, so a follow-up anchor edit needs no new read. In a new text of more than %d lines that "+
 				"you sent as is, the lines between its first and last are bare anchors (\"9:395c\"). Edits whose excerpts "+
 				"would overlap share one: excerpt_of names the edit that holds it. A new version clears a pending stale "+
 				"mark unless keep_stale is true. Limits: as in the create_artifact description.",
-				artifact.ExcerptContext, artifact.ExcerptFullLines),
+				textedit.ExcerptContext, textedit.ExcerptFullLines),
 		}, "\n\n"),
 
 		"get_guide": "Return the guide to this Kazari instance: the workflow, how to edit files, the authoring " +

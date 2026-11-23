@@ -16,9 +16,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 func (e *env) connectWith(t *testing.T, p auth.Principal, opts *mcp.ClientOptions) *mcp.ClientSession {
@@ -53,14 +53,14 @@ func TestEditFile(t *testing.T) {
 		"files": []map[string]any{{"path": "index.html", "content": editPage}, {"path": "app.js", "content": "run()"}}})
 
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html", "anchors": true})
-	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || readBody(res) != artifact.AnchorLines(editPage) ||
+	if !rf.Anchored || rf.Version != 1 || rf.LatestVersion != 1 || readBody(res) != textedit.AnchorLines(editPage) ||
 		rf.Content != readBody(res) || firstLine(res) != "index.html, version 1 (the latest), 6 lines" {
 		t.Fatalf("read_file anchors = %+v %q", rf, text(res))
 	}
 
 	out, res := ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{{"old_text": "<h1>Q3</h1>", "new_text": "<h1>Q4</h1>"}}})
-	if out.Version != 2 || out.Edits[0].Match != artifact.MatchExact ||
+	if out.Version != 2 || out.Edits[0].Match != textedit.MatchExact ||
 		firstLine(res) != "Published https://demo.art.test/ (version 2): edited index.html; edit 1 lines 3-3 (exact)." {
 		t.Fatalf("edit_file = %+v %q", out, firstLine(res))
 	}
@@ -82,7 +82,7 @@ func TestEditFile(t *testing.T) {
 	}
 	out, _ = ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 3,
 		"edits": []map[string]any{{"old_text": "", "start": start, "new_text": ""}}})
-	if out.Version != 4 || out.Edits[0].Match != artifact.MatchAnchor || out.Edits[0].EndLine != 4 {
+	if out.Version != 4 || out.Edits[0].Match != textedit.MatchAnchor || out.Edits[0].EndLine != 4 {
 		t.Errorf("anchor edit = %+v", out)
 	}
 	rf, res = ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html"})
@@ -464,8 +464,8 @@ func TestReadFileWindow(t *testing.T) {
 	rf, res := ok[mcpserver.ReadFileResult](t, cs, "read_file", map[string]any{"slug": "demo", "path": "index.html",
 		"start_line": 2000, "end_line": 2002, "anchors": true})
 	lines := strings.Split(big, "\n")
-	want := artifact.Anchor(2000, lines[1999]) + "|" + lines[1999] + "\n" + artifact.Anchor(2001, lines[2000]) + "|" + lines[2000] + "\n" +
-		artifact.Anchor(2002, lines[2001]) + "|" + lines[2001]
+	want := textedit.Anchor(2000, lines[1999]) + "|" + lines[1999] + "\n" + textedit.Anchor(2001, lines[2000]) + "|" + lines[2000] + "\n" +
+		textedit.Anchor(2002, lines[2001]) + "|" + lines[2001]
 	if rf.Encoding != "utf8" || !rf.Anchored || rf.StartLine != 2000 || rf.EndLine != 2002 || rf.TotalLines != 3000 ||
 		rf.Content != want || readBody(res) != want || firstLine(res) != "index.html, version 1 (the latest), lines 2000-2002 of 3000" {
 		t.Fatalf("window = %+v\n%q", rf, text(res))

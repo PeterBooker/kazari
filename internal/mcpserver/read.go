@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // {+path} is reserved expansion, so a path may contain slashes.
@@ -142,7 +143,7 @@ func (b *builder) readFile(ctx context.Context, actor artifact.Actor, in ReadFil
 		out.Encoding = "utf8"
 		body := string(fc.data)
 		if in.Anchors {
-			body, out.Anchored = artifact.AnchorLines(body), true
+			body, out.Anchored = textedit.AnchorLines(body), true
 		}
 		out.Content = body
 		out.blocks = []mcp.Content{head(f.Path, lineCount(fc.data)), &mcp.TextContent{Text: body}}
@@ -174,7 +175,7 @@ func readHeader(path string, version, published, latest int, what string) string
 	return fmt.Sprintf("%s, version %d (%s), %s", path, version, state, what)
 }
 
-// lineCount counts as artifact.AnchorLines does: "a\nb\n" is two lines.
+// lineCount counts as textedit.AnchorLines does: "a\nb\n" is two lines.
 func lineCount(data []byte) string {
 	n := bytes.Count(data, []byte("\n"))
 	if len(data) > 0 && data[len(data)-1] != '\n' {
@@ -383,7 +384,7 @@ const windowChunkBytes = 32 << 10
 
 // lineWindow keeps lines start to end (0 for the last) of a file read once, in
 // at most limit bytes, however large the file. It counts lines as
-// artifact.AnchorLines does: "a\nb\n" is two lines and "" none.
+// textedit.AnchorLines does: "a\nb\n" is two lines and "" none.
 type lineWindow struct {
 	start, end int
 	limit      int64
@@ -486,7 +487,7 @@ func (w *lineWindow) keep(n int) bool {
 	}
 	piece := string(w.line)
 	if w.anchors {
-		piece = artifact.Anchor(n, piece) + "|" + piece
+		piece = textedit.Anchor(n, piece) + "|" + piece
 	}
 	add := len(piece)
 	if n > w.start {

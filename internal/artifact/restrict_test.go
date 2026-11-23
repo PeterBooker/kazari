@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 func TestValidateSlugPattern(t *testing.T) {
@@ -163,7 +164,7 @@ var slugOps = []struct {
 	}},
 	{"Edit", false, func(e *env, actor artifact.Actor, slug string) error {
 		_, _, _, err := e.svc.Edit(e.ctx, actor, artifact.EditRequest{Slug: slug, Path: "index.html",
-			Edits: []artifact.Edit{{OldText: "<h1>", NewText: "<h2>"}}})
+			Edits: []textedit.Edit{{OldText: "<h1>", NewText: "<h2>"}}})
 		return err
 	}},
 	{"Publish", false, func(e *env, actor artifact.Actor, slug string) error {
@@ -193,15 +194,15 @@ var slugOps = []struct {
 		return e.svc.Delete(e.ctx, actor, slug, true)
 	}},
 	{"CreateShareLink", false, func(e *env, actor artifact.Actor, slug string) error {
-		_, _, err := e.svc.CreateShareLink(e.ctx, actor, slug, "", time.Hour, "")
+		_, _, err := e.shares.CreateShareLink(e.ctx, actor, slug, "", time.Hour, "")
 		return err
 	}},
 	{"ListShareLinks", false, func(e *env, actor artifact.Actor, slug string) error {
-		_, err := e.svc.ListShareLinks(e.ctx, actor, slug)
+		_, err := e.shares.ListShareLinks(e.ctx, actor, slug)
 		return err
 	}},
 	{"RevokeShareLink", false, func(e *env, actor artifact.Actor, slug string) error {
-		err := e.svc.RevokeShareLink(e.ctx, actor, slug, "aaaaaaaa")
+		err := e.shares.RevokeShareLink(e.ctx, actor, slug, "aaaaaaaa")
 		if errors.Is(err, artifact.ErrLinkNotFound) {
 			return nil // past every check: the artifact has no such link
 		}
