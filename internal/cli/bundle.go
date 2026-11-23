@@ -31,9 +31,10 @@ const ignoreFile = ".kazariignore"
 type bundleFile struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
-	// name is the file's name in the plan's root, and sum the hex sha256 of
-	// the bytes the plan read.
+	// name is the file's name in the plan's root, info the file the plan
+	// read and sum the hex sha256 of the bytes it read.
 	name string
+	info os.FileInfo
 	sum  string
 }
 
@@ -299,7 +300,7 @@ func (p *bundlePlan) read(sent, name string, scan bool) (bundleFile, bool, error
 	if err != nil {
 		return bundleFile{}, false, err
 	}
-	return bundleFile{Path: sent, Size: n, name: name, sum: hex.EncodeToString(h.Sum(nil))}, keys.found, nil
+	return bundleFile{Path: sent, Size: n, name: name, info: st, sum: hex.EncodeToString(h.Sum(nil))}, keys.found, nil
 }
 
 func hidden(name string) bool {
@@ -465,14 +466,17 @@ func (p *bundlePlan) writeTarGz(w io.Writer) error {
 	return nil
 }
 
-// addFile sends the bytes the plan checked, or fails before the archive
-// ends.
+// addFile sends the bytes the plan checked, from the file it read, or fails
+// before the archive ends.
 func (p *bundlePlan) addFile(tw *tar.Writer, bf bundleFile) error {
 	f, err := p.root.Open(bf.name)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bf.Path, err)
 	}
 	defer f.Close()
+	if st, err := f.Stat(); err != nil || !os.SameFile(st, bf.info) {
+		return fmt.Errorf("tar %s: %w", bf.Path, errChanged)
+	}
 	hdr := &tar.Header{
 		Typeflag: tar.TypeReg,
 		Name:     bf.Path,

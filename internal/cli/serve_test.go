@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -17,10 +19,30 @@ import (
 	"github.com/PeterBooker/kazari/internal/cli"
 )
 
+// lockedBuffer is written by the server's goroutines while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+var startedHTTP = regexp.MustCompile(`"?http"?[=:]"?(127\.0\.0\.1:[0-9]+)`)
+
 // startLocal runs kazari serve --local on a free port with its data in a
-// temporary directory and returns that directory and the environment the
-// client needs to find the socket.
-func startLocal(t *testing.T) (string, map[string]string) {
+// temporary directory and returns that directory, the environment the
+// client needs to find the socket, and the address it serves HTTP on.
+func startLocal(t *testing.T) (string, map[string]string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	// The server reads the process environment, as it does under main.
@@ -28,7 +50,7 @@ func startLocal(t *testing.T) (string, map[string]string) {
 	t.Setenv("KAZARI_LISTEN_HTTP", "127.0.0.1:0")
 	env := map[string]string{"HOME": t.TempDir(), "KAZARI_DATA_DIR": dir}
 	ctx, cancel := context.WithCancel(context.Background())
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	done := make(chan int, 1)
 	go func() {
 		done <- cli.Run(ctx, []string{"serve", "--local"}, cli.Env{Stdout: &stdout, Stderr: &stderr, LookupEnv: envMap(env)})
@@ -47,8 +69,9 @@ func startLocal(t *testing.T) (string, map[string]string) {
 	socket := filepath.Join(dir, "admin.sock")
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if info, err := os.Stat(socket); err == nil && info.Mode().Type() == fs.ModeSocket {
-			return dir, env
+		m := startedHTTP.FindStringSubmatch(stderr.String())
+		if info, err := os.Stat(socket); err == nil && info.Mode().Type() == fs.ModeSocket && m != nil {
+			return dir, env, m[1]
 		}
 		select {
 		case code := <-done:
@@ -57,14 +80,14 @@ func startLocal(t *testing.T) (string, map[string]string) {
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no admin socket after 10s: %s", stderr.String())
+			t.Fatalf("no admin socket and HTTP address after 10s: %s", stderr.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 func TestServeLocalAdminSocket(t *testing.T) {
-	dir, env := startLocal(t)
+	dir, env, _ := startLocal(t)
 	socket := filepath.Join(dir, "admin.sock")
 
 	// Found from KAZARI_DATA_DIR: no URL, no token.
@@ -159,7 +182,7 @@ func TestCheckReportsSources(t *testing.T) {
 }
 
 func TestBackupStreamAndRestore(t *testing.T) {
-	dir, env := startLocal(t)
+	dir, env, _ := startLocal(t)
 	if r := runCLI(t, env, "admin", "users", "create", "ana", "--role", "admin"); r.code != 0 {
 		t.Fatalf("create user: %+v", r)
 	}
