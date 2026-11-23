@@ -24,9 +24,20 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 )
+
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
 
 var start = time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
 
@@ -63,7 +74,9 @@ func newEnv(t testing.TB, opts artifact.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
+	path := filepath.Join(dir, "kazari.db")
+	emptyDB.Copy(t, path)
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1914,7 +1927,9 @@ func (failingRecorder) Record(context.Context, audit.Event) error { return error
 func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(dir, "kazari.db"), sqlite.Options{})
+	path := filepath.Join(dir, "kazari.db")
+	emptyDB.Copy(t, path)
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

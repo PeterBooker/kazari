@@ -57,9 +57,12 @@ func TestAdminSocketOfAnotherServer(t *testing.T) {
 	if fi, err := os.Stat(socket); err != nil || fi.Mode().Type() != os.ModeSocket {
 		t.Fatalf("the first server's socket after the second gave up: %v", err)
 	}
-	if _, err := (&net.Dialer{}).DialContext(t.Context(), "unix", socket); err != nil {
-		t.Errorf("dial the first server's socket: %v", err)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", socket)
+	if err != nil {
+		t.Fatalf("dial the first server's socket: %v", err)
 	}
+	// Left open, the connection holds up the first server's shutdown.
+	conn.Close()
 }
 
 func TestHealthByAddressInProxyMode(t *testing.T) {

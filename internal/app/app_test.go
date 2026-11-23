@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net"
@@ -30,6 +31,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -74,6 +77,16 @@ func testConfig(t testing.TB) config.Config {
 	return cfg
 }
 
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
+
 // cheapArgon2 keeps password hashing out of the tests' run time: the real
 // parameters cost 64 MiB a hash.
 var cheapArgon2 = user.Argon2{Memory: 64, Time: 1, Threads: 1}
@@ -93,6 +106,12 @@ func start(t testing.TB, cfg config.Config) *instance {
 // startWith runs the app with opts, its clock and logger filled in.
 func startWith(t testing.TB, cfg config.Config, opts app.Options) *instance {
 	t.Helper()
+	// A data directory the test has not filled starts from a migrated
+	// database, which costs far less than migrating; the tests that call
+	// app.New themselves still start from an empty directory.
+	if _, err := os.Stat(cfg.DBPath()); errors.Is(err, fs.ErrNotExist) {
+		emptyDB.Copy(t, cfg.DBPath())
+	}
 	clk := &clock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 	ctx, cancel := context.WithCancel(context.Background())
 	opts.Now = clk.Now

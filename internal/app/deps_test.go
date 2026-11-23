@@ -112,6 +112,7 @@ var layers = map[string]layer{
 
 	"internal/artifact/storetest":        support,
 	"internal/blob/blobtest":             support,
+	"internal/dbtemplate":                support,
 	"internal/instrument/instrumenttest": support,
 	"internal/leaktest":                  support,
 	"internal/passkey/passkeytest":       support,

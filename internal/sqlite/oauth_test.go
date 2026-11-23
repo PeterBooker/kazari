@@ -21,7 +21,9 @@ var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 func oauthTestDB(t *testing.T) *DB {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), Options{})
+	path := filepath.Join(t.TempDir(), "kazari.db")
+	EmptyDB.Copy(t, path)
+	db, err := Open(ctx, path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,12 +21,23 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
+
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
@@ -163,7 +174,9 @@ type envOptions struct {
 func newEnv(t *testing.T, eo envOptions) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), sqlite.Options{})
+	path := filepath.Join(t.TempDir(), "kazari.db")
+	emptyDB.Copy(t, path)
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,9 +15,20 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/upload"
 )
+
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
 
 type clock struct {
 	mu sync.Mutex
@@ -47,7 +58,9 @@ func newEnv(t *testing.T, opts upload.Options) *env {
 	t.Helper()
 	ctx := context.Background()
 	tmp := t.TempDir()
-	db, err := sqlite.Open(ctx, filepath.Join(tmp, "kazari.db"), sqlite.Options{})
+	path := filepath.Join(tmp, "kazari.db")
+	emptyDB.Copy(t, path)
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

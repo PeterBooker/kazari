@@ -10,9 +10,20 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/views"
 )
+
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
 
 var start = time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
 
@@ -47,7 +58,9 @@ type fixture struct {
 func newFixture(t *testing.T, slugs ...string) *fixture {
 	t.Helper()
 	ctx := t.Context()
-	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), sqlite.Options{})
+	path := filepath.Join(t.TempDir(), "kazari.db")
+	emptyDB.Copy(t, path)
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
