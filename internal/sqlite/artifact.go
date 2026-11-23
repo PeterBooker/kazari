@@ -44,11 +44,7 @@ const artifactSelect = `SELECT a.id, a.slug, a.name, a.description, u.handle, a.
 	a.created_at, a.updated_at
 FROM artifact a JOIN user u ON u.id = a.owner_id`
 
-type artifactRowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanArtifact(row artifactRowScanner) (int64, *artifact.Artifact, error) {
+func scanArtifact(row rowScanner) (int64, *artifact.Artifact, error) {
 	var (
 		id                                int64
 		a                                 artifact.Artifact
@@ -335,22 +331,16 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 	return nil, artifact.ErrVersionNotFound
 }
 
+const artifactFiles = `SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file
+	WHERE version_id = ? ORDER BY path`
+
+func scanFile(row rowScanner, f *artifact.File) error {
+	return row.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy)
+}
+
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file WHERE version_id = ? ORDER BY path`, versionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []artifact.File
-	for rows.Next() {
-		var f artifact.File
-		if err := rows.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy); err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
-	return files, rows.Err()
+	rows, err := s.db.QueryContext(ctx, artifactFiles, versionID)
+	return collect(rows, err, fill(scanFile))
 }
 
 func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []artifact.Version, err error) {
@@ -373,23 +363,15 @@ func listArtifactVersions(ctx context.Context, q interface {
 	rows, err := q.QueryContext(ctx,
 		`SELECT id, number, label, created_by, created_at, size_bytes, staged FROM version
 		 WHERE artifact_id = ? ORDER BY number DESC`, aid)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []artifact.Version
-	for rows.Next() {
+	return collect(rows, err, func(row rowScanner) (artifact.Version, error) {
 		var (
 			v       artifact.Version
 			created int64
 		)
-		if err := rows.Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged); err != nil {
-			return nil, err
-		}
+		err := row.Scan(&v.ID, &v.Number, &v.Label, &v.CreatedBy, &created, &v.SizeBytes, &v.Staged)
 		v.CreatedAt = fromNanos(created)
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, err
+	})
 }
 
 func (s *ArtifactStore) DeleteVersions(ctx context.Context, slug string,
@@ -572,32 +554,26 @@ func (s *ArtifactStore) TransferOwned(ctx context.Context, from, to, by string, 
 		if err != nil {
 			return err
 		}
+		type owned struct {
+			id   int64
+			slug string
+		}
 		rows, err := tx.QueryContext(ctx, `UPDATE artifact SET owner_id = ?, updated_at = ?
 			WHERE owner_id = ? AND purged_at IS NULL RETURNING id, slug`, toID, toNanos(at), fromID)
+		got, err := collect(rows, err, func(row rowScanner) (owned, error) {
+			var o owned
+			err := row.Scan(&o.id, &o.slug)
+			return o, err
+		})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		var ids []int64
-		for rows.Next() {
-			var (
-				id   int64
-				slug string
-			)
-			if err := rows.Scan(&id, &slug); err != nil {
-				return err
+		for _, o := range got {
+			moved = append(moved, o.slug)
+			if by == "" {
+				continue
 			}
-			ids = append(ids, id)
-			moved = append(moved, slug)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return err
-		}
-		if by == "" {
-			return nil
-		}
-		for _, id := range ids {
-			if err := markArtifactActor(ctx, tx, id, by, false, at); err != nil {
+			if err := markArtifactActor(ctx, tx, o.id, by, false, at); err != nil {
 				return err
 			}
 		}
@@ -794,12 +770,16 @@ const artifactResolveSelect = `SELECT a.id, a.slug, COALESCE(v.id, 0), COALESCE(
 	%s, a.visibility, a.metadata, a.unpublished_at, a.deleted_at, a.purged_at`
 
 var (
-	artifactResolvePublished = fmt.Sprintf(artifactResolveSelect, "0")
-	artifactResolveVersion   = fmt.Sprintf(artifactResolveSelect,
-		"COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0)")
+	artifactResolvePublished = fmt.Sprintf(artifactResolveSelect, "0") + `
+		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
+		WHERE a.slug = ?`
+	artifactResolveVersion = fmt.Sprintf(artifactResolveSelect,
+		"COALESCE((SELECT MAX(lv.number) FROM version lv WHERE lv.artifact_id = a.id), 0)") + `
+		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
+		WHERE a.slug = ?`
 )
 
-func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) {
+func scanArtifactPublished(row rowScanner) (*artifact.Published, error) {
 	var (
 		p                  artifact.Published
 		vis, meta          string
@@ -823,9 +803,7 @@ func scanArtifactPublished(row artifactRowScanner) (*artifact.Published, error) 
 func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolvePublished")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolvePublished+`
-		FROM artifact a LEFT JOIN version v ON v.id = a.published_version_id
-		WHERE a.slug = ?`, slug))
+	p, err := scanArtifactPublished(s.db.stmt.resolvePublished.QueryRowContext(ctx, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
@@ -840,9 +818,7 @@ func (s *ArtifactStore) ResolvePublished(ctx context.Context, slug string) (_ *a
 func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number int) (_ *artifact.Published, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ResolveVersion")
 	defer func() { end(err) }()
-	p, err := scanArtifactPublished(s.db.QueryRowContext(ctx, artifactResolveVersion+`
-		FROM artifact a LEFT JOIN version v ON v.artifact_id = a.id AND v.number = ?
-		WHERE a.slug = ?`, number, slug))
+	p, err := scanArtifactPublished(s.db.stmt.resolveVersion.QueryRowContext(ctx, number, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
@@ -870,18 +846,37 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ []artifac
 	return files, nil
 }
 
+const artifactFile = `SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file
+	WHERE version_id = ? AND path = ?`
+
+func (s *ArtifactStore) File(ctx context.Context, versionID int64, path string) (_ *artifact.File, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.File")
+	defer func() { end(err) }()
+	var f artifact.File
+	err = scanFile(s.db.stmt.file.QueryRowContext(ctx, versionID, path), &f)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, artifact.ErrNotFound
+	}
+	if err != nil {
+		return nil, artifactErr("file", err)
+	}
+	return &f, nil
+}
+
+const artifactFileOrigin = `
+	SELECT cur.uploaded_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
+	FROM version_file cur
+	JOIN version cv ON cv.id = cur.version_id
+	JOIN artifact a ON a.id = cv.artifact_id
+	JOIN user owner ON owner.id = a.owner_id
+	LEFT JOIN user u ON u.handle = cur.uploaded_by
+	WHERE cur.version_id = ? AND cur.path = ?`
+
 func (s *ArtifactStore) FileOrigin(ctx context.Context, versionID int64, path string) (_ *artifact.FileOrigin, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.FileOrigin")
 	defer func() { end(err) }()
 	var o artifact.FileOrigin
-	err = s.db.QueryRowContext(ctx, `
-		SELECT cur.uploaded_by, COALESCE(u.role = 'admin', 1), u.disabled_at IS NOT NULL, owner.handle
-		FROM version_file cur
-		JOIN version cv ON cv.id = cur.version_id
-		JOIN artifact a ON a.id = cv.artifact_id
-		JOIN user owner ON owner.id = a.owner_id
-		LEFT JOIN user u ON u.handle = cur.uploaded_by
-		WHERE cur.version_id = ? AND cur.path = ?`, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
+	err = s.db.stmt.fileOrigin.QueryRowContext(ctx, versionID, path).Scan(&o.Author, &o.Admin, &o.Disabled, &o.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
@@ -904,22 +899,14 @@ func (s *ArtifactStore) Usage(ctx context.Context, ownerHandle string) (_ int64,
 
 func (s *ArtifactStore) listWhere(ctx context.Context, op, cond, order string, arg any) ([]artifact.Artifact, error) {
 	rows, err := s.db.QueryContext(ctx, artifactSelect+" WHERE "+cond+" ORDER BY "+order+", a.id", arg)
-	if err != nil {
-		return nil, artifactErr(op, err)
-	}
-	defer rows.Close()
-	var out []artifact.Artifact
-	for rows.Next() {
-		_, a, err := scanArtifact(rows)
+	out, err := collect(rows, err, func(row rowScanner) (artifact.Artifact, error) {
+		_, a, err := scanArtifact(row)
 		if err != nil {
-			return nil, artifactErr(op, err)
+			return artifact.Artifact{}, err
 		}
-		out = append(out, *a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, artifactErr(op, err)
-	}
-	return out, nil
+		return *a, nil
+	})
+	return out, artifactErr(op, err)
 }
 
 func (s *ArtifactStore) ListExpired(ctx context.Context, now time.Time) (_ []artifact.Artifact, err error) {
@@ -1086,44 +1073,24 @@ func (s *ArtifactStore) OwnerUsage(ctx context.Context) (_ []artifact.OwnerUsage
 		FROM artifact a JOIN user u ON u.id = a.owner_id
 		WHERE a.purged_at IS NULL
 		GROUP BY u.id ORDER BY u.handle`, artifact.FileChargeBytes)
-	if err != nil {
-		return nil, artifactErr("owner usage", err)
-	}
-	defer rows.Close()
-	var out []artifact.OwnerUsage
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (artifact.OwnerUsage, error) {
 		var o artifact.OwnerUsage
-		if err := rows.Scan(&o.Handle, &o.Artifacts, &o.Bytes); err != nil {
-			return nil, artifactErr("owner usage", err)
-		}
-		out = append(out, o)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, artifactErr("owner usage", err)
-	}
-	return out, nil
+		err := row.Scan(&o.Handle, &o.Artifacts, &o.Bytes)
+		return o, err
+	})
+	return out, artifactErr("owner usage", err)
 }
 
 func (s *ArtifactStore) CountArtifacts(ctx context.Context) (_ []artifact.StatusCount, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.CountArtifacts")
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+artifactStatus+`, visibility, COUNT(*) FROM artifact GROUP BY 1, 2`)
-	if err != nil {
-		return nil, artifactErr("count", err)
-	}
-	defer rows.Close()
-	var out []artifact.StatusCount
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (artifact.StatusCount, error) {
 		var c artifact.StatusCount
-		if err := rows.Scan(&c.Status, &c.Visibility, &c.Count); err != nil {
-			return nil, artifactErr("count", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, artifactErr("count", err)
-	}
-	return out, nil
+		err := row.Scan(&c.Status, &c.Visibility, &c.Count)
+		return c, err
+	})
+	return out, artifactErr("count", err)
 }
 
 func (s *ArtifactStore) VersionTotals(ctx context.Context) (_ artifact.Totals, err error) {

@@ -856,3 +856,15 @@ func (s *Service) modify(ctx context.Context, actor Actor, slug string, allowDel
 	}
 	return got, nil
 }
+
+// File returns a version's file at path, and false when it has none.
+func (s *Service) File(ctx context.Context, versionID int64, path string) (File, bool, error) {
+	f, err := s.store.File(ctx, versionID, path)
+	if errors.Is(err, ErrNotFound) {
+		return File{}, false, nil
+	}
+	if err != nil {
+		return File{}, false, err
+	}
+	return *f, true, nil
+}

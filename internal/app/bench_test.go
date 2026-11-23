@@ -2,8 +2,10 @@ package app_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,7 +23,8 @@ func (discardSpans) Shutdown(context.Context) error                             
 
 // BenchmarkSiteServe serves a 5 KiB file through the whole public chain:
 // host router, middleware and the site handler, with telemetry off (the
-// Prometheus metrics alone) and with tracing at two site sample ratios.
+// Prometheus metrics alone) and with tracing at two site sample ratios, and
+// one file of a version with many, telemetry off.
 func BenchmarkSiteServe(b *testing.B) {
 	for _, bc := range []struct {
 		name  string
@@ -38,12 +41,19 @@ func BenchmarkSiteServe(b *testing.B) {
 				cfg.Telemetry.Traces.SiteSampleRatio = bc.ratio
 				opts.SpanExporter = discardSpans{}
 			}
-			benchSite(b, startWith(b, cfg, opts))
+			benchSite(b, startWith(b, cfg, opts), 1)
+		})
+	}
+	for _, n := range []int{200, 2000} {
+		b.Run("files-"+strconv.Itoa(n), func(b *testing.B) {
+			benchSite(b, startWith(b, testConfig(b), app.Options{}), n)
 		})
 	}
 }
 
-func benchSite(b *testing.B, in *instance) {
+// benchSite publishes index.html and files-1 more stylesheets, and requests
+// the last stylesheet when there are any.
+func benchSite(b *testing.B, in *instance, files int) {
 	b.Helper()
 	hc := client(in.app.Addrs().HTTP)
 	ctx := context.Background()
@@ -57,12 +67,18 @@ func benchSite(b *testing.B, in *instance) {
 	}
 	page := "<!doctype html><title>Bench</title>" + strings.Repeat("x", 5<<10)
 	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: hc})
-	if _, err := user.CreateBundle(ctx, api.CreateManifest{Slug: "bench"}, bundle(b, map[string]string{"index.html": page})); err != nil {
+	content := map[string]string{"index.html": page}
+	target := "index.html"
+	for i := 1; i < files; i++ {
+		target = fmt.Sprintf("css/%04d.css", i)
+		content[target] = fmt.Sprintf("body{order:%d}", i)
+	}
+	if _, err := user.CreateBundle(ctx, api.CreateManifest{Slug: "bench"}, bundle(b, content)); err != nil {
 		b.Fatal(err)
 	}
 
 	h := in.app.Handler()
-	req := httptest.NewRequest(http.MethodGet, "http://bench.localhost/index.html", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://bench.localhost/"+target, nil)
 	b.ReportAllocs()
 	for b.Loop() {
 		rec := httptest.NewRecorder()

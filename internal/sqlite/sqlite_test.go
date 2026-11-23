@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func TestOpenMigratesIdempotently(t *testing.T) {
@@ -50,6 +51,84 @@ func TestOpenMigratesIdempotently(t *testing.T) {
 	}
 	if m != n {
 		t.Fatalf("migrations after reopen = %d, want %d", m, n)
+	}
+}
+
+func TestReadTxDoesNotWaitForWriter(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.ExecContext(ctx, `CREATE TABLE t (n INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO t VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	held, release := make(chan struct{}), make(chan struct{})
+	wrote := make(chan error, 1)
+	go func() {
+		wrote <- inTx(ctx, db, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO t VALUES (2)`); err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-held:
+	case err := <-wrote:
+		t.Fatalf("write transaction: %v", err)
+	}
+
+	// Well inside busy_timeout, so a read that queued for the write lock
+	// runs out of time instead of getting it when the writer is released.
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	var n int
+	readErr := readTx(readCtx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(readCtx, `SELECT count(*) FROM t`).Scan(&n)
+	})
+	cancel()
+	close(release)
+	if err := <-wrote; err != nil {
+		t.Fatalf("write transaction: %v", err)
+	}
+	if readErr != nil {
+		t.Fatalf("readTx during a write transaction: %v", readErr)
+	}
+	if n != 1 {
+		t.Errorf("readTx during a write transaction counted %d rows, want the 1 committed", n)
+	}
+
+	// One connection, so the write below runs where query_only was set.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	err = readTx(ctx, conn, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO t VALUES (3)`)
+		return err
+	})
+	if err == nil {
+		t.Error("readTx ran an INSERT, want it refused")
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM t`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("rows after the refused INSERT = %d, want 2", n)
+	}
+	if err := inTx(ctx, conn, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO t VALUES (4)`)
+		return err
+	}); err != nil {
+		t.Errorf("inTx after a readTx on the same pool: %v", err)
 	}
 }
 

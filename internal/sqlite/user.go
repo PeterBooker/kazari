@@ -29,11 +29,7 @@ func NewUserStore(db *DB) *UserStore {
 const userColumns = `user.id, user.handle, user.email, user.display_name, user.role,
 	user.quota_bytes, user.disabled_at, user.created_at`
 
-type userRowScanner interface {
-	Scan(dest ...any) error
-}
-
-func userScan(s userRowScanner, u *user.User) error {
+func userScan(s rowScanner, u *user.User) error {
 	var (
 		email    sql.NullString
 		role     string
@@ -139,19 +135,8 @@ func (s *UserStore) ListUsers(ctx context.Context) (_ []user.User, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListUsers")
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM user ORDER BY handle`)
+	users, err := collect(rows, err, fill(userScan))
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: list users: %w", err)
-	}
-	defer rows.Close()
-	var users []user.User
-	for rows.Next() {
-		var u user.User
-		if err := userScan(rows, &u); err != nil {
-			return nil, fmt.Errorf("sqlite: list users: %w", err)
-		}
-		users = append(users, u)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list users: %w", err)
 	}
 	return users, nil
@@ -316,7 +301,7 @@ const userKeyColumns = `api_key.id, user.handle, api_key.prefix, api_key.hash, a
 	coalesce((SELECT i.prefix FROM api_key i WHERE i.id = api_key.issued_by), ''),
 	api_key.last_used_at, api_key.expires_at, api_key.revoked_at, api_key.created_at`
 
-func userScanKey(s userRowScanner, k *user.APIKey, extra ...any) error {
+func userScanKey(s rowScanner, k *user.APIKey, extra ...any) error {
 	var (
 		scopes, slugs            string
 		lastUsed, expires, revok sql.NullInt64
@@ -373,7 +358,7 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKe
 	ctx, end := s.db.op(ctx, "UserStore.ListKeys")
 	defer func() { end(err) }()
 	var keys []user.APIKey
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
@@ -382,18 +367,11 @@ func (s *UserStore) ListKeys(ctx context.Context, handle string) (_ []user.APIKe
 			FROM api_key JOIN user ON user.id = api_key.user_id
 			WHERE api_key.user_id = ?
 			ORDER BY api_key.created_at DESC, api_key.id DESC`, uid)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var k user.APIKey
-			if err := userScanKey(rows, &k); err != nil {
-				return err
-			}
-			keys = append(keys, k)
-		}
-		return rows.Err()
+		keys, err = collect(rows, err, func(row rowScanner) (k user.APIKey, err error) {
+			err = userScanKey(row, &k)
+			return k, err
+		})
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list keys of %q: %w", handle, err)
@@ -425,18 +403,7 @@ func (s *UserStore) RevokeKey(ctx context.Context, handle, prefix string, at tim
 			UPDATE api_key SET revoked_at = ?2
 			WHERE id IN (SELECT id FROM tree) AND id <> ?1 AND revoked_at IS NULL
 			RETURNING prefix`, id, toNanos(at))
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var p string
-			if err := rows.Scan(&p); err != nil {
-				return err
-			}
-			issued = append(issued, p)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		if issued, err = collect(rows, err, scalar[string]); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE api_key SET revoked_at = coalesce(revoked_at, ?) WHERE id = ?`, toNanos(at), id)
@@ -550,31 +517,25 @@ func (s *UserStore) ListIdentities(ctx context.Context, handle string) (_ []user
 	ctx, end := s.db.op(ctx, "UserStore.ListIdentities")
 	defer func() { end(err) }()
 	var ids []user.Identity
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		uid, err := userLookupID(ctx, tx, handle)
 		if err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT issuer, subject, email_at_login, last_login_at
 			FROM user_identity WHERE user_id = ? ORDER BY issuer, subject`, uid)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
+		ids, err = collect(rows, err, func(row rowScanner) (user.Identity, error) {
 			var (
 				id   user.Identity
 				last int64
 			)
-			if err := rows.Scan(&id.Issuer, &id.Subject, &id.EmailAtLogin, &last); err != nil {
-				return err
-			}
+			err := row.Scan(&id.Issuer, &id.Subject, &id.EmailAtLogin, &last)
 			if last != 0 {
 				id.LastLoginAt = fromNanos(last)
 			}
-			ids = append(ids, id)
-		}
-		return rows.Err()
+			return id, err
+		})
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list identities of %q: %w", handle, err)
@@ -586,19 +547,12 @@ func (s *UserStore) CountUsers(ctx context.Context) (_ []user.Count, err error) 
 	ctx, end := s.db.op(ctx, "UserStore.CountUsers")
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, `SELECT role, disabled_at IS NOT NULL, COUNT(*) FROM user GROUP BY 1, 2`)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count users: %w", err)
-	}
-	defer rows.Close()
-	var out []user.Count
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (user.Count, error) {
 		var c user.Count
-		if err := rows.Scan(&c.Role, &c.Disabled, &c.Count); err != nil {
-			return nil, fmt.Errorf("sqlite: count users: %w", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
+		err := row.Scan(&c.Role, &c.Disabled, &c.Count)
+		return c, err
+	})
+	if err != nil {
 		return nil, fmt.Errorf("sqlite: count users: %w", err)
 	}
 	return out, nil

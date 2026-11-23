@@ -1471,6 +1471,12 @@ func TestResolveDerivesFlags(t *testing.T) {
 	if f, ok := fm["index.html"]; !ok || f.Hash != sha("<div id=app>") {
 		t.Fatalf("Files = %+v", fm)
 	}
+	if f, ok, err := e.svc.File(e.ctx, v.ID, "index.html"); err != nil || !ok || f.Hash != sha("<div id=app>") {
+		t.Fatalf("File(index.html) = %+v, %t, %v", f, ok, err)
+	}
+	if f, ok, err := e.svc.File(e.ctx, v.ID, "missing.html"); err != nil || ok {
+		t.Fatalf("File(missing.html) = %+v, %t, %v; want not found", f, ok, err)
+	}
 	_, err = e.svc.ResolveVersion(e.ctx, "spa", 2)
 	wantErr(t, "ResolveVersion missing", err, artifact.ErrVersionNotFound)
 	_, err = e.svc.ResolvePublished(e.ctx, "nope")

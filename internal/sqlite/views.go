@@ -114,10 +114,7 @@ func (s *ViewStore) InstanceDays(ctx context.Context, from, to time.Time) (_ []v
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT day, sum(views), sum(visitors), sum(member_views), sum(link_views)
 		 FROM view_day WHERE day >= ? AND day < ? GROUP BY day ORDER BY day`, toNanos(from), toNanos(to))
-	if err != nil {
-		return nil, viewErr("instance views", err)
-	}
-	out, err := scanDays(rows)
+	out, err := collect(rows, err, scanDay)
 	return out, viewErr("instance views", err)
 }
 
@@ -130,19 +127,12 @@ func (s *ViewStore) TopArtifacts(ctx context.Context, from, to time.Time, limit 
 		 FROM view_day d JOIN artifact a ON a.id = d.artifact_id
 		 WHERE d.day >= ? AND d.day < ? AND a.purged_at IS NULL
 		 GROUP BY a.id ORDER BY sum(d.views) DESC, a.slug LIMIT ?`, toNanos(from), toNanos(to), limit)
-	if err != nil {
-		return nil, viewErr("top artifacts", err)
-	}
-	defer rows.Close()
-	var out []views.ArtifactTotals
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (views.ArtifactTotals, error) {
 		var a views.ArtifactTotals
-		if err := rows.Scan(&a.Slug, &a.Views, &a.Visitors, &a.MemberViews, &a.LinkViews); err != nil {
-			return nil, viewErr("top artifacts", err)
-		}
-		out = append(out, a)
-	}
-	return out, viewErr("top artifacts", rows.Err())
+		err := row.Scan(&a.Slug, &a.Views, &a.Visitors, &a.MemberViews, &a.LinkViews)
+		return a, err
+	})
+	return out, viewErr("top artifacts", err)
 }
 
 // ArtifactSums implements views.Store.
@@ -200,10 +190,7 @@ func (s *ViewStore) ArtifactDays(ctx context.Context, slug string, from, to time
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT day, views, visitors, member_views, link_views
 		 FROM view_day WHERE artifact_id = ? AND day >= ? AND day < ? ORDER BY day`, id, toNanos(from), toNanos(to))
-	if err != nil {
-		return nil, viewErr("artifact days", err)
-	}
-	out, err := scanDays(rows)
+	out, err := collect(rows, err, scanDay)
 	return out, viewErr("artifact days", err)
 }
 
@@ -219,19 +206,12 @@ func (s *ViewStore) TopPaths(ctx context.Context, slug string, from, to time.Tim
 		`SELECT path, sum(views) FROM view_path_day
 		 WHERE artifact_id = ? AND day >= ? AND day < ?
 		 GROUP BY path ORDER BY sum(views) DESC, path LIMIT ?`, id, toNanos(from), toNanos(to), limit)
-	if err != nil {
-		return nil, viewErr("top paths", err)
-	}
-	defer rows.Close()
-	var out []views.FileViews
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (views.FileViews, error) {
 		var f views.FileViews
-		if err := rows.Scan(&f.Path, &f.Views); err != nil {
-			return nil, viewErr("top paths", err)
-		}
-		out = append(out, f)
-	}
-	return out, viewErr("top paths", rows.Err())
+		err := row.Scan(&f.Path, &f.Views)
+		return f, err
+	})
+	return out, viewErr("top paths", err)
 }
 
 // Readers implements views.Store, the latest reader first.
@@ -246,38 +226,24 @@ func (s *ViewStore) Readers(ctx context.Context, slug string, limit int) (_ []vi
 		`SELECT u.handle, u.display_name, r.first_at, r.last_at, r.views
 		 FROM view_reader r JOIN user u ON u.id = r.user_id
 		 WHERE r.artifact_id = ? ORDER BY r.last_at DESC, u.handle LIMIT ?`, id, limit)
-	if err != nil {
-		return nil, viewErr("readers", err)
-	}
-	defer rows.Close()
-	var out []views.Reader
-	for rows.Next() {
+	out, err := collect(rows, err, func(row rowScanner) (views.Reader, error) {
 		var (
 			r           views.Reader
 			first, last int64
 		)
-		if err := rows.Scan(&r.Handle, &r.Name, &first, &last, &r.Views); err != nil {
-			return nil, viewErr("readers", err)
-		}
+		err := row.Scan(&r.Handle, &r.Name, &first, &last, &r.Views)
 		r.FirstAt, r.LastAt = fromNanos(first), fromNanos(last)
-		out = append(out, r)
-	}
-	return out, viewErr("readers", rows.Err())
+		return r, err
+	})
+	return out, viewErr("readers", err)
 }
 
-func scanDays(rows *sql.Rows) ([]views.DayTotals, error) {
-	defer rows.Close()
-	var out []views.DayTotals
-	for rows.Next() {
-		var (
-			d   views.DayTotals
-			day int64
-		)
-		if err := rows.Scan(&day, &d.Views, &d.Visitors, &d.MemberViews, &d.LinkViews); err != nil {
-			return nil, err
-		}
-		d.Day = fromNanos(day)
-		out = append(out, d)
-	}
-	return out, rows.Err()
+func scanDay(row rowScanner) (views.DayTotals, error) {
+	var (
+		d   views.DayTotals
+		day int64
+	)
+	err := row.Scan(&day, &d.Views, &d.Visitors, &d.MemberViews, &d.LinkViews)
+	d.Day = fromNanos(day)
+	return d, err
 }

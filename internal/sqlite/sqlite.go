@@ -32,6 +32,46 @@ type Options struct {
 type DB struct {
 	*sql.DB
 	tracer trace.Tracer
+	stmt   statements
+}
+
+// statements are the queries of serving a page, prepared once: the driver
+// otherwise parses a statement on every call, which cost a page request more
+// than running it.
+type statements struct {
+	resolvePublished *sql.Stmt
+	resolveVersion   *sql.Stmt
+	file             *sql.Stmt
+	fileOrigin       *sql.Stmt
+}
+
+func (s *statements) prepare(ctx context.Context, db *sql.DB) error {
+	for _, q := range []struct {
+		stmt  **sql.Stmt
+		query string
+	}{
+		{&s.resolvePublished, artifactResolvePublished},
+		{&s.resolveVersion, artifactResolveVersion},
+		{&s.file, artifactFile},
+		{&s.fileOrigin, artifactFileOrigin},
+	} {
+		stmt, err := db.PrepareContext(ctx, q.query) //nolint:sqlclosecheck // DB.Close closes it
+		if err != nil {
+			return errors.Join(fmt.Errorf("sqlite: prepare: %w", err), s.close())
+		}
+		*q.stmt = stmt
+	}
+	return nil
+}
+
+func (s *statements) close() error {
+	var errs []error
+	for _, stmt := range []*sql.Stmt{s.resolvePublished, s.resolveVersion, s.file, s.fileOrigin} {
+		if stmt != nil {
+			errs = append(errs, stmt.Close())
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Open opens or creates the database at path and applies pending migrations.
@@ -57,8 +97,18 @@ func Open(ctx context.Context, path string, o Options) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
+	out := &DB{DB: db, tracer: o.Telemetry.Tracer(scope)}
+	if err := out.stmt.prepare(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	observePool(o.Telemetry.Meter(scope), db)
-	return &DB{DB: db, tracer: o.Telemetry.Tracer(scope)}, nil
+	return out, nil
+}
+
+// Close closes the prepared statements and then the database.
+func (db *DB) Close() error {
+	return errors.Join(db.stmt.close(), db.DB.Close())
 }
 
 const maxOpenConns = 8
@@ -136,8 +186,21 @@ type beginner interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) (err error) {
-	tx, err := db.BeginTx(ctx, nil)
+// inTx runs fn in a transaction that takes the write lock as it begins
+// (_txlock=immediate), so it never fails part way when another writer
+// commits first.
+func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) error {
+	return runTx(ctx, db, nil, fn)
+}
+
+// readTx runs fn in a deferred, query-only transaction: one snapshot that
+// neither waits for a writer nor holds one up.
+func readTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) error {
+	return runTx(ctx, db, &sql.TxOptions{ReadOnly: true}, fn)
+}
+
+func runTx(ctx context.Context, db beginner, opts *sql.TxOptions, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -153,4 +216,46 @@ func inTx(ctx context.Context, db beginner, fn func(tx *sql.Tx) error) (err erro
 		err = tx.Commit()
 	}()
 	return fn(tx)
+}
+
+// rowScanner is a *sql.Row or a *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// collect scans every row of a query, taking the query's error too, and
+// closes rows on every path.
+func collect[T any](rows *sql.Rows, err error, scan func(rowScanner) (T, error)) ([]T, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// fill turns a function that scans a row into a *T into one for collect.
+func fill[T any](scan func(rowScanner, *T) error) func(rowScanner) (T, error) {
+	return func(row rowScanner) (T, error) {
+		var v T
+		err := scan(row, &v)
+		return v, err
+	}
+}
+
+// scalar scans a row of one column.
+func scalar[T any](row rowScanner) (T, error) {
+	var v T
+	err := row.Scan(&v)
+	return v, err
 }

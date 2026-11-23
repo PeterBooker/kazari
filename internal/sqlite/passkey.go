@@ -87,7 +87,7 @@ func (s *UserStore) CreatePasskey(ctx context.Context, p *user.Passkey, webauthn
 const passkeySelect = `SELECT k.id, u.handle, k.name, k.credential_id, k.record, k.created_at, k.last_used_at
 	FROM passkey k JOIN user u ON u.id = k.user_id`
 
-func scanPasskey(row userRowScanner, p *user.Passkey, extra ...any) error {
+func scanPasskey(row rowScanner, p *user.Passkey, extra ...any) error {
 	var (
 		created int64
 		used    sql.NullInt64
@@ -104,27 +104,23 @@ func scanPasskey(row userRowScanner, p *user.Passkey, extra ...any) error {
 func (s *UserStore) ListPasskeys(ctx context.Context, handle string) (_ []user.Passkey, err error) {
 	ctx, end := s.db.op(ctx, "UserStore.ListPasskeys")
 	defer func() { end(err) }()
-	out := []user.Passkey{}
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+	var out []user.Passkey
+	err = readTx(ctx, s.db, func(tx *sql.Tx) error {
 		if _, err := userLookupID(ctx, tx, handle); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, passkeySelect+` WHERE u.handle = ? ORDER BY k.id`, handle)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var p user.Passkey
-			if err := scanPasskey(rows, &p); err != nil {
-				return err
-			}
-			out = append(out, p)
-		}
-		return rows.Err()
+		out, err = collect(rows, err, func(row rowScanner) (p user.Passkey, err error) {
+			err = scanPasskey(row, &p)
+			return p, err
+		})
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list passkeys of %q: %w", handle, err)
+	}
+	if out == nil {
+		out = []user.Passkey{}
 	}
 	return out, nil
 }
