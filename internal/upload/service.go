@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -298,26 +299,16 @@ func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.Fil
 	staged := slices.Clone(u.Files)
 	slices.SortFunc(staged, func(a, b StagedFile) int { return strings.Compare(a.Path, b.Path) })
 
-	var opened []*os.File
-	closeAll := func() error {
-		var errs []error
-		for _, fh := range opened {
-			if err := fh.Close(); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(errs...)
-	}
 	inputs := make([]artifact.FileInput, 0, len(staged))
+	readers := make([]*stagedReader, 0, len(staged))
 	for _, f := range staged {
-		fh, err := s.openStaged(id, f)
-		if err != nil {
-			return nil, nil, errors.Join(fmt.Errorf("upload: files %s: %w", id, err), closeAll())
+		p := s.stagingPath(id, f.StagingIndex)
+		if err := trimStaged(p, f); err != nil {
+			return nil, nil, fmt.Errorf("upload: files %s: %w", id, err)
 		}
-		opened = append(opened, fh)
-		inputs = append(inputs, artifact.FileInput{
-			Path: f.Path, Content: io.NewSectionReader(fh, 0, f.Bytes), ContentType: f.ContentType,
-		})
+		r := &stagedReader{id: id, path: p, file: f}
+		readers = append(readers, r)
+		inputs = append(inputs, artifact.FileInput{Path: f.Path, Content: r, ContentType: f.ContentType})
 	}
 
 	var (
@@ -326,7 +317,11 @@ func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.Fil
 	)
 	done := func(consumed bool) error {
 		once.Do(func() {
-			cleanupErr = closeAll()
+			var errs []error
+			for _, r := range readers {
+				errs = append(errs, r.close())
+			}
+			cleanupErr = errors.Join(errs...)
 			if consumed {
 				cleanupErr = errors.Join(cleanupErr, s.remove(context.WithoutCancel(ctx), id))
 			}
@@ -336,25 +331,84 @@ func (s *Service) Files(ctx context.Context, owner, id string) (_ []artifact.Fil
 	return inputs, done, nil
 }
 
-// openStaged trims the file to its recorded size.
-func (s *Service) openStaged(id string, f StagedFile) (*os.File, error) {
-	p := s.stagingPath(id, f.StagingIndex)
-	fh, err := os.OpenFile(p, os.O_RDWR, 0)
+// trimStaged checks the staging file at p holds f and trims it to its
+// recorded size.
+func trimStaged(p string, f StagedFile) error {
+	st, err := os.Stat(p)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	st, err := fh.Stat()
-	if err == nil && st.Size() < f.Bytes {
-		err = fmt.Errorf("staging file for %q has %d bytes, want %d", f.Path, st.Size(), f.Bytes)
+	if st.Size() < f.Bytes {
+		return fmt.Errorf("staging file for %q has %d bytes, want %d", f.Path, st.Size(), f.Bytes)
 	}
-	if err == nil && st.Size() > f.Bytes {
-		err = fh.Truncate(f.Bytes)
+	if st.Size() > f.Bytes {
+		return os.Truncate(p, f.Bytes)
+	}
+	return nil
+}
+
+// stagedReader opens its staging file on the first Read and closes it at
+// the end, so a publish of many files holds one open at a time. It reads
+// up to the recorded size, and Size tells it unread, as the publish's
+// limit checks ask.
+type stagedReader struct {
+	id   string
+	path string
+	file StagedFile
+
+	fh  *os.File
+	r   *io.SectionReader
+	err error
+}
+
+func (s *stagedReader) Size() int64 { return s.file.Bytes }
+
+func (s *stagedReader) Read(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	if s.r == nil {
+		if err := s.open(); err != nil {
+			s.err = err
+			return 0, err
+		}
+	}
+	n, err := s.r.Read(p)
+	if err != nil {
+		s.err = err
+		// Read only, so a failed close loses nothing.
+		_ = s.close()
+	}
+	return n, err
+}
+
+func (s *stagedReader) open() error {
+	fh, err := os.Open(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return artifact.Errorf(artifact.ErrUploadNotFound, "upload %s was removed during the publish", s.id)
 	}
 	if err != nil {
-		fh.Close()
-		return nil, err
+		return fmt.Errorf("upload: files %s: %w", s.id, err)
 	}
-	return fh, nil
+	// Trimmed when the publish began: shorter now, it would end early.
+	if st, err := fh.Stat(); err != nil || st.Size() < s.file.Bytes {
+		_ = fh.Close()
+		if err == nil {
+			err = fmt.Errorf("staging file for %q has %d bytes, want %d", s.file.Path, st.Size(), s.file.Bytes)
+		}
+		return fmt.Errorf("upload: files %s: %w", s.id, err)
+	}
+	s.fh, s.r = fh, io.NewSectionReader(fh, 0, s.file.Bytes)
+	return nil
+}
+
+func (s *stagedReader) close() error {
+	if s.fh == nil {
+		return nil
+	}
+	err := s.fh.Close()
+	s.fh = nil
+	return err
 }
 
 // Abort removes an upload of owner, expired or not.

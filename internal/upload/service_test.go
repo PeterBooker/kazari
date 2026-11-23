@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -507,6 +508,47 @@ func TestFilesCapAtRecordedSize(t *testing.T) {
 	e.appendChunk(t, u.ID, "a", 3, "def")
 	if diff := cmp.Diff(map[string]string{"a": "abc"}, readFiles(t, files)); diff != "" {
 		t.Errorf("content (-want +got):\n%s", diff)
+	}
+}
+
+// Files opens no staging file: each opens when the publish reads it, so a
+// publish of many files does not hold them all open at once.
+func TestFilesOpenOnRead(t *testing.T) {
+	ctx := t.Context()
+	e := newEnv(t, upload.Options{})
+	u := e.begin(t, "alice")
+	staged := map[string]upload.StagedFile{}
+	for p, body := range map[string]string{"a": "abc", "b": "bcde", "c": "cdefg"} {
+		staged[p] = e.appendChunk(t, u.ID, p, 0, body)
+	}
+	files, done, err := e.svc.Files(ctx, "alice", u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done(false)
+
+	if b, err := io.ReadAll(files[0].Content); err != nil || string(b) != "abc" {
+		t.Fatalf("read %s = %q, %v; want %q", files[0].Path, b, err, "abc")
+	}
+	// Gone before it is read: an open file would still give its content.
+	if err := os.Remove(filepath.Join(e.dir, u.ID, strconv.Itoa(staged["b"].StagingIndex))); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := files[1].Content.(interface{ Size() int64 }); !ok || n.Size() != 4 {
+		t.Errorf("%s: Size before reading = %v, want 4", files[1].Path, n)
+	}
+	if _, err := io.ReadAll(files[1].Content); !errors.Is(err, artifact.ErrUploadNotFound) {
+		t.Errorf("read %s after its staging file is removed: err = %v, want ErrUploadNotFound", files[1].Path, err)
+	}
+	// Cut short after Files checked it: an error, not a shorter file.
+	if err := os.Truncate(filepath.Join(e.dir, u.ID, strconv.Itoa(staged["c"].StagingIndex)), 2); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := io.ReadAll(files[2].Content); err == nil {
+		t.Errorf("read %s after its staging file is cut to 2 bytes = %q, nil; want an error", files[2].Path, b)
+	}
+	if err := done(false); err != nil {
+		t.Errorf("done: %v", err)
 	}
 }
 
