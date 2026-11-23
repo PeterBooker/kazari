@@ -194,11 +194,17 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, v visit) {
 }
 
 func (s *server) revokeKeyPage(w http.ResponseWriter, r *http.Request, v visit) {
+	s.confirmRevoke(w, r, v, http.StatusOK, "")
+}
+
+// confirmRevoke answers with the page that confirms revoking the key the
+// path names, with why the last attempt was refused, if it was.
+func (s *server) confirmRevoke(w http.ResponseWriter, r *http.Request, v visit, status int, why string) {
 	k, keys, ok := s.ownKey(w, r, v)
 	if !ok {
 		return
 	}
-	d := confirmPage{base: s.baseFor(v), Kind: "key", Key: k, Own: k.Prefix == v.sess.KeyPrefix}
+	d := confirmPage{base: s.baseFor(v), Kind: "key", Key: k, Own: k.Prefix == v.sess.KeyPrefix, Err: why}
 	for _, other := range keys {
 		if other.Live && other.IssuedBy == k.Prefix {
 			d.Issued = append(d.Issued, other)
@@ -214,14 +220,18 @@ func (s *server) revokeKeyPage(w http.ResponseWriter, r *http.Request, v visit) 
 			d.Apps = append(d.Apps, a)
 		}
 	}
-	s.render(w, r, http.StatusOK, "confirm", d)
+	s.render(w, r, status, "confirm", d)
 }
 
 func (s *server) revokeKey(w http.ResponseWriter, r *http.Request, v visit) {
 	prefix := r.PathValue("prefix")
-	err := s.d.Users.RevokeKey(r.Context(), user.KeyRef{Handle: v.user.Handle, Prefix: prefix, Session: true})
+	err := s.d.Users.RevokeKey(r.Context(), user.KeyRef{Handle: v.user.Handle, Prefix: prefix, With: v.sess.KeyPrefix, Session: true})
 	if errors.Is(err, user.ErrKeyNotFound) {
 		s.message(w, r, http.StatusNotFound, "not-found")
+		return
+	}
+	if errors.Is(err, user.ErrKeyTooWide) {
+		s.confirmRevoke(w, r, v, http.StatusForbidden, "too-wide")
 		return
 	}
 	if err != nil {

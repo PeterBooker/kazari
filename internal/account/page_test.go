@@ -501,6 +501,14 @@ func TestKeysFromKeySession(t *testing.T) {
 	if k, _ := e.users.KeyStatus(ctx, wide.Prefix); !k.Active {
 		t.Error("the refused rotation ended the key")
 	}
+	// And revoking one.
+	resp, body = b.post("/account/keys/"+wide.Prefix+"/revoke", url.Values{"form_token": {b.token()}})
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "This key cannot be revoked here") {
+		t.Errorf("revoking a wider key: status %d: %s", resp.StatusCode, body)
+	}
+	if k, _ := e.users.KeyStatus(ctx, wide.Prefix); !k.Active {
+		t.Error("the refused revocation ended the key")
+	}
 
 	// Revoking the key the session was opened with signs the browser out.
 	resp, body = b.get("/account/keys/" + narrow.Prefix + "/revoke")
