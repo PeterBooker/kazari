@@ -85,6 +85,9 @@ func (c *Config) Validate() error {
 	if c.Serve.ShareLinkMaxTTL <= 0 {
 		v.add("serve.share_link_max_ttl", "must be greater than 0")
 	}
+	if c.Serve.CompressionCache < 0 {
+		v.add("serve.compression_cache", "must not be negative (0 turns compression off)")
+	}
 
 	v.positive("fetch", c.Fetch)
 	if c.Fetch.Budget < c.Fetch.Timeout {

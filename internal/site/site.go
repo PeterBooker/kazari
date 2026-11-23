@@ -27,6 +27,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/gate"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/views"
@@ -103,7 +104,16 @@ type Options struct {
 	Gate Gate
 	// Views counts page views; nil counts none.
 	Views Views
+	// CompressionCache is the budget, in bytes, of the encoded files kept
+	// in memory. 0 sends every file as stored.
+	CompressionCache int64
+	// Compressions bounds the compressions that run at once; 0 is
+	// GOMAXPROCS. A request that finds every one taken does not wait.
+	Compressions int
+	Telemetry    instrument.Providers
 }
+
+const scope = "github.com/PeterBooker/kazari/internal/site"
 
 // MaxImmutableAge is the default and the cap of ImmutableMaxAge.
 const MaxImmutableAge = 365 * 24 * time.Hour
@@ -162,6 +172,8 @@ type handler struct {
 	// shareNotFound is the 404 page of the share path: an operator's own
 	// page when set, else one that speaks of the link.
 	shareNotFound []byte
+	// comp is nil when compression is off.
+	comp *compressor
 }
 
 // NewHandler returns the artifact-serving handler.
@@ -185,7 +197,11 @@ func NewHandler(r Resolver, blobs blob.Store, opts Options) http.Handler {
 	if bytes.Equal(shareNotFound, defaultNotFoundPage) {
 		shareNotFound = shareNotFoundPage
 	}
-	return &handler{resolver: r, blobs: blobs, opts: opts, log: log, immutable: immutable, shareNotFound: shareNotFound}
+	h := &handler{resolver: r, blobs: blobs, opts: opts, log: log, immutable: immutable, shareNotFound: shareNotFound}
+	if opts.CompressionCache > 0 {
+		h.comp = newCompressor(blobs, opts.CompressionCache, opts.Compressions, opts.Telemetry)
+	}
+	return h
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -431,41 +447,71 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.
 		h.opts.Views.Record(r, views.Hit{ArtifactID: p.ArtifactID, Path: f.Path, Access: access,
 			IP: middleware.ClientIP(r), UA: r.Header.Get("User-Agent")})
 	}
-	if compressible(f.ContentType, f.Size) {
+	if h.comp != nil && compressible(f.ContentType, f.Size) {
 		// On identity answers too, so a shared cache of a pinned version
-		// keeps the two representations apart.
+		// keeps the representations apart.
 		hdr.Add("Vary", "Accept-Encoding")
-		if wantsGzip(r, gzipETag(f.Hash)) {
-			h.serveGzip(w, r, p, f, rc)
+		if h.serveEncoded(w, r, p, f) {
 			return
 		}
 	}
 	http.ServeContent(w, r, f.Path, time.Time{}, rc)
 }
 
-// serveGzip answers what http.ServeContent would for a request without
-// Range, If-Range or If-Match, with the gzip representation and its own ETag.
-func (h *handler) serveGzip(w http.ResponseWriter, r *http.Request, p *artifact.Published, f artifact.File, rc io.Reader) {
+// serveEncoded answers r with f in the coding the client prefers, through
+// http.ServeContent under the coding's own ETag. It reports false, having
+// written nothing, when the stored bytes are to be sent instead.
+func (h *handler) serveEncoded(w http.ResponseWriter, r *http.Request, p *artifact.Published, f artifact.File) bool {
 	hdr := w.Header()
-	etag := gzipETag(f.Hash)
-	hdr.Set("ETag", etag)
-	if noneMatch(r.Header.Values("If-None-Match"), etag) {
-		hdr.Del("Content-Type")
-		w.WriteHeader(http.StatusNotModified)
-		return
+	acc := parseAcceptEncoding(r.Header.Values("Accept-Encoding"))
+	// Ahead of choosing, so a revalidation never waits for a compression.
+	if inm := r.Header.Values("If-None-Match"); len(inm) > 0 {
+		for _, cd := range codings {
+			if etag := codingETag(f.Hash, cd); acc.of(cd.name) > 0 && noneMatch(inm, etag) {
+				hdr.Set("ETag", etag)
+				hdr.Del("Content-Type")
+				w.WriteHeader(http.StatusNotModified)
+				return true
+			}
+		}
 	}
-	if err := writeGzip(w, r, http.StatusOK, rc); err != nil {
-		h.abortGzip(r, p, f.Path, err)
+	cd, pinned := choose(r.Header, acc, f.Hash, h.comp.cached(f.Hash))
+	if cd == nil {
+		return false
 	}
+	cd, body := h.encodedBody(r, p, f, acc, cd, pinned)
+	if cd == nil {
+		return false
+	}
+	hdr.Set("ETag", codingETag(f.Hash, cd))
+	hdr.Set("Content-Encoding", cd.name)
+	// ServeContent sets the length of a range only, when the content is
+	// encoded.
+	hdr.Set("Content-Length", strconv.Itoa(len(body)))
+	http.ServeContent(w, r, f.Path, time.Time{}, bytes.NewReader(body))
+	return true
 }
 
-// abortGzip ends a gzip response whose status has gone out, which
-// writeGzip explains.
-func (h *handler) abortGzip(r *http.Request, p *artifact.Published, path string, err error) {
-	if !errors.Is(err, context.Canceled) {
-		h.log.WarnContext(r.Context(), "site: send gzip", "slug", p.Slug, "path", path, "err", err)
+// encodedBody returns f in cd, or when every compression slot is taken in
+// another coding acc accepts that is cached already, unless a validator
+// pinned cd. A nil coding means the stored bytes.
+func (h *handler) encodedBody(r *http.Request, p *artifact.Published, f artifact.File, acc acceptance, cd *coding, pinned bool) (*coding, []byte) {
+	ctx := r.Context()
+	body, err := h.comp.encoded(ctx, f.Hash, cd)
+	switch {
+	case err == nil:
+		return cd, body
+	case errors.Is(err, errBusy):
+		if !pinned {
+			if cd, body := h.comp.anyCached(ctx, acc, f.Hash); cd != nil {
+				return cd, body
+			}
+		}
+		h.comp.busy.Add(ctx, 1)
+	case !errors.Is(err, context.Canceled):
+		h.log.WarnContext(ctx, "site: compress", "slug", p.Slug, "path", f.Path, "coding", cd.name, "err", err)
 	}
-	panic(http.ErrAbortHandler)
+	return nil, nil
 }
 
 // html reports whether ct is an HTML page, the one kind of file a view is.
@@ -485,21 +531,24 @@ func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *a
 
 	h.setErrorHeaders(w, p)
 	w.Header().Set("Content-Type", contentType(f.ContentType))
-	if compressible(f.ContentType, f.Size) {
+	var body io.Reader = rc
+	size := f.Size
+	if h.comp != nil && compressible(f.ContentType, f.Size) {
 		w.Header().Add("Vary", "Accept-Encoding")
-		if acceptsGzip(r.Header.Values("Accept-Encoding")) {
-			if err := writeGzip(w, r, http.StatusNotFound, rc); err != nil {
-				h.abortGzip(r, p, f.Path, err)
+		acc := parseAcceptEncoding(r.Header.Values("Accept-Encoding"))
+		if cd, _ := choose(nil, acc, f.Hash, h.comp.cached(f.Hash)); cd != nil {
+			if cd, b := h.encodedBody(r, p, f, acc, cd, false); cd != nil {
+				w.Header().Set("Content-Encoding", cd.name)
+				body, size = bytes.NewReader(b), int64(len(b))
 			}
-			return
 		}
 	}
-	w.Header().Set("Content-Length", strconv.FormatInt(f.Size, 10))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusNotFound)
 	if r.Method == http.MethodHead {
 		return
 	}
-	if _, err := io.Copy(w, rc); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := io.Copy(w, body); err != nil && !errors.Is(err, context.Canceled) {
 		h.log.WarnContext(r.Context(), "site: copy 404.html", "slug", p.Slug, "err", err)
 	}
 }

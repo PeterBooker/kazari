@@ -137,6 +137,9 @@ type Serve struct {
 	ReservedSlugs     []string `yaml:"reserved_slugs"`
 	DefaultVisibility string   `yaml:"default_visibility"`
 	ShareLinkMaxTTL   Duration `yaml:"share_link_max_ttl"`
+	// CompressionCache is the memory kept for compressed files; 0 turns
+	// compression off.
+	CompressionCache Bytes `yaml:"compression_cache"`
 }
 
 // Fetch bounds the URLs the server fetches for members: files named by url
@@ -287,6 +290,7 @@ func Default() Config {
 			ReservedSlugs:     slices.Clone(defaultReservedSlugs),
 			DefaultVisibility: "public",
 			ShareLinkMaxTTL:   Duration(90 * day),
+			CompressionCache:  64 * MiB,
 		},
 		Fetch: Fetch{
 			Enabled: true,

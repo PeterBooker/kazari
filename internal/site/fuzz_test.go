@@ -50,23 +50,29 @@ func FuzzParseHost(f *testing.F) {
 	})
 }
 
-func FuzzAcceptsGzip(f *testing.F) {
+func FuzzAcceptEncoding(f *testing.F) {
 	for _, v := range []string{"", "gzip", "x-gzip", "*", "GZIP", "gzip;q=0", "gzip; q=0.5", "gzip;q=1.000", "gzip;q=1.5",
 		"gzip;q=0.0001", "gzip;q=", "gzip;level=1", "gzip;;q=1", "br, gzip;q=0, *", "*;q=0", "*;Q=0.3, gzip;q=0",
-		"deflate, gzip;q=1.0, *;q=0.5", " , ,gzip ,", "identity", "gzip;q=0;q=1", "gzip;q=-0", "gzip;q=0x1", "gzip;q=1e0"} {
+		"deflate, gzip;q=1.0, *;q=0.5", " , ,gzip ,", "identity", "gzip;q=0;q=1", "gzip;q=-0", "gzip;q=0x1", "gzip;q=1e0",
+		"br;q=0.9, zstd;q=0.9, gzip;q=0.8", "gzip, deflate, br, zstd", "identity;q=1, br;q=0.5", "zstd;q=0, *", "BR"} {
 		f.Add(v)
 	}
 	f.Fuzz(func(t *testing.T, v string) {
-		got := site.AcceptsGzip([]string{v})
 		lower := strings.ToLower(v)
-		if got && !strings.Contains(lower, "gzip") && !strings.Contains(lower, "*") {
-			t.Errorf("AcceptsGzip(%q) = true, which names neither gzip nor *", v)
-		}
-		if upper := asciiUpper(v); site.AcceptsGzip([]string{upper}) != got {
-			t.Errorf("AcceptsGzip(%q) = %v, but %v for %q", v, got, !got, upper)
-		}
-		if !site.AcceptsGzip([]string{v, "gzip"}) {
-			t.Errorf("AcceptsGzip(%q, \"gzip\") = false, want true", v)
+		for _, name := range []string{"br", "zstd", "gzip"} {
+			got := site.AcceptWeight([]string{v}, name)
+			if got < 0 || got > 1 {
+				t.Errorf("AcceptWeight(%q, %s) = %v, want a weight from 0 to 1", v, name, got)
+			}
+			if got > 0 && !strings.Contains(lower, name) && !strings.Contains(lower, "*") {
+				t.Errorf("AcceptWeight(%q, %s) = %v, from a field that names neither %s nor *", v, name, got, name)
+			}
+			if upper := asciiUpper(v); site.AcceptWeight([]string{upper}, name) != got {
+				t.Errorf("AcceptWeight(%q, %s) = %v, but %v for %q", v, name, got, site.AcceptWeight([]string{upper}, name), upper)
+			}
+			if w := site.AcceptWeight([]string{v, name}, name); w != 1 {
+				t.Errorf("AcceptWeight(%q, %q, %s) = %v, want 1", v, name, name, w)
+			}
 		}
 	})
 }
@@ -88,7 +94,7 @@ func FuzzNoneMatch(f *testing.F) {
 		f.Add(v)
 	}
 	f.Fuzz(func(t *testing.T, v string) {
-		etag := site.GzipETag(hash)
+		etag := site.CodingETag(hash, "gzip")
 		got := site.NoneMatch([]string{v}, etag)
 		if got && !strings.Contains(v, "*") && !strings.Contains(v, etag) {
 			t.Errorf("NoneMatch(%q, %s) = true, which holds neither * nor the tag", v, etag)

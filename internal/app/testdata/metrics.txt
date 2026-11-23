@@ -29,6 +29,7 @@
 # TYPE kazari_mcp_tool_result_size_bytes histogram
 # TYPE kazari_ready_checks gauge
 # TYPE kazari_ready_timestamp_seconds gauge
+# TYPE kazari_site_compression_cache_usage_bytes gauge
 # TYPE kazari_upload_count gauge
 # TYPE kazari_user_count gauge
 # TYPE kazari_user_link_operations_total counter

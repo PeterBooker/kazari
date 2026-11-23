@@ -500,6 +500,8 @@ func (a *App) surfaces(p *parts) hosts {
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
 		Views:            a.views,
+		CompressionCache: int64(cfg.Serve.CompressionCache),
+		Telemetry:        tel,
 		Gate: gate.New(p.signins, p.shares, gate.Options{
 			SignInURL:       u.signIn,
 			SignOutURL:      u.signOut,
