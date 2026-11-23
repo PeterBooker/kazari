@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -272,24 +273,46 @@ func (a *App) bindSocket(ctx context.Context, path string, servers *[]server) (s
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("app: remove stale admin socket %s: %w", path, err)
 	}
-	ln, err := new(net.ListenConfig).Listen(ctx, "unix", path)
+	ln, err := listenSocket(ctx, path, new(net.ListenConfig).Listen)
 	if err != nil {
-		return "", fmt.Errorf("app: listen admin socket on %s: %w", path, err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		ln.Close()
-		return "", fmt.Errorf("app: admin socket %s: %w", path, err)
+		return "", err
 	}
 	own, err := os.Stat(path)
 	if err != nil {
 		ln.Close()
 		return "", fmt.Errorf("app: admin socket %s: %w", path, err)
 	}
+	*servers = append(*servers, server{name: "admin socket", srv: a.newServer(a.adminLocal), ln: ownedSocket{Listener: ln, path: path, own: own}})
+	return path, nil
+}
+
+// listenSocket binds a Unix socket in a fresh private directory beside path
+// and renames it to path once it has mode 0600, so it only ever appears at
+// path with its final permissions. The listener must not unlink on close:
+// the name it was bound to no longer exists, and path is the caller's.
+func listenSocket(ctx context.Context, path string, listen func(ctx context.Context, network, address string) (net.Listener, error)) (net.Listener, error) {
+	dir, err := os.MkdirTemp(filepath.Dir(path), ".")
+	if err != nil {
+		return nil, fmt.Errorf("app: admin socket %s: %w", path, err)
+	}
+	defer os.RemoveAll(dir)
+	bound := filepath.Join(dir, "s")
+	ln, err := listen(ctx, "unix", bound)
+	if err != nil {
+		return nil, fmt.Errorf("app: listen admin socket on %s: %w", path, err)
+	}
 	if ul, ok := ln.(*net.UnixListener); ok {
 		ul.SetUnlinkOnClose(false)
 	}
-	*servers = append(*servers, server{name: "admin socket", srv: a.newServer(a.adminLocal), ln: ownedSocket{Listener: ln, path: path, own: own}})
-	return path, nil
+	if err := os.Chmod(bound, 0o600); err != nil {
+		ln.Close()
+		return nil, fmt.Errorf("app: admin socket %s: %w", path, err)
+	}
+	if err := os.Rename(bound, path); err != nil {
+		ln.Close()
+		return nil, fmt.Errorf("app: admin socket %s: %w", path, err)
+	}
+	return ln, nil
 }
 
 // ownedSocket removes its file on Close only if it is still the socket this
