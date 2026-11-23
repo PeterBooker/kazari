@@ -134,7 +134,7 @@ Every artifact follows these rules, whichever way it was published.
 
 #### Slugs
 
-A slug matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is 3 to 63 characters long. It cannot contain `--`, which is reserved for version hosts, or be one of `serve.reserved_slugs`. A slug is fixed when the artifact is created. The `invalid_slug` message suggests a slug made from the one given when it can, such as `q3-report` for `Q3_Report`.
+A slug matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is 3 to 63 characters long. It cannot contain `--`, which is reserved for version hosts, or be one of `serve.reserved_slugs` or Kazari's own hosts `api`, `mcp` and `admin`. A slug is fixed when the artifact is created. The `invalid_slug` message suggests a slug made from the one given when it can, such as `q3-report` for `Q3_Report`.
 
 #### File paths
 

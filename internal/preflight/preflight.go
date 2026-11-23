@@ -109,7 +109,7 @@ func checkMetrics(cfg config.Config, add adder) {
 		return
 	}
 	add("metrics", Skip, "/metrics is not served on %s until telemetry.metrics.token is set, or scrape admin.listen on a private address",
-		cfg.Host("admin"))
+		cfg.Host(config.AdminHost))
 }
 
 // checkDashboard reports where a browser finds the dashboard, and an address

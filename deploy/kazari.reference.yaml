@@ -77,6 +77,7 @@ serve:
   # frame-ancestors 'none' also keeps the MCP preview app to links; list an MCP host's
   # app origins there to let it embed pages (docs/mcp.md, Preview app).
   allow_csp_override: true           # kazari.csp metadata adds sources to csp for that artifact
+  # A list replaces this one; api, mcp and admin, Kazari's own hosts, stay reserved either way.
   reserved_slugs: [api, mcp, admin, www, mail, ns1, ns2, autoconfig, autodiscover, localhost]
   # Visibility of artifacts created without one: public | unlisted | members.
   # members pages open only for people who sign in to this instance (or hold
