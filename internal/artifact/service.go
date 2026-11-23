@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"maps"
 	"slices"
@@ -36,11 +37,21 @@ const (
 	DefaultRetention       = 30 * 24 * time.Hour
 	DefaultTombstone       = 90 * 24 * time.Hour
 	DefaultBlobGrace       = time.Hour
+	// DefaultOrphanAge is far longer than any publish, which holds blobMu
+	// from its first Put to its commit. The sweep's re-check under the lock
+	// already keeps a publish's files; the age is the margin for a writer
+	// outside the lock, and costs only a day of a crashed publish's disk.
+	DefaultOrphanAge       = 24 * time.Hour
 	DefaultShareLinkTTL    = 7 * 24 * time.Hour
 	DefaultMaxShareLinkTTL = 90 * 24 * time.Hour
 )
 
 const gcBatch = 1000
+
+// OrphanSweepInterval is the least time between two orphan sweeps: each one
+// reads every directory of the blob store, which costs far more than a
+// garbage collection that finds nothing.
+const OrphanSweepInterval = 24 * time.Hour
 
 // Passwords hashes passwords and checks them against a hash, as the
 // built-in accounts' are. user.Service implements it.
@@ -53,6 +64,15 @@ type Passwords interface {
 // user.Service implements it, NoQuotas for an instance without quotas.
 type QuotaSource interface {
 	QuotaBytes(ctx context.Context, handle string) (int64, error)
+}
+
+// BlobStore is the blob store a Service keeps content in, and lists for
+// the orphan sweep. blob.FS implements it, checked by blobtest.RunList.
+type BlobStore interface {
+	blob.Store
+	// List yields every stored blob, and nothing a Put has not finished. An
+	// error ends the sequence.
+	List(ctx context.Context) iter.Seq2[blob.Info, error]
 }
 
 // NoQuotas is the QuotaSource of an instance without quotas: every owner's
@@ -70,6 +90,7 @@ type Options struct {
 	Retention        time.Duration // soft-deleted -> purged
 	Tombstone        time.Duration // purged -> slug freed
 	BlobGrace        time.Duration // how long an unreferenced blob survives GC
+	OrphanAge        time.Duration // how old a stored file no row records must be to be swept
 	WritePolicy      string        // WriteShared (default) or WriteOwner
 	// DefaultVisibility defaults to Public.
 	DefaultVisibility Visibility
@@ -112,6 +133,9 @@ func (o Options) withDefaults() Options {
 	if o.BlobGrace <= 0 {
 		o.BlobGrace = DefaultBlobGrace
 	}
+	if o.OrphanAge <= 0 {
+		o.OrphanAge = DefaultOrphanAge
+	}
 	if o.WritePolicy == "" {
 		o.WritePolicy = WriteShared
 	}
@@ -141,7 +165,7 @@ func (o Options) withDefaults() Options {
 type Service struct {
 	store  Store
 	index  BlobIndex
-	blobs  blob.Store
+	blobs  BlobStore
 	quotas QuotaSource
 	rec    audit.Recorder
 	opts   Options
@@ -153,15 +177,19 @@ type Service struct {
 	// blobMu orders publishes against the garbage collector: a Put of stored
 	// content writes nothing, so the blob looks unreferenced until its
 	// version commits. Publishes hold the read side over that window,
-	// CollectGarbage and a failed publish's cleanup the write side.
+	// CollectGarbage, SweepOrphans and a failed publish's cleanup the write
+	// side.
 	blobMu sync.RWMutex
+
+	orphanMu     sync.Mutex
+	orphansSwept time.Time
 }
 
 // New returns a Service whose blobs, kept in blobs, index records; a nil
 // rec discards audit events. quotas gives the owner's quota when another
 // member adds a version under WriteShared, so every version is charged to
 // the owner.
-func New(store Store, index BlobIndex, blobs blob.Store, quotas QuotaSource, rec audit.Recorder, opts Options) *Service {
+func New(store Store, index BlobIndex, blobs BlobStore, quotas QuotaSource, rec audit.Recorder, opts Options) *Service {
 	if quotas == nil {
 		// A missing source would leave versions by other members uncharged.
 		panic("artifact: New needs a QuotaSource; NoQuotas for none")

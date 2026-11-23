@@ -8,9 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"iter"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/blob"
 )
@@ -26,6 +29,21 @@ func Run(t *testing.T, newStore func(t *testing.T) blob.Store) {
 	t.Run("OpenMissing", func(t *testing.T) { testOpenMissing(t, newStore(t)) })
 	t.Run("FailedPutLeavesNothing", func(t *testing.T) { testFailedPut(t, newStore(t)) })
 	t.Run("ConcurrentPutSameContent", func(t *testing.T) { testConcurrentPut(t, newStore(t)) })
+}
+
+// Lister is a blob.Store that can list what it holds.
+type Lister interface {
+	blob.Store
+	// List yields every stored blob, and nothing a Put has not finished. An
+	// error ends the sequence.
+	List(ctx context.Context) iter.Seq2[blob.Info, error]
+}
+
+// RunList tests a Lister's listing. newStore must return an empty store and
+// is called once per subtest.
+func RunList(t *testing.T, newStore func(t *testing.T) Lister) {
+	t.Run("List", func(t *testing.T) { testList(t, newStore(t)) })
+	t.Run("ListStopsEarly", func(t *testing.T) { testListStopsEarly(t, newStore(t)) })
 }
 
 func sum(b []byte) string {
@@ -212,5 +230,65 @@ func testConcurrentPut(t *testing.T, s blob.Store) {
 	}
 	if got := readAll(t, s, want); !bytes.Equal(got, content) {
 		t.Fatalf("content after concurrent Put: %d bytes, want %d", len(got), len(content))
+	}
+}
+
+// listed returns the store's blobs by hash, with their sizes.
+func listed(t *testing.T, s Lister) map[string]int64 {
+	t.Helper()
+	got := map[string]int64{}
+	for info, err := range s.List(context.Background()) {
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if _, dup := got[info.Hash]; dup {
+			t.Errorf("List yielded %s twice", info.Hash)
+		}
+		if info.ModTime.IsZero() {
+			t.Errorf("List yielded %s with no ModTime", info.Hash)
+		}
+		got[info.Hash] = info.Size
+	}
+	return got
+}
+
+func testList(t *testing.T, s Lister) {
+	ctx := context.Background()
+	if got := listed(t, s); len(got) != 0 {
+		t.Fatalf("List of an empty store = %v, want nothing", got)
+	}
+	kept := put(t, s, []byte("kept"))
+	empty := put(t, s, nil)
+	doomed := put(t, s, []byte("doomed"))
+	put(t, s, []byte("kept"))
+	if _, _, err := s.Put(ctx, &failingReader{data: []byte("partial"), err: errors.New("boom")}); err == nil {
+		t.Fatal("Put with failing reader succeeded")
+	}
+	if err := s.Delete(ctx, doomed); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{kept: 4, empty: 0}
+	if diff := cmp.Diff(want, listed(t, s)); diff != "" {
+		t.Errorf("List after puts, a failed put and a delete (-want +got):\n%s", diff)
+	}
+}
+
+func testListStopsEarly(t *testing.T, s Lister) {
+	for i := range 3 {
+		put(t, s, []byte(strings.Repeat("x", i+1)))
+	}
+	n := 0
+	s.List(context.Background())(func(_ blob.Info, err error) bool {
+		if err != nil {
+			t.Errorf("List: %v", err)
+		}
+		n++
+		return false
+	})
+	if n != 1 {
+		t.Errorf("List yielded %d times after yield returned false, want 1", n)
+	}
+	if got := listed(t, s); len(got) != 3 {
+		t.Errorf("List after a break yielded %d blobs, want 3", len(got))
 	}
 }

@@ -202,7 +202,7 @@ sudo chown -R --reference=/var/lib/private/kazari /var/lib/private/kazari
 sudo systemctl start kazari
 ```
 
-Restoring the blobs before the database means no restored row ever points at a missing file. Extra blobs are harmless: the `gc` job removes the ones nothing references.
+Restoring the blobs before the database means no restored row ever points at a missing file. Extra blobs are harmless. Every `gc` run removes the blobs the database records but no version references, and once a day the [orphan sweep](#sweeping-orphan-blob-files) removes the files it has no record of that were last written more than a day ago.
 
 ## Upgrading
 
@@ -497,6 +497,8 @@ These describe the server itself:
 | ---------------------------------------------- | --------- | ------------------------------------------------------------------------- |
 | `kazari_job_duration_seconds`                  | histogram | `kazari_job_name`, `error_type`                                           |
 | `kazari_job_last_success_timestamp_seconds`    | gauge     | `kazari_job_name`                                                         |
+| `kazari_gc_orphans_removed_total`              | counter   | None: blob files the database had no record of, removed by the [orphan sweep](#sweeping-orphan-blob-files) |
+| `kazari_gc_orphans_removed_size_bytes_total`   | counter   | None: their size                                                          |
 | `kazari_certificate_expiry_timestamp_seconds`  | gauge     | None: the served certificate; absent in proxy mode                        |
 | `kazari_backup_duration_seconds`               | histogram | `error_type` (`backup_running`, `no_space`, `canceled`, `internal`) on a backup that was refused, failed or lost its reader |
 | `kazari_backup_size_bytes`                     | histogram | None: the content of each archive written                                 |
@@ -652,7 +654,7 @@ Kazari runs seven maintenance jobs on its own, and an eighth with an identity pr
 | Job              | Interval                                           | What it does                                                                                         |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `sweep`          | `lifecycle.sweep_interval`, 15 minutes by default  | Moves artifacts along the [lifecycle](#lifecycle): soft-deletes expired stale ones, purges soft-deleted ones past retention and removes tombstones past the tombstone period. It also deletes the versions past an artifact's `kazari.keep_versions` |
-| `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour |
+| `gc`             | `lifecycle.gc_interval`, 1 hour by default         | Deletes blobs that no version references, in batches of 1000, sparing blobs written in the last hour. Once a day it also removes blob files the database has no record of |
 | `uploads-expire` | 10 minutes                                         | Removes chunked uploads past `limits.upload_ttl` and staging directories left by a crash             |
 | `oauth-cleanup`  | 1 hour                                             | Deletes expired OAuth authorization requests, codes and tokens, expired browser sign-ins, sign-in codes and sessions, and OAuth clients that completed no grant within a day of registering |
 | `oidc-discovery` | 30 seconds                                         | With `auth.oidc`, retries discovery until the identity provider answers, then does nothing ([sign-in is temporarily unavailable](identity.md#sign-in-is-temporarily-unavailable)) |
@@ -663,6 +665,16 @@ Kazari runs seven maintenance jobs on its own, and an eighth with an identity pr
 `gc` spares recent blobs so that a publish in progress never loses one. The unreferenced blobs it finds are those of purged or hard-deleted artifacts and of a publish that a crash interrupted, since a failed publish deletes its own. It also removes temporary files a crash left behind: blob writes, spilled bundles and database copies of a backup older than an hour. While a [backup](#taking-a-backup) is being written, `gc` skips its run and logs `gc: skipped, a backup is running`.
 
 Each interval is jittered by ±10%, and the first run comes after a random delay of up to 10% of the interval. A job never runs twice at once.
+
+### Sweeping orphan blob files
+
+An orphan is a file in the blob directory that the database has no record of, so the hourly collection, which works from the database, never finds it. A publish stopped by a crash leaves up to 100 of them, the files it stored before it recorded them, and a restore can bring back files the restored database does not know.
+
+Once a day, `gc` also reads every directory of the blob store and removes the orphans last written more than a day before. The first `gc` run after the server starts sweeps, then the first run a day after the last sweep; a run in between, `kazari admin jobs run gc` included, skips it. Reading the whole store is why it runs only daily.
+
+The sweep checks each file again just before it removes it, while new publishes wait for that batch, so a publish that stores the same content in the meantime keeps its file. A publish in progress also holds the sweep off until it has recorded its files, however old they look.
+
+A sweep that removed files logs a summary line, such as `gc orphans_removed=3 orphan_bytes=18204`, and `kazari_gc_orphans_removed_total` and `kazari_gc_orphans_removed_size_bytes_total` count them.
 
 ### Checking the jobs
 

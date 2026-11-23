@@ -140,6 +140,10 @@ type BlobIndex interface {
 	// BlobReferenced reports whether any version's file uses the blob.
 	BlobReferenced(ctx context.Context, hash string) (bool, error)
 
+	// KnownBlobs returns which of the hashes have a row, referenced or not,
+	// in one query.
+	KnownBlobs(ctx context.Context, hashes []string) (map[string]bool, error)
+
 	DeleteBlob(ctx context.Context, hash string) error
 
 	// DeleteBlobs deletes, in one transaction, the rows of those hashes

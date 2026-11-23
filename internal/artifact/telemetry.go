@@ -47,6 +47,8 @@ type metrics struct {
 	editRetries metric.Int64Counter
 	imports     metric.Int64Counter
 	shareLinks  metric.Int64Counter
+	orphans     metric.Int64Counter
+	orphanBytes metric.Int64Counter
 }
 
 func newMetrics(m metric.Meter) metrics {
@@ -63,6 +65,8 @@ func newMetrics(m metric.Meter) metrics {
 		editRetries: counter("kazari.artifact.edit.retries", "{retry}", "Edits applied again after a concurrent publish."),
 		imports:     counter("kazari.artifact.imports", "{import}", "Page imports."),
 		shareLinks:  counter("kazari.share_link.operations", "{operation}", "Share links created, revoked and opened."),
+		orphans:     counter("kazari.gc.orphans.removed", "{blob}", "Stored blob files that no row recorded, removed by the orphan sweep."),
+		orphanBytes: counter("kazari.gc.orphans.removed.size", "By", "Size of the blob files the orphan sweep removed."),
 	}
 }
 
@@ -154,6 +158,15 @@ func importAttrs(span trace.Span, r *ImportReport) {
 			attribute.Int("kazari.import.fetched_count", r.Fetched),
 			attribute.Int("kazari.import.skipped_count", len(r.Skipped)),
 			attribute.Int("kazari.import.scripts_removed_count", r.ScriptsRemoved),
+		)
+	}
+}
+
+func orphanAttrs(span trace.Span, r OrphanReport) {
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Int("kazari.gc.orphans_removed_count", r.Removed),
+			attribute.Int64("kazari.gc.orphans_removed_size", r.Bytes),
 		)
 	}
 }

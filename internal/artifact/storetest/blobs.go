@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,7 +18,32 @@ func RunBlobIndex(t *testing.T, open func(t *testing.T) Stores) {
 		{"Blobs", testBlobs},
 		{"DeleteBlobs", testDeleteBlobs},
 		{"BlobTotals", testBlobTotals},
+		{"KnownBlobs", testKnownBlobs},
 	}.run(t, open)
+}
+
+func testKnownBlobs(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	free, used := hashOf("free"), hashOf("used")
+	if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: free, Size: 4}}, at(0)); err != nil {
+		t.Fatal(err)
+	}
+	h.create(t, newArtifact("demo", "alice", at(0)), file("used.txt", "used"))
+
+	hashes := []string{free, used, hashOf("unknown")}
+	for i := range 2000 {
+		hashes = append(hashes, hashOf(strconv.Itoa(i)))
+	}
+	got, err := h.blobs.KnownBlobs(h.ctx, hashes)
+	if err != nil {
+		t.Fatalf("KnownBlobs: %v", err)
+	}
+	if diff := cmp.Diff(map[string]bool{free: true, used: true}, got); diff != "" {
+		t.Errorf("KnownBlobs of a recorded, a referenced and unknown hashes (-want +got):\n%s", diff)
+	}
+	if got, err := h.blobs.KnownBlobs(h.ctx, nil); err != nil || len(got) != 0 {
+		t.Errorf("KnownBlobs(nil) = %v, %v; want none, nil", got, err)
+	}
 }
 
 func testDeleteBlobs(t *testing.T, h *harness) {

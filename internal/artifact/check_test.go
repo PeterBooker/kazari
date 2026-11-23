@@ -13,7 +13,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
-	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
@@ -251,7 +250,7 @@ func TestCheckCacheBudget(t *testing.T) {
 // countingBlobs records the blobs opened and counts the bytes read from
 // them.
 type countingBlobs struct {
-	blob.Store
+	artifact.BlobStore
 	bytes atomic.Int64
 
 	mu     sync.Mutex
@@ -259,7 +258,7 @@ type countingBlobs struct {
 }
 
 func (c *countingBlobs) Open(ctx context.Context, hash string) (io.ReadSeekCloser, error) {
-	rc, err := c.Store.Open(ctx, hash)
+	rc, err := c.BlobStore.Open(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +294,7 @@ func (r readCounter) Read(p []byte) (int, error) {
 
 // countingService is a Service over e's store whose blob reads are counted.
 func countingService(e *env, opts artifact.Options) (*artifact.Service, *countingBlobs) {
-	blobs := &countingBlobs{Store: e.blobs}
+	blobs := &countingBlobs{BlobStore: e.blobs}
 	opts.Now = e.clock.Now
 	return artifact.New(e.store, e.store, blobs, artifact.NoQuotas{}, nil, opts), blobs
 }

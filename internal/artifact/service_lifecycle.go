@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/PeterBooker/kazari/internal/audit"
+	"github.com/PeterBooker/kazari/internal/blob"
 )
 
 const (
@@ -710,6 +711,111 @@ func (s *Service) deleteUnreferenced(ctx context.Context, before time.Time) (has
 		deleted = append(deleted, h)
 	}
 	return hashes, deleted, err
+}
+
+// SweepOrphans removes the stored blob files that no row records and that
+// were last written before the OrphanAge window: what a publish interrupted
+// by a crash before it recorded them leaves, or a restore that brought back
+// files the database does not know. CollectGarbage works from the rows and
+// never sees them. A sweep runs at most once per OrphanSweepInterval; a
+// call before then does nothing. It carries on past failures to return the
+// first.
+func (s *Service) SweepOrphans(ctx context.Context) (rep OrphanReport, err error) {
+	now := s.now()
+	s.orphanMu.Lock()
+	due := s.orphansSwept.IsZero() || !now.Before(s.orphansSwept.Add(OrphanSweepInterval))
+	if due {
+		s.orphansSwept = now
+	}
+	s.orphanMu.Unlock()
+	if !due {
+		return OrphanReport{}, nil
+	}
+
+	ctx, span := s.span(ctx, "artifact.sweep_orphans", "")
+	defer func() {
+		s.m.orphans.Add(ctx, int64(rep.Removed))
+		s.m.orphanBytes.Add(ctx, rep.Bytes)
+		orphanAttrs(span, rep)
+		endSpan(span, err)
+	}()
+	rep.Ran = true
+	before := now.Add(-s.opts.OrphanAge)
+	var firstErr error
+	fail := func(err error) {
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	old := make([]blob.Info, 0, gcBatch)
+	for info, err := range s.blobs.List(ctx) {
+		if err != nil {
+			fail(fmt.Errorf("artifact: orphan sweep: %w", err))
+			break
+		}
+		if !info.ModTime.Before(before) {
+			continue
+		}
+		old = append(old, info)
+		if len(old) == gcBatch {
+			if err := s.removeOrphans(ctx, old, &rep); err != nil {
+				fail(err)
+			}
+			old = old[:0]
+		}
+	}
+	if err := s.removeOrphans(ctx, old, &rep); err != nil {
+		fail(err)
+	}
+	return rep, firstErr
+}
+
+// removeOrphans deletes the files of old that no row records. The lookup
+// before the lock spares publishes a wait for a batch that is all
+// recorded. The one under it sees every row a publish recorded since the
+// walk, and the lock waits out the publishes in progress and keeps new
+// ones from a Put until the files are gone: a Put of content still stored
+// writes nothing, so a file deleted after it would leave its version
+// without one.
+func (s *Service) removeOrphans(ctx context.Context, old []blob.Info, rep *OrphanReport) error {
+	if len(old) == 0 {
+		return nil
+	}
+	unrecorded, err := s.unrecorded(ctx, old)
+	if err != nil || len(unrecorded) == 0 {
+		return err
+	}
+	s.blobMu.Lock()
+	defer s.blobMu.Unlock()
+	unrecorded, err = s.unrecorded(ctx, unrecorded)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, b := range unrecorded {
+		if err := s.blobs.Delete(ctx, b.Hash); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("artifact: orphan sweep %s: %w", b.Hash, err)
+			}
+			continue
+		}
+		rep.Removed++
+		rep.Bytes += b.Size
+	}
+	return firstErr
+}
+
+// unrecorded returns the blobs of bs that have no row, in one query.
+func (s *Service) unrecorded(ctx context.Context, bs []blob.Info) ([]blob.Info, error) {
+	hashes := make([]string, len(bs))
+	for i, b := range bs {
+		hashes[i] = b.Hash
+	}
+	known, err := s.index.KnownBlobs(ctx, hashes)
+	if err != nil {
+		return nil, fmt.Errorf("artifact: orphan sweep rows: %w", err)
+	}
+	return slices.DeleteFunc(slices.Clone(bs), func(b blob.Info) bool { return known[b.Hash] }), nil
 }
 
 // Usage sums every version of the handle's artifacts, for quota reporting.

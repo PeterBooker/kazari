@@ -41,8 +41,10 @@ func TestMetricNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	get(t, hc, "http://demo.localhost/")
-	if err := in.app.Scheduler().Trigger(context.Background(), "sweep"); err != nil {
-		t.Fatal(err)
+	for _, job := range []string{"sweep", "gc"} {
+		if err := in.app.Scheduler().Trigger(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The readiness checks run once at start, in the background: wait for
 	// that run, so its gauges are in the scrape every time.
