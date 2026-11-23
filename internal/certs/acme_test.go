@@ -28,7 +28,7 @@ func newTestACME(t *testing.T, cfg ACMEConfig) *ACME {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(a.stop)
+	t.Cleanup(a.Stop)
 	return a
 }
 

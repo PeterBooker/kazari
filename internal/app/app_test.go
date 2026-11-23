@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"syscall"
@@ -617,6 +618,29 @@ func TestListenError(t *testing.T) {
 		t.Fatal("Started closed although the port is taken")
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not fail")
+	}
+}
+
+func TestCloseStopsACMEWithoutRun(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ExternalScheme = "https"
+	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0"}
+	cfg.TLS.Mode = "acme"
+	cfg.TLS.DNSProvider = "cloudflare"
+	cfg.TLS.DNS.APIToken = "token"
+	a, err := app.New(t.Context(), cfg, app.Options{Logger: testLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Errorf("Close = %v", err)
+	}
+	var stacks strings.Builder
+	if err := pprof.Lookup("goroutine").WriteTo(&stacks, 1); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stacks.String(), "certmagic.(*Cache).maintainAssets") {
+		t.Error("the certificate cache's maintenance goroutine runs on after Close")
 	}
 }
 

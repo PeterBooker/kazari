@@ -7,7 +7,7 @@ import (
 )
 
 func TestTLSConfig(t *testing.T) {
-	s, err := NewSelfSigned("localhost")
+	s, err := NewSelfSigned([]string{"localhost"}, SelfSignedOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

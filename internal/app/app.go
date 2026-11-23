@@ -724,7 +724,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	a.mode = tlsMode(cfg)
 	if !cfg.Listen.ProxyMode {
 		_, span := instrument.StartChild(ctx, a.tracer, "certs.init")
-		a.certs, err = certSource(cfg, log)
+		a.certs, err = certSource(cfg, log, now)
 		instrument.End(span, err, "")
 		if err != nil {
 			return err
@@ -842,10 +842,10 @@ func viewCallback(cfg config.Config) func(host string) (string, bool) {
 	}
 }
 
-func certSource(cfg config.Config, log *slog.Logger) (certs.Source, error) {
+func certSource(cfg config.Config, log *slog.Logger, now func() time.Time) (certs.Source, error) {
 	switch cfg.TLS.Mode {
 	case "self-signed":
-		s, err := certs.NewSelfSigned(cfg.BaseDomain)
+		s, err := certs.NewSelfSigned([]string{cfg.BaseDomain}, certs.SelfSignedOptions{Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}
@@ -907,10 +907,13 @@ func (a *App) Addrs() Addrs {
 	return a.addrs
 }
 
-// Close flushes telemetry and closes the database; it is idempotent and Run
-// calls it on exit.
+// Close stops the certificate source, flushes telemetry and closes the
+// database; it is idempotent and Run calls it on exit.
 func (a *App) Close() error {
 	a.closeOnce.Do(func() {
+		if s, ok := a.certs.(interface{ Stop() }); ok {
+			s.Stop()
+		}
 		a.flushTelemetry()
 		if err := a.db.Close(); err != nil {
 			a.closeErr = fmt.Errorf("app: close database: %w", err)
