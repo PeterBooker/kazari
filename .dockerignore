@@ -1,9 +1,9 @@
-.git
-.github
-.data
-.env
-.env.*
-kazari
-dist
-docs
-*.md
+# Only what deploy/Dockerfile builds from: everything else, from docs to
+# gitignored reports and local data, stays out of the build context.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+**/*_test.go
+**/testdata/

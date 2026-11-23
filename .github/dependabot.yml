@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # The base images in deploy/Dockerfile and deploy/Dockerfile.goreleaser, pinned by digest:
+  # one pull request a week refreshes them. A new Go minor follows go.mod and a new Debian
+  # release is a new image name, so both stay with the maintenance skill.
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      base-images:
+        patterns: ["*"]

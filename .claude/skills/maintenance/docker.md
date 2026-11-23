@@ -3,7 +3,7 @@
 | Image | In | Rule |
 | ----- | -- | ---- |
 | `golang:<minor>-alpine` | `deploy/Dockerfile` | the `go.mod` minor |
-| `gcr.io/distroless/static-debianNN:nonroot` | both Dockerfiles | same image and digest in both |
+| `gcr.io/distroless/static-debianNN:nonroot` | both Dockerfiles | same image and digest in both, which `package.yml` checks |
 | `busybox:<minor>` | `deploy/Dockerfile.goreleaser` | the latest minor; it only creates an empty data directory |
 
 ## Check
@@ -16,12 +16,14 @@ curl -fsSL 'https://hub.docker.com/v2/repositories/library/golang/tags?page_size
   | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+-alpine$' | sort -V | tail -n1
 curl -fsSL 'https://hub.docker.com/v2/repositories/library/busybox/tags?page_size=100' \
   | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+$' | sort -V | tail -n1
-curl -fsSL https://gcr.io/v2/distroless/static-debian13/tags/list | jq '.tags | index("nonroot") != null'
+curl -fsSL https://gcr.io/v2/distroless/static-debian14/tags/list | jq '.tags | index("nonroot") != null'
 ```
 
 The registry answers a Debian release it does not have with an empty tag list rather than an error, so check for the `nonroot` tag; a status code check would say yes.
 
 ## Update
+
+Dependabot (`.github/dependabot.yml`) opens one pull request a week that refreshes the digests and moves busybox to a new minor; it leaves the Go minor and the Debian release to this skill.
 
 Every `FROM` is pinned by the digest of the multi-platform index, so a tag that moves upstream cannot change what is built. Refresh every digest whenever you touch the images (after any tag change):
 

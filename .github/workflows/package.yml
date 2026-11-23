@@ -3,6 +3,7 @@ name: Package
 on:
   pull_request:
     paths:
+      - ".dockerignore"
       - "deploy/**"
       - "go.mod"
       - "go.sum"
@@ -29,6 +30,16 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Check that both Dockerfiles build the same runtime image
+        # Only where the binary and the data directory come from may differ: each COPY keeps its
+        # other flags and its destination.
+        run: |
+          runtime() {
+            sed -n '/^FROM gcr.io\/distroless/,$p' "$1" | grep -v -e '^#' -e '^ARG ' |
+              sed -E 's/^COPY (--from=[^ ]+ )?((--[a-z]+=[^ ]+ )*)[^ ]+ /COPY \2/'
+          }
+          test -n "$(runtime deploy/Dockerfile)"
+          diff <(runtime deploy/Dockerfile) <(runtime deploy/Dockerfile.goreleaser)
       - run: docker build --file deploy/Dockerfile --tag kazari:dev .
       - run: .github/scripts/smoke-image.sh kazari:dev
 

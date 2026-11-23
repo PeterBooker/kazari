@@ -39,6 +39,7 @@ services:
     # KAZARI_TELEMETRY_OTLP_HEADERS.
     # environment:
     #   KAZARI_TELEMETRY_OTLP_ENDPOINT: http://otel-collector:4318
+    # Images after 0.8.0 carry this check themselves; it stays for 0.8.0 and earlier.
     healthcheck:
       # Over the admin socket in the data volume, which needs no token.
       test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
