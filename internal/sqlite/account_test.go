@@ -303,7 +303,9 @@ func TestUserStoreSetup(t *testing.T) {
 
 func TestSignInStoreUserSessions(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(ctx, t.TempDir()+"/kazari.db", Options{})
+	path := t.TempDir() + "/kazari.db"
+	EmptyDB.Copy(t, path)
+	db, err := Open(ctx, path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

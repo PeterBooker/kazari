@@ -16,7 +16,9 @@ import (
 
 func auditTestStore(t *testing.T) *AuditStore {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "kazari.db"), Options{})
+	path := filepath.Join(t.TempDir(), "kazari.db")
+	EmptyDB.Copy(t, path)
+	db, err := Open(context.Background(), path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

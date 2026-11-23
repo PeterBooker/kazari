@@ -18,8 +18,19 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/dbtemplate"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 )
+
+// emptyDB is a database at the latest migration, migrated once for the
+// package's tests and copied for each.
+var emptyDB = dbtemplate.New(func(ctx context.Context, path string) error {
+	db, err := sqlite.Open(ctx, path, sqlite.Options{})
+	if err != nil {
+		return err
+	}
+	return db.Close()
+})
 
 var (
 	start = time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
@@ -53,7 +64,9 @@ func open(t *testing.T, dir string) *instance {
 
 func newInstance(t *testing.T) *instance {
 	t.Helper()
-	in := open(t, t.TempDir())
+	dir := t.TempDir()
+	emptyDB.Copy(t, filepath.Join(dir, "kazari.db"))
+	in := open(t, dir)
 	if err := os.MkdirAll(filepath.Join(in.dir, "tmp"), 0o750); err != nil {
 		t.Fatal(err)
 	}
