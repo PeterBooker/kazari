@@ -48,7 +48,7 @@ docker compose up -d
 docker compose logs kazari       # prints the setup link that creates the first admin
 ```
 
-The [installation guide](docs/install.md) has every path, the preflight check, the first admin and the first publish, and [DNS and certificates](docs/certificates.md) the records, the providers and the proxy configurations.
+The image is published for amd64 and arm64 at [`ghcr.io/peterbooker/kazari`](https://github.com/PeterBooker/kazari/pkgs/container/kazari), signed and tagged by version ([the image](docs/install.md#the-image)). The [installation guide](docs/install.md) has every path, the preflight check, the first admin and the first publish, and [DNS and certificates](docs/certificates.md) the records, the providers and the proxy configurations.
 
 ## Configuration at a glance
 
