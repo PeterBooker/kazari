@@ -69,16 +69,16 @@ Each release publishes an image at `ghcr.io/peterbooker/kazari`, built from the 
 
 The facts a deployment needs are:
 
-| Item          | Value                                                                   |
-| ------------- | ----------------------------------------------------------------------- |
-| Platforms     | `linux/amd64` and `linux/arm64`, under one tag                          |
-| Tags          | each release version, such as `0.8.0`, and `latest` for the newest      |
-| Base          | distroless `static-debian13`, with no shell and no package manager      |
-| User          | `nonroot`, UID 65532                                                    |
-| Entrypoint    | `kazari`, with `serve` as the default command                           |
-| Configuration | `/etc/kazari/kazari.yaml` when mounted, else the `KAZARI_*` environment |
-| Data          | the volume `/var/lib/kazari`                                            |
-| Ports         | 80 and 443                                                              |
+| Item          | Value                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| Platforms     | `linux/amd64` and `linux/arm64`, under one tag                                                     |
+| Tags          | each release version, such as `0.8.0`, and `latest` for the newest                                 |
+| Base          | distroless `static-debian13` (`static-debian12` up to 0.8.0), with no shell and no package manager |
+| User          | `nonroot`, UID 65532                                                                               |
+| Entrypoint    | `kazari`, with `serve` as the default command                                                      |
+| Configuration | `/etc/kazari/kazari.yaml` when mounted, else the `KAZARI_*` environment                            |
+| Data          | the volume `/var/lib/kazari`                                                                       |
+| Ports         | 80 and 443                                                                                         |
 
 The entrypoint is `kazari`, so the words after the image name are a Kazari command. To print the version an image holds, run:
 
@@ -138,7 +138,7 @@ docker run -d --name kazari --restart unless-stopped \
 
 The log, from `docker logs -f kazari`, shows the same lines as under Compose. Wherever this guide runs `docker compose exec kazari kazari`, run `docker exec kazari kazari` instead.
 
-The image checks the server's health itself, with `kazari admin health` every 30 seconds, so `docker ps` shows a container started this way as `healthy` too.
+Images after 0.8.0 check the server's health themselves, with `kazari admin health` every 30 seconds, so `docker ps` shows a container started this way as `healthy` too. In 0.8.0 and earlier only the Compose file checks it: `docker run --health-cmd` needs a shell, which the image lacks.
 
 ## Installing the package
 

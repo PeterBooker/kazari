@@ -282,7 +282,7 @@ Events from before the rename keep the actor they had, so `admin` there can be t
 
 ## Checking readiness
 
-Two commands ask a running server how it is. `kazari admin health` answers whether it is up: it needs no credential, costs nothing and is what the image's health check runs. `kazari admin ready` answers whether it is set up correctly:
+Two commands ask a running server how it is. `kazari admin health` answers whether it is up: it needs no credential, costs nothing and is what the health check in the image and the Compose file runs. `kazari admin ready` answers whether it is set up correctly:
 
 ```sh
 sudo kazari admin ready
