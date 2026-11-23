@@ -71,6 +71,7 @@ type env struct {
 	t       *testing.T
 	ctx     context.Context
 	art     *artifact.Service
+	blobs   *blob.FS
 	users   *user.Service
 	uploads *upload.Service
 	jobRuns *atomic.Int32
@@ -166,7 +167,7 @@ func newEnv(t *testing.T, c config) *env {
 	}, c.admin))
 	t.Cleanup(admSrv.Close)
 
-	e := &env{t: t, ctx: ctx, art: art, users: users, uploads: uploads, jobRuns: &runs, views: viewRec,
+	e := &env{t: t, ctx: ctx, art: art, blobs: blobs, users: users, uploads: uploads, jobRuns: &runs, views: viewRec,
 		userURL: userSrv.URL, admURL: admSrv.URL}
 	if !c.empty {
 		e.alice = e.member("alice", nil)

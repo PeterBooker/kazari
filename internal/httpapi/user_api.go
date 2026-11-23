@@ -157,6 +157,7 @@ func (h *userAPI) routes() []route {
 		write("POST /v1/artifacts/{slug}/stale", h.markStale),
 		write("DELETE /v1/artifacts/{slug}/stale", h.unmarkStale),
 		read("GET /v1/artifacts/{slug}/files/{path...}", h.readFile),
+		read("GET /v1/artifacts/{slug}/bundle", h.downloadBundle),
 		share("POST /v1/artifacts/{slug}/share-links", h.createShareLink),
 		read("GET /v1/artifacts/{slug}/share-links", h.listShareLinks),
 		share("DELETE /v1/artifacts/{slug}/share-links/{prefix}", h.revokeShareLink),
