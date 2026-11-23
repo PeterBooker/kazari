@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
@@ -137,7 +138,7 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 				return
 			}
 			if !p.HasScope(scope) {
-				writeError(w, r, http.StatusForbidden, "forbidden", fmt.Sprintf("scope %q required", scope))
+				writeError(w, r, http.StatusForbidden, errcode.Forbidden, fmt.Sprintf("scope %q required", scope))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -176,7 +177,7 @@ func RequireAdmin(token string, fallback Authenticator, opts Options) func(http.
 				if err == nil {
 					if !p.Admin || !slices.Contains(p.Scopes, ScopeAdmin) {
 						rec.record(r.Context(), p.Source, resultForbidden, &p)
-						writeError(w, r, http.StatusForbidden, "forbidden", "admin role required")
+						writeError(w, r, http.StatusForbidden, errcode.Forbidden, "admin role required")
 						return
 					}
 					rec.record(r.Context(), p.Source, resultOK, &p)
@@ -229,7 +230,7 @@ func unauthorized(w http.ResponseWriter, r *http.Request, opts Options, msg stri
 		challenge += fmt.Sprintf(`, resource_metadata=%q`, opts.ResourceMetadataURL)
 	}
 	w.Header().Set("WWW-Authenticate", challenge)
-	writeError(w, r, http.StatusUnauthorized, "unauthorized", msg)
+	writeError(w, r, http.StatusUnauthorized, errcode.Unauthorized, msg)
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {

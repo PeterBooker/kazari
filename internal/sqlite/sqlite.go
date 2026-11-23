@@ -15,11 +15,9 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/oauth"
-	"github.com/PeterBooker/kazari/internal/user"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/sqlite"
@@ -121,23 +119,12 @@ func errorCode(err error) string {
 	switch {
 	case err == nil:
 		return ""
-	case artifact.CodeOf(err) != "":
-		return artifact.CodeOf(err)
-	case errors.Is(err, user.ErrNotFound), errors.Is(err, user.ErrKeyNotFound), errors.Is(err, oauth.ErrNotFound),
-		errors.Is(err, user.ErrLinkNotFound):
-		return api.CodeNotFound
-	case errors.Is(err, user.ErrLastAdmin):
-		return api.CodeLastAdmin
-	case errors.Is(err, user.ErrTooManyKeys):
-		return api.CodeTooManyKeys
-	case errors.Is(err, user.ErrSetupDone):
-		return api.CodeSetupDone
-	case errors.Is(err, user.ErrHandleTaken):
-		return api.CodeHandleTaken
-	case errors.Is(err, user.ErrEmailTaken):
-		return api.CodeEmailTaken
+	case errcode.CodeOf(err) != "":
+		return errcode.CodeOf(err)
+	case errors.Is(err, oauth.ErrNotFound):
+		return errcode.NotFound
 	case errors.Is(err, oauth.ErrCodeUsed):
-		return api.CodeInvalidArgument
+		return errcode.InvalidArgument
 	default:
 		return instrument.CodeInternal
 	}

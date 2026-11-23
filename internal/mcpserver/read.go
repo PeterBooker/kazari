@@ -278,8 +278,8 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 }
 
 func (b *builder) resourceError(ctx context.Context, uri string, err error) error {
-	switch artifact.CodeOf(err) {
-	case api.CodeNotFound, api.CodeFileNotFound, api.CodeVersionNotFound, api.CodeGone:
+	if errors.Is(err, artifact.ErrNotFound) || errors.Is(err, artifact.ErrFileNotFound) ||
+		errors.Is(err, artifact.ErrVersionNotFound) || errors.Is(err, artifact.ErrGone) {
 		return mcp.ResourceNotFoundError(uri)
 	}
 	return b.toolError(ctx, "resource", err)

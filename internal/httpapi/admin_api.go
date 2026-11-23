@@ -13,6 +13,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
@@ -465,9 +466,9 @@ func (h *adminAPI) runJob(w http.ResponseWriter, r *http.Request, _ auth.Princip
 	err := h.d.Jobs.Trigger(r.Context(), name)
 	switch {
 	case errors.Is(err, scheduler.ErrUnknownJob):
-		return &statusError{status: http.StatusNotFound, code: api.CodeNotFound, msg: "no job named " + strconv.Quote(name)}
+		return errcode.Errorf(scheduler.ErrUnknownJob, "no job named %q", name)
 	case errors.Is(err, scheduler.ErrRunning):
-		return &statusError{status: http.StatusConflict, code: api.CodeJobRunning, msg: "job " + strconv.Quote(name) + " is already running"}
+		return errcode.Errorf(scheduler.ErrRunning, "job %q is already running", name)
 	case err != nil:
 		return err
 	}

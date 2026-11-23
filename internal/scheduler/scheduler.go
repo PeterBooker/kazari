@@ -18,14 +18,15 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/scheduler"
 
-var ErrUnknownJob = errors.New("scheduler: unknown job")
+var ErrUnknownJob = errcode.Text(errcode.NotFound, "scheduler: unknown job")
 
-var ErrRunning = errors.New("scheduler: job already running")
+var ErrRunning = errcode.Text(errcode.JobRunning, "scheduler: job already running")
 
 const defaultJitter = 0.1
 

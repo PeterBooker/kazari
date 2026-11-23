@@ -3,9 +3,10 @@ package audit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
 const (
@@ -86,7 +87,7 @@ const MaxActions = 32
 
 // ErrInvalidQuery is a Query no listing can answer: a cursor that is not
 // one, an empty action or more than MaxActions of them.
-var ErrInvalidQuery = errors.New("audit: invalid query")
+var ErrInvalidQuery = errcode.Text(errcode.InvalidArgument, "audit: invalid query")
 
 // Validate reports ErrInvalidQuery for the Actions of q. The cursor is
 // checked where it is decoded.

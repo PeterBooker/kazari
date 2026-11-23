@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
@@ -152,7 +153,7 @@ func (f *FS) Open(ctx context.Context, hash string) (_ io.ReadSeekCloser, err er
 // internal errors.
 func errorCode(err error) string {
 	if errors.Is(err, ErrNotFound) {
-		return "not_found"
+		return errcode.NotFound
 	}
 	return ""
 }

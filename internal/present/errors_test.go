@@ -17,8 +17,11 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -84,12 +87,23 @@ var errorRows = []struct {
 	{name: "user.ErrBusy", err: user.ErrBusy, status: http.StatusServiceUnavailable, code: api.CodeBusy},
 	{name: "user.ErrHasPassword", err: user.ErrHasPassword, status: http.StatusUnprocessableEntity, code: api.CodeInvalidArgument},
 	{name: "user.ErrLocalOff", err: user.ErrLocalOff, status: http.StatusForbidden, code: api.CodeForbidden},
-	{name: "user.ErrInvalidIdentity", err: user.ErrInvalidIdentity, elsewhere: "httpapi: only the admin API links identities"},
+	{name: "user.ErrInvalidIdentity", err: user.ErrInvalidIdentity, status: http.StatusUnprocessableEntity, code: api.CodeInvalidArgument},
 	{name: "user.ErrBadRecoveryCode", err: user.ErrBadRecoveryCode, elsewhere: "account: the recovery page"},
 	{name: "user.ErrPasskeyNotFound", err: user.ErrPasskeyNotFound, elsewhere: "account: the passkey pages"},
 	{name: "user.ErrPasskeyExists", err: user.ErrPasskeyExists, elsewhere: "account: the passkey pages"},
 	{name: "user.ErrTooManyPasskeys", err: user.ErrTooManyPasskeys, elsewhere: "account: the passkey pages"},
 	{name: "user.ErrPasskeyStale", err: user.ErrPasskeyStale, elsewhere: "account: the passkey pages"},
+
+	{name: "audit.ErrInvalidQuery", err: audit.ErrInvalidQuery, status: http.StatusUnprocessableEntity, code: api.CodeInvalidArgument},
+
+	{name: "backup.ErrRunning", err: backup.ErrRunning, status: http.StatusConflict, code: api.CodeBackupRunning},
+	{name: "backup.ErrNoSpace", err: backup.ErrNoSpace, status: http.StatusInsufficientStorage, code: api.CodeNoSpace},
+	{name: "backup.ErrUnsafeEntry", err: backup.ErrUnsafeEntry, elsewhere: "cli: admin backup and admin restore-backup unpack on the client"},
+	{name: "backup.ErrNotEmpty", err: backup.ErrNotEmpty, elsewhere: "cli: admin backup and admin restore-backup unpack on the client"},
+	{name: "backup.ErrNotBackup", err: backup.ErrNotBackup, elsewhere: "cli: admin restore-backup, with the server stopped"},
+
+	{name: "scheduler.ErrUnknownJob", err: scheduler.ErrUnknownJob, status: http.StatusNotFound, code: api.CodeNotFound},
+	{name: "scheduler.ErrRunning", err: scheduler.ErrRunning, status: http.StatusConflict, code: api.CodeJobRunning},
 
 	{name: "upload.OffsetMismatchError", err: &upload.OffsetMismatchError{Path: "a", Current: 7}, status: http.StatusConflict, code: api.CodeOffsetMismatch},
 	{name: "http.MaxBytesError", err: &http.MaxBytesError{Limit: 10}, status: http.StatusRequestEntityTooLarge, code: api.CodeTooLarge},
@@ -134,7 +148,7 @@ func sentinels(t *testing.T, pkg string) []string {
 
 func TestErrorRowForEverySentinel(t *testing.T) {
 	var want []string
-	for _, pkg := range []string{"artifact", "auth", "upload", "user"} {
+	for _, pkg := range []string{"artifact", "audit", "auth", "backup", "scheduler", "upload", "user"} {
 		want = append(want, sentinels(t, pkg)...)
 	}
 	if len(want) == 0 {
@@ -180,7 +194,43 @@ func TestError(t *testing.T) {
 	}
 }
 
+// Sentinels that share a wire code, such as artifact.ErrNotFound and
+// user.ErrNotFound, stay apart for errors.Is.
+func TestSentinelsMatchOnlyThemselves(t *testing.T) {
+	var rows []int
+	for i, row := range errorRows {
+		if _, name, _ := strings.Cut(row.name, "."); strings.HasPrefix(name, "Err") {
+			rows = append(rows, i)
+		}
+	}
+	for _, i := range rows {
+		for _, j := range rows {
+			a, b := errorRows[i], errorRows[j]
+			wrapped := fmt.Errorf("list things: %w", a.err)
+			if got, want := errors.Is(wrapped, b.err), i == j; got != want {
+				t.Errorf("errors.Is(%s, %s) = %v, want %v", a.name, b.name, got, want)
+			}
+		}
+	}
+}
+
 func TestErrorDetail(t *testing.T) {
+	t.Run("a user error shows its words whatever wraps it", func(t *testing.T) {
+		err := fmt.Errorf("disable %q: %w", "ann", user.ErrLastAdmin)
+		status, body := present.Error(err)
+		want := api.Error{Code: api.CodeLastAdmin, Message: "the last active admin cannot be disabled or demoted; make another person an admin first"}
+		if diff := cmp.Diff(want, body); status != http.StatusConflict || diff != "" {
+			t.Errorf("Error(%v) = %d, want %d; body (-want +got):\n%s", err, status, http.StatusConflict, diff)
+		}
+	})
+	t.Run("an identity without an issuer names what was refused", func(t *testing.T) {
+		err := fmt.Errorf("link identity: %w", user.ErrInvalidIdentity)
+		status, body := present.Error(err)
+		want := api.Error{Code: api.CodeInvalidArgument, Message: "link identity: user: identity needs an issuer and a subject"}
+		if diff := cmp.Diff(want, body); status != http.StatusUnprocessableEntity || diff != "" {
+			t.Errorf("Error(%v) = %d, want %d; body (-want +got):\n%s", err, status, http.StatusUnprocessableEntity, diff)
+		}
+	})
 	t.Run("an artifact error keeps its own message", func(t *testing.T) {
 		err := artifact.Errorf(artifact.ErrSlugTaken, "slug %q is already taken", "demo")
 		status, body := present.Error(err)

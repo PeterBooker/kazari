@@ -441,7 +441,7 @@ func (s *server) peopleIdentityLink(w http.ResponseWriter, r *http.Request, _ *r
 	f := r.PostForm
 	err = s.d.Users.LinkIdentity(r.Context(), u.Handle, f.Get("issuer"), f.Get("subject"), f.Get("email"))
 	if errors.Is(err, user.ErrInvalidIdentity) {
-		return refused("Enter the issuer and the subject as the provider sends them.")
+		return explained(err, "That did not work", "Enter the issuer and the subject as the provider sends them.")
 	}
 	if err != nil {
 		return err

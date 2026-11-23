@@ -28,10 +28,10 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/disk"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
@@ -46,10 +46,10 @@ const (
 
 var (
 	// ErrRunning is returned by Write while another backup is being written.
-	ErrRunning = errors.New("backup: a backup is already running")
+	ErrRunning = errcode.Shown(errcode.BackupRunning, "backup: a backup is already running", "a backup is already running; wait for it to finish")
 	// ErrNoSpace is returned by Write when the temporary directory cannot
 	// hold the copy of the database.
-	ErrNoSpace = errors.New("backup: not enough free space for the database copy")
+	ErrNoSpace = errcode.Text(errcode.NoSpace, "backup: not enough free space for the database copy")
 )
 
 // Database makes the consistent copy. *sqlite.DB implements it.
@@ -181,10 +181,8 @@ func errorCode(err error, gone bool) string {
 	switch {
 	case err == nil:
 		return ""
-	case errors.Is(err, ErrRunning):
-		return api.CodeBackupRunning
-	case errors.Is(err, ErrNoSpace):
-		return api.CodeNoSpace
+	case errors.Is(err, ErrRunning), errors.Is(err, ErrNoSpace):
+		return errcode.CodeOf(err)
 	case gone, errors.Is(err, context.Canceled):
 		return codeCanceled
 	}

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -16,7 +17,7 @@ const nearSlugs = 200
 // closest slug the caller can see when one is close: most misses are typos
 // or a slug remembered wrong.
 func (b *builder) notFound(ctx context.Context, actor artifact.Actor, req *mcp.CallToolRequest, err error) error {
-	if artifact.CodeOf(err) != artifact.ErrNotFound.Code || req == nil || req.Params == nil {
+	if !errors.Is(err, artifact.ErrNotFound) || req == nil || req.Params == nil {
 		return err
 	}
 	var args struct {

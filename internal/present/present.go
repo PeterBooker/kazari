@@ -15,6 +15,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/scheduler"
@@ -492,50 +493,8 @@ func Error(err error) (int, api.Error) {
 		cur := om.Current
 		return http.StatusConflict, api.Error{Code: api.CodeOffsetMismatch, Message: om.Error(), Current: &cur}
 	}
-	if ae, ok := errors.AsType[*artifact.Error](err); ok {
-		return statusFor(ae.Code), api.Error{Code: ae.Code, Message: ae.Message}
-	}
-	switch {
-	case errors.Is(err, auth.ErrInvalidToken):
-		return http.StatusUnauthorized, api.Error{Code: api.CodeUnauthorized, Message: "invalid or expired token"}
-	case errors.Is(err, user.ErrNotFound):
-		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "user not found"}
-	case errors.Is(err, user.ErrKeyNotFound):
-		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "key not found"}
-	case errors.Is(err, user.ErrHandleTaken):
-		return http.StatusConflict, api.Error{Code: api.CodeHandleTaken, Message: err.Error()}
-	case errors.Is(err, user.ErrEmailTaken):
-		return http.StatusConflict, api.Error{Code: api.CodeEmailTaken, Message: err.Error()}
-	case errors.Is(err, user.ErrInvalidHandle), errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrInvalidScope),
-		errors.Is(err, user.ErrInvalidKey):
-		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}
-	case errors.Is(err, user.ErrKeyTooWide):
-		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
-	case errors.Is(err, user.ErrDisabled):
-		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
-	case errors.Is(err, user.ErrNotProvisioned):
-		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: err.Error()}
-	case errors.Is(err, user.ErrHasPassword):
-		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument,
-			Message: "the person already has a password, so an invite link is not for them; make a reset link instead"}
-	case errors.Is(err, user.ErrBusy):
-		return http.StatusServiceUnavailable, api.Error{Code: api.CodeBusy, Message: "too many passwords are being checked at once; try again in a few seconds"}
-	case errors.Is(err, user.ErrLastAdmin):
-		return http.StatusConflict, api.Error{Code: api.CodeLastAdmin, Message: "the last active admin cannot be disabled or demoted; make another person an admin first"}
-	case errors.Is(err, user.ErrSelf):
-		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: "nobody disables or demotes their own account; ask another admin"}
-	case errors.Is(err, user.ErrTooManyKeys):
-		return http.StatusForbidden, api.Error{Code: api.CodeTooManyKeys, Message: err.Error()}
-	case errors.Is(err, user.ErrSetupDone):
-		return http.StatusConflict, api.Error{Code: api.CodeSetupDone, Message: "the instance already has users; an admin invites the others"}
-	case errors.Is(err, user.ErrLocalOff):
-		return http.StatusForbidden, api.Error{Code: api.CodeForbidden, Message: "built-in accounts are off on this instance; people sign in at the identity provider"}
-	case errors.Is(err, user.ErrLinkNotFound):
-		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "link not found, or it was used, replaced or has expired"}
-	case errors.Is(err, user.ErrWeakPassword):
-		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}
-	case errors.Is(err, user.ErrBadPassword):
-		return http.StatusUnauthorized, api.Error{Code: api.CodeUnauthorized, Message: "wrong name or password"}
+	if code, msg, ok := errcode.Public(err); ok {
+		return statusFor(code), api.Error{Code: code, Message: msg}
 	}
 	if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: "request body exceeds " + artifact.FormatBytes(mbe.Limit)}
@@ -568,7 +527,8 @@ func statusFor(code string) int {
 	switch code {
 	case api.CodeNotFound, api.CodeVersionNotFound, api.CodeFileNotFound, api.CodeUploadNotFound, api.CodeLinkNotFound:
 		return http.StatusNotFound
-	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch, api.CodePublishedNotLatest:
+	case api.CodeSlugTaken, api.CodeOffsetMismatch, api.CodeAnchorMismatch, api.CodePublishedNotLatest,
+		api.CodeHandleTaken, api.CodeEmailTaken, api.CodeLastAdmin, api.CodeSetupDone, api.CodeJobRunning, api.CodeBackupRunning:
 		return http.StatusConflict
 	case api.CodeVersionConflict:
 		return http.StatusPreconditionFailed
@@ -577,7 +537,7 @@ func statusFor(code string) int {
 	case api.CodeTooManyFiles, api.CodeInvalidSlug, api.CodeInvalidPath, api.CodeInvalidMetadata, api.CodeInvalidArgument,
 		api.CodeEditNotFound, api.CodeEditAmbiguous, api.CodeDigestMismatch:
 		return http.StatusUnprocessableEntity
-	case api.CodeQuotaExceeded, api.CodeTooManyUploads:
+	case api.CodeQuotaExceeded, api.CodeTooManyUploads, api.CodeTooManyKeys:
 		return http.StatusForbidden
 	case api.CodeForbidden:
 		return http.StatusForbidden
@@ -589,6 +549,10 @@ func statusFor(code string) int {
 		return http.StatusTooManyRequests
 	case api.CodeFetchFailed:
 		return http.StatusBadGateway
+	case api.CodeBusy:
+		return http.StatusServiceUnavailable
+	case api.CodeNoSpace:
+		return http.StatusInsufficientStorage
 	}
 	return http.StatusInternalServerError
 }

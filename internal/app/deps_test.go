@@ -15,7 +15,10 @@ import (
 type layer string
 
 const (
-	// leaf packages know no other package of Kazari.
+	// base packages know no other package of Kazari, and every package may
+	// know them.
+	base layer = "base"
+	// leaf packages know no other package of Kazari but the base ones.
 	leaf layer = "leaf"
 	// platform packages know nothing of artifacts, users or grants.
 	platform layer = "platform"
@@ -34,16 +37,17 @@ const (
 )
 
 var mayImport = map[layer][]layer{
-	leaf:     {},
-	platform: {leaf, platform},
-	domain:   {leaf, platform, domain},
-	convert:  {leaf, platform, domain},
-	surface:  {leaf, platform, domain, convert},
-	store:    {leaf, platform, domain},
-	wiring:   {leaf, platform, domain, convert, surface, store},
-	command:  {leaf, platform, domain, wiring},
-	program:  {leaf, command},
-	support:  {leaf, platform, domain},
+	base:     {},
+	leaf:     {base},
+	platform: {base, leaf, platform},
+	domain:   {base, leaf, platform, domain},
+	convert:  {base, leaf, platform, domain},
+	surface:  {base, leaf, platform, domain, convert},
+	store:    {base, leaf, platform, domain},
+	wiring:   {base, leaf, platform, domain, convert, surface, store},
+	command:  {base, leaf, platform, domain, wiring},
+	program:  {base, leaf, command},
+	support:  {base, leaf, platform, domain},
 }
 
 var layers = map[string]layer{
@@ -96,6 +100,8 @@ var layers = map[string]layer{
 	"internal/instrument": leaf,
 	"internal/theme":      leaf,
 
+	"internal/errcode": base,
+
 	"internal/artifact/storetest":        support,
 	"internal/blob/blobtest":             support,
 	"internal/instrument/instrumenttest": support,
@@ -113,6 +119,11 @@ var restricted = []struct {
 	// Packages take Options from internal/app; these two show and check a
 	// whole configuration.
 	{path: "internal/config", only: []string{"cmd/kazari", "internal/app", "internal/cli", "internal/dashboard", "internal/preflight"}},
+	// The wire types are for what answers a client and for the CLI; a
+	// domain package names an error code with internal/errcode. The rate
+	// limiter answers a client itself.
+	{path: "internal/api", only: []string{"internal/account", "internal/app", "internal/cli", "internal/httpapi",
+		"internal/mcpserver", "internal/present", "internal/ratelimit"}},
 	{path: "database/sql", only: []string{"internal/sqlite"}},
 	{path: "github.com/ncruces/go-sqlite3", only: []string{"internal/sqlite"}},
 	{path: "github.com/alecthomas/kong", only: []string{"internal/cli"}},
@@ -172,7 +183,7 @@ func TestPackageDependencies(t *testing.T) {
 		// Tests run against the real store, the conformance suites and at
 		// times a surface, so the layers do not bind them. A leaf stays a
 		// leaf: a test that needs another package belongs to that package.
-		if from != leaf {
+		if from != leaf && from != base {
 			continue
 		}
 		for _, imp := range slices.Concat(pkg.TestImports, pkg.XTestImports) {
