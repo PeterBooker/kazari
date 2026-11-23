@@ -4,6 +4,46 @@ What changed in each release of Kazari, newest first. Each release lists what is
 
 Versions follow [semantic versioning](https://semver.org/). Until 1.0.0, a minor release can change behaviour, and the upgrade notes say how.
 
+## 0.9.0
+
+Released 2026-11-23.
+
+Share links can ask for a password, and `kazari pull` brings a published page back into a directory to change and deploy again, where `kazari deploy` now sends only the files that changed. Artifact hosts compress text files themselves and serve pages faster. Behind a proxy, Kazari reads the client's address from one header, which some proxies need to name in the configuration.
+
+### Upgrading
+
+- **In proxy mode the client's address comes from one header**, `listen.client_ip_header`: `X-Real-IP` by default, or `X-Forwarded-For`, whose last entry is read. The other header is ignored. The `Caddyfile` in `deploy/` and the Caddy and nginx examples set `X-Real-IP`. Behind a proxy that only appends to `X-Forwarded-For`, such as Cloudflare Tunnel, a load balancer or Caddy without `header_up X-Real-IP`, set `client_ip_header: X-Forwarded-For`, or the per-IP limits and the logs see the proxy's address ([running behind a reverse proxy](docs/install.md#running-behind-a-reverse-proxy)).
+- **Raise the proxy's request body limit** to a third more than `limits.max_version_bytes`, about 70 MiB for the default 50 MiB, to accept a whole version sent inline in base64. The nginx example now sets `client_max_body_size 70m` ([proxy examples](docs/certificates.md#proxy-examples)).
+- **`api`, `mcp` and `admin` are always reserved**, also when `serve.reserved_slugs` leaves them out, and `kazari admin settings` shows the list with them added. An existing artifact with one of these slugs is not served at its version addresses; publish its files under another slug ([reserved slugs](docs/configuration.md#reserved-slugs)).
+- **`kazari.csp` refuses every source that matches every host**, such as `https://*`, `wss://*:443` or `*:*`, as it refused `*` and bare schemes. Subdomain wildcards such as `https://*.example.com` are accepted. A page that already sets such a source is served without it, so check the pages that set `kazari.csp` ([per-artifact CSP](docs/configuration.md#per-artifact-csp)).
+
+### New
+
+- **Share link passwords.** `password`, 12 to 256 characters, on `POST /v1/artifacts/{slug}/share-links`, `create_share_link`, `kazari share create --password`, the dashboard and the account page has the link ask for a password before it opens the page. Only a hash is stored. Wrong passwords make the next try from that address wait, up to a minute, and listings and the audit log show which links have a password ([share links](docs/identity.md#share-links)).
+- **`kazari pull`** writes the files of the published version, or of `--version N`, to `./<slug>`, so `kazari pull q3-report` and `kazari deploy q3-report` work on the same files; `-` writes the `tar.gz` to standard output. `GET /v1/artifacts/{slug}/bundle?version=N` streams the same archive and names the version in `Kazari-Version` ([pull](docs/cli.md#pull)).
+- **Compression on artifact hosts.** Text files from 1 KiB to 4 MiB are sent with Brotli, zstd or gzip, the coding the client weighs highest, and kept compressed in memory up to `serve.compression_cache`: 5% of the memory the server may use by default, at most 1 GiB, and `0` turns it off. The start log and the `compression` line of `kazari check` state the size, and the `kazari_site_compression_*` metrics report hits, evictions and use. A proxy in front needs no compression of its own ([compression](docs/configuration.md#compression)).
+- **An orphan sweep.** Once a day the `gc` job also removes files in the blob store that the database has no record of and that were last written more than a day ago, such as those a publish stopped by a crash leaves. `kazari_gc_orphans_removed_total` and `kazari_gc_orphans_removed_size_bytes_total` count them ([sweeping orphan blob files](docs/ops.md#sweeping-orphan-blob-files)).
+- **The image checks its own health** with `kazari admin health` every 30 seconds, so a container started with `docker run` shows as `healthy` too. The installation guide describes the image: its tags and platforms, pinning a version or a digest, verifying its signature, reading its SBOM and running it without Compose ([the image](docs/install.md#the-image)).
+
+### Changed
+
+- **`kazari deploy` sends only what changed** since the version it builds on, and reports it as `3 files, 12 KiB; 11 unchanged; removed: assets/index-3fa0c2.js`. `--dry-run` lists the unchanged files too, and a file that changes on disk after the deploy has checked it fails the deploy ([deploy](docs/cli.md#deploy)).
+- **Pages are served faster**, however many files a version holds, and the checks after a publish read only the files that changed. Large publishes and garbage collection take less time too.
+- **A sign-in handed over from an invite, reset or setup link asks to continue.** The sign-in page asks the person to continue as their handle, and signs the browser in when they press **Continue**.
+- **The image is built on distroless `static-debian13`**, in place of `static-debian12`.
+- **Inline files over REST are read as MCP reads them**: base64 can be unpadded, contain line breaks, spaces and tabs, and start with a `data:` prefix, and `encoding` is read in any case. A JSON body with files can be a third larger than `limits.max_version_bytes` plus 1 MiB, so a whole version fits in base64, and `limits.max_version_bytes` also bounds the files one request names by URL.
+- `update_artifact` with `stage` and no files or edits fails with `invalid_argument`, also when it sets the visibility.
+- Every CLI command stops at Ctrl-C or `SIGTERM` and says what it left behind, and `--timeout` covers the admin socket too.
+- Sizes in the output of the CLI and `kazari check` have no trailing `.0` (`312 KiB`), and `--quota` takes the units the configuration takes.
+
+### Fixed
+
+- Sign-in no longer waits on an identity provider that does not answer: each request for discovery, the token exchange or the signing keys gives up after 10 seconds.
+- After signing in with an API key, the account page revokes only keys no wider than that key, as it rotates them and as `/me/keys` does.
+- The admin socket appears at its path only with mode `0600`.
+- An import counts once in `kazari_artifact_publishes_total`, as `import`.
+- A page name taken from a `<title>` cut to the name limit no longer ends in a space.
+
 ## 0.8.0
 
 Released 2026-11-22.
