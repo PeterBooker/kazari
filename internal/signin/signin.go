@@ -204,6 +204,9 @@ type Store interface {
 
 	// CreateViewCode stores a code for an existing session.
 	CreateViewCode(ctx context.Context, c *ViewCode) error
+	// GetViewCode returns a code by hash, used or not, and leaves it as it
+	// is. ErrNotFound.
+	GetViewCode(ctx context.Context, hash string) (*ViewCode, error)
 	// ConsumeViewCode atomically marks the code used at at and returns it.
 	// ErrNotFound for an unknown code, ErrCodeUsed for a second use.
 	ConsumeViewCode(ctx context.Context, hash string, at time.Time) (*ViewCode, error)

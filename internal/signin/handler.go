@@ -149,12 +149,17 @@ func (s *Service) serveSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if code := q.Get(ParamHandoff); code != "" {
-		done, err := s.handoff(w, r, code, t)
+		anchor, err := s.handoffAnchor(ctx, code, false)
 		if err != nil {
 			s.fail(w, r, "hand off", err)
 			return
 		}
-		if done {
+		if anchor != nil {
+			// A link can bring any browser here, so only the button,
+			// posted from this page, signs it in.
+			s.pages.Render(w, http.StatusOK, "handoff", handoffPage{
+				Handle: anchor.UserHandle, Code: code, Host: t.host, Path: t.path, Nonce: t.nonceHash,
+			}, t.callback)
 			return
 		}
 	}
@@ -320,7 +325,8 @@ func lifetime(d time.Duration) string {
 }
 
 // serveSignInForm signs a browser in with what the sign-in form sent: the
-// name and password of a built-in account, a passkey, or an API key. Like
+// name and password of a built-in account, a passkey, an API key, or the
+// code of a sign-in another page handed over (ParamHandoff). Like
 // the consent form, it must come from the form itself: an attacker's page
 // could otherwise sign a visitor in as the attacker. The form names where
 // the sign-in continues: a host, or the pending authorization of an MCP
@@ -340,6 +346,10 @@ func (s *Service) serveSignInForm(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 	f := r.PostForm
+	if code := f.Get(ParamHandoff); code != "" {
+		s.serveHandoff(w, r, code)
+		return
+	}
 	if s.idp != nil || (s.keys == nil && s.passwords == nil) {
 		s.pages.Message(w, http.StatusForbidden, "Sign-in required",
 			"Sign in at the identity provider. Open the page you wanted again.", "")
@@ -678,42 +688,81 @@ func (s *Service) sendToHost(w http.ResponseWriter, r *http.Request, sess *Sessi
 	http.Redirect(w, r, withQuery(t.callback, url.Values{"code": {code}}), http.StatusFound)
 }
 
-// handoff signs the browser in with a code from LinkCode and sends it on to
-// t. ok is false when the code opens nothing, and nothing was written.
-func (s *Service) handoff(w http.ResponseWriter, r *http.Request, code string, t target) (bool, error) {
+// serveHandoff signs the browser in with a code from LinkCode, posted from
+// the page that asks the person to continue, and sends it on to the form's
+// target. A code that opens nothing leads to the sign-in page for the
+// target, as one in the link does.
+func (s *Service) serveHandoff(w http.ResponseWriter, r *http.Request, code string) {
 	ctx := r.Context()
-	if len(code) != tokenLen {
-		return false, nil
+	f := r.PostForm
+	t, ok := s.target(f.Get("host"), f.Get("path"), f.Get("nonce"))
+	if !ok {
+		s.pages.Message(w, http.StatusBadRequest, "Invalid sign-in link",
+			"This sign-in link is not valid. Open the page you wanted again.", "")
+		return
 	}
-	c, err := s.store.ConsumeViewCode(ctx, hashSecret(code), s.now())
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCodeUsed) {
-		return false, nil
-	}
+	anchor, err := s.handoffAnchor(ctx, code, true)
 	if err != nil {
-		return false, err
+		s.fail(w, r, "hand off", err)
+		return
 	}
-	if c.Host != hostHandoff || !s.now().Before(c.ExpiresAt) {
-		return false, nil
-	}
-	anchor, err := s.store.GetSessionByID(ctx, c.SessionID)
-	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if key, err := s.live(ctx, anchor.UserHandle, "", anchor.ExpiresAt, anchor.UserDisabled); err != nil || !key.live {
-		return false, err
+	if anchor == nil {
+		q := url.Values{"host": {t.host}, "path": {t.path}, "nonce": {t.nonceHash}}
+		if login := f.Get("login"); login != "" {
+			q.Set("login", login)
+		}
+		http.Redirect(w, r, PathSignIn+"?"+q.Encode(), http.StatusSeeOther)
+		return
 	}
 	if err := s.store.DeleteSession(ctx, anchor.ID); err != nil {
-		return false, err
+		s.fail(w, r, "hand off", err)
+		return
 	}
 	sess, err := s.startSession(ctx, w, s.binding(r), anchor.UserHandle, "", ViaLink)
 	if err != nil {
-		return false, err
+		s.fail(w, r, "hand off", err)
+		return
 	}
 	s.sendToHost(w, r, sess, t)
-	return true, nil
+}
+
+// handoffAnchor returns the session that holds the person of a code from
+// LinkCode, using the code up when consume is set. It is nil when the code
+// opens nothing: unknown, used, expired, not a LinkCode's, or its person
+// can no longer sign in.
+func (s *Service) handoffAnchor(ctx context.Context, code string, consume bool) (*Session, error) {
+	if len(code) != tokenLen {
+		return nil, nil
+	}
+	var (
+		c   *ViewCode
+		err error
+	)
+	if consume {
+		c, err = s.store.ConsumeViewCode(ctx, hashSecret(code), s.now())
+	} else {
+		c, err = s.store.GetViewCode(ctx, hashSecret(code))
+	}
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCodeUsed) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if (!consume && c.UsedAt != nil) || c.Host != hostHandoff || !s.now().Before(c.ExpiresAt) {
+		return nil, nil
+	}
+	anchor, err := s.store.GetSessionByID(ctx, c.SessionID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if key, err := s.live(ctx, anchor.UserHandle, "", anchor.ExpiresAt, anchor.UserDisabled); err != nil || !key.live {
+		return nil, err
+	}
+	return anchor, nil
 }
 
 // serveSignOutPage asks a person to confirm ending the sign-in. It changes

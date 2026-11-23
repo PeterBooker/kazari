@@ -211,23 +211,9 @@ func (s *SignInStore) ConsumeViewCode(ctx context.Context, hash string, at time.
 		if err != nil {
 			return err
 		}
-		var (
-			v       signin.ViewCode
-			expires int64
-			used    sql.NullInt64
-		)
-		err = tx.QueryRowContext(ctx, `SELECT session_id, host, path, nonce_hash, expires_at, used_at
-			FROM signin_code WHERE code_hash = ?`, hash).Scan(&v.SessionID, &v.Host, &v.Path, &v.NonceHash, &expires, &used)
-		if errors.Is(err, sql.ErrNoRows) {
-			return signin.ErrNotFound
-		}
-		if err != nil {
+		if c, err = viewCode(ctx, tx, hash); err != nil {
 			return err
 		}
-		v.Hash = hash
-		v.ExpiresAt = fromNanos(expires)
-		v.UsedAt = ptrTime(used)
-		c = &v
 		if n == 0 {
 			return signin.ErrCodeUsed
 		}
@@ -237,6 +223,39 @@ func (s *SignInStore) ConsumeViewCode(ctx context.Context, hash string, at time.
 		return nil, fmt.Errorf("sqlite: consume view code: %w", err)
 	}
 	return c, nil
+}
+
+// GetViewCode implements signin.Store.
+func (s *SignInStore) GetViewCode(ctx context.Context, hash string) (_ *signin.ViewCode, err error) {
+	ctx, end := s.db.op(ctx, "SignInStore.GetViewCode")
+	defer func() { end(err) }()
+	c, err := viewCode(ctx, s.db, hash)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: get view code: %w", err)
+	}
+	return c, nil
+}
+
+func viewCode(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, hash string) (*signin.ViewCode, error) {
+	var (
+		v       signin.ViewCode
+		expires int64
+		used    sql.NullInt64
+	)
+	err := q.QueryRowContext(ctx, `SELECT session_id, host, path, nonce_hash, expires_at, used_at
+		FROM signin_code WHERE code_hash = ?`, hash).Scan(&v.SessionID, &v.Host, &v.Path, &v.NonceHash, &expires, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, signin.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	v.Hash = hash
+	v.ExpiresAt = fromNanos(expires)
+	v.UsedAt = ptrTime(used)
+	return &v, nil
 }
 
 // CreateViewSession implements signin.Store.

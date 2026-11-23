@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -379,8 +380,16 @@ func (b *browser) welcomed(resp *http.Response) {
 		t.Fatalf("the link's form: status %d to %q, want the sign-in host with a handoff", resp.StatusCode, loc)
 	}
 	resp, body := b.getURL(loc)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `name="`+signin.ParamHandoff+`"`) {
+		t.Fatalf("the handoff: status %d: %s, want the page to continue", resp.StatusCode, body)
+	}
+	form := url.Values{}
+	for _, m := range hiddenField.FindAllStringSubmatch(body, -1) {
+		form.Add(m[1], html.UnescapeString(m[2]))
+	}
+	resp, body = b.postFrom(b.e.mcp.URL, b.e.mcp.URL+signin.PathSignIn, form)
 	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.apex.URL+account.CallbackPath+"?code=") {
-		t.Fatalf("the handoff: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
+		t.Fatalf("continuing the handoff: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
 	resp, body = b.getURL(resp.Header.Get("Location"))
 	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/account/" {
@@ -399,8 +408,9 @@ func (b *browser) page() string {
 }
 
 var (
-	formToken = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
-	onceValue = regexp.MustCompile(`name="once" value="([^"]+)"`)
+	formToken   = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+	onceValue   = regexp.MustCompile(`name="once" value="([^"]+)"`)
+	hiddenField = regexp.MustCompile(`<input type="hidden" name="([^"]+)" value="([^"]*)">`)
 )
 
 // token returns the form token of the browser's session.

@@ -3,14 +3,19 @@ package oauth_test
 import (
 	"context"
 	"errors"
+	"html"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -781,7 +786,8 @@ func TestLinkCodeOneSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, _ := e.get(signInQuery("demo", "/") + "&" + signin.ParamHandoff + "=" + code)
+	_, page := e.get(signInQuery("demo", "/") + "&" + signin.ParamHandoff + "=" + code)
+	resp, _ := e.signInForm(hiddenFields(page))
 	first, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatalf("Redeem after the handoff: %v", err)
@@ -816,6 +822,121 @@ func TestLinkCodeOneSignIn(t *testing.T) {
 	}
 	if n, _ := e.signin.CountSessions(ctx, "ana"); n != 0 {
 		t.Errorf("a used code opened a session: %d", n)
+	}
+}
+
+var hiddenField = regexp.MustCompile(`<input type="hidden" name="([^"]+)" value="([^"]*)">`)
+
+// hiddenFields returns the hidden fields of the forms in body.
+func hiddenFields(body string) url.Values {
+	v := url.Values{}
+	for _, m := range hiddenField.FindAllStringSubmatch(body, -1) {
+		v.Add(m[1], html.UnescapeString(m[2]))
+	}
+	return v
+}
+
+// A sign-in handed over from another page asks the person to continue: the
+// link alone signs the browser in nowhere and leaves the code for the
+// button, which posts it from the page.
+func TestHandoffAsksToContinue(t *testing.T) {
+	e := newEnv(t, envOptions{noIDP: true, passwords: true})
+	ctx := t.Context()
+	e.person("ana", "", "")
+	code, err := e.signin.LinkCode(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := signInQuery("demo", "/report") + "&" + signin.ParamHandoff + "=" + code
+	var form url.Values
+	for i := range 2 {
+		resp, body := e.get(link)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, "<h1 class=\"title\">Continue as ana</h1>") {
+			t.Fatalf("GET %d with a link code: status %d, want 200 with the page to continue:\n%s", i+1, resp.StatusCode, body)
+		}
+		if set := resp.Header.Values("Set-Cookie"); len(set) != 0 {
+			t.Errorf("GET %d with a link code set the cookies %q, want none", i+1, set)
+		}
+		form = hiddenFields(body)
+	}
+	want := url.Values{signin.ParamHandoff: {code}, "host": {"demo"}, "path": {"/report"}, "nonce": {nonceHash(browserNonce)}, "login": {"ana"}}
+	if diff := cmp.Diff(want, form); diff != "" {
+		t.Errorf("the page's form (-want +got):\n%s", diff)
+	}
+	if resp, _ := e.get(signInQuery("other", "/")); resp.StatusCode != http.StatusOK {
+		t.Errorf("another host after the page: status %d, want 200 with the sign-in form", resp.StatusCode)
+	}
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 0 {
+		t.Errorf("sign-in audit after the page = %+v, want none", ev)
+	}
+
+	resp, body := e.signInForm(form)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("continuing: status %d: %s", resp.StatusCode, body)
+	}
+	v, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	if err != nil || v.Path != "/report" {
+		t.Fatalf("Redeem after continuing = %+v, %v; want the path /report", v, err)
+	}
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != signin.ViaLink {
+		t.Errorf("sign-in audit = %+v, want one by ana via the link", ev)
+	}
+
+	// Continuing again leads to the sign-in page, with the name filled in.
+	resp, body = e.signInForm(form)
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther || loc.Path != signin.PathSignIn || loc.Query().Get("login") != "ana" ||
+		loc.Query().Get("host") != "demo" || loc.Query().Get(signin.ParamHandoff) != "" {
+		t.Errorf("continuing with a used code: status %d to %s, want 303 to the sign-in page for ana: %s", resp.StatusCode, loc, body)
+	}
+}
+
+// The button's post must come from the sign-in host's own page; refused, it
+// leaves the code unused for that page.
+func TestHandoffFromAnotherOrigin(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		header http.Header
+	}{
+		{"another origin", http.Header{"Origin": {"https://demo.art.test"}}},
+		{"another site without an origin", http.Header{"Sec-Fetch-Site": {"cross-site"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, envOptions{noIDP: true, passwords: true})
+			ctx := t.Context()
+			e.person("ana", "", "")
+			code, err := e.signin.LinkCode(ctx, "ana")
+			if err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{signin.ParamHandoff: {code}, "host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(browserNonce)}}
+			req, err := http.NewRequest(http.MethodPost, e.url(signin.PathSignIn), strings.NewReader(form.Encode()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			maps.Copy(req.Header, tt.header)
+			resp, body := e.do(req)
+			if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Request rejected") {
+				t.Errorf("POST with %v: status %d, want 403: %s", tt.header, resp.StatusCode, body)
+			}
+			if set := resp.Header.Values("Set-Cookie"); len(set) != 0 {
+				t.Errorf("POST with %v set the cookies %q, want none", tt.header, set)
+			}
+			if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 0 {
+				t.Errorf("sign-in audit after the refused post = %+v, want none", ev)
+			}
+			resp, body = e.signInForm(form)
+			if resp.StatusCode != http.StatusFound {
+				t.Fatalf("the page's own post after a refused one: status %d: %s", resp.StatusCode, body)
+			}
+			if _, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce); err != nil {
+				t.Errorf("Redeem after the page's own post = %v", err)
+			}
+		})
 	}
 }
 

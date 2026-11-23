@@ -70,6 +70,16 @@ func TestSignInStoreSessions(t *testing.T) {
 	if err := s.CreateViewCode(ctx, code); err != nil {
 		t.Fatal(err)
 	}
+	peeked, err := s.GetViewCode(ctx, "ch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(code, peeked); diff != "" {
+		t.Errorf("GetViewCode (-want +got):\n%s", diff)
+	}
+	if _, err := s.GetViewCode(ctx, "unknown"); !errors.Is(err, signin.ErrNotFound) {
+		t.Errorf("GetViewCode unknown = %v, want ErrNotFound", err)
+	}
 	used := oauthT0.Add(time.Second)
 	got, err := s.ConsumeViewCode(ctx, "ch", used)
 	if err != nil {
@@ -81,6 +91,9 @@ func TestSignInStoreSessions(t *testing.T) {
 	}
 	if _, err := s.ConsumeViewCode(ctx, "ch", used); !errors.Is(err, signin.ErrCodeUsed) {
 		t.Fatalf("second ConsumeViewCode = %v, want ErrCodeUsed", err)
+	}
+	if peeked, err = s.GetViewCode(ctx, "ch"); err != nil || peeked.UsedAt == nil || !peeked.UsedAt.Equal(used) {
+		t.Errorf("GetViewCode after ConsumeViewCode = %+v, %v; want used at %v", peeked, err, used)
 	}
 	if _, err := s.ConsumeViewCode(ctx, "unknown", used); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("ConsumeViewCode unknown = %v, want ErrNotFound", err)

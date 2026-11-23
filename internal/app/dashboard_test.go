@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"html"
 	"log/slog"
 	"maps"
 	"net"
@@ -24,11 +25,14 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 const testPassword = "correct horse battery"
 
 var formTokenRE = regexp.MustCompile(`name="form_token" value="([^"]+)"`)
+
+var hiddenFieldRE = regexp.MustCompile(`<input type="hidden" name="([^"]+)" value="([^"]*)">`)
 
 var setupLinkRE = regexp.MustCompile(`http://localhost/account/setup\?token=(kzl_[a-z2-7]+)`)
 
@@ -85,7 +89,16 @@ func (b *browser) welcomed(done response) {
 	if done.status != http.StatusSeeOther || !strings.HasPrefix(loc, "http://mcp.localhost/oauth/signin?") {
 		b.t.Fatalf("the link's form: status %d to %q: %s", done.status, loc, truncate(done.body))
 	}
-	callback := b.follow(b.get(loc), "the handoff at the sign-in host")
+	page := b.get(loc)
+	wantStatus(b.t, page, http.StatusOK, "the page to continue at the sign-in host")
+	form := url.Values{}
+	for _, m := range hiddenFieldRE.FindAllStringSubmatch(page.body, -1) {
+		form.Add(m[1], html.UnescapeString(m[2]))
+	}
+	if form.Get(signin.ParamHandoff) == "" {
+		b.t.Fatalf("the page to continue carries no handoff: %s", truncate(page.body))
+	}
+	callback := b.follow(b.send(http.MethodPost, "http://mcp.localhost/oauth/signin", form, origin("http://mcp.localhost")), "the handoff at the sign-in host")
 	if r := b.get(callback); r.status != http.StatusFound || r.header.Get("Location") != "/account/" {
 		b.t.Fatalf("callback after the handoff: status %d to %q", r.status, r.header.Get("Location"))
 	}
