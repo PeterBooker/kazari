@@ -318,7 +318,6 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		MaxShareLinkTTL:   cfg.Serve.ShareLinkMaxTTL.Std(),
 		CSP:               cfg.Serve.CSP,
 		AllowCSPOverride:  cfg.Serve.AllowCSPOverride,
-		Quotas:            users,
 		Passwords:         users,
 		Now:               now,
 		Logger:            log,
@@ -339,7 +338,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			MaxFiles:      cfg.Limits.MaxFiles,
 		})
 	}
-	arts = artifact.New(sqlite.NewArtifactStore(a.db), blobs, auditStore, artOpts)
+	arts = artifact.New(sqlite.NewArtifactStore(a.db), blobs, users, auditStore, artOpts)
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
 		Telemetry:       tel,

@@ -71,7 +71,7 @@ func TestEditStoreCalls(t *testing.T) {
 	bob := e.user(t, "bob")
 	e.create(t, bob, "demo", "index.html", page, "app.js", "run()")
 	cs := &countingStore{ArtifactStore: e.store, calls: map[string]int{}}
-	svc := artifact.New(cs, e.blobs, e.rec, artifact.Options{Now: e.clock.Now})
+	svc := artifact.New(cs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
 	if _, _, _, err := svc.Edit(e.ctx, bob, artifact.EditRequest{Slug: "demo", Path: "index.html",
 		Edits: []artifact.Edit{{OldText: "Q3", NewText: "Q4"}}}); err != nil {
 		t.Fatal(err)

@@ -126,8 +126,8 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 		},
 		RevokeGrants: func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 	})
-	e.artifacts = artifact.New(wideArtifacts{sqlite.NewArtifactStore(db), &e.wide}, blobs, e.audit, artifact.Options{
-		Quotas: e.users, Passwords: e.users, Now: e.clock.Now, Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour,
+	e.artifacts = artifact.New(wideArtifacts{sqlite.NewArtifactStore(db), &e.wide}, blobs, e.users, e.audit, artifact.Options{
+		Passwords: e.users, Now: e.clock.Now, Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour,
 		DefaultGrace: 14 * 24 * time.Hour, MaxShareLinkTTL: 90 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
 	e.jobs = scheduler.New(scheduler.Options{Now: e.clock.Now},

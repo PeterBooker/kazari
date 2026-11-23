@@ -76,7 +76,7 @@ func newEnv(t *testing.T, opts artifact.Options) *env {
 	opts.Now = c.Now
 	store := sqlite.NewArtifactStore(db)
 	rec := &audit.Memory{}
-	return &env{ctx: ctx, svc: artifact.New(store, blobs, rec, opts), db: db, store: store, blobs: blobs, blobDir: blobDir, rec: rec, clock: c}
+	return &env{ctx: ctx, svc: artifact.New(store, blobs, artifact.NoQuotas{}, rec, opts), db: db, store: store, blobs: blobs, blobDir: blobDir, rec: rec, clock: c}
 }
 
 // storedBytes sums every file under the blob directory, temporary ones too.
@@ -431,8 +431,18 @@ type quotas map[string]int64
 
 func (q quotas) QuotaBytes(_ context.Context, handle string) (int64, error) { return q[handle], nil }
 
+func TestNewNeedsQuotas(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("New with a nil QuotaSource did not panic")
+		}
+	}()
+	artifact.New(nil, nil, nil, nil, artifact.Options{})
+}
+
 func TestQuotaChargesOwner(t *testing.T) {
-	e := newEnv(t, artifact.Options{Quotas: quotas{"alice": 20 + 2*artifact.FileChargeBytes}})
+	e := newEnv(t, artifact.Options{})
+	e.svc = artifact.New(e.store, e.blobs, quotas{"alice": 20 + 2*artifact.FileChargeBytes}, e.rec, artifact.Options{Now: e.clock.Now})
 	alice := e.user(t, "alice")
 	bob := e.user(t, "bob")
 	e.create(t, alice, "one", "a.txt", strings.Repeat("a", 15))
@@ -1722,7 +1732,7 @@ func TestFailedPublishRemovesItsBlobs(t *testing.T) {
 			if tc.store != nil {
 				tc.store(store)
 			}
-			svc := artifact.New(store, e.blobs, e.rec, artifact.Options{MaxFileBytes: 100, Now: e.clock.Now})
+			svc := artifact.New(store, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{MaxFileBytes: 100, Now: e.clock.Now})
 			actor := alice
 			actor.QuotaBytes = tc.actor.QuotaBytes
 			wantErr(t, "failed publish", tc.publish(e, svc, actor), tc.want)
@@ -1908,7 +1918,7 @@ func TestAuditFailureDoesNotFailOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	svc := artifact.New(sqlite.NewArtifactStore(db), blobs, failingRecorder{}, artifact.Options{
+	svc := artifact.New(sqlite.NewArtifactStore(db), blobs, artifact.NoQuotas{}, failingRecorder{}, artifact.Options{
 		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	if _, _, err := svc.Create(ctx, artifact.Actor{Handle: "alice"}, artifact.CreateRequest{Slug: "demo", Files: files("a", "a")}); err != nil {

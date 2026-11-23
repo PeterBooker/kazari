@@ -120,8 +120,8 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	if eo.shared {
 		policy = artifact.WriteShared
 	}
-	e.arts = artifact.New(sqlite.NewArtifactStore(db), blobs, e.audit, artifact.Options{
-		Quotas: e.users, Passwords: e.users, Now: e.clock.Now, WritePolicy: policy, DefaultGrace: 14 * 24 * time.Hour,
+	e.arts = artifact.New(sqlite.NewArtifactStore(db), blobs, e.users, e.audit, artifact.Options{
+		Passwords: e.users, Now: e.clock.Now, WritePolicy: policy, DefaultGrace: 14 * 24 * time.Hour,
 		Retention: 30 * 24 * time.Hour, MaxShareLinkTTL: 30 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
 	var (

@@ -48,10 +48,16 @@ type Passwords interface {
 }
 
 // QuotaSource answers a user's storage quota, 0 meaning unlimited.
-// user.Service implements it.
+// user.Service implements it, NoQuotas for an instance without quotas.
 type QuotaSource interface {
 	QuotaBytes(ctx context.Context, handle string) (int64, error)
 }
+
+// NoQuotas is the QuotaSource of an instance without quotas: every owner's
+// is unlimited.
+type NoQuotas struct{}
+
+func (NoQuotas) QuotaBytes(context.Context, string) (int64, error) { return 0, nil }
 
 // Options configures a Service. Zero values get the Default* values.
 type Options struct {
@@ -80,10 +86,6 @@ type Options struct {
 	// Passwords hashes and checks share-link passwords; nil refuses a link
 	// with one.
 	Passwords Passwords
-	// Quotas gives the owner's quota when another member adds a version
-	// under WriteShared, so every version is charged to the owner. Nil
-	// leaves such versions uncharged.
-	Quotas    QuotaSource
 	Now       func() time.Time
 	Logger    *slog.Logger // audit failures; default slog.Default()
 	Telemetry instrument.Providers
@@ -135,10 +137,11 @@ func (o Options) withDefaults() Options {
 // Service implements the artifact operations. It is safe for concurrent
 // use; the store resolves races.
 type Service struct {
-	store Store
-	blobs blob.Store
-	rec   audit.Recorder
-	opts  Options
+	store  Store
+	blobs  blob.Store
+	quotas QuotaSource
+	rec    audit.Recorder
+	opts   Options
 
 	tracer trace.Tracer
 	m      metrics
@@ -150,13 +153,19 @@ type Service struct {
 	blobMu sync.RWMutex
 }
 
-// New returns a Service; a nil rec discards audit events.
-func New(store Store, blobs blob.Store, rec audit.Recorder, opts Options) *Service {
+// New returns a Service; a nil rec discards audit events. quotas gives the
+// owner's quota when another member adds a version under WriteShared, so
+// every version is charged to the owner.
+func New(store Store, blobs blob.Store, quotas QuotaSource, rec audit.Recorder, opts Options) *Service {
+	if quotas == nil {
+		// A missing source would leave versions by other members uncharged.
+		panic("artifact: New needs a QuotaSource; NoQuotas for none")
+	}
 	if rec == nil {
 		rec = audit.Nop{}
 	}
 	meter := opts.Telemetry.Meter(scope)
-	s := &Service{store: store, blobs: blobs, rec: rec, opts: opts.withDefaults(),
+	s := &Service{store: store, blobs: blobs, quotas: quotas, rec: rec, opts: opts.withDefaults(),
 		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter)}
 	s.observeCensus(meter)
 	return s
@@ -375,15 +384,12 @@ func (s *Service) quotaLeft(ctx context.Context, owner string, quotaBytes int64)
 }
 
 // ownerQuota is the quota a version of the artifact is charged against: the
-// actor's own when it is the owner, else the owner's from Options.Quotas.
+// actor's own when it is the owner, else the owner's from the QuotaSource.
 func (s *Service) ownerQuota(ctx context.Context, actor Actor, owner string) (int64, error) {
 	if actor.Handle == owner {
 		return actor.QuotaBytes, nil
 	}
-	if s.opts.Quotas == nil {
-		return 0, nil
-	}
-	return s.opts.Quotas.QuotaBytes(ctx, owner)
+	return s.quotas.QuotaBytes(ctx, owner)
 }
 
 // Update changes fields and, unless req.Files is empty, adds a version of
