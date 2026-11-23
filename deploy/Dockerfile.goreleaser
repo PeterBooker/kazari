@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 # check=error=true
-# For goreleaser, which builds the binary outside the image. Digest-pinned; the maintenance skill
-# updates them.
+# Dependabot refreshes the digests; the maintenance skill moves the tags.
 FROM --platform=$BUILDPLATFORM busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec AS data
 RUN mkdir /data
 
@@ -10,14 +9,14 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c86
 # goreleaser puts each platform's binary under its name in the build context.
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/kazari /usr/local/bin/kazari
-# Owned by nonroot (65532): a new named volume copies it, so the server can write.
+# A new named volume copies this directory's owner, so the server can write to it.
 COPY --from=data --chown=65532:65532 /data /var/lib/kazari
-# The nonroot base sets this too; stated so that another base tag cannot run as root.
+# The base sets it too; stated so that another base tag cannot run as root.
 USER 65532:65532
 VOLUME /var/lib/kazari
 EXPOSE 80 443
 ENV KAZARI_DATA_DIR=/var/lib/kazari
-# Over the admin socket in the data volume, which needs no token, and with no shell.
+# The admin socket in the data volume needs no token.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --start-interval=1s --retries=3 \
     CMD ["/usr/local/bin/kazari", "admin", "health"]
 ENTRYPOINT ["/usr/local/bin/kazari"]
