@@ -12,11 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PeterBooker/kazari/internal/config"
-
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/instrument/instrumenttest"
 )

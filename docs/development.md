@@ -96,6 +96,7 @@ go mod tidy -diff                                         # go.mod and go.sum ar
 go fix -diff ./...                                        # no pending modernizer fix
 go vet ./...
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run   # the linters in .golangci.yml
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest fmt --diff   # import groups: standard, third-party, this module
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...     # known vulnerabilities
 shellcheck site/static/install.sh deploy/packaging/*.sh .github/scripts/*.sh
 go run github.com/goreleaser/goreleaser/v2@latest check   # the release configuration

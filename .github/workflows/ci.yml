@@ -51,6 +51,9 @@ jobs:
       # refuses a module on a newer Go than the one that built it.
       - name: golangci-lint
         run: go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION" run
+      # run loads only the files built for linux/amd64; fmt reads every file.
+      - name: golangci-lint fmt --diff
+        run: go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION" fmt --diff
       - name: govulncheck
         run: go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./...
       - name: shellcheck

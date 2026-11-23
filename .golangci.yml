@@ -49,6 +49,16 @@ linters:
         linters:
           - thelper
 
+formatters:
+  enable:
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

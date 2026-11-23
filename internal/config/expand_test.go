@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-
 	"gopkg.in/yaml.v3"
 )
 
