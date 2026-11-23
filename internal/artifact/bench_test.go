@@ -44,7 +44,7 @@ func BenchmarkCollectGarbageBatch(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			if err := e.store.RecordBlob(e.ctx, hash, size, e.clock.Now()); err != nil {
+			if err := e.store.RecordBlobs(e.ctx, []artifact.StoredBlob{{Hash: hash, Size: size}}, e.clock.Now()); err != nil {
 				b.Fatal(err)
 			}
 		}

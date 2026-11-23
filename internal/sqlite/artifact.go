@@ -998,12 +998,27 @@ func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) (err e
 	return artifactErr("delete tombstone", err)
 }
 
-// RecordBlob only moves created_at forward.
-func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) (err error) {
-	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlob")
+// RecordBlobs only moves created_at forward.
+func (s *ArtifactStore) RecordBlobs(ctx context.Context, blobs []artifact.StoredBlob, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlobs")
 	defer func() { end(err) }()
-	_, err = s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
-	return artifactErr("record blob", err)
+	if len(blobs) == 0 {
+		return nil
+	}
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, artifactUpsertBlob)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, b := range blobs {
+			if _, err := stmt.ExecContext(ctx, b.Hash, b.Size, toNanos(at)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return artifactErr("record blobs", err)
 }
 
 // unreferencedBlobs takes the cutoff and the limit; blob_created serves it.

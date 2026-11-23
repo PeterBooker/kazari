@@ -140,6 +140,46 @@ func TestCollectGarbageRowsAfterLock(t *testing.T) {
 	}
 }
 
+// A publish records its blobs in batches as it stores them, so a crash
+// leaves rows the collector finds for all but the last batch.
+func TestPublishRecordsBlobsInBatches(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	cs := &countingStore{ArtifactStore: e.store, calls: map[string]int{}}
+	svc := artifact.New(cs, cs, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
+
+	const stored = 150
+	in := make([]artifact.FileInput, 0, stored+1)
+	for i := range stored {
+		in = append(in, artifact.FileInput{Path: fmt.Sprintf("f/%03d.txt", i), Content: strings.NewReader(fmt.Sprintf("file %d", i))})
+	}
+	br := &blockingReader{data: strings.NewReader("tail"), reached: make(chan struct{}), release: make(chan struct{})}
+	in = append(in, artifact.FileInput{Path: "tail.txt", Content: br})
+	created := make(chan error, 1)
+	go func() {
+		_, _, err := svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "many", Files: in})
+		created <- err
+	}()
+	<-br.reached
+	totals, err := e.store.BlobTotals(e.ctx)
+	close(br.release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Count != 100 {
+		t.Errorf("blob rows while the publish is parked on file %d = %d, want 100, the first batch", stored+1, totals.Count)
+	}
+	if err := <-created; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if totals, err = e.store.BlobTotals(e.ctx); err != nil || totals.Count != stored+1 {
+		t.Errorf("blob rows after the publish = %d, %v; want %d", totals.Count, err, stored+1)
+	}
+	if got := cs.calls["RecordBlobs"]; got != 2 {
+		t.Errorf("RecordBlobs calls for %d files = %d, want 2", stored+1, got)
+	}
+}
+
 func TestFailedPublishSparesBlobOfPublishInProgress(t *testing.T) {
 	e := newEnv(t, artifact.Options{MaxFileBytes: 100})
 	alice, bob := e.user(t, "alice"), e.user(t, "bob")
