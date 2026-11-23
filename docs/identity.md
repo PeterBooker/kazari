@@ -209,7 +209,7 @@ A person issues, rotates and revokes their own API keys on the account page, wit
 - After signing in with a password or at the identity provider, a new key holds the member scopes at most (`artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete`), for an admin too. A key with the `admin` scope comes from the dashboard or from `kazari admin keys issue`.
 - After signing in with an API key, a new key is bounded by that key, as on [`/me/keys`](api.md#your-own-keys-mekeys): no scope it lacks, a restriction inside its own, and an expiry no later.
 
-The page revokes any of the person's keys. It rotates any but one that holds `admin`, which is rotated in the dashboard or on the admin API.
+The page revokes any of the person's keys. It rotates any but one that holds `admin`, which is rotated in the dashboard or on the admin API. After signing in with an API key, it revokes and rotates only a key no wider than that key, as `/me/keys` does.
 
 A new or rotated key is shown once, on the page that answers the form. Reloading that page offers to send the form again, and doing so makes no second key: the page says **Form already sent**.
 

@@ -467,6 +467,12 @@ export KAZARI_TOKEN={{.Secret}}</code></pre>
 <p class="lede">{{if .Key.Live}}This cannot be undone. Whatever uses the key stops working at once.{{else}}This key has already ended. Revoking it changes nothing more.{{end}}</p>
 </header>
 
+{{if eq .Err "too-wide"}}<div class="notice tone-danger" role="alert">
+<p class="notice-title">{{template "icon/alert"}}This key cannot be revoked here</p>
+<p>You signed in with an API key that holds less than this one. Sign in with your password to revoke it.</p>
+</div>
+{{end}}
+
 <section class="box section" aria-labelledby="ends">
 <h2 class="h2" id="ends">What ends</h2>
 <ul class="dash">

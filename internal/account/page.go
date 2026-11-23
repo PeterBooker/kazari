@@ -296,6 +296,8 @@ type confirmPage struct {
 	Issued []keyRow
 	Apps   []appRow
 	App    *appRow
+	// Err is why revoking Key was refused, "" for none.
+	Err string
 }
 
 // ownApp returns the person's connected app the path names. Another
