@@ -14,7 +14,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/apiclient"
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -88,7 +88,7 @@ func (c *GetCmd) Run(r *runner, cl userAPI) error {
 			case v.Staged:
 				num += " staged"
 			}
-			tw.row(num, dash(v.Label), dash(v.CreatedBy), fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
+			tw.row(num, dash(v.Label), dash(v.CreatedBy), fmtTime(v.CreatedAt), bytesize.Format(v.SizeBytes), v.URL)
 		}
 		tw.flush()
 		if !c.Files {
@@ -103,7 +103,7 @@ func (c *GetCmd) Run(r *runner, cl userAPI) error {
 			tw := newTable(w)
 			tw.row("PATH", "SIZE", "TYPE", "HASH")
 			for _, f := range v.Files {
-				tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+				tw.row(f.Path, bytesize.Format(f.Size), f.ContentType, shortHash(f.Hash))
 			}
 			tw.flush()
 		}
@@ -126,7 +126,7 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	kv("visibility", a.Visibility)
 	kv("state", artifactState(a))
 	kv("version", fmt.Sprintf("%d published, %d latest", a.PublishedVersion, a.LatestVersion))
-	kv("size", artifact.FormatBytes(a.SizeBytes))
+	kv("size", bytesize.Format(a.SizeBytes))
 	kv("metadata", fmtMap(a.Metadata))
 	kv("created", fmtTime(a.CreatedAt))
 	kv("updated", fmtTime(a.UpdatedAt))
@@ -211,7 +211,7 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 			if a.LatestVersion != a.PublishedVersion {
 				ver += "/" + strconv.Itoa(a.LatestVersion)
 			}
-			cells := []any{a.Slug, ver, a.Visibility, artifactState(&a), artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name}
+			cells := []any{a.Slug, ver, a.Visibility, artifactState(&a), bytesize.Format(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name}
 			if owner {
 				cells = append([]any{a.Owner}, cells...)
 			}
@@ -760,7 +760,7 @@ func (c *FilesLsCmd) Run(r *runner, cl userAPI) error {
 		tw := newTable(w)
 		tw.row("PATH", "SIZE", "TYPE", "HASH")
 		for _, f := range v.Files {
-			tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+			tw.row(f.Path, bytesize.Format(f.Size), f.ContentType, shortHash(f.Hash))
 		}
 		return tw.flush()
 	})

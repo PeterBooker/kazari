@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -111,7 +111,7 @@ func (p *bundlePlan) mirror(base []api.File) *bundlePlan {
 // summary is "3 files, 12 KiB; 11 unchanged; skipped: .env (dotfile);
 // removed: a.txt".
 func (p *bundlePlan) summary() string {
-	s := fmt.Sprintf("%s, %s", count(len(p.Files), "file"), artifact.FormatBytes(p.Bytes))
+	s := fmt.Sprintf("%s, %s", count(len(p.Files), "file"), bytesize.Format(p.Bytes))
 	if len(p.Unchanged) > 0 {
 		s += fmt.Sprintf("; %d unchanged", len(p.Unchanged))
 	}

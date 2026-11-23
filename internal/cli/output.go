@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -120,9 +120,9 @@ func dash(s string) string {
 
 func fmtQuota(used, quota int64) string {
 	if quota <= 0 {
-		return artifact.FormatBytes(used) + " used (no quota)"
+		return bytesize.Format(used) + " used (no quota)"
 	}
-	return fmt.Sprintf("%s of %s used", artifact.FormatBytes(used), artifact.FormatBytes(quota))
+	return fmt.Sprintf("%s of %s used", bytesize.Format(used), bytesize.Format(quota))
 }
 
 // parseSize reads a size as the configuration writes one, such as 500MiB.

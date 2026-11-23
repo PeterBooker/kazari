@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/backup"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/dirlock"
 	"github.com/PeterBooker/kazari/internal/preflight"
 )
@@ -225,7 +225,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 			Certificates bool   `json:"certificates"`
 		}{c.Dir, files, size, err == nil})
 	}
-	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, artifact.FormatBytes(size), c.Dir)
+	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, bytesize.Format(size), c.Dir)
 	return nil
 }
 
@@ -318,7 +318,7 @@ func (c *AdminRestoreBackupCmd) Run(r *runner) error {
 			Bytes   int64  `json:"bytes"`
 		}{dataDir, sum.Files, sum.Bytes})
 	}
-	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, artifact.FormatBytes(sum.Bytes), dataDir)
+	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, bytesize.Format(sum.Bytes), dataDir)
 	return nil
 }
 

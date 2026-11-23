@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 // PullCmd writes a version's files to a directory.
@@ -69,7 +69,7 @@ func (c *PullCmd) Run(r *runner) error {
 			NotDeployed []string `json:"not_deployed,omitempty"`
 		}{c.Slug, version, dir, len(pulled), size, left})
 	}
-	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %s, %s\n", version, c.Slug, dir, count(len(pulled), "file"), artifact.FormatBytes(size))
+	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %s, %s\n", version, c.Slug, dir, count(len(pulled), "file"), bytesize.Format(size))
 	return nil
 }
 

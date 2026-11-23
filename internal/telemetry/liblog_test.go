@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"log/slog"
 	"strings"
 	"testing"
@@ -92,6 +93,17 @@ func TestGRPCLoggerRespectsLevel(t *testing.T) {
 	g.Warning("[core] connection refused")
 	if buf.Len() != 0 {
 		t.Errorf("logged a gRPC warning at log.level info: %s", buf.String())
+	}
+}
+
+func TestStdLogger(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	l := log.New(stdLogger{leveledLogger(&buf, slog.LevelDebug).With("logger", "stdlib")}, "", 0)
+	l.Printf("[WARNING] Unable to delete invalid OCSP staple file: %v", "permission denied")
+	want := []string{"WARN [WARNING] Unable to delete invalid OCSP staple file: permission denied logger=stdlib"}
+	if diff := cmp.Diff(want, lines(t, &buf, "logger")); diff != "" {
+		t.Errorf("records (-want +got):\n%s", diff)
 	}
 }
 

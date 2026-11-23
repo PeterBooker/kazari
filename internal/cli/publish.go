@@ -12,6 +12,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 // artifactFlags are the fields publish and deploy set on the artifact.
@@ -300,10 +301,10 @@ func (r *runner) printPlan(p *bundlePlan) error {
 	return r.emit(p, func(w io.Writer) error {
 		tw := newTable(w)
 		for _, f := range p.Files {
-			tw.row("send", f.Path, artifact.FormatBytes(f.Size))
+			tw.row("send", f.Path, bytesize.Format(f.Size))
 		}
 		for _, f := range p.Unchanged {
-			tw.row("unchanged", f.Path, artifact.FormatBytes(f.Size))
+			tw.row("unchanged", f.Path, bytesize.Format(f.Size))
 		}
 		for _, path := range p.Removed {
 			tw.row("delete", path, "")

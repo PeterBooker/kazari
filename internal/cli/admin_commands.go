@@ -12,7 +12,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/apiclient"
-	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -64,9 +64,9 @@ func (c *AdminUsersListCmd) Run(r *runner, cl adminAPI) error {
 		for _, u := range users {
 			quota := "-"
 			if u.QuotaBytes > 0 {
-				quota = artifact.FormatBytes(u.QuotaBytes)
+				quota = bytesize.Format(u.QuotaBytes)
 			}
-			tw.row(u.Handle, dash(u.Email), u.Role, userState(&u), artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
+			tw.row(u.Handle, dash(u.Email), u.Role, userState(&u), bytesize.Format(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
 		}
 		return tw.flush()
 	})
