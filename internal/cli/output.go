@@ -24,11 +24,26 @@ func (r *runner) printJSON(v any) error {
 	return nil
 }
 
-// newTable goes through termSafe because its cells hold text other members
-// wrote.
-func newTable(w io.Writer) *tabwriter.Writer {
-	return tabwriter.NewWriter(termSafe{w}, 0, 0, 2, ' ', 0)
+// table lines up cells that hold text other members wrote: each cell stays
+// on its line and in its column, and goes through termSafe.
+type table struct{ w *tabwriter.Writer }
+
+func newTable(w io.Writer) *table { return newTablePadded(w, 2) }
+
+func newTablePadded(w io.Writer, padding int) *table {
+	return &table{tabwriter.NewWriter(termSafe{w}, 0, 0, padding, ' ', 0)}
 }
+
+// row writes one line of cells, each as fmt.Sprint writes it.
+func (t *table) row(cells ...any) {
+	parts := make([]string, len(cells))
+	for i, c := range cells {
+		parts[i] = oneLine(fmt.Sprint(c))
+	}
+	fmt.Fprintln(t.w, strings.Join(parts, "\t"))
+}
+
+func (t *table) flush() error { return t.w.Flush() }
 
 // termSafe replaces control characters but tab and newline, and the bidi
 // controls, with U+FFFD, so server text cannot drive or reorder the terminal.

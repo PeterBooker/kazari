@@ -87,7 +87,7 @@ func (c *GetCmd) Run(r *runner) error {
 	}
 	fmt.Fprintln(r.stdout)
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "VERSION\tLABEL\tCREATED BY\tCREATED\tSIZE\tURL")
+	tw.row("VERSION", "LABEL", "CREATED BY", "CREATED", "SIZE", "URL")
 	for _, v := range d.Versions {
 		num := strconv.Itoa(v.Number)
 		switch {
@@ -96,10 +96,9 @@ func (c *GetCmd) Run(r *runner) error {
 		case v.Staged:
 			num += " staged"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", num, dash(oneLine(v.Label)), dash(v.CreatedBy),
-			fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
+		tw.row(num, dash(v.Label), dash(v.CreatedBy), fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
 	}
-	tw.Flush()
+	tw.flush()
 	if !c.Files {
 		return nil
 	}
@@ -110,11 +109,11 @@ func (c *GetCmd) Run(r *runner) error {
 		}
 		fmt.Fprintf(r.stdout, "\nversion %d files:\n", v.Number)
 		tw := newTable(r.stdout)
-		fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
+		tw.row("PATH", "SIZE", "TYPE", "HASH")
 		for _, f := range v.Files {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+			tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
 		}
-		tw.Flush()
+		tw.flush()
 	}
 	return nil
 }
@@ -123,7 +122,7 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	tw := newTable(r.stdout)
 	kv := func(k, v string) {
 		if v != "" {
-			fmt.Fprintf(tw, "%s:\t%s\n", k, oneLine(v))
+			tw.row(k+":", v)
 		}
 	}
 	kv("slug", a.Slug)
@@ -153,7 +152,7 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	if a.PurgedAt != nil {
 		kv("purged at", fmtTime(*a.PurgedAt))
 	}
-	tw.Flush()
+	tw.flush()
 }
 
 // listFlags are the filters of list and admin artifacts list.
@@ -215,22 +214,25 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 		return r.printJSON(l)
 	}
 	tw := newTable(r.stdout)
+	head := []any{"SLUG", "VERSION", "VISIBILITY", "STATE", "SIZE", "UPDATED", "NAME"}
 	if owner {
-		fmt.Fprint(tw, "OWNER\t")
+		head = append([]any{"OWNER"}, head...)
 	}
-	fmt.Fprintln(tw, "SLUG\tVERSION\tVISIBILITY\tSTATE\tSIZE\tUPDATED\tNAME")
+	tw.row(head...)
 	for _, a := range l.Items {
-		if owner {
-			fmt.Fprintf(tw, "%s\t", a.Owner)
-		}
 		ver := strconv.Itoa(a.PublishedVersion)
 		if a.LatestVersion != a.PublishedVersion {
 			ver += "/" + strconv.Itoa(a.LatestVersion)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Slug, ver, a.Visibility, artifactState(&a),
-			artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), oneLine(a.Name))
+		cells := []any{a.Slug, ver, a.Visibility, artifactState(&a), artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name}
+		if owner {
+			cells = append([]any{a.Owner}, cells...)
+		}
+		tw.row(cells...)
 	}
-	tw.Flush()
+	if err := tw.flush(); err != nil {
+		return err
+	}
 	if l.NextCursor != "" {
 		fmt.Fprintf(r.stderr, "more results: --cursor %s (or --all)\n", l.NextCursor)
 	}
@@ -508,7 +510,7 @@ func (c *ShareListCmd) Run(r *runner) error {
 		return r.printJSON(list)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "PREFIX\tLABEL\tCREATED BY\tCREATED\tEXPIRES\tUSES\tLAST USED\tPASSWORD\tSTATE")
+	tw.row("PREFIX", "LABEL", "CREATED BY", "CREATED", "EXPIRES", "USES", "LAST USED", "PASSWORD", "STATE")
 	for _, l := range list.Items {
 		state := "active"
 		switch {
@@ -521,10 +523,9 @@ func (c *ShareListCmd) Run(r *runner) error {
 		if l.Password {
 			password = "yes"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", l.Prefix, dash(oneLine(l.Label)), l.CreatedBy,
-			fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), password, state)
+		tw.row(l.Prefix, dash(l.Label), l.CreatedBy, fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), password, state)
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // ShareRevokeCmd revokes a share link.
@@ -800,11 +801,11 @@ func (c *FilesLsCmd) Run(r *runner) error {
 		return r.printJSON(v.Files)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
+	tw.row("PATH", "SIZE", "TYPE", "HASH")
 	for _, f := range v.Files {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+		tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // FilesCatCmd writes one file to stdout.
@@ -863,25 +864,25 @@ func (c *MeCmd) Run(r *runner) error {
 		return r.printJSON(me)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintf(tw, "handle:\t%s\n", me.Handle)
+	tw.row("handle:", me.Handle)
 	switch {
 	case me.Role == "":
-		fmt.Fprintf(tw, "admin:\t%t\n", me.Admin)
+		tw.row("admin:", me.Admin)
 	case me.Role == "admin" && !me.Admin:
-		fmt.Fprintf(tw, "role:\tadmin (this key has no admin scope)\n")
+		tw.row("role:", "admin (this key has no admin scope)")
 	default:
-		fmt.Fprintf(tw, "role:\t%s\n", me.Role)
+		tw.row("role:", me.Role)
 	}
-	fmt.Fprintf(tw, "scopes:\t%s\n", dash(strings.Join(me.Scopes, ", ")))
-	fmt.Fprintf(tw, "source:\t%s\n", dash(me.Source))
+	tw.row("scopes:", dash(strings.Join(me.Scopes, ", ")))
+	tw.row("source:", dash(me.Source))
 	if len(me.Slugs) > 0 {
-		fmt.Fprintf(tw, "slugs:\t%s\n", strings.Join(me.Slugs, ", "))
+		tw.row("slugs:", strings.Join(me.Slugs, ", "))
 	}
 	if me.ExpiresAt != nil {
-		fmt.Fprintf(tw, "expires:\t%s\n", fmtTime(*me.ExpiresAt))
+		tw.row("expires:", fmtTime(*me.ExpiresAt))
 	}
-	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(me.UsedBytes, me.QuotaBytes))
-	return tw.Flush()
+	tw.row("storage:", fmtQuota(me.UsedBytes, me.QuotaBytes))
+	return tw.flush()
 }
 
 // KeysCmd manages the caller's own keys. Without a subcommand it lists them.
@@ -1019,13 +1020,11 @@ func (r *runner) printKeys(keys []api.APIKey) error {
 		return r.printJSON(keys)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "PREFIX\tLABEL\tSCOPES\tSLUGS\tISSUED BY\tCREATED\tLAST USED\tEXPIRES\tREVOKED")
+	tw.row("PREFIX", "LABEL", "SCOPES", "SLUGS", "ISSUED BY", "CREATED", "LAST USED", "EXPIRES", "REVOKED")
 	for _, k := range keys {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", k.Prefix, dash(oneLine(k.Label)), dash(strings.Join(k.Scopes, ",")),
-			dash(strings.Join(k.Slugs, ",")), dash(k.IssuedBy),
-			fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
+		tw.row(k.Prefix, dash(k.Label), dash(strings.Join(k.Scopes, ",")), dash(strings.Join(k.Slugs, ",")), dash(k.IssuedBy), fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 func fmtMap(m map[string]string) string {

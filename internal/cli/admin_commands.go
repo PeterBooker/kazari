@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
@@ -66,16 +65,15 @@ func (c *AdminUsersListCmd) Run(r *runner) error {
 		return r.printJSON(users)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "HANDLE\tEMAIL\tROLE\tSTATE\tUSED\tQUOTA\tLAST ACTIVE\tCREATED")
+	tw.row("HANDLE", "EMAIL", "ROLE", "STATE", "USED", "QUOTA", "LAST ACTIVE", "CREATED")
 	for _, u := range users {
 		quota := "-"
 		if u.QuotaBytes > 0 {
 			quota = artifact.FormatBytes(u.QuotaBytes)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(oneLine(u.Email)), u.Role, userState(&u),
-			artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
+		tw.row(u.Handle, dash(u.Email), u.Role, userState(&u), artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // userState is disabled, invited (an invite waits for the person to set a
@@ -95,39 +93,39 @@ func (r *runner) printUser(u *api.User) error {
 		return r.printJSON(u)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintf(tw, "handle:\t%s\n", u.Handle)
+	tw.row("handle:", u.Handle)
 	if u.DisplayName != "" {
-		fmt.Fprintf(tw, "name:\t%s\n", oneLine(u.DisplayName))
+		tw.row("name:", u.DisplayName)
 	}
-	fmt.Fprintf(tw, "email:\t%s\n", dash(oneLine(u.Email)))
-	fmt.Fprintf(tw, "role:\t%s\n", u.Role)
-	fmt.Fprintf(tw, "storage:\t%s\n", fmtQuota(u.UsedBytes, u.QuotaBytes))
+	tw.row("email:", dash(u.Email))
+	tw.row("role:", u.Role)
+	tw.row("storage:", fmtQuota(u.UsedBytes, u.QuotaBytes))
 	if u.DisabledAt != nil {
-		fmt.Fprintf(tw, "disabled:\t%s\n", fmtTime(*u.DisabledAt))
+		tw.row("disabled:", fmtTime(*u.DisabledAt))
 	}
 	switch {
 	case u.Password:
-		fmt.Fprintf(tw, "password:\tset\n")
+		tw.row("password:", "set")
 	case u.Invited:
-		fmt.Fprintf(tw, "password:\tnot set, invited\n")
+		tw.row("password:", "not set, invited")
 	}
 	if u.Passkeys > 0 {
-		fmt.Fprintf(tw, "passkeys:\t%d\n", u.Passkeys)
+		tw.row("passkeys:", u.Passkeys)
 	}
 	if u.RecoveryCodes > 0 {
-		fmt.Fprintf(tw, "recovery codes:\t%d unused\n", u.RecoveryCodes)
+		tw.row("recovery codes:", fmt.Sprintf("%d unused", u.RecoveryCodes))
 	}
 	if u.Keys > 0 {
-		fmt.Fprintf(tw, "keys:\t%d\n", u.Keys)
+		tw.row("keys:", u.Keys)
 	}
 	if u.LastActiveAt != nil {
-		fmt.Fprintf(tw, "last active:\t%s\n", fmtTime(*u.LastActiveAt))
+		tw.row("last active:", fmtTime(*u.LastActiveAt))
 	}
 	if u.Sessions != nil {
-		fmt.Fprintf(tw, "sessions:\t%d\n", *u.Sessions)
+		tw.row("sessions:", *u.Sessions)
 	}
-	fmt.Fprintf(tw, "created:\t%s\n", fmtTime(u.CreatedAt))
-	return tw.Flush()
+	tw.row("created:", fmtTime(u.CreatedAt))
+	return tw.flush()
 }
 
 // AdminUsersCreateCmd creates a user.
@@ -265,11 +263,11 @@ func (c *AdminIdentitiesListCmd) Run(r *runner) error {
 		return r.printJSON(ids)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "ISSUER\tSUBJECT\tEMAIL\tLAST SIGN-IN")
+	tw.row("ISSUER", "SUBJECT", "EMAIL", "LAST SIGN-IN")
 	for _, id := range u.Identities {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", oneLine(id.Issuer), oneLine(id.Subject), dash(oneLine(id.Email)), fmtTimePtr(id.LastLoginAt))
+		tw.row(id.Issuer, id.Subject, dash(id.Email), fmtTimePtr(id.LastLoginAt))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // AdminIdentitiesLinkCmd links an identity to a user.
@@ -425,16 +423,15 @@ func (c *AdminGrantsListCmd) Run(r *runner) error {
 		return r.printJSON(grants)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "ID\tCLIENT\tSCOPES\tKEY\tLAST REFRESH\tEXPIRES")
+	tw.row("ID", "CLIENT", "SCOPES", "KEY", "LAST REFRESH", "EXPIRES")
 	for _, g := range grants {
 		client := g.Client
 		if client == "" {
 			client = g.ClientID
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", g.ID, dash(oneLine(client)), dash(strings.Join(g.Scopes, ",")),
-			dash(g.KeyPrefix), fmtTime(g.CreatedAt), fmtTime(g.ExpiresAt))
+		tw.row(g.ID, dash(client), dash(strings.Join(g.Scopes, ",")), dash(g.KeyPrefix), fmtTime(g.CreatedAt), fmtTime(g.ExpiresAt))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // AdminGrantsRevokeCmd revokes a grant.
@@ -552,15 +549,15 @@ func (c *AdminSettingsCmd) Run(r *runner) error {
 	}
 	lines := map[string]string{}
 	flatten("", s, lines)
-	tw := tabwriter.NewWriter(termSafe{r.stdout}, 0, 0, 1, ' ', 0)
+	tw := newTablePadded(r.stdout, 1)
 	for _, k := range slices.Sorted(maps.Keys(lines)) {
 		if src := sourceOf(sources, k); src != "" {
-			fmt.Fprintf(tw, "%s\t= %s\t(%s)\n", k, lines[k], src)
+			tw.row(k, "= "+lines[k], "("+src+")")
 			continue
 		}
-		fmt.Fprintf(tw, "%s\t= %s\n", k, lines[k])
+		tw.row(k, "= "+lines[k])
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // sourceOf finds where key, or the mapping holding it, was set: a header
@@ -636,12 +633,11 @@ func (c *AdminJobsListCmd) Run(r *runner) error {
 		return r.printJSON(jobs)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "NAME\tEVERY\tRUNNING\tLAST RUN\tNEXT RUN\tLAST ERROR")
+	tw.row("NAME", "EVERY", "RUNNING", "LAST RUN", "NEXT RUN", "LAST ERROR")
 	for _, j := range jobs {
-		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\t%s\t%s\n", j.Name, j.Every, j.Running,
-			fmtTimePtr(j.LastRun), fmtTimePtr(j.NextRun), dash(j.LastError))
+		tw.row(j.Name, j.Every, j.Running, fmtTimePtr(j.LastRun), fmtTimePtr(j.NextRun), dash(j.LastError))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // AdminJobsRunCmd runs one job.
@@ -712,11 +708,11 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 		return r.printJSON(l)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "AT\tACTOR\tACTION\tSLUG\tSUBJECT\tDETAILS")
+	tw.row("AT", "ACTOR", "ACTION", "SLUG", "SUBJECT", "DETAILS")
 	for _, e := range l.Events {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(e.Subject), dash(oneLine(fmtMap(e.Details))))
+		tw.row(fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(e.Subject), dash(fmtMap(e.Details)))
 	}
-	if err := tw.Flush(); err != nil {
+	if err := tw.flush(); err != nil {
 		return err
 	}
 	if l.NextCursor != "" {
@@ -748,11 +744,11 @@ func (c *AdminViewsCmd) Run(r *runner) error {
 		if len(s.Top) > 0 {
 			fmt.Fprintln(r.stdout)
 			tw := newTable(r.stdout)
-			fmt.Fprintln(tw, "SLUG\tVIEWS\tVISITORS\tMEMBERS\tSHARE LINKS")
+			tw.row("SLUG", "VIEWS", "VISITORS", "MEMBERS", "SHARE LINKS")
 			for _, a := range s.Top {
-				fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\n", a.Slug, a.Views, a.Visitors, a.MemberViews, a.LinkViews)
+				tw.row(a.Slug, a.Views, a.Visitors, a.MemberViews, a.LinkViews)
 			}
-			if err := tw.Flush(); err != nil {
+			if err := tw.flush(); err != nil {
 				return err
 			}
 		}
@@ -770,11 +766,11 @@ func (c *AdminViewsCmd) Run(r *runner) error {
 	if len(a.Files) > 0 {
 		fmt.Fprintln(r.stdout)
 		tw := newTable(r.stdout)
-		fmt.Fprintln(tw, "FILE\tVIEWS")
+		tw.row("FILE", "VIEWS")
 		for _, f := range a.Files {
-			fmt.Fprintf(tw, "%s\t%d\n", f.Path, f.Views)
+			tw.row(f.Path, f.Views)
 		}
-		if err := tw.Flush(); err != nil {
+		if err := tw.flush(); err != nil {
 			return err
 		}
 	}
@@ -784,11 +780,11 @@ func (c *AdminViewsCmd) Run(r *runner) error {
 	if len(a.Readers) > 0 {
 		fmt.Fprintln(r.stdout)
 		tw := newTable(r.stdout)
-		fmt.Fprintln(tw, "READER\tNAME\tVIEWS\tFIRST OPENED\tLAST OPENED")
+		tw.row("READER", "NAME", "VIEWS", "FIRST OPENED", "LAST OPENED")
 		for _, rd := range a.Readers {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", rd.Handle, dash(rd.Name), rd.Views, fmtTime(rd.FirstAt), fmtTime(rd.LastAt))
+			tw.row(rd.Handle, dash(rd.Name), rd.Views, fmtTime(rd.FirstAt), fmtTime(rd.LastAt))
 		}
-		return tw.Flush()
+		return tw.flush()
 	}
 	return nil
 }
@@ -805,13 +801,13 @@ func printViewDays(r *runner, days []api.ViewDay) error {
 	}
 	fmt.Fprintln(r.stdout)
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "DAY\tVIEWS\tVISITORS")
+	tw.row("DAY", "VIEWS", "VISITORS")
 	for _, d := range days {
 		if d.Views > 0 {
-			fmt.Fprintf(tw, "%s\t%d\t%d\n", d.Day, d.Views, d.Visitors)
+			tw.row(d.Day, d.Views, d.Visitors)
 		}
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // AdminHealthCmd checks liveness.

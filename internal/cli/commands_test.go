@@ -1032,6 +1032,22 @@ func TestRunGetTerminalSafe(t *testing.T) {
 	}
 }
 
+func TestTableCellsStayOnOneLine(t *testing.T) {
+	views := api.ArtifactViews{Slug: "demo", From: "2026-10-01", To: "2026-10-01",
+		Files:   []api.ViewFile{{Path: "a\tb\nc.html", Views: 3}},
+		Readers: []api.ViewReader{{Handle: "bob", Name: "Bob\nB\tX", FirstAt: t0, LastAt: t0, Views: 1}}}
+	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{"GET /v1/artifacts/demo/views": replyWith(200, views)})
+	r := runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "views", "demo")
+	want := "demo, 2026-10-01 to 2026-10-01: 0 views, 0 daily visitors, 0 by members, 0 by share link\n\n" +
+		"FILE        VIEWS\n" +
+		"a b c.html  3\n\n" +
+		"READER  NAME     VIEWS  FIRST OPENED               LAST OPENED\n" +
+		"bob     Bob B X  1      2026-10-01T14:00:00+02:00  2026-10-01T14:00:00+02:00\n"
+	if r.code != 0 || r.stdout != want {
+		t.Errorf("admin views demo with a tab and a newline in a path and a name: %+v\nwant stdout\n%s", r, want)
+	}
+}
+
 // A failed edit quotes the current lines of a file another member may have
 // written, so the error text is as untrusted as a table cell.
 func TestErrorMessageTerminalSafe(t *testing.T) {

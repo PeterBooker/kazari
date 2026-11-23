@@ -301,18 +301,18 @@ func (r *runner) printPlan(p *bundlePlan) error {
 	}
 	tw := newTable(r.stdout)
 	for _, f := range p.Files {
-		fmt.Fprintf(tw, "send\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size))
+		tw.row("send", f.Path, artifact.FormatBytes(f.Size))
 	}
 	for _, f := range p.Unchanged {
-		fmt.Fprintf(tw, "unchanged\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size))
+		tw.row("unchanged", f.Path, artifact.FormatBytes(f.Size))
 	}
 	for _, path := range p.Removed {
-		fmt.Fprintf(tw, "delete\t%s\t\n", path)
+		tw.row("delete", path, "")
 	}
 	for _, s := range p.Skipped {
-		fmt.Fprintf(tw, "skip\t%s\t%s\n", s.Path, s.Reason)
+		tw.row("skip", s.Path, s.Reason)
 	}
-	if err := tw.Flush(); err != nil {
+	if err := tw.flush(); err != nil {
 		return err
 	}
 	fmt.Fprintf(termSafe{r.stderr}, "dry run, nothing sent: %s\n", p.summary())

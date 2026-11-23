@@ -151,15 +151,15 @@ func (c *AdminInvitesListCmd) Run(r *runner) error {
 		return r.printJSON(links)
 	}
 	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "ID\tUSER\tPURPOSE\tBY\tCREATED\tEXPIRES")
+	tw.row("ID", "USER", "PURPOSE", "BY", "CREATED", "EXPIRES")
 	for _, l := range links {
 		purpose := l.Purpose
 		if l.RevokeAll {
 			purpose += " (revokes keys and apps)"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", l.ID, dash(l.User), purpose, dash(l.CreatedBy), fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt))
+		tw.row(l.ID, dash(l.User), purpose, dash(l.CreatedBy), fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt))
 	}
-	return tw.Flush()
+	return tw.flush()
 }
 
 // AdminInvitesRevokeCmd ends a link.

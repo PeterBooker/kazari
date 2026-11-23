@@ -2,11 +2,13 @@ package cli_test
 
 import (
 	"archive/tar"
+	"context"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 const (
@@ -261,19 +264,7 @@ func TestRunAdminBackupOverSocket(t *testing.T) {
 		query = r.URL.RawQuery
 		w.Write(archive(t, map[string]string{"kazari.db": "the database"}))
 	}}}
-	sockDir, err := os.MkdirTemp("", "kz") //nolint:usetesting // a Unix socket's path is bounded at about a hundred bytes, and t.TempDir's holds the test's name
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(sockDir) })
-	socket := filepath.Join(sockDir, "admin.sock")
-	ln, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &http.Server{Handler: f}
-	go srv.Serve(ln)
-	t.Cleanup(func() { srv.Close() })
+	socket := serveSocket(t, f)
 
 	dir := filepath.Join(t.TempDir(), "backup")
 	r := runCLI(t, nil, "--admin-socket", socket, "admin", "backup", dir)
@@ -387,5 +378,62 @@ func TestRunAdminReady(t *testing.T) {
 	r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "--json", "admin", "ready")
 	if r.code != 0 || !strings.Contains(r.stdout, `"latest": "0.8.0"`) || !strings.Contains(r.stdout, `"newer": true`) {
 		t.Errorf("--json with a newer release: %+v", r)
+	}
+}
+
+// serveSocket serves h on a Unix socket until the test ends.
+func serveSocket(t *testing.T, h http.Handler) string {
+	t.Helper()
+	sockDir, err := os.MkdirTemp("", "kz") //nolint:usetesting // a Unix socket's path is bounded at about a hundred bytes, and t.TempDir's holds the test's name
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	socket := filepath.Join(sockDir, "admin.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return socket
+}
+
+func TestAdminSocketTimeoutAndRetry(t *testing.T) {
+	release := make(chan struct{})
+	var busy atomic.Int32
+	socket := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/jobs" {
+			<-release
+			return
+		}
+		if busy.Add(1) == 1 {
+			w.Header().Set("Retry-After", "7")
+			reply(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: api.Error{Code: "unavailable", Message: "busy"}})
+			return
+		}
+		reply(w, 200, api.Health{Status: "ok", Version: "1.0"})
+	}))
+	t.Cleanup(func() { close(release) })
+
+	done := make(chan result, 1)
+	go func() { done <- runCLI(t, nil, "--timeout", "50ms", "--admin-socket", socket, "admin", "jobs", "list") }()
+	select {
+	case r := <-done:
+		if r.code != exitError || !strings.Contains(r.stderr, "Client.Timeout") {
+			t.Errorf("admin jobs list --timeout 50ms on a socket that never answers: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("admin jobs list --timeout 50ms over the admin socket still waits after 10s")
+	}
+
+	var waits []time.Duration
+	r := runEnv(t, cli.Env{LookupEnv: envMap(map[string]string{"HOME": t.TempDir()}), Sleep: func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}}, "--admin-socket", socket, "admin", "health")
+	if r.code != 0 || !slices.Equal(waits, []time.Duration{7 * time.Second}) {
+		t.Errorf("admin health over a busy socket: %+v, waits %v; want one wait of 7s", r, waits)
 	}
 }
