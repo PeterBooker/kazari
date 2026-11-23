@@ -428,3 +428,35 @@ func FuzzParseKeepVersions(f *testing.F) {
 		}
 	})
 }
+
+func FuzzLinkCookie(f *testing.F) {
+	token := artifact.LinkTokenPrefix + "abcdefgh_" + strings.Repeat("q", 52)
+	for _, s := range []string{token, token + ".", token + ".proof", token + ".a.b", "kzs_short", "", ".", "..", "kzs_.x"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, cookie string) {
+		tok, proof, hasProof := artifact.SplitLinkCookie(cookie)
+		if hasProof != strings.Contains(cookie, ".") {
+			t.Errorf("SplitLinkCookie(%q) hasProof = %t, want it exactly when the cookie holds a dot", cookie, hasProof)
+		}
+		rejoined := tok
+		if hasProof {
+			rejoined += "." + proof
+		}
+		if rejoined != cookie || strings.Contains(tok, ".") {
+			t.Errorf("SplitLinkCookie(%q) = %q, %q, %t, which does not make the cookie again", cookie, tok, proof, hasProof)
+		}
+		if artifact.IsLinkCookie(cookie) != artifact.IsLinkToken(tok) {
+			t.Errorf("IsLinkCookie(%q) = %t, but its token %q is a link token: %t",
+				cookie, artifact.IsLinkCookie(cookie), tok, artifact.IsLinkToken(tok))
+		}
+		// A token with a proof is the same link's cookie, told apart from the
+		// token alone.
+		if artifact.IsLinkToken(cookie) {
+			withProof := cookie + "." + proof
+			if gotTok, _, has := artifact.SplitLinkCookie(withProof); gotTok != cookie || !has || !artifact.IsLinkCookie(withProof) {
+				t.Errorf("SplitLinkCookie(%q) = %q, %t; want the token %q with a proof", withProof, gotTok, has, cookie)
+			}
+		}
+	})
+}

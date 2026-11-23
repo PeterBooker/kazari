@@ -13,6 +13,9 @@ func GCWaiting(s *Service) bool {
 	return true
 }
 
+// SplitLinkCookie is how CheckShareLink reads a view cookie.
+var SplitLinkCookie = splitLinkCookie
+
 // CheckPage runs the checks after a publish on one page, with the paths of
 // the version's other files.
 func CheckPage(policy string, override bool, page string, data []byte, paths ...string) []string {

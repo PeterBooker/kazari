@@ -205,6 +205,7 @@ type ShareLinkInput struct {
 	Label     string `json:"label,omitempty" jsonschema:"note on who the link is for, e.g. Acme review"`
 	ExpiresIn string `json:"expires_in,omitempty" jsonschema:"how long the link works, e.g. 72h, 14d or 2w; default 7d"`
 	Version   int    `json:"version,omitempty" jsonschema:"also return version_url, the link opening this version"`
+	Password  string `json:"password,omitempty" jsonschema:"a password the page asks for before it opens"`
 }
 
 // ListShareLinksInput is the input of list_share_links.
@@ -630,15 +631,22 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 					"version %d of %s is staged, and a share link does not open a staged version; publish it with "+
 						"publish_version first, or leave out version", in.Version, a.Slug)
 			}
-			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl)
+			l, token, err := arts.CreateShareLink(ctx, actor, in.Slug, in.Label, ttl, in.Password)
 			if err != nil {
 				return ShareLinkResult{}, "", err
 			}
 			out := ShareLinkResult{URL: links.ShareURL(a.Slug, token), Slug: a.Slug, Visibility: string(a.Visibility),
-				Prefix: l.Prefix, Label: l.Label, ExpiresAt: l.ExpiresAt}
-			line := fmt.Sprintf("Share link for %s: %s (until %s). Anyone with this URL can open the page until then; "+
+				Prefix: l.Prefix, Label: l.Label, ExpiresAt: l.ExpiresAt, Password: l.HasPassword}
+			who := "Anyone with this URL"
+			if l.HasPassword {
+				who = "Anyone with this URL and the password"
+			}
+			line := fmt.Sprintf("Share link for %s: %s (until %s). %s can open the page until then; "+
 				"give it to the user, and revoke it with revoke_share_link prefix %q.",
-				a.Slug, out.URL, l.ExpiresAt.Format(time.RFC3339), l.Prefix)
+				a.Slug, out.URL, l.ExpiresAt.Format(time.RFC3339), who, l.Prefix)
+			if l.HasPassword {
+				line += " Tell the user to send the password apart from the link."
+			}
 			if in.Version > 0 {
 				latest := strings.TrimSuffix(links.ArtifactURL(a.Slug), "/")
 				out.VersionURL = strings.TrimSuffix(links.VersionURL(a.Slug, in.Version), "/") + strings.TrimPrefix(out.URL, latest)

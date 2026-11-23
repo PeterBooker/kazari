@@ -28,7 +28,8 @@ func TestRunShare(t *testing.T) {
 		"POST /v1/artifacts/demo/share-links": replyWith(http.StatusCreated, api.CreatedShareLink{URL: "https://demo.art.test/.kazari/share?token=kzs_y", ShareLink: link, Artifact: demo}),
 		"GET /v1/artifacts/team/share-links": replyWith(http.StatusOK, api.ShareLinkList{Items: []api.ShareLink{
 			link,
-			{Prefix: "zyxwvuts", CreatedBy: "ann", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour), RevokedAt: &revoked, LastUsedAt: &used, Uses: 2},
+			{Prefix: "zyxwvuts", CreatedBy: "ann", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour), RevokedAt: &revoked, LastUsedAt: &used, Uses: 2,
+				Password: true},
 		}}),
 		"DELETE /v1/artifacts/team/share-links/abcdefgh": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) },
 	})
@@ -49,10 +50,19 @@ func TestRunShare(t *testing.T) {
 		t.Fatalf("create on a public artifact: %+v", r)
 	}
 
+	// Off a terminal, --password reads the first line of stdin.
+	r = runCLIWith(t, nil, strings.NewReader("open sesame please\n"), nil, "--url", srv.URL, "--token", "t", "share", "create", "team", "--password")
+	if r.code != 0 || body != `{"password":"open sesame please"}` {
+		t.Fatalf("create --password: %+v, body %s; want the password sent", r, body)
+	}
+	if r := runCLIWith(t, nil, strings.NewReader(""), nil, "--url", srv.URL, "--token", "t", "share", "create", "team", "--password"); r.code != 2 {
+		t.Errorf("create --password with nothing on stdin: code %d, want 2: %+v", r.code, r)
+	}
+
 	r = run("share", "list", "team")
-	want := "PREFIX    LABEL  CREATED BY  CREATED                    EXPIRES                    USES  LAST USED                  STATE\n" +
-		"abcdefgh  Acme   peter       2026-10-01T14:00:00+02:00  2026-10-04T14:00:00+02:00  0     -                          active\n" +
-		"zyxwvuts  -      ann         2026-10-01T14:00:00+02:00  2026-10-01T15:00:00+02:00  2     2026-10-01T14:01:00+02:00  revoked\n"
+	want := "PREFIX    LABEL  CREATED BY  CREATED                    EXPIRES                    USES  LAST USED                  PASSWORD  STATE\n" +
+		"abcdefgh  Acme   peter       2026-10-01T14:00:00+02:00  2026-10-04T14:00:00+02:00  0     -                          no        active\n" +
+		"zyxwvuts  -      ann         2026-10-01T14:00:00+02:00  2026-10-01T15:00:00+02:00  2     2026-10-01T14:01:00+02:00  yes       revoked\n"
 	if r.code != 0 {
 		t.Fatalf("list: %+v", r)
 	}

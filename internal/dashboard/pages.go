@@ -334,6 +334,11 @@ type pageData struct {
 	Retention time.Duration
 }
 
+// MinLinkPassword and MaxLinkPassword bound a share link's password, for
+// the form.
+func (pageData) MinLinkPassword() int { return artifact.ShareLinkPasswordMin }
+func (pageData) MaxLinkPassword() int { return artifact.ShareLinkPasswordMax }
+
 const (
 	pageEvents      = 20
 	defaultLinkDays = int(artifact.DefaultShareLinkTTL / (24 * time.Hour))
@@ -631,13 +636,20 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 	if err != nil || days < 1 || days > s.maxLinkDays() {
 		return refuse("days", "Give a number of days from 1 to "+strconv.Itoa(s.maxLinkDays())+".")
 	}
-	// The days are checked above, so what the service still refuses here is
-	// the note.
 	if artifact.ValidateLabel(label) != nil {
 		return refuse("label", "Keep the note to one line of plain text, at most "+strconv.Itoa(artifact.LabelMaxBytes)+" bytes.")
 	}
-	l, token, err := s.d.Artifacts.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour)
-	if errors.Is(err, artifact.ErrInvalidArgument) {
+	password := r.PostForm.Get("password")
+	passwordRule := "Use " + strconv.Itoa(artifact.ShareLinkPasswordMin) + " to " +
+		strconv.Itoa(artifact.ShareLinkPasswordMax) + " characters, such as a few words, or leave it empty."
+	if password != "" && artifact.CheckLinkPassword(password) != nil {
+		return refuse("password", passwordRule)
+	}
+	l, token, err := s.d.Artifacts.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour, password)
+	switch {
+	case errors.Is(err, artifact.ErrLinkPassword):
+		return refuse("password", "This instance cannot keep a password for a link. Leave it empty.")
+	case errors.Is(err, artifact.ErrInvalidArgument):
 		return refuse("label", "That note was not accepted. Use plain text on one line.")
 	}
 	if err != nil {
@@ -647,16 +659,21 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 	if l.Label != "" {
 		what += " for " + l.Label
 	}
+	lede := "Copy it now and send it over a channel you trust. Whoever has it can open " +
+		hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in."
+	notes := []string{
+		"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked under Share links on the page.",
+		"Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.",
+	}
+	if l.HasPassword {
+		lede = "Copy it now and send it over a channel you trust. Whoever has it and the password can open " +
+			hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in."
+		notes = append(notes, "Send the password apart from the link, such as by phone or in another message.")
+	}
 	// The link is in this response and nowhere else.
 	return s.showOnce(w, r, c, shownOnce{
-		Slug: slug, Title: "Share link for " + slug, Label: what,
-		Lede: "Copy it now and send it over a channel you trust. Whoever has it can open " +
-			hostOf(s.d.Links.ArtifactURL(slug)) + " without signing in.",
-		Value: s.d.Links.ShareURL(slug, token), Button: "Copy the link",
-		Notes: []string{
-			"It works until " + l.ExpiresAt.UTC().Format(dayLayout) + ", or until it is revoked under Share links on the page.",
-			"Kazari keeps no copy. After you leave this page it cannot be shown again; create another if it is lost.",
-		},
+		Slug: slug, Title: "Share link for " + slug, Label: what, Lede: lede,
+		Value: s.d.Links.ShareURL(slug, token), Button: "Copy the link", Notes: notes,
 		Back: "Back to the page",
 	})
 }

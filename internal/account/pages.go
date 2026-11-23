@@ -135,6 +135,11 @@ type ownPageData struct {
 	Err                   map[string]string
 }
 
+// MinLinkPassword and MaxLinkPassword bound a share link's password, for
+// the form.
+func (ownPageData) MinLinkPassword() int { return artifact.ShareLinkPasswordMin }
+func (ownPageData) MaxLinkPassword() int { return artifact.ShareLinkPasswordMax }
+
 func stateOf(a *artifact.Artifact) string {
 	switch {
 	case a.DeletedAt != nil:
@@ -273,8 +278,15 @@ func (s *server) createLink(w http.ResponseWriter, r *http.Request, v visit, act
 	if artifact.ValidateLabel(label) != nil {
 		return refuse("label")
 	}
-	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour)
-	if errors.Is(err, artifact.ErrInvalidArgument) {
+	password := r.PostForm.Get("password")
+	if password != "" && artifact.CheckLinkPassword(password) != nil {
+		return refuse("password")
+	}
+	l, token, err := s.d.Artifacts.CreateShareLink(r.Context(), actor, slug, label, time.Duration(days)*24*time.Hour, password)
+	switch {
+	case errors.Is(err, artifact.ErrLinkPassword):
+		return refuse("password")
+	case errors.Is(err, artifact.ErrInvalidArgument):
 		return refuse("label")
 	}
 	if err != nil {

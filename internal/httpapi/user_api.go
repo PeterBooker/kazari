@@ -661,7 +661,7 @@ func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth
 		return err
 	}
 	actor, slug := present.Actor(p), r.PathValue("slug")
-	l, token, err := h.d.Artifacts.CreateShareLink(r.Context(), actor, slug, req.Label, ttl)
+	l, token, err := h.d.Artifacts.CreateShareLink(r.Context(), actor, slug, req.Label, ttl, req.Password)
 	if err != nil {
 		return err
 	}

@@ -428,7 +428,7 @@ func (s *Service) passwordSignIn(w http.ResponseWriter, r *http.Request, page si
 		s.signedIn(ctx, viaPassword, signInDelayed)
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
 		s.renderSignIn(w, http.StatusTooManyRequests, page, false,
-			"Too many attempts. Try again in "+waitText(wait)+".")
+			"Too many attempts. Try again in "+ratelimit.WaitText(wait)+".")
 		return nil, false
 	}
 	u, err := s.passwords.CheckPassword(ctx, login, password)
@@ -472,7 +472,7 @@ func (s *Service) passkeySignIn(w http.ResponseWriter, r *http.Request, page sig
 		s.ipDelay.Refused(ctx)
 		s.signedIn(ctx, viaPasskey, signInDelayed)
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
-		refuse(http.StatusTooManyRequests, "Too many attempts. Try again in "+waitText(wait)+".")
+		refuse(http.StatusTooManyRequests, "Too many attempts. Try again in "+ratelimit.WaitText(wait)+".")
 		return nil, false
 	}
 	u, err := s.passkeys.Verify(ctx, r.PostForm.Get("passkey_token"), r.PostForm.Get("passkey"))
@@ -515,14 +515,6 @@ func (s *Service) accountKey(ctx context.Context, login string) string {
 
 // maxAccountKey is the longest email address (RFC 5321).
 const maxAccountKey = 254
-
-// waitText describes a wait in whole seconds, rounded up.
-func waitText(d time.Duration) string {
-	if n := ratelimit.RetryAfter(d); n != "1" {
-		return n + " seconds"
-	}
-	return "a second"
-}
 
 // serveSignInCallback finishes a browser sign-in at the identity provider.
 func (s *Service) serveSignInCallback(w http.ResponseWriter, r *http.Request) {

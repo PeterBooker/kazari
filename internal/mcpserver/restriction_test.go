@@ -203,7 +203,7 @@ func TestShareScopeOnTools(t *testing.T) {
 		Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader("<h1>demo</h1>")}}}); err != nil {
 		t.Fatal(err)
 	}
-	link, _, err := e.deps.Artifacts.CreateShareLink(e.ctx, alice, "demo", "", 0)
+	link, _, err := e.deps.Artifacts.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -181,7 +181,7 @@ func TestGatedEndToEnd(t *testing.T) {
 	}
 
 	// A share link opens the page for a browser that never signed in.
-	created, err := user.CreateShareLink(ctx, "team", "reviewer", "2d")
+	created, err := user.CreateShareLink(ctx, "team", "reviewer", "2d", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +197,37 @@ func TestGatedEndToEnd(t *testing.T) {
 	}
 	wantStatus(t, guest.get("http://team.localhost/"), http.StatusFound, "guest after revoke")
 	wantStatus(t, guest.get(created.URL), http.StatusForbidden, "revoked share link")
+
+	// A link with a password opens a form, and the URL alone opens nothing.
+	locked, err := user.CreateShareLink(ctx, "team", "client", "2d", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !locked.ShareLink.Password {
+		t.Fatalf("created link = %+v, want password true", locked.ShareLink)
+	}
+	visitor := newBrowser(t, addr)
+	moved := visitor.get(locked.URL)
+	wantStatus(t, moved, http.StatusSeeOther, "link with a password")
+	if loc := moved.header.Get("Location"); loc != "/.kazari/share" {
+		t.Fatalf("link with a password went on to %q, want the share path without the token", loc)
+	}
+	asked := visitor.get("http://team.localhost/.kazari/share")
+	if asked.status != http.StatusOK || !strings.Contains(asked.body, `name="password"`) {
+		t.Fatalf("the password form: %d, want 200 and the form; body %q", asked.status, truncate(asked.body))
+	}
+	wantStatus(t, visitor.get("http://team.localhost/"), http.StatusFound, "page before the password")
+	post := func(password string) response {
+		return visitor.send(http.MethodPost, "http://team.localhost/.kazari/share",
+			url.Values{"password": {password}}, http.Header{"Origin": {"http://team.localhost"}})
+	}
+	wantStatus(t, post("open says me please"), http.StatusForbidden, "wrong password")
+	if back := visitor.follow(post("correct horse battery"), "right password"); back != "/" {
+		t.Fatalf("right password returned to %q", back)
+	}
+	if got := visitor.get("http://team.localhost/"); got.status != http.StatusOK || got.body != "team v2" {
+		t.Fatalf("page after the password: %d %q", got.status, got.body)
+	}
 
 	// Signing out on the MCP host ends the browser's access on every host.
 	wantStatus(t, b.get("http://mcp.localhost/oauth/signout"), http.StatusOK, "sign-out page")
@@ -242,11 +273,11 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 		Files: []api.FileInput{{Path: "index.html", Content: "team page"}}}); err != nil {
 		t.Fatal(err)
 	}
-	theirs, err := leaver.CreateShareLink(ctx, "team", "kept", "90d")
+	theirs, err := leaver.CreateShareLink(ctx, "team", "kept", "90d", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewers, err := owner.CreateShareLink(ctx, "team", "reviewer", "2d")
+	reviewers, err := owner.CreateShareLink(ctx, "team", "reviewer", "2d", "")
 	if err != nil {
 		t.Fatal(err)
 	}

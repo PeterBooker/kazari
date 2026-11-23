@@ -51,6 +51,8 @@ var errorRows = []struct {
 	{name: "artifact.ErrOffsetMismatch", err: artifact.ErrOffsetMismatch, status: http.StatusConflict, code: api.CodeOffsetMismatch},
 	{name: "artifact.ErrUploadNotFound", err: artifact.ErrUploadNotFound, status: http.StatusNotFound, code: api.CodeUploadNotFound},
 	{name: "artifact.ErrLinkNotFound", err: artifact.ErrLinkNotFound, status: http.StatusNotFound, code: api.CodeLinkNotFound},
+	{name: "artifact.ErrLinkPassword", err: artifact.ErrLinkPassword,
+		elsewhere: "a marker the share-link forms match; the refusals it marks carry invalid_argument"},
 	{name: "artifact.ErrTooManyUploads", err: artifact.ErrTooManyUploads, status: http.StatusForbidden, code: api.CodeTooManyUploads},
 	{name: "artifact.ErrDigestMismatch", err: artifact.ErrDigestMismatch, status: http.StatusUnprocessableEntity, code: api.CodeDigestMismatch},
 	{name: "artifact.ErrEditNotFound", err: artifact.ErrEditNotFound, status: http.StatusUnprocessableEntity, code: api.CodeEditNotFound},

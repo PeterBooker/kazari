@@ -450,6 +450,10 @@ https://<slug>.<base>/.kazari/share?token=kzs_...
 
 The token works on every host of the artifact, but each host needs it once. For a pinned version, send `https://<slug>--v<N>.<base>/.kazari/share?token=kzs_...`. Revoking the link ends access on the next request.
 
+A link made with a password shows a password form before the page. The cookie it sets after the right password works only with that link, and ends when the link expires or is revoked ([creating a share link](api.md#create-a-share-link-post-artifactsslugshare-links)).
+
+Wrong passwords make the next try wait, from a second up to a minute. The first three from an address cost nothing, and the wait applies to that address first: the link's other visitors wait too only after about thirty wrong tries in all, and the right password clears both. Someone who has the link but not the password can keep slowing the form down by guessing. If that happens, revoke the link and make a new one.
+
 ## MCP clients
 
 How an MCP client starts the OAuth flow depends on where it runs. The [MCP server reference](mcp.md) covers connecting with an API key instead.

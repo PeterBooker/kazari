@@ -381,6 +381,34 @@ func TestPageDeleteVersion(t *testing.T) {
 	}
 }
 
+func TestPageShareLinkPassword(t *testing.T) {
+	e, b := pagesEnv(t)
+	b.get("/pages/members-one")
+	r := b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"short"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, "Use 12 to 256 characters, such as a few words, or leave it empty.") {
+		t.Fatalf("a short password: status %d, want 422 saying how long it must be", r.StatusCode)
+	}
+	b.get("/pages/members-one")
+	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"\xff\xfe twelve bytes"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(r.body, `id="link-password-err"`) {
+		t.Fatalf("a password that is not UTF-8: status %d, want 422 beside the password", r.StatusCode)
+	}
+	b.get("/pages/members-one")
+	r = b.post("/pages/members-one/links", url.Values{"days": {"3"}, "password": {"open sesame please"}})
+	if r.StatusCode != http.StatusOK || !strings.Contains(r.body, "Send the password apart from the link") ||
+		strings.Contains(r.body, "open sesame please") {
+		t.Fatalf("a link with a password: status %d, want the link shown once with a note on the password, and never the password:\n%s",
+			r.StatusCode, r.body)
+	}
+	links, err := e.artifacts.ListShareLinks(t.Context(), artifact.Actor{Handle: "boss", Admin: true}, "members-one")
+	if err != nil || len(links) != 1 || !links[0].HasPassword {
+		t.Fatalf("links after creating one with a password = %+v, %v", links, err)
+	}
+	if r := b.get("/pages/members-one"); !strings.Contains(r.body, `<span class="status tone-note">Password</span>`) {
+		t.Error("the page's link list does not mark the link with a password")
+	}
+}
+
 var shareToken = regexp.MustCompile(`kzs_[a-z2-7]{8}_[a-z2-7]{52}`)
 
 func TestPageShareLink(t *testing.T) {
@@ -637,7 +665,7 @@ func hostilePages(t *testing.T) (*env, *browser) {
 	if _, _, err := e.artifacts.Update(ctx, boss, artifact.UpdateRequest{Slug: "members-one", Name: &name, Description: &desc}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour); err != nil {
+	if _, _, err := e.artifacts.CreateShareLink(ctx, boss, "members-one", hostileAttr, time.Hour, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.users.UpdateUser(asAdmin(), "ana", user.UpdateUserRequest{DisplayName: new(hostileScript)}); err != nil {
@@ -698,7 +726,7 @@ func TestPagesMarkup(t *testing.T) {
 	}
 	strictMarkup(t, "a new share link", b.post("/pages/members-one/links", url.Values{"days": {"1"}}).body)
 	strictMarkup(t, "an error page", b.navigate("/pages/no-such-page").body)
-	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour)
+	l, _, err := e.artifacts.CreateShareLink(context.Background(), boss, "members-one", "", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}

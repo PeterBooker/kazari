@@ -194,6 +194,14 @@ func (b *Backoff) makeRoom(now time.Time) {
 	}
 }
 
+// WaitText is a wait in words for a person, rounded up to whole seconds.
+func WaitText(d time.Duration) string {
+	if n := RetryAfter(d); n != "1" {
+		return n + " seconds"
+	}
+	return "a second"
+}
+
 // Reset forgets key's failures, after an attempt that succeeded.
 func (b *Backoff) Reset(key string) {
 	if b == nil {

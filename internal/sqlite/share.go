@@ -10,7 +10,7 @@ import (
 )
 
 // CreateShareLink implements artifact.Store.
-func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *artifact.ShareLink, hash string) (err error) {
+func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *artifact.ShareLink, hash, passwordHash string) (err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.CreateShareLink")
 	defer func() { end(err) }()
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -19,32 +19,35 @@ func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *art
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO share_link (artifact_id, prefix, token_hash, label, created_by, created_at, expires_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			aid, l.Prefix, hash, l.Label, l.CreatedBy, toNanos(l.CreatedAt), toNanos(l.ExpiresAt))
+			`INSERT INTO share_link (artifact_id, prefix, token_hash, password_hash, label, created_by, created_at, expires_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			aid, l.Prefix, hash, passwordHash, l.Label, l.CreatedBy, toNanos(l.CreatedAt), toNanos(l.ExpiresAt))
 		return err
 	})
 	return artifactErrOrNil("create share link", err)
 }
 
 const shareLinkSelect = `SELECT l.prefix, l.label, l.created_by, l.created_at, l.expires_at, l.revoked_at,
-	l.last_used_at, l.uses
+	l.last_used_at, l.uses, l.password_hash
 FROM share_link l JOIN artifact a ON a.id = l.artifact_id`
 
-func scanShareLink(row artifactRowScanner) (*artifact.ShareLink, error) {
+// scanShareLink returns the link and its password hash, "" for none.
+func scanShareLink(row artifactRowScanner) (*artifact.ShareLink, string, error) {
 	var (
 		l                artifact.ShareLink
 		created, expires int64
 		revoked, used    sql.NullInt64
+		passwordHash     string
 	)
-	if err := row.Scan(&l.Prefix, &l.Label, &l.CreatedBy, &created, &expires, &revoked, &used, &l.Uses); err != nil {
-		return nil, err
+	if err := row.Scan(&l.Prefix, &l.Label, &l.CreatedBy, &created, &expires, &revoked, &used, &l.Uses, &passwordHash); err != nil {
+		return nil, "", err
 	}
 	l.CreatedAt = fromNanos(created)
 	l.ExpiresAt = fromNanos(expires)
 	l.RevokedAt = ptrTime(revoked)
 	l.LastUsedAt = ptrTime(used)
-	return &l, nil
+	l.HasPassword = passwordHash != ""
+	return &l, passwordHash, nil
 }
 
 // ListShareLinks implements artifact.Store.
@@ -58,7 +61,7 @@ func (s *ArtifactStore) ListShareLinks(ctx context.Context, slug string) (_ []ar
 	defer rows.Close()
 	out := []artifact.ShareLink{}
 	for rows.Next() {
-		l, err := scanShareLink(rows)
+		l, _, err := scanShareLink(rows)
 		if err != nil {
 			return nil, artifactErr("list share links", err)
 		}
@@ -112,17 +115,17 @@ func (s *ArtifactStore) RevokeUserShareLinks(ctx context.Context, handle string,
 }
 
 // ShareLink implements artifact.Store.
-func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (_ *artifact.ShareLink, err error) {
+func (s *ArtifactStore) ShareLink(ctx context.Context, slug, hash string) (_ *artifact.ShareLink, _ string, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.ShareLink")
 	defer func() { end(err) }()
-	l, err := scanShareLink(s.db.QueryRowContext(ctx, shareLinkSelect+` WHERE l.token_hash = ? AND a.slug = ?`, hash, slug))
+	l, passwordHash, err := scanShareLink(s.db.QueryRowContext(ctx, shareLinkSelect+` WHERE l.token_hash = ? AND a.slug = ?`, hash, slug))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, artifact.ErrLinkNotFound
+		return nil, "", artifact.ErrLinkNotFound
 	}
 	if err != nil {
-		return nil, artifactErr("share link", err)
+		return nil, "", artifactErr("share link", err)
 	}
-	return l, nil
+	return l, passwordHash, nil
 }
 
 // UseShareLink implements artifact.Store.

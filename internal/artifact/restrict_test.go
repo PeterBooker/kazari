@@ -189,7 +189,7 @@ var slugOps = []struct {
 		return e.svc.Delete(e.ctx, actor, slug, true)
 	}},
 	{"CreateShareLink", false, func(e *env, actor artifact.Actor, slug string) error {
-		_, _, err := e.svc.CreateShareLink(e.ctx, actor, slug, "", time.Hour)
+		_, _, err := e.svc.CreateShareLink(e.ctx, actor, slug, "", time.Hour, "")
 		return err
 	}},
 	{"ListShareLinks", false, func(e *env, actor artifact.Actor, slug string) error {

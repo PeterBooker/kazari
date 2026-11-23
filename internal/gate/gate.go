@@ -36,7 +36,9 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/theme"
+	"github.com/PeterBooker/kazari/internal/user"
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
@@ -44,17 +46,20 @@ import (
 const (
 	Prefix       = "/" + artifact.ReservedDir + "/"
 	CallbackPath = Prefix + "callback" // ?code=: the end of a sign-in
-	SharePath    = Prefix + "share"    // ?token=: opens a share link
+	SharePath    = Prefix + "share"    // ?token=: opens a share link; a POST gives its password
 	SignOutPath  = Prefix + "signout"
 )
 
-// Cookie names before the __Host- prefix: the visitor's access, and the
-// nonce that binds a sign-in to the browser that started it.
+// Cookie names before the __Host- prefix: the visitor's access, the nonce
+// that binds a sign-in to the browser that started it, and the token of a
+// share link whose password form is open, kept off the address bar.
 const (
 	viewCookie  = "kazari_view"
 	nonceCookie = "kazari_nonce"
 	nonceTTL    = 10 * time.Minute // as long as a sign-in may take
 	nonceLen    = 43               // 32 random bytes, base64url
+	shareCookie = "kazari_share"
+	shareTTL    = 10 * time.Minute // as long as typing a password may take
 )
 
 // pageCSP is the policy of the pages this package serves on an artifact
@@ -70,11 +75,15 @@ type Sessions interface {
 	EndView(ctx context.Context, host, token string) error
 }
 
-// Links checks share links. artifact.Service implements it; both methods
-// return artifact.ErrLinkNotFound for a token that does not open slug.
+// Links checks share links. artifact.Service implements it; every method
+// returns artifact.ErrLinkNotFound for a token or cookie that does not open
+// slug, and UnlockShareLink artifact.ErrForbidden for a wrong password.
 type Links interface {
-	CheckShareLink(ctx context.Context, slug, token string) (*artifact.ShareLink, error)
-	OpenShareLink(ctx context.Context, slug, token string) (*artifact.ShareLink, error)
+	CheckShareLink(ctx context.Context, slug, cookie string) (*artifact.ShareLink, error)
+	// OpenShareLink returns the view cookie, or "" for a link that asks for
+	// a password first.
+	OpenShareLink(ctx context.Context, slug, token string) (*artifact.ShareLink, string, error)
+	UnlockShareLink(ctx context.Context, slug, token, password string) (*artifact.ShareLink, string, error)
 }
 
 // Options configures a Gate.
@@ -106,7 +115,21 @@ type Gate struct {
 	// takes, built once: every page view passes the gate, and a slice built
 	// per call would be allocated each time.
 	results map[string][]metric.AddOption
+	// guessDelay slows down guesses at a link's password from one address,
+	// and linkDelay, which lets many more go first, those from every address
+	// together: one visitor's wrong guesses then hold up the link's other
+	// visitors only once they are many.
+	guessDelay, linkDelay *ratelimit.Backoff
 }
+
+// The waits between guesses at a share link's password: a few cost nothing,
+// then each failure doubles the wait, up to linkMaxDelay.
+const (
+	guessFreeFailures = 3
+	linkFreeFailures  = 30
+	linkBaseDelay     = time.Second
+	linkMaxDelay      = time.Minute
+)
 
 // Results of the gate, the values of kazari.gate.result.
 const (
@@ -139,9 +162,14 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 	for _, r := range []string{resultPublic, resultMember, resultShareLink, resultRedirect, resultDenied} {
 		results[r] = []metric.AddOption{metric.WithAttributes(resultKey.String(r))}
 	}
+	backoff := func(free int, scope string) *ratelimit.Backoff {
+		return ratelimit.NewBackoff(ratelimit.BackoffOptions{Free: free, Base: linkBaseDelay, Max: linkMaxDelay,
+			Now: opts.Now, Scope: scope, Telemetry: opts.Telemetry})
+	}
 	return &Gate{sessions: sessions, links: links, opts: opts, log: log, results: results,
 		requests: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.gate.requests",
-			metric.WithUnit("{request}"), metric.WithDescription("Requests for artifact pages by what the gate decided.")))}
+			metric.WithUnit("{request}"), metric.WithDescription("Requests for artifact pages by what the gate decided."))),
+		guessDelay: backoff(guessFreeFailures, ratelimit.ScopeIP), linkDelay: backoff(linkFreeFailures, ratelimit.ScopeAccount)}
 }
 
 // Allow reports whether r may be served p on host, the artifact host's
@@ -214,7 +242,7 @@ func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (vi
 		return views.Access{}, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie opens nothing
 	}
 	a, notFound := views.Access{Via: views.ViaMember}, oauth.ErrNotFound
-	if artifact.IsLinkToken(ck.Value) {
+	if artifact.IsLinkCookie(ck.Value) {
 		// A share link is for the people the page is published to, and a
 		// staged version is not published yet.
 		if p.Staged {
@@ -281,7 +309,7 @@ func (g *Gate) ServeReserved(w http.ResponseWriter, r *http.Request, p *artifact
 			g.callback(w, r, host)
 		}
 	case SharePath:
-		if g.method(w, r, http.MethodGet) {
+		if g.method(w, r, http.MethodGet, http.MethodPost) {
 			g.share(w, r, p)
 		}
 	case SignOutPath:
@@ -333,9 +361,11 @@ func (g *Gate) callback(w http.ResponseWriter, r *http.Request, host string) {
 	w.WriteHeader(http.StatusFound)
 }
 
-// share opens a share link: its token becomes the view cookie until the
-// link expires, and the browser goes on to the page without the token in
-// its address bar or history.
+// share opens a share link: the view cookie it gives lasts until the link
+// expires, and the browser goes on to the page without the token in its
+// address bar or history. A link with a password moves its token to a
+// short-lived cookie instead and comes back here without it, to a form that
+// posts the password.
 func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Published) {
 	if p.Staged {
 		g.page(w, r, http.StatusForbidden, page{Title: "Not published yet",
@@ -343,21 +373,121 @@ func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 			Link:    "/", LinkText: "Sign in to open it"})
 		return
 	}
-	token := r.URL.Query().Get("token")
-	l, err := g.links.OpenShareLink(r.Context(), p.Slug, token)
+	if r.Method == http.MethodPost {
+		g.unlock(w, r, p)
+		return
+	}
+	token, fromAddress := r.URL.Query().Get("token"), true
+	if token == "" {
+		token, fromAddress = g.cookie(r, shareCookie), false
+	}
+	l, cookie, err := g.links.OpenShareLink(r.Context(), p.Slug, token)
+	switch {
+	case err != nil:
+		g.setCookie(w, shareCookie, "", -1)
+		g.linkFailed(w, r, p, err)
+	case cookie != "":
+		g.opened(w, l, cookie)
+	case fromAddress:
+		g.setCookie(w, shareCookie, token, min(shareTTL, l.ExpiresAt.Sub(g.opts.Now())))
+		setNoStore(w.Header())
+		w.Header().Set("Location", SharePath)
+		w.WriteHeader(http.StatusSeeOther)
+	default:
+		g.page(w, r, http.StatusOK, passwordPage(""))
+	}
+}
+
+// unlock checks the password posted for the link whose token the share
+// cookie holds, as slowly as the guesses before it make it wait.
+func (g *Gate) unlock(w http.ResponseWriter, r *http.Request, p *artifact.Published) {
+	if !middleware.SameHost(r) {
+		g.page(w, r, http.StatusForbidden, page{Title: "Request rejected", Message: "This form was not sent from this page."})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUnlockBytes)
+	if err := r.ParseForm(); err != nil {
+		g.page(w, r, http.StatusBadRequest, page{Title: "Request rejected", Message: "The form could not be read."})
+		return
+	}
+	token, password := g.cookie(r, shareCookie), r.PostForm.Get("password")
+	if !artifact.IsLinkToken(token) {
+		g.page(w, r, http.StatusForbidden, page{Title: "Form expired",
+			Message: "This password form has expired. Open the link you were sent again."})
+		return
+	}
+	if password == "" {
+		g.page(w, r, http.StatusBadRequest, passwordPage("Enter the password."))
+		return
+	}
+	link := p.Slug + " " + strings.SplitN(token, "_", 3)[1]
+	guess := link + " " + ratelimit.IPKey(r)
+	attempt, wait := ratelimit.BeginPair(r.Context(), g.guessDelay, guess, g.linkDelay, link)
+	if wait > 0 {
+		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))
+		g.page(w, r, http.StatusTooManyRequests, passwordPage("Too many tries. Try again in "+ratelimit.WaitText(wait)+"."))
+		return
+	}
+	l, cookie, err := g.links.UnlockShareLink(r.Context(), p.Slug, token, password)
+	switch {
+	case errors.Is(err, artifact.ErrForbidden):
+		attempt.Failed()
+		g.page(w, r, http.StatusForbidden, passwordPage("That password is not right."))
+	case errors.Is(err, user.ErrBusy):
+		attempt.Done()
+		w.Header().Set("Retry-After", "5")
+		g.page(w, r, http.StatusServiceUnavailable, passwordPage("The server is busy. Try again in a moment."))
+	case errors.Is(err, context.Canceled):
+		attempt.Done() // the visitor left; there is no one to answer
+	case err != nil:
+		attempt.Done()
+		g.setCookie(w, shareCookie, "", -1)
+		g.linkFailed(w, r, p, err)
+	default:
+		attempt.Done()
+		g.guessDelay.Reset(guess)
+		g.linkDelay.Reset(link)
+		g.setCookie(w, shareCookie, "", -1)
+		g.opened(w, l, cookie)
+	}
+}
+
+// cookie returns the value of the host's cookie named base, "" for none.
+func (g *Gate) cookie(r *http.Request, base string) string {
+	if ck, err := r.Cookie(g.name(base)); err == nil {
+		return ck.Value
+	}
+	return ""
+}
+
+// maxUnlockBytes bounds the password form: a password of at most
+// artifact.ShareLinkPasswordMax four-byte characters, encoded.
+const maxUnlockBytes = 16 << 10
+
+// opened sets the view cookie of an opened link and goes on to the page.
+func (g *Gate) opened(w http.ResponseWriter, l *artifact.ShareLink, cookie string) {
+	g.setCookie(w, viewCookie, cookie, l.ExpiresAt.Sub(g.opts.Now()))
+	setNoStore(w.Header())
+	w.Header().Set("Location", "/")
+	w.WriteHeader(http.StatusFound)
+}
+
+func (g *Gate) linkFailed(w http.ResponseWriter, r *http.Request, p *artifact.Published, err error) {
 	if errors.Is(err, artifact.ErrLinkNotFound) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Link not valid",
 			Message: "This share link has expired or was revoked. Ask the person who sent it for a new one."})
 		return
 	}
-	if err != nil {
-		g.log.ErrorContext(r.Context(), "gate: open share link", "slug", p.Slug, "err", err)
-		g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
-		return
-	}
-	g.setCookie(w, viewCookie, token, l.ExpiresAt.Sub(g.opts.Now()))
-	setNoStore(w.Header())
-	http.Redirect(w, r, "/", http.StatusFound)
+	g.log.ErrorContext(r.Context(), "gate: open share link", "slug", p.Slug, "err", err)
+	g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
+}
+
+// passwordPage asks for the password of the link whose token the share
+// cookie holds.
+func passwordPage(problem string) page {
+	return page{Title: "Enter the password",
+		Message: "This page needs the password that came with its link.",
+		Unlock:  &unlockForm{Action: SharePath, Error: problem}}
 }
 
 // signOut shows a button (GET) or leaves this host (POST): its view session
@@ -385,7 +515,7 @@ func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Request rejected", Message: "This form was not sent from this page."})
 		return
 	}
-	if ck, err := r.Cookie(g.name(viewCookie)); err == nil && !artifact.IsLinkToken(ck.Value) {
+	if ck, err := r.Cookie(g.name(viewCookie)); err == nil && !artifact.IsLinkCookie(ck.Value) {
 		if err := g.sessions.EndView(r.Context(), host, ck.Value); err != nil {
 			g.log.ErrorContext(r.Context(), "gate: end view", "host", host, "err", err)
 			g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
@@ -425,8 +555,15 @@ func (g *Gate) setCookie(w http.ResponseWriter, base, value string, ttl time.Dur
 // page is the data of the instance page shown on an artifact host.
 type page struct {
 	Title, Message string
-	Link, LinkText string // an optional link under the message
-	Form           string // the action of a sign-out button, if any
+	Link, LinkText string      // an optional link under the message
+	Form           string      // the action of a sign-out button, if any
+	Unlock         *unlockForm // the password form of a share link, if any
+}
+
+// unlockForm asks for a share link's password.
+type unlockForm struct {
+	Action string
+	Error  string // why the last try failed, if it did
 }
 
 func (g *Gate) page(w http.ResponseWriter, r *http.Request, status int, p page) {

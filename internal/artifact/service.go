@@ -40,6 +40,13 @@ const (
 
 const gcBatch = 1000
 
+// Passwords hashes passwords and checks them against a hash, as the
+// built-in accounts' are. user.Service implements it.
+type Passwords interface {
+	HashPassword(ctx context.Context, password string) (string, error)
+	VerifyPassword(ctx context.Context, hash, password string) (bool, error)
+}
+
 // QuotaSource answers a user's storage quota, 0 meaning unlimited.
 // user.Service implements it.
 type QuotaSource interface {
@@ -70,6 +77,9 @@ type Options struct {
 	AllowCSPOverride bool
 	// Pages takes the snapshots Import publishes; nil disables Import.
 	Pages PageSource
+	// Passwords hashes and checks share-link passwords; nil refuses a link
+	// with one.
+	Passwords Passwords
 	// Quotas gives the owner's quota when another member adds a version
 	// under WriteShared, so every version is charged to the owner. Nil
 	// leaves such versions uncharged.

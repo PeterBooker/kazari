@@ -102,9 +102,9 @@ func TestConversions(t *testing.T) {
 		Outline: []api.Landmark{{Line: 12, Tag: "<main>", Heading: "Welcome"}}}
 
 	sl := &artifact.ShareLink{Prefix: "kzs_ab12", Label: "for the client", CreatedBy: "ana", CreatedAt: day(1), ExpiresAt: day(9),
-		RevokedAt: new(day(3)), LastUsedAt: new(day(2)), Uses: 5}
+		RevokedAt: new(day(3)), LastUsedAt: new(day(2)), Uses: 5, HasPassword: true}
 	wantShare := api.ShareLink{Prefix: "kzs_ab12", Label: "for the client", CreatedBy: "ana", CreatedAt: day(1), ExpiresAt: day(9),
-		RevokedAt: new(day(3)), LastUsedAt: new(day(2)), Uses: 5}
+		RevokedAt: new(day(3)), LastUsedAt: new(day(2)), Uses: 5, Password: true}
 
 	u := &user.User{ID: 7, Handle: "ana", Email: "ana@example.com", DisplayName: "Ana", Role: user.RoleAdmin,
 		QuotaBytes: 1 << 20, DisabledAt: new(day(8)), CreatedAt: day(1)}
