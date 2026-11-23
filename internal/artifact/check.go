@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 
 	"golang.org/x/net/html"
@@ -23,6 +24,14 @@ const (
 	checkFiles     = 100
 	checkFileBytes = 2 << 20
 	maxWarnings    = 10
+)
+
+// What the checks parse out of a file depends only on its content and its
+// path, so it is cached by both: a publish that carries files over
+// unchanged does not read them again.
+const (
+	DefaultCheckCacheEntries = 4096
+	DefaultCheckCacheBytes   = 8 << 20
 )
 
 // warnings lists what will stop a version from rendering as published: no
@@ -50,16 +59,18 @@ func (s *Service) warnings(ctx context.Context, a *Artifact, files []File) []str
 			continue
 		}
 		read++
-		data, err := s.readBlob(ctx, f.Hash)
-		if err != nil {
-			s.opts.Logger.WarnContext(ctx, "reading a file to check it", "slug", a.Slug, "path", f.Path, "err", err)
-			continue
+		key := refKey{hash: f.Hash, path: f.Path}
+		refs, ok := s.refs.get(key)
+		if !ok {
+			data, err := s.readBlob(ctx, f.Hash)
+			if err != nil {
+				s.opts.Logger.WarnContext(ctx, "reading a file to check it", "slug", a.Slug, "path", f.Path, "err", err)
+				continue
+			}
+			refs = parseRefs(kind, f.Path, data)
+			s.refs.add(key, refs)
 		}
-		if kind == "html" {
-			c.html(f.Path, data)
-		} else {
-			c.css(f.Path, f.Path, data)
-		}
+		c.check(f.Path, refs)
 	}
 	out = append(out, c.out...)
 	if len(out) > maxWarnings {
@@ -107,24 +118,41 @@ func checkKind(p string) string {
 	return ""
 }
 
-type checker struct {
-	have     map[string]bool
-	policy   map[string][]string
-	checkCSP bool
-	override bool
-	seen     map[string]bool
-	out      []string
+// reference is what a page or stylesheet loads: a path in the version, or
+// a remote URL with its origin and the directive that governs it.
+type reference struct {
+	remote    bool
+	target    string
+	origin    string
+	directive string
 }
 
-func (c *checker) warn(key, msg string) {
-	if c.seen[key] {
+// parseRefs lists, in order and once each, what the file at file loads.
+func parseRefs(kind, file string, data []byte) []reference {
+	p := refParser{from: file, seen: map[reference]bool{}}
+	if kind == "html" {
+		p.html(data)
+	} else {
+		p.css(data)
+	}
+	return p.refs
+}
+
+type refParser struct {
+	from string
+	seen map[reference]bool
+	refs []reference
+}
+
+func (p *refParser) add(r reference) {
+	if p.seen[r] {
 		return
 	}
-	c.seen[key] = true
-	c.out = append(c.out, msg)
+	p.seen[r] = true
+	p.refs = append(p.refs, r)
 }
 
-func (c *checker) html(file string, data []byte) {
+func (p *refParser) html(data []byte) {
 	z := html.NewTokenizer(bytes.NewReader(data))
 	inStyle := false
 	for {
@@ -133,7 +161,7 @@ func (c *checker) html(file string, data []byte) {
 			return
 		case html.TextToken:
 			if inStyle {
-				c.css(file, file, z.Text())
+				p.css(z.Text())
 			}
 		case html.EndTagToken:
 			if name, _ := z.TagName(); string(name) == "style" {
@@ -154,7 +182,7 @@ func (c *checker) html(file string, data []byte) {
 			}
 			ref, directive := resource(tag, attrs)
 			if ref != "" {
-				c.ref(file, file, ref, directive)
+				p.ref(ref, directive)
 			}
 		}
 	}
@@ -190,11 +218,9 @@ var (
 	cssURL    = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
 )
 
-// css checks a stylesheet; from is the file references resolve against,
-// file the one named in a warning.
-func (c *checker) css(file, from string, data []byte) {
+func (p *refParser) css(data []byte) {
 	for _, m := range cssImport.FindAllSubmatch(data, -1) {
-		c.ref(file, from, string(m[1]), "style-src")
+		p.ref(string(m[1]), "style-src")
 	}
 	for _, m := range cssURL.FindAllSubmatch(data, -1) {
 		ref := string(m[1])
@@ -205,11 +231,11 @@ func (c *checker) css(file, from string, data []byte) {
 		case ".css":
 			continue // an @import, checked above
 		}
-		c.ref(file, from, ref, directive)
+		p.ref(ref, directive)
 	}
 }
 
-func (c *checker) ref(file, from, ref, directive string) {
+func (p *refParser) ref(ref, directive string) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" || strings.HasPrefix(ref, "#") {
 		return
@@ -223,45 +249,156 @@ func (c *checker) ref(file, from, ref, directive string) {
 	}
 	switch {
 	case u.Scheme == "http" || u.Scheme == "https":
-		c.remote(file, u, directive)
-	case u.Scheme == "" && u.Host == "":
-		c.local(file, from, u)
+		p.add(reference{remote: true, target: u.String(), origin: u.Scheme + "://" + u.Host, directive: directive})
+	case u.Scheme == "" && u.Host == "" && u.Path != "":
+		p.add(reference{target: p.local(u.Path)})
 	}
 }
 
-func (c *checker) remote(file string, u *url.URL, directive string) {
+// local is the path in the version that ref names, resolved against the
+// file it is in.
+func (p *refParser) local(ref string) string {
+	target := ref
+	if !strings.HasPrefix(target, "/") {
+		target = path.Join(path.Dir("/"+p.from), target)
+	}
+	target = strings.TrimPrefix(path.Clean(target), "/")
+	if strings.HasSuffix(ref, "/") || target == "" {
+		target = strings.TrimPrefix(target+"/index.html", "/")
+	}
+	return target
+}
+
+type checker struct {
+	have     map[string]bool
+	policy   map[string][]string
+	checkCSP bool
+	override bool
+	seen     map[string]bool
+	out      []string
+}
+
+func (c *checker) warn(key, msg string) {
+	if c.seen[key] {
+		return
+	}
+	c.seen[key] = true
+	c.out = append(c.out, msg)
+}
+
+// check holds what file loads against the version's files and the policy.
+func (c *checker) check(file string, refs []reference) {
+	for _, r := range refs {
+		if r.remote {
+			c.remote(file, r)
+		} else if !c.have[r.target] {
+			c.warn("missing "+r.target, fmt.Sprintf("%s refers to %s, which is not in this version", file, r.target))
+		}
+	}
+}
+
+func (c *checker) remote(file string, r reference) {
 	if !c.checkCSP {
 		return
 	}
-	sources, ok := csp.Sources(c.policy, directive)
-	if !ok || csp.Allows(sources, u.String()) {
+	sources, ok := csp.Sources(c.policy, r.directive)
+	if !ok || csp.Allows(sources, r.target) {
 		return
 	}
-	origin := u.Scheme + "://" + u.Host
 	fix := "ship the file in the artifact instead"
 	if c.override {
-		fix += fmt.Sprintf(", or add %s to %s with kazari.csp metadata", origin, directive)
+		fix += fmt.Sprintf(", or add %s to %s with kazari.csp metadata", r.origin, r.directive)
 	}
-	c.warn(directive+" "+origin, fmt.Sprintf("%s loads %s, which the page's Content-Security-Policy (%s) blocks: %s",
-		file, u.String(), directive, fix))
+	c.warn(r.directive+" "+r.origin, fmt.Sprintf("%s loads %s, which the page's Content-Security-Policy (%s) blocks: %s",
+		file, r.target, r.directive, fix))
 }
 
-func (c *checker) local(file, from string, u *url.URL) {
-	p := u.Path
-	if p == "" {
+type refKey struct{ hash, path string }
+
+type refEntry struct {
+	key        refKey
+	refs       []reference
+	size       int64
+	prev, next *refEntry
+}
+
+// refCache is a least-recently-used cache of parsed references, bounded by
+// a number of entries and an estimate of the bytes they hold.
+type refCache struct {
+	maxEntries int
+	maxBytes   int64
+
+	mu      sync.Mutex
+	bytes   int64
+	root    refEntry // root.next is the most recently used, root.prev the least
+	entries map[refKey]*refEntry
+}
+
+func newRefCache(maxEntries int, maxBytes int64) *refCache {
+	c := &refCache{maxEntries: maxEntries, maxBytes: maxBytes, entries: map[refKey]*refEntry{}}
+	c.root.prev, c.root.next = &c.root, &c.root
+	return c
+}
+
+func (c *refCache) get(k refKey) ([]reference, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[k]
+	if !ok {
+		return nil, false
+	}
+	c.unlink(e)
+	c.pushFront(e)
+	return e.refs, true
+}
+
+func (c *refCache) add(k refKey, refs []reference) {
+	size := entrySize(k, refs)
+	if size > c.maxBytes {
 		return
 	}
-	if !strings.HasPrefix(p, "/") {
-		p = path.Join(path.Dir("/"+from), p)
-	}
-	p = strings.TrimPrefix(path.Clean(p), "/")
-	if strings.HasSuffix(u.Path, "/") || p == "" {
-		p = strings.TrimPrefix(p+"/index.html", "/")
-	}
-	if c.have[p] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.entries[k]; ok {
 		return
 	}
-	c.warn("missing "+p, fmt.Sprintf("%s refers to %s, which is not in this version", file, p))
+	e := &refEntry{key: k, refs: refs, size: size}
+	c.entries[k] = e
+	c.pushFront(e)
+	c.bytes += size
+	for len(c.entries) > c.maxEntries || c.bytes > c.maxBytes {
+		last := c.root.prev
+		c.unlink(last)
+		delete(c.entries, last.key)
+		c.bytes -= last.size
+	}
+}
+
+func (c *refCache) pushFront(e *refEntry) {
+	e.prev, e.next = &c.root, c.root.next
+	e.prev.next, e.next.prev = e, e
+}
+
+func (c *refCache) unlink(e *refEntry) {
+	e.prev.next, e.next.prev = e.next, e.prev
+	e.prev, e.next = nil, nil
+}
+
+func (c *refCache) size() (int, int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries), c.bytes
+}
+
+// entrySize estimates the memory an entry holds: its strings and the
+// headers around them. Directives are constants and cost nothing.
+func entrySize(k refKey, refs []reference) int64 {
+	const entryOverhead, refOverhead = 160, 64
+	n := int64(entryOverhead + len(k.hash) + len(k.path))
+	for _, r := range refs {
+		n += refOverhead + int64(len(r.target)+len(r.origin))
+	}
+	return n
 }
 
 // pageTitle is the <title> of the root index.html, as a name for an
