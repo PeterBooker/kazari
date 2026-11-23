@@ -37,7 +37,7 @@ func serveTLS(t *testing.T, s Source) string {
 }
 
 func TestSelfSignedHandshake(t *testing.T) {
-	s, err := NewSelfSigned("localhost", "art.test")
+	s, err := NewSelfSigned([]string{"localhost", "art.test"}, SelfSignedOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSelfSignedHandshake(t *testing.T) {
 }
 
 func TestSelfSignedSANs(t *testing.T) {
-	s, err := NewSelfSigned("Localhost.", "art.test", "*.wild.test", "192.0.2.1", "")
+	s, err := NewSelfSigned([]string{"Localhost.", "art.test", "*.wild.test", "192.0.2.1", ""}, SelfSignedOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSelfSignedSANs(t *testing.T) {
 }
 
 func TestSelfSignedDefaultsAndRun(t *testing.T) {
-	s, err := NewSelfSigned()
+	s, err := NewSelfSigned(nil, SelfSignedOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,11 +132,15 @@ func TestSelfSignedDefaultsAndRun(t *testing.T) {
 }
 
 func TestSelfSignedNotAfter(t *testing.T) {
-	s, err := NewSelfSigned("art.test")
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	s, err := NewSelfSigned([]string{"art.test"}, SelfSignedOptions{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.NotAfter(); got.Before(time.Now().Add(300 * 24 * time.Hour)) {
-		t.Errorf("NotAfter = %v, want about a year away", got)
+	if got, want := s.NotAfter(), now.AddDate(1, 0, 0); !got.Equal(want) {
+		t.Errorf("NotAfter = %v, want %v", got, want)
+	}
+	if got, want := s.cert.Leaf.NotBefore, now.Add(-time.Hour); !got.Equal(want) {
+		t.Errorf("NotBefore = %v, want %v", got, want)
 	}
 }

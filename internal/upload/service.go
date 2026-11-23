@@ -511,9 +511,9 @@ func (s *Service) ExpireStale(ctx context.Context) (n int, err error) {
 		removed int
 		errs    []error
 	)
-	for _, u := range expired {
-		unlock := s.locks.lock(u.ID)
-		err := s.remove(ctx, u.ID)
+	for _, id := range expired {
+		unlock := s.locks.lock(id)
+		err := s.remove(ctx, id)
 		unlock()
 		if err != nil {
 			errs = append(errs, err)

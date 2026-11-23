@@ -23,11 +23,20 @@ type SelfSigned struct {
 
 var _ Source = (*SelfSigned)(nil)
 
+// SelfSignedOptions configures NewSelfSigned.
+type SelfSignedOptions struct {
+	Now func() time.Time // nil means time.Now
+}
+
 // NewSelfSigned generates a certificate valid for one year for each domain
 // and its wildcard (so "localhost" covers "demo.localhost"), 127.0.0.1 and
 // ::1. IP domains become IP SANs; no domains means "localhost".
-func NewSelfSigned(domains ...string) (*SelfSigned, error) {
-	der, key, err := selfSignedDER(time.Now(), domains)
+func NewSelfSigned(domains []string, opts SelfSignedOptions) (*SelfSigned, error) {
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	der, key, err := selfSignedDER(now(), domains)
 	if err != nil {
 		return nil, err
 	}

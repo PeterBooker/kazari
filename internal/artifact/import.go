@@ -106,7 +106,7 @@ func (s *Service) Import(ctx context.Context, actor Actor, req ImportRequest) (_
 	if desc == "" {
 		desc = cleanText(snap.Description, DescriptionMaxBytes)
 	}
-	a, v, err := s.Create(ctx, actor, CreateRequest{
+	a, v, err := s.create(ctx, actor, CreateRequest{
 		Slug:        req.Slug,
 		Name:        name,
 		Description: desc,

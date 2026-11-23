@@ -175,9 +175,6 @@ func TestUploadStoreListExpired(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.UpsertFile(ctx, "early", upload.StagedFile{Path: "a", Bytes: 3}, 3); err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
 		name string
 		now  time.Time
@@ -193,55 +190,8 @@ func TestUploadStoreListExpired(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var ids []string
-			for _, u := range got {
-				ids = append(ids, u.ID)
-			}
-			if diff := cmp.Diff(tt.want, ids); diff != "" {
-				t.Errorf("ids (-want +got):\n%s", diff)
-			}
-		})
-	}
-	got, err := s.ListExpired(ctx, uploadT0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := uploadAt("early", "bob", uploadT0.Add(-time.Hour))
-	want.Bytes = 3
-	want.Files = []upload.StagedFile{{Path: "a", Bytes: 3}}
-	if diff := cmp.Diff(*want, got[0]); diff != "" {
-		t.Errorf("expired upload (-want +got):\n%s", diff)
-	}
-}
-
-func TestUploadStoreCountOpen(t *testing.T) {
-	ctx := context.Background()
-	s := uploadTestStore(t, "alice", "bob")
-	for _, u := range []*upload.Upload{
-		uploadAt("a1", "alice", uploadT0),
-		uploadAt("a2", "alice", uploadT0),
-		uploadAt("b1", "bob", uploadT0),
-	} {
-		if err := s.Create(ctx, u, 0); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tests := []struct {
-		owner string
-		want  int
-	}{
-		{"alice", 2},
-		{"bob", 1},
-		{"nobody", 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.owner, func(t *testing.T) {
-			got, err := s.CountOpen(ctx, tt.owner)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Errorf("CountOpen = %d, want %d", got, tt.want)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ListExpired(%v) (-want +got):\n%s", tt.now, diff)
 			}
 		})
 	}
@@ -278,8 +228,8 @@ func TestUploadStoreCreateLimit(t *testing.T) {
 			t.Errorf("concurrent Create: %v", err)
 		}
 	}
-	if n, err := s.CountOpen(ctx, "alice"); err != nil || wins != limit || n != limit {
-		t.Fatalf("%d concurrent creates succeeded, %d open (%v); want %d", wins, n, err, limit)
+	if n, err := s.CountAll(ctx); err != nil || wins != limit || n != limit+1 {
+		t.Fatalf("%d concurrent creates succeeded, %d stored (%v); want %d and %d", wins, n, err, limit, limit+1)
 	}
 }
 
@@ -338,7 +288,7 @@ func TestUploadStoreArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(expired) != 2 || expired[0].Archive == nil || !expired[0].Archive.ReceivedAt.Equal(at) || expired[1].Archive != nil {
-		t.Errorf("ListExpired = %+v", expired)
+	if diff := cmp.Diff([]string{"u1", "u2"}, expired); diff != "" {
+		t.Errorf("ListExpired (-want +got):\n%s", diff)
 	}
 }

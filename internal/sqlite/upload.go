@@ -216,57 +216,29 @@ func (s *UploadStore) Delete(ctx context.Context, id string) (err error) {
 	return nil
 }
 
-// ListExpired returns the oldest expiry first, each upload with its files.
-func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []upload.Upload, err error) {
+// ListExpired returns the IDs of the expired uploads, the oldest expiry
+// first.
+func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []string, err error) {
 	ctx, end := s.db.op(ctx, "UploadStore.ListExpired")
 	defer func() { end(err) }()
-	var out []upload.Upload
-	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT `+uploadColumns+`
-			 FROM upload u JOIN user usr ON usr.id = u.owner_id
-			 WHERE u.expires_at <= ?
-			 ORDER BY u.expires_at, u.id`, toNanos(now))
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			u, err := scanUpload(rows.Scan)
-			if err != nil {
-				return err
-			}
-			out = append(out, *u)
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		rows.Close()
-		for i := range out {
-			if out[i].Files, err = uploadFiles(ctx, tx, out[i].ID); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM upload WHERE expires_at <= ? ORDER BY expires_at, id`, toNanos(now))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
 	}
-	return out, nil
-}
-
-// CountOpen counts the uploads owned by the handle, expired or not.
-func (s *UploadStore) CountOpen(ctx context.Context, owner string) (_ int, err error) {
-	ctx, end := s.db.op(ctx, "UploadStore.CountOpen")
-	defer func() { end(err) }()
-	var n int
-	err = s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM upload u JOIN user usr ON usr.id = u.owner_id
-		 WHERE usr.handle = ?`, owner).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("sqlite: count uploads of %q: %w", owner, err)
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
+		}
+		ids = append(ids, id)
 	}
-	return n, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
+	}
+	return ids, nil
 }
 
 const uploadColumns = `u.id, usr.handle, u.bytes, u.created_at, u.expires_at,

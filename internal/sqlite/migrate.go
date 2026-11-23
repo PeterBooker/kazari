@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -8,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -83,7 +84,7 @@ func migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		}
 		migs = append(migs, mig{v, name})
 	}
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
+	slices.SortFunc(migs, func(a, b mig) int { return cmp.Compare(a.version, b.version) })
 
 	for _, m := range migs {
 		if applied[m.version] {

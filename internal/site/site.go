@@ -158,6 +158,9 @@ type handler struct {
 	opts      Options
 	log       *slog.Logger
 	immutable string
+	// shareNotFound is the 404 page of the share path: an operator's own
+	// page when set, else one that speaks of the link.
+	shareNotFound []byte
 }
 
 // NewHandler returns the artifact-serving handler.
@@ -177,7 +180,11 @@ func NewHandler(r Resolver, blobs blob.Store, opts Options) http.Handler {
 		age = MaxImmutableAge
 	}
 	immutable := "public, max-age=" + strconv.FormatInt(int64(age/time.Second), 10) + ", immutable"
-	return &handler{resolver: r, blobs: blobs, opts: opts, log: log, immutable: immutable}
+	shareNotFound := opts.NotFoundPage
+	if bytes.Equal(shareNotFound, defaultNotFoundPage) {
+		shareNotFound = shareNotFoundPage
+	}
+	return &handler{resolver: r, blobs: blobs, opts: opts, log: log, immutable: immutable, shareNotFound: shareNotFound}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -529,8 +536,8 @@ func (h *handler) evictWorker(w http.ResponseWriter, r *http.Request, clear bool
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, status int) {
 	var body []byte
 	switch {
-	case status == http.StatusNotFound && r.URL.Path == gate.SharePath && bytes.Equal(h.opts.NotFoundPage, defaultNotFoundPage):
-		body = shareNotFoundPage
+	case status == http.StatusNotFound && r.URL.Path == gate.SharePath:
+		body = h.shareNotFound
 	case status == http.StatusNotFound:
 		body = h.opts.NotFoundPage
 	case status == http.StatusGone:

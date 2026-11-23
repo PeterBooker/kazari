@@ -130,7 +130,7 @@ func (a *ACME) NotAfter() time.Time {
 // maintenance. With ACMEConfig.Sync it returns an error if the initial
 // obtain fails.
 func (a *ACME) Run(ctx context.Context) error {
-	defer a.stop()
+	defer a.Stop()
 	manage := a.magic.ManageAsync
 	if a.manageSync {
 		manage = a.magic.ManageSync
@@ -145,7 +145,9 @@ func (a *ACME) Run(ctx context.Context) error {
 	return nil
 }
 
-func (a *ACME) stop() {
+// Stop ends CertMagic's maintenance, which starts with NewACME, not Run. It
+// is idempotent, and Run calls it on return.
+func (a *ACME) Stop() {
 	a.stopOnce.Do(a.cache.Stop)
 }
 

@@ -213,6 +213,12 @@ func (s *Service) record(ctx context.Context, actor Actor, action, slug string, 
 func (s *Service) Create(ctx context.Context, actor Actor, req CreateRequest) (_ *Artifact, v *Version, err error) {
 	ctx, span := s.span(ctx, "artifact.create", req.Slug)
 	defer func() { s.published(ctx, publishCreate, v, err); versionAttrs(span, v); endSpan(span, err) }()
+	return s.create(ctx, actor, req)
+}
+
+// create is Create without its span and count, for Import, which publishes
+// through it under its own.
+func (s *Service) create(ctx context.Context, actor Actor, req CreateRequest) (_ *Artifact, v *Version, err error) {
 	if actor.Handle == "" {
 		return nil, nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
