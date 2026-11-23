@@ -61,7 +61,84 @@ docker compose exec kazari kazari check
 
 Inside a container the `dns` lines cannot compare the records with the host's addresses, and say so instead: check that they show the host's public address.
 
-The container runs as the `nonroot` user, keeps its data in the volume `kazari_data`, and serves `/etc/kazari/kazari.yaml`. The image is tagged with each release version and `latest`; pin a version with `KAZARI_VERSION=<version>` in `.env`, such as the newest on the [releases page](https://github.com/PeterBooker/kazari/releases). Then go on to [creating the first admin](#creating-the-first-admin).
+The container keeps its data in the volume `kazari_data`. Go on to [creating the first admin](#creating-the-first-admin); the sections below pin a version, verify the image and run it without Compose.
+
+### The image
+
+Each release publishes an image at `ghcr.io/peterbooker/kazari`, built from the same binary as the archives and the packages. Anyone can pull it, without a GitHub account, and its [package page](https://github.com/PeterBooker/kazari/pkgs/container/kazari) lists every version.
+
+The facts a deployment needs are:
+
+| Item          | Value                                                                   |
+| ------------- | ----------------------------------------------------------------------- |
+| Platforms     | `linux/amd64` and `linux/arm64`, under one tag                          |
+| Tags          | each release version, such as `0.8.0`, and `latest` for the newest      |
+| Base          | distroless `static-debian12`, with no shell and no package manager      |
+| User          | `nonroot`, UID 65532                                                    |
+| Entrypoint    | `kazari`, with `serve` as the default command                           |
+| Configuration | `/etc/kazari/kazari.yaml` when mounted, else the `KAZARI_*` environment |
+| Data          | the volume `/var/lib/kazari`                                            |
+| Ports         | 80 and 443                                                              |
+
+The entrypoint is `kazari`, so the words after the image name are a Kazari command. To print the version an image holds, run:
+
+```sh
+docker run --rm ghcr.io/peterbooker/kazari:0.8.0 version
+```
+
+The image has no shell, so `docker exec kazari sh` fails. Run `kazari` itself instead, as the admin commands in this guide do.
+
+### Pinning a version
+
+By default the Compose file runs `latest`, which moves to the newest release whenever you pull. To decide when an upgrade happens, pin a version in `.env`, such as the newest on the [releases page](https://github.com/PeterBooker/kazari/releases):
+
+```sh
+KAZARI_VERSION=0.8.0
+```
+
+A tag can be pushed again, but a digest names one image for good. To pin the exact image you [verified](#verifying-the-image), add its digest after the version:
+
+```sh
+KAZARI_VERSION=0.8.0@sha256:0a687fe48ccdff25b5c42c61086de0d2a73cd6fb22a6d9fa9be1ab5eeeed32a8
+```
+
+Docker then pulls that digest and ignores the tag. [Upgrading under Docker Compose](ops.md#upgrading-under-docker-compose) moves a pinned instance to the next release.
+
+### Verifying the image
+
+The release workflow signs every image with keyless [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), as it signs the checksums of the archives. To check that an image came from that workflow, run:
+
+```sh
+cosign verify ghcr.io/peterbooker/kazari:0.8.0 \
+  --certificate-identity-regexp '^https://github.com/PeterBooker/kazari/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It lists the checks it performed and prints the signed image's `docker-manifest-digest`, the digest to pin. Any error means the image is not one Kazari released.
+
+Each image also carries an SBOM for each platform. To read the one for amd64, run:
+
+```sh
+docker buildx imagetools inspect ghcr.io/peterbooker/kazari:0.8.0 \
+  --format '{{ json (index .SBOM "linux/amd64").SPDX }}'
+```
+
+### Running without Compose
+
+To run the image with `docker run`, pass what the Compose file sets up: the ports, the configuration file, the data volume and the secrets. In the directory that holds `kazari.yaml` and `.env`, run:
+
+```sh
+docker run -d --name kazari --restart unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v "$PWD/kazari.yaml:/etc/kazari/kazari.yaml:ro" \
+  -v kazari_data:/var/lib/kazari \
+  --env-file .env \
+  ghcr.io/peterbooker/kazari:0.8.0
+```
+
+The log, from `docker logs -f kazari`, shows the same lines as under Compose. Wherever this guide runs `docker compose exec kazari kazari`, run `docker exec kazari kazari` instead.
+
+Compose checks the server's health with `kazari admin health`. `docker run --health-cmd` needs a shell, which the image lacks, so a container started this way has no health check.
 
 ## Installing the package
 

@@ -244,6 +244,18 @@ docker compose up -d
 
 The container keeps its data in the volume `kazari_data`.
 
+### Upgrading a container started with `docker run`
+
+A container keeps the image it started from, so an upgrade replaces the container. Pull the new version, stop and remove the old container, then start it again with the [same command](install.md#running-without-compose) and the new tag:
+
+```sh
+docker pull ghcr.io/peterbooker/kazari:<version>
+docker stop kazari
+docker rm kazari
+```
+
+`docker stop` gives the server time to finish its requests and close the database. The data stays in the volume `kazari_data`, which the new container mounts.
+
 ### Upgrading to 0.8
 
 Four things change in how an instance is run:
