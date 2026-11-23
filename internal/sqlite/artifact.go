@@ -334,15 +334,13 @@ func (s *ArtifactStore) GetVersion(ctx context.Context, slug string, number int)
 const artifactFiles = `SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file
 	WHERE version_id = ? ORDER BY path`
 
-func scanFile(row rowScanner) (artifact.File, error) {
-	var f artifact.File
-	err := row.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy)
-	return f, err
+func scanFile(row rowScanner, f *artifact.File) error {
+	return row.Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy)
 }
 
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
 	rows, err := s.db.QueryContext(ctx, artifactFiles, versionID)
-	return collect(rows, err, scanFile)
+	return collect(rows, err, fill(scanFile))
 }
 
 func (s *ArtifactStore) ListVersions(ctx context.Context, slug string) (_ []artifact.Version, err error) {
@@ -854,7 +852,8 @@ const artifactFile = `SELECT path, blob_hash, size, content_type, uploaded_by FR
 func (s *ArtifactStore) File(ctx context.Context, versionID int64, path string) (_ *artifact.File, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.File")
 	defer func() { end(err) }()
-	f, err := scanFile(s.db.stmt.file.QueryRowContext(ctx, versionID, path))
+	var f artifact.File
+	err = scanFile(s.db.stmt.file.QueryRowContext(ctx, versionID, path), &f)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, artifact.ErrNotFound
 	}
