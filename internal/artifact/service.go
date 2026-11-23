@@ -18,6 +18,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/blob"
+	"github.com/PeterBooker/kazari/internal/lru"
 )
 
 const (
@@ -146,7 +147,7 @@ type Service struct {
 
 	tracer trace.Tracer
 	m      metrics
-	refs   *refCache
+	refs   *lru.Cache[refKey, []reference]
 
 	// blobMu orders publishes against the garbage collector: a Put of stored
 	// content writes nothing, so the blob looks unreferenced until its
@@ -170,7 +171,7 @@ func New(store Store, index BlobIndex, blobs blob.Store, quotas QuotaSource, rec
 	meter := opts.Telemetry.Meter(scope)
 	opts = opts.withDefaults()
 	s := &Service{store: store, index: index, blobs: blobs, quotas: quotas, rec: rec, opts: opts,
-		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter), refs: newRefCache(opts.CheckCacheEntries, opts.CheckCacheBytes)}
+		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter), refs: lru.New[refKey, []reference](opts.CheckCacheEntries, opts.CheckCacheBytes)}
 	s.observeCensus(meter)
 	return s
 }

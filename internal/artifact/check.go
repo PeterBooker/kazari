@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"unicode"
 
 	"golang.org/x/net/html"
@@ -60,7 +59,7 @@ func (s *Service) warnings(ctx context.Context, a *Artifact, files []File) []str
 		}
 		read++
 		key := refKey{hash: f.Hash, path: f.Path}
-		refs, ok := s.refs.get(key)
+		refs, ok := s.refs.Get(key)
 		if !ok {
 			data, err := s.readBlob(ctx, f.Hash)
 			if err != nil {
@@ -68,7 +67,7 @@ func (s *Service) warnings(ctx context.Context, a *Artifact, files []File) []str
 				continue
 			}
 			refs = parseRefs(kind, f.Path, data)
-			s.refs.add(key, refs)
+			s.refs.Add(key, refs, entrySize(key, refs))
 		}
 		c.check(f.Path, refs)
 	}
@@ -314,81 +313,6 @@ func (c *checker) remote(file string, r reference) {
 }
 
 type refKey struct{ hash, path string }
-
-type refEntry struct {
-	key        refKey
-	refs       []reference
-	size       int64
-	prev, next *refEntry
-}
-
-// refCache is a least-recently-used cache of parsed references, bounded by
-// a number of entries and an estimate of the bytes they hold.
-type refCache struct {
-	maxEntries int
-	maxBytes   int64
-
-	mu      sync.Mutex
-	bytes   int64
-	root    refEntry // root.next is the most recently used, root.prev the least
-	entries map[refKey]*refEntry
-}
-
-func newRefCache(maxEntries int, maxBytes int64) *refCache {
-	c := &refCache{maxEntries: maxEntries, maxBytes: maxBytes, entries: map[refKey]*refEntry{}}
-	c.root.prev, c.root.next = &c.root, &c.root
-	return c
-}
-
-func (c *refCache) get(k refKey) ([]reference, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.entries[k]
-	if !ok {
-		return nil, false
-	}
-	c.unlink(e)
-	c.pushFront(e)
-	return e.refs, true
-}
-
-func (c *refCache) add(k refKey, refs []reference) {
-	size := entrySize(k, refs)
-	if size > c.maxBytes {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.entries[k]; ok {
-		return
-	}
-	e := &refEntry{key: k, refs: refs, size: size}
-	c.entries[k] = e
-	c.pushFront(e)
-	c.bytes += size
-	for len(c.entries) > c.maxEntries || c.bytes > c.maxBytes {
-		last := c.root.prev
-		c.unlink(last)
-		delete(c.entries, last.key)
-		c.bytes -= last.size
-	}
-}
-
-func (c *refCache) pushFront(e *refEntry) {
-	e.prev, e.next = &c.root, c.root.next
-	e.prev.next, e.next.prev = e, e
-}
-
-func (c *refCache) unlink(e *refEntry) {
-	e.prev.next, e.next.prev = e.next, e.prev
-	e.prev, e.next = nil, nil
-}
-
-func (c *refCache) size() (int, int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.entries), c.bytes
-}
 
 // entrySize estimates the memory an entry holds: its strings and the
 // headers around them. Directives are constants and cost nothing.

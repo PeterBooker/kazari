@@ -35,5 +35,5 @@ func CheckPage(policy string, override bool, page string, data []byte, paths ...
 // CheckCacheSize is the entries and the estimated bytes the cache of the
 // checks after a publish holds.
 func CheckCacheSize(s *Service) (entries int, bytes int64) {
-	return s.refs.size()
+	return s.refs.Size()
 }
