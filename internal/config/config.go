@@ -66,6 +66,9 @@ type Listen struct {
 	HTTP string `yaml:"http"`
 	// Plain HTTP only, trusting X-Forwarded-* from a TLS-terminating proxy.
 	ProxyMode bool `yaml:"proxy_mode"`
+	// In proxy mode, the one header that carries the client's address:
+	// X-Forwarded-For (its last entry) or X-Real-IP.
+	ClientIPHeader string `yaml:"client_ip_header"`
 }
 
 // TLS selects where certificates come from.
@@ -239,8 +242,9 @@ func Default() Config {
 		DataDir:        DefaultDataDir,
 		ExternalScheme: "https",
 		Listen: Listen{
-			HTTPS: ":443",
-			HTTP:  ":80",
+			HTTPS:          ":443",
+			HTTP:           ":80",
+			ClientIPHeader: "X-Forwarded-For",
 		},
 		TLS: TLS{
 			Mode:        "acme",
@@ -321,7 +325,7 @@ func Local() Config {
 	c.DataDir = "./.data"
 	c.ExternalScheme = "http"
 	c.ExternalPort = 8080
-	c.Listen = Listen{HTTP: "127.0.0.1:8080", ProxyMode: true}
+	c.Listen = Listen{HTTP: "127.0.0.1:8080", ProxyMode: true, ClientIPHeader: c.Listen.ClientIPHeader}
 	c.TLS.Mode = "self-signed"
 	c.Log.Level = "debug"
 	return c

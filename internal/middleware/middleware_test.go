@@ -99,30 +99,35 @@ func TestRequestID(t *testing.T) {
 func TestRealIP(t *testing.T) {
 	tests := []struct {
 		name   string
-		proxy  bool
+		header string
 		remote string
 		xff    string
 		xri    string
 		want   string
 	}{
-		{"direct", false, "192.0.2.1:1234", "", "", "192.0.2.1"},
-		{"direct ignores headers", false, "192.0.2.1:1234", "203.0.113.9", "203.0.113.8", "192.0.2.1"},
-		{"direct ipv6", false, "[2001:db8::1]:443", "", "", "2001:db8::1"},
-		{"direct without port", false, "192.0.2.1", "", "", "192.0.2.1"},
-		{"proxy last xff", true, "10.0.0.1:1", "198.51.100.1, 10.0.0.2, 203.0.113.9", "203.0.113.8", "203.0.113.9"},
-		{"proxy ignores client-supplied left entries", true, "10.0.0.1:1", "1.2.3.4, 203.0.113.9", "", "203.0.113.9"},
-		{"proxy single xff with spaces", true, "10.0.0.1:1", "  203.0.113.9  ", "", "203.0.113.9"},
-		{"proxy xff ipv6", true, "10.0.0.1:1", "2001:db8::2", "", "2001:db8::2"},
-		{"proxy mapped ipv4", true, "10.0.0.1:1", "::ffff:203.0.113.9", "", "203.0.113.9"},
-		{"proxy x-real-ip", true, "10.0.0.1:1", "", "203.0.113.8", "203.0.113.8"},
-		{"proxy invalid xff falls back to x-real-ip", true, "10.0.0.1:1", "garbage", "203.0.113.8", "203.0.113.8"},
-		{"proxy no headers", true, "10.0.0.1:1", "", "", "10.0.0.1"},
-		{"proxy invalid headers", true, "10.0.0.1:1", "nope", "nope", "10.0.0.1"},
+		{"direct", "", "192.0.2.1:1234", "", "", "192.0.2.1"},
+		{"direct ignores headers", "", "192.0.2.1:1234", "203.0.113.9", "203.0.113.8", "192.0.2.1"},
+		{"direct ipv6", "", "[2001:db8::1]:443", "", "", "2001:db8::1"},
+		{"direct without port", "", "192.0.2.1", "", "", "192.0.2.1"},
+		{"last xff", "X-Forwarded-For", "10.0.0.1:1", "198.51.100.1, 10.0.0.2, 203.0.113.9", "203.0.113.8", "203.0.113.9"},
+		{"xff ignores left entries", "X-Forwarded-For", "10.0.0.1:1", "1.2.3.4, 203.0.113.9", "", "203.0.113.9"},
+		{"xff with spaces", "X-Forwarded-For", "10.0.0.1:1", "  203.0.113.9  ", "", "203.0.113.9"},
+		{"xff ipv6", "X-Forwarded-For", "10.0.0.1:1", "2001:db8::2", "", "2001:db8::2"},
+		{"xff mapped ipv4", "X-Forwarded-For", "10.0.0.1:1", "::ffff:203.0.113.9", "", "203.0.113.9"},
+		{"xff ignores x-real-ip", "X-Forwarded-For", "10.0.0.1:1", "", "203.0.113.8", "10.0.0.1"},
+		{"invalid xff ignores x-real-ip", "X-Forwarded-For", "10.0.0.1:1", "garbage", "203.0.113.8", "10.0.0.1"},
+		{"x-real-ip", "X-Real-IP", "10.0.0.1:1", "", "203.0.113.8", "203.0.113.8"},
+		{"x-real-ip ignores xff", "X-Real-IP", "10.0.0.1:1", "198.51.100.1", "203.0.113.8", "203.0.113.8"},
+		{"missing x-real-ip ignores xff", "X-Real-IP", "10.0.0.1:1", "198.51.100.1", "", "10.0.0.1"},
+		{"x-real-ip mapped ipv4", "X-Real-IP", "10.0.0.1:1", "", "::ffff:203.0.113.8", "203.0.113.8"},
+		{"no headers", "X-Forwarded-For", "10.0.0.1:1", "", "", "10.0.0.1"},
+		{"invalid xff", "X-Forwarded-For", "10.0.0.1:1", "nope", "nope", "10.0.0.1"},
+		{"invalid x-real-ip", "X-Real-IP", "10.0.0.1:1", "nope", "nope", "10.0.0.1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got string
-			h := RealIP(tt.proxy)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := RealIP(tt.header)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				got = ClientIP(r)
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -135,7 +140,7 @@ func TestRealIP(t *testing.T) {
 			}
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			if got != tt.want {
-				t.Errorf("ClientIP = %q, want %q", got, tt.want)
+				t.Errorf("RealIP(%q): ClientIP = %q, want %q", tt.header, got, tt.want)
 			}
 		})
 	}
@@ -195,7 +200,7 @@ func TestLogger(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			l, buf := newJSONLogger()
-			h := Chain(tt.handler, RequestID(), RealIP(false), Logger(l))
+			h := Chain(tt.handler, RequestID(), RealIP(""), Logger(l))
 			req := httptest.NewRequest(http.MethodPost, "http://api.art.test/v1/things?q=1", nil)
 			req.RemoteAddr = "192.0.2.1:5555"
 			req.Header.Set("User-Agent", "test-agent/1.0")

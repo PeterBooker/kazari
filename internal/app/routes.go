@@ -67,9 +67,13 @@ func (a *App) surface(name string, control bool, h http.Handler) http.Handler {
 	if control {
 		probes = probePaths
 	}
+	ipHeader := ""
+	if a.cfg.Listen.ProxyMode {
+		ipHeader = a.cfg.Listen.ClientIPHeader
+	}
 	mws := []func(http.Handler) http.Handler{
 		middleware.RequestID(),
-		middleware.RealIP(a.cfg.Listen.ProxyMode),
+		middleware.RealIP(ipHeader),
 		a.obs.Observe(name, observe),
 		middleware.Logger(a.log, probes...),
 		middleware.Recover(a.log),

@@ -51,7 +51,7 @@ func acmeConfig(t *testing.T) config.Config {
 	cfg.BaseDomain = "art.example.test"
 	cfg.DataDir = t.TempDir()
 	cfg.TLS.DNS.APIToken = "token"
-	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0"}
+	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0", ClientIPHeader: cfg.Listen.ClientIPHeader}
 	return cfg
 }
 
@@ -213,8 +213,12 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe = %q, want %q", got, want)
 	}
 	local := config.Local()
-	if got := Describe(local, config.Origin{}); got != "environment only, base domain kazari.localhost, mode proxy, data in .data" {
+	if got := Describe(local, config.Origin{}); got != "environment only, base domain kazari.localhost, mode proxy, client IP from X-Forwarded-For, data in .data" {
 		t.Errorf("Describe(local) = %q", got)
+	}
+	local.Listen.ClientIPHeader = "X-Real-IP"
+	if got, want := Describe(local, config.Origin{}), "environment only, base domain kazari.localhost, mode proxy, client IP from X-Real-IP, data in .data"; got != want {
+		t.Errorf("Describe(local, X-Real-IP) = %q, want %q", got, want)
 	}
 }
 

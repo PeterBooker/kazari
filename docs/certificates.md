@@ -152,6 +152,7 @@ server {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
     }
 }
@@ -163,6 +164,8 @@ server {
     return 301 https://$host$request_uri;
 }
 ```
+
+`$proxy_add_x_forwarded_for` appends the address nginx saw to `X-Forwarded-For`, and Kazari reads that last entry with the default `listen.client_ip_header`. To read `X-Real-IP` instead, set `client_ip_header: X-Real-IP`.
 
 Reload nginx after each renewal, since it reads the files at start.
 

@@ -132,7 +132,7 @@ func TestReadyProblems(t *testing.T) {
 			})}
 		}, "oidc", Fail, []string{"cannot reach https://idp.invalid/.well-known/openid-configuration", "check auth.oidc.issuer"}},
 		{"proxy mode", func(c *config.Config, o *ReadyOptions) {
-			c.Listen = config.Listen{HTTP: "127.0.0.1:0", ProxyMode: true}
+			c.Listen = config.Listen{HTTP: "127.0.0.1:0", ProxyMode: true, ClientIPHeader: c.Listen.ClientIPHeader}
 			o.CertNotAfter = nil
 		}, "certificate", Skip, []string{"proxy mode"}},
 		{"disk filling", func(_ *config.Config, o *ReadyOptions) { o.DiskUsage = diskUsage(9<<30, 100<<30) },

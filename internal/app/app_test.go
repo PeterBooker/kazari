@@ -54,7 +54,7 @@ func testConfig(t testing.TB) config.Config {
 	cfg.BaseDomain = "localhost"
 	cfg.DataDir = t.TempDir()
 	cfg.ExternalScheme = "http"
-	cfg.Listen = config.Listen{HTTP: "127.0.0.1:0", ProxyMode: true}
+	cfg.Listen = config.Listen{HTTP: "127.0.0.1:0", ProxyMode: true, ClientIPHeader: cfg.Listen.ClientIPHeader}
 	cfg.Auth.AdminToken = adminToken
 	cfg.Limits.MaxVersionBytes = 4 * config.MiB
 	cfg.Limits.MaxFileBytes = 2 * config.MiB
@@ -448,7 +448,7 @@ func TestHTTPSSelfSigned(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.ExternalScheme = "https"
 	cfg.TLS.Mode = "self-signed"
-	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0"}
+	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0", ClientIPHeader: cfg.Listen.ClientIPHeader}
 	in := start(t, cfg)
 	addrs := in.app.Addrs()
 	if addrs.HTTPS == "" || addrs.HTTP == "" {
@@ -624,7 +624,7 @@ func TestListenError(t *testing.T) {
 func TestCloseStopsACMEWithoutRun(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.ExternalScheme = "https"
-	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0"}
+	cfg.Listen = config.Listen{HTTPS: "127.0.0.1:0", HTTP: "127.0.0.1:0", ClientIPHeader: cfg.Listen.ClientIPHeader}
 	cfg.TLS.Mode = "acme"
 	cfg.TLS.DNSProvider = "cloudflare"
 	cfg.TLS.DNS.APIToken = "token"

@@ -155,6 +155,7 @@ Every key has an environment variable: `KAZARI_` followed by the key's full path
 | -------------------------- | --------------------------------- |
 | `base_domain`              | `KAZARI_BASE_DOMAIN`              |
 | `listen.proxy_mode`        | `KAZARI_LISTEN_PROXY_MODE`        |
+| `listen.client_ip_header`  | `KAZARI_LISTEN_CLIENT_IP_HEADER`  |
 | `tls.dns_provider`         | `KAZARI_TLS_DNS_PROVIDER`         |
 | `tls.dns.api_token`        | `KAZARI_TLS_DNS_API_TOKEN`        |
 | `limits.max_version_bytes` | `KAZARI_LIMITS_MAX_VERSION_BYTES` |
@@ -227,17 +228,18 @@ The domain, the data directory and the shape of public URLs:
 
 Where Kazari accepts connections:
 
-| Key          | Type   | Default | Meaning                                                    |
-| ------------ | ------ | ------- | ---------------------------------------------------------- |
-| `https`      | string | `:443`  | TLS listener address. Required unless `proxy_mode` is on.  |
-| `http`       | string | `:80`   | Plain HTTP listener; `""` disables it.                     |
-| `proxy_mode` | bool   | `false` | Serve plain HTTP behind one TLS-terminating proxy.         |
+| Key                | Type   | Default           | Meaning                                                                  |
+| ------------------ | ------ | ----------------- | ------------------------------------------------------------------------ |
+| `https`            | string | `:443`            | TLS listener address. Required unless `proxy_mode` is on.                |
+| `http`             | string | `:80`             | Plain HTTP listener; `""` disables it.                                   |
+| `proxy_mode`       | bool   | `false`           | Serve plain HTTP behind one TLS-terminating proxy.                       |
+| `client_ip_header` | string | `X-Forwarded-For` | In proxy mode, the header that carries the client's address: `X-Forwarded-For` or `X-Real-IP`. |
 
 Each address is `host:port`. A bare port such as `8080` fails validation: write `127.0.0.1:8080` for this machine only, or `:8080` for every address.
 
 Outside proxy mode, the `http` listener answers `/health` and redirects every request for the base domain or its subdomains to HTTPS with a `301`. In proxy mode it is the only listener, and it is required.
 
-In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the last `X-Forwarded-For` entry, then from `X-Real-IP`. Bind `http` where only the proxy reaches it, such as `127.0.0.1:8080`; `kazari check` warns about an address that is neither loopback nor private. `/health` answers on any `Host` outside the base domain, so a probe can target the backend by its address. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
+In proxy mode Kazari serves plain HTTP on `http` and takes the client IP from the one header `client_ip_header` names, and ignores the other. With `X-Forwarded-For` it reads the last entry, the one your proxy added; with `X-Real-IP`, the whole value. Without a valid address there, it uses the address of the connection. Caddy and Traefik set `X-Forwarded-For` by default; nginx sets it with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, as in the [nginx example](certificates.md#nginx). Choose `X-Real-IP` only for a proxy that sets that header and not `X-Forwarded-For`. Bind `http` where only the proxy reaches it, such as `127.0.0.1:8080`; `kazari check` warns about an address that is neither loopback nor private. `/health` answers on any `Host` outside the base domain, so a probe can target the backend by its address. [Running behind a reverse proxy](install.md#running-behind-a-reverse-proxy) sets it up, and `serve --local` uses it.
 
 ### `tls`
 

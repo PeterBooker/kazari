@@ -42,6 +42,7 @@ func (c *Config) Validate() error {
 	} else {
 		v.required("listen.https", c.Listen.HTTPS)
 	}
+	v.oneOf("listen.client_ip_header", c.Listen.ClientIPHeader, "X-Forwarded-For", "X-Real-IP")
 	v.listenAddr("listen.http", c.Listen.HTTP)
 	v.listenAddr("listen.https", c.Listen.HTTPS)
 	v.listenAddr("admin.listen", c.Admin.Listen)

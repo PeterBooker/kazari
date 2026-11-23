@@ -333,7 +333,7 @@ Kazari logs to stderr through `log/slog`; under systemd, that is the journal. `l
 time=2026-10-24T09:12:03Z level=INFO msg=request method=GET host=q3-report.art.example.com path=/ status=200 bytes=5120 duration_ms=1.8 request_id=6f1c0e9b2a7d4c33a1e0f5b6c7d8e9f0 ip=198.51.100.7 user_agent="Mozilla/5.0 ..."
 ```
 
-Each line carries `method`, `host`, `path`, `status`, `bytes`, `duration_ms`, `request_id`, `ip` and `user_agent`. In proxy mode, `ip` comes from `X-Forwarded-For` or `X-Real-IP`. `user_agent` is cut to 200 bytes.
+Each line carries `method`, `host`, `path`, `status`, `bytes`, `duration_ms`, `request_id`, `ip` and `user_agent`. In proxy mode, `ip` comes from the header `listen.client_ip_header` names. `user_agent` is cut to 200 bytes.
 
 `5xx` responses log at `ERROR`, the rest at `INFO`. API `5xx` errors also log their cause on a separate line (`httpapi: request failed`); the client only ever sees `internal error`.
 
