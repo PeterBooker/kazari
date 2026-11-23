@@ -108,6 +108,7 @@ var layers = map[string]layer{
 	"internal/bytesize": base,
 	"internal/errcode":  base,
 	"internal/lru":      base,
+	"internal/memlimit": base,
 
 	"internal/artifact/storetest":        support,
 	"internal/blob/blobtest":             support,

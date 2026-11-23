@@ -35,6 +35,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/memlimit"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/oidc"
@@ -87,6 +88,10 @@ type Options struct {
 	// OIDCClient replaces the HTTP client of the identity provider, for
 	// tests.
 	OIDCClient *http.Client
+
+	// Memory replaces where the memory the process may use is read, which
+	// a percentage of serve.compression_cache is taken of, for tests.
+	Memory memlimit.Options
 
 	// SpanExporter, MetricReader and LogExporter replace their signal's
 	// OTLP exporter whatever the endpoint, for tests.

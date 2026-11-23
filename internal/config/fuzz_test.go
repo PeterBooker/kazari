@@ -36,6 +36,35 @@ func FuzzParseBytes(f *testing.F) {
 	})
 }
 
+func FuzzParseMemory(f *testing.F) {
+	for _, s := range []string{"5%", "2.5%", "0.25%", "12.50%", "100%", "101%", "0%", "0", "64MiB", " 5 % ", "-5%", "+5%", "5.%",
+		".5%", "5.125%", "%", "5%%", "1e1%", "NaN%", "５%", "9223372036854775807", "8388608TiB", ""} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		m, err := config.ParseMemory(s)
+		if err != nil {
+			if m != (config.Memory{}) {
+				t.Errorf("ParseMemory(%q) = %+v with an error, want the zero value", s, m)
+			}
+			return
+		}
+		if m.Size < 0 || m.Share < 0 || m.Share > 100*100 || m.Share > 0 && m.Size != 0 {
+			t.Errorf("ParseMemory(%q) = %+v, want a size from 0 or a share of at most 100%%", s, m)
+		}
+		if again, err := config.ParseMemory(m.String()); err != nil || again != m {
+			t.Errorf("ParseMemory(%q) = %+v, %v, want %+v", m.String(), again, err, m)
+		}
+		var u config.Memory
+		if err := u.UnmarshalText([]byte(s)); err != nil || u != m {
+			t.Errorf("UnmarshalText(%q) = %+v, %v, want %+v", s, u, err, m)
+		}
+		if n := m.Of(1 << 40); n < 0 || n > 1<<40 && m.Share > 0 {
+			t.Errorf("%+v.Of(1 TiB) = %d, want from 0 to 1 TiB", m, n)
+		}
+	})
+}
+
 func FuzzParseDuration(f *testing.F) {
 	for _, s := range []string{"15m", "336h", "14d", "2w", "1w2d", "1w-1h", "1d12h", "0", "0d", "1h0m0s", "90s", "1.5h", "-5m", " 2d ", "106751d", "106752d",
 		"106751d23h47m16.854775807s", "106751d24h", "1d-1h", "1d+1h", "-1d", "1.5d", "d", "1d1d", "5", "1dh", "", "١d"} {

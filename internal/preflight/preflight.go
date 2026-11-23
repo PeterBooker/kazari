@@ -27,8 +27,10 @@ import (
 
 	"github.com/caddyserver/certmagic"
 
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
+	"github.com/PeterBooker/kazari/internal/memlimit"
 	"github.com/PeterBooker/kazari/internal/telemetry"
 )
 
@@ -76,6 +78,8 @@ type Options struct {
 	// HTTPClient fetches the identity provider's discovery document; nil
 	// means http.DefaultClient.
 	HTTPClient *http.Client
+	// Memory replaces where the memory the process may use is read.
+	Memory memlimit.Options
 }
 
 // Run performs every check and returns the findings; Failed reports whether
@@ -94,6 +98,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) []Finding {
 	checkOIDC(ctx, cfg, opts, add)
 	checkMetrics(cfg, add)
 	checkDashboard(cfg, add)
+	checkCompression(cfg, opts.Memory, add)
 	if opts.Telemetry != nil {
 		checkTelemetry(ctx, *opts.Telemetry, add)
 	}
@@ -110,6 +115,18 @@ func checkMetrics(cfg config.Config, add adder) {
 	}
 	add("metrics", Skip, "/metrics is not served on %s until telemetry.metrics.token is set, or scrape admin.listen on a private address",
 		cfg.Host(config.AdminHost))
+}
+
+// checkCompression reports the memory serve.compression_cache comes to on
+// this machine, as the server sizes it at start.
+func checkCompression(cfg config.Config, mem memlimit.Options, add adder) {
+	limit, _ := memlimit.Detect(mem)
+	n, basis := cfg.Serve.CompressionCacheBytes(limit.Bytes, limit.Source)
+	if n == 0 {
+		add("compression", Skip, "off: serve.compression_cache is 0, so every file is sent as stored")
+		return
+	}
+	add("compression", OK, "a cache of %s (%s)", bytesize.Format(n), basis)
 }
 
 // checkDashboard reports where a browser finds the dashboard, and an address
