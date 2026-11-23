@@ -48,7 +48,9 @@ func NewOnce(ttl time.Duration, now func() time.Time) *Once {
 }
 
 // Seal returns a value that carries payload, bound to purpose: Open takes
-// it once, for that purpose alone.
+// it once, for that purpose alone. Two values made in the same second for
+// one purpose are the same value unless their payloads differ, so a caller
+// that needs distinct values puts random bytes in the payload.
 func (o *Once) Seal(purpose string, payload []byte) string {
 	body := make([]byte, stampLen+len(payload))
 	binary.BigEndian.PutUint64(body, uint64(o.now().Unix()))
