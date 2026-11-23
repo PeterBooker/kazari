@@ -49,3 +49,55 @@ func FuzzParseHost(f *testing.F) {
 		}
 	})
 }
+
+func FuzzAcceptsGzip(f *testing.F) {
+	for _, v := range []string{"", "gzip", "x-gzip", "*", "GZIP", "gzip;q=0", "gzip; q=0.5", "gzip;q=1.000", "gzip;q=1.5",
+		"gzip;q=0.0001", "gzip;q=", "gzip;level=1", "gzip;;q=1", "br, gzip;q=0, *", "*;q=0", "*;Q=0.3, gzip;q=0",
+		"deflate, gzip;q=1.0, *;q=0.5", " , ,gzip ,", "identity", "gzip;q=0;q=1", "gzip;q=-0", "gzip;q=0x1", "gzip;q=1e0"} {
+		f.Add(v)
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		got := site.AcceptsGzip([]string{v})
+		lower := strings.ToLower(v)
+		if got && !strings.Contains(lower, "gzip") && !strings.Contains(lower, "*") {
+			t.Errorf("AcceptsGzip(%q) = true, which names neither gzip nor *", v)
+		}
+		if upper := asciiUpper(v); site.AcceptsGzip([]string{upper}) != got {
+			t.Errorf("AcceptsGzip(%q) = %v, but %v for %q", v, got, !got, upper)
+		}
+		if !site.AcceptsGzip([]string{v, "gzip"}) {
+			t.Errorf("AcceptsGzip(%q, \"gzip\") = false, want true", v)
+		}
+	})
+}
+
+func asciiUpper(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'a' <= c && c <= 'z' {
+			b[i] = c - 'a' + 'A'
+		}
+	}
+	return string(b)
+}
+
+func FuzzNoneMatch(f *testing.F) {
+	hash := strings.Repeat("ab", 32)
+	for _, v := range []string{"", "*", `"x"`, `W/"x"`, `"x", "y"`, `"x`, `W/`, `W/x`, `,,"x",`, `"a,b"`,
+		`"` + hash + `-gzip"`, `W/"` + hash + `-gzip"`, `"` + hash + `"`, ` "x" , *`} {
+		f.Add(v)
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		etag := site.GzipETag(hash)
+		got := site.NoneMatch([]string{v}, etag)
+		if got && !strings.Contains(v, "*") && !strings.Contains(v, etag) {
+			t.Errorf("NoneMatch(%q, %s) = true, which holds neither * nor the tag", v, etag)
+		}
+		if !site.NoneMatch([]string{v, etag}, etag) {
+			t.Errorf("NoneMatch(%q, %s) on a second line = false, want true", v, etag)
+		}
+		if site.NoneMatch(nil, etag) {
+			t.Errorf("NoneMatch(nil, %s) = true, want false", etag)
+		}
+	})
+}

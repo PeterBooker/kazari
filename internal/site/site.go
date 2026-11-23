@@ -402,7 +402,32 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.
 		h.opts.Views.Record(r, views.Hit{ArtifactID: p.ArtifactID, Path: f.Path, Access: access,
 			IP: middleware.ClientIP(r), UA: r.Header.Get("User-Agent")})
 	}
+	if compressible(f.ContentType, f.Size) {
+		// On identity answers too, so a shared cache of a pinned version
+		// keeps the two representations apart.
+		hdr.Add("Vary", "Accept-Encoding")
+		if wantsGzip(r) {
+			h.serveGzip(w, r, p, f, rc)
+			return
+		}
+	}
 	http.ServeContent(w, r, f.Path, time.Time{}, rc)
+}
+
+// serveGzip answers what http.ServeContent would for a request without
+// Range, If-Range or If-Match, with the gzip representation and its own ETag.
+func (h *handler) serveGzip(w http.ResponseWriter, r *http.Request, p *artifact.Published, f artifact.File, rc io.Reader) {
+	hdr := w.Header()
+	etag := gzipETag(f.Hash)
+	hdr.Set("ETag", etag)
+	if noneMatch(r.Header.Values("If-None-Match"), etag) {
+		hdr.Del("Content-Type")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if err := writeGzip(w, r, http.StatusOK, rc); err != nil && !errors.Is(err, context.Canceled) {
+		h.log.WarnContext(r.Context(), "site: send gzip", "slug", p.Slug, "path", f.Path, "err", err)
+	}
 }
 
 // html reports whether ct is an HTML page, the one kind of file a view is.
@@ -422,6 +447,15 @@ func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *a
 
 	h.setErrorHeaders(w, p)
 	w.Header().Set("Content-Type", contentType(f.ContentType))
+	if compressible(f.ContentType, f.Size) {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Values("Accept-Encoding")) {
+			if err := writeGzip(w, r, http.StatusNotFound, rc); err != nil && !errors.Is(err, context.Canceled) {
+				h.log.WarnContext(r.Context(), "site: copy 404.html", "slug", p.Slug, "err", err)
+			}
+			return
+		}
+	}
 	w.Header().Set("Content-Length", strconv.FormatInt(f.Size, 10))
 	w.WriteHeader(http.StatusNotFound)
 	if r.Method == http.MethodHead {
