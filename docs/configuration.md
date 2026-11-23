@@ -351,6 +351,14 @@ On an instance that is not meant for the open web, set `default_visibility: memb
 
 Share links last 7 days unless asked otherwise, or `share_link_max_ttl` if that is shorter.
 
+#### Compression
+
+Kazari compresses text files itself, so pages load faster without a proxy that does it. There is no key to set: a file from 1 KiB to 4 MiB is sent gzip-compressed to every client whose `Accept-Encoding` allows gzip. Text of every kind (HTML, CSS, plain text, CSV), JavaScript, JSON, XML, SVG, WebAssembly and TrueType and OpenType fonts qualify. Images, WOFF fonts, archives and media are compressed already and are sent as stored, and so is a larger file, which would cost tens of milliseconds of CPU on every request.
+
+The compressed answer has its own `ETag`, the stored file's hash with `-gzip` appended, and every answer for such a file carries `Vary: Accept-Encoding`, so a cache in front keeps the two forms apart. A request with a `Range` or `If-Range` header gets the stored bytes, and so does an `If-Match` that names the stored file's `ETag`.
+
+A proxy in front leaves the compressed answers as they are. One that compresses on its own, such as Caddy's `encode`, still compresses the rest: files under 1 KiB or over 4 MiB, and range requests.
+
 ### `fetch`
 
 The URLs Kazari fetches for members: a file named by `url` in a create or update, and the page an [import](api.md#importing-a-web-page) copies. Fetches go to public addresses only.
