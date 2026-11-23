@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"archive/tar"
@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 // tarGz writes entries as a gzip-compressed archive; a zero Type is a
@@ -223,15 +224,15 @@ func TestExtractBundleRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
 			dir := filepath.Join(parent, "out")
-			_, _, err := extractBundle(bytes.NewReader(tc.archive), dir)
+			_, _, err := cli.ExtractBundle(bytes.NewReader(tc.archive), dir)
 			if err == nil {
-				t.Fatalf("extractBundle(%s) = nil error, want one", tc.name)
+				t.Fatalf("cli.ExtractBundle(%s) = nil error, want one", tc.name)
 			}
-			if got := errors.Is(err, errUnsafeEntry); got != tc.unsafe {
-				t.Errorf("extractBundle(%s) = %v; unsafe %t, want %t", tc.name, err, got, tc.unsafe)
+			if got := errors.Is(err, cli.ErrUnsafeEntry); got != tc.unsafe {
+				t.Errorf("cli.ExtractBundle(%s) = %v; unsafe %t, want %t", tc.name, err, got, tc.unsafe)
 			}
 			if _, err := os.Lstat(filepath.Join(parent, "escape")); err == nil {
-				t.Errorf("extractBundle(%s) wrote outside the directory", tc.name)
+				t.Errorf("cli.ExtractBundle(%s) wrote outside the directory", tc.name)
 			}
 		})
 	}
@@ -261,16 +262,16 @@ func TestExtractBundleRefusesSymlinksInTheDirectory(t *testing.T) {
 			if err := os.Symlink(target, filepath.Join(dir, tc.link)); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err := extractBundle(bytes.NewReader(tarGz(t, tarEntry{Name: tc.entry, Content: "new"})), dir)
+			_, _, err := cli.ExtractBundle(bytes.NewReader(tarGz(t, tarEntry{Name: tc.entry, Content: "new"})), dir)
 			if err == nil {
-				t.Errorf("extractBundle(%s) through the symlink %s = nil error, want one", tc.entry, tc.link)
+				t.Errorf("cli.ExtractBundle(%s) through the symlink %s = nil error, want one", tc.entry, tc.link)
 			}
 			if b, _ := os.ReadFile(filepath.Join(dir, "other.html")); string(b) != "old" {
-				t.Errorf("extractBundle(%s) changed other.html to %q", tc.entry, b)
+				t.Errorf("cli.ExtractBundle(%s) changed other.html to %q", tc.entry, b)
 			}
 			for _, p := range []string{filepath.Join(parent, "escape"), filepath.Join(dir, "assets", "site.css")} {
 				if _, err := os.Lstat(p); err == nil {
-					t.Errorf("extractBundle(%s) wrote %s through the symlink %s", tc.entry, p, tc.link)
+					t.Errorf("cli.ExtractBundle(%s) wrote %s through the symlink %s", tc.entry, p, tc.link)
 				}
 			}
 		})
@@ -288,7 +289,7 @@ func TestExtractBundleRefusesTwoPathsOneFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := tarGz(t, tarEntry{Name: "a.html", Content: "a"}, tarEntry{Name: "b.html", Content: "b"})
-	if _, _, err := extractBundle(bytes.NewReader(archive), dir); !errors.Is(err, errUnsafeEntry) {
-		t.Errorf("extractBundle of two paths that are one file = %v, want %v", err, errUnsafeEntry)
+	if _, _, err := cli.ExtractBundle(bytes.NewReader(archive), dir); !errors.Is(err, cli.ErrUnsafeEntry) {
+		t.Errorf("extractBundle of two paths that are one file = %v, want %v", err, cli.ErrUnsafeEntry)
 	}
 }

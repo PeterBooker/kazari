@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/cli"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/views"
 )
@@ -36,9 +36,9 @@ func open(t *testing.T, addr, url string, edit func(r *http.Request)) {
 	}
 }
 
-func publishPage(t *testing.T, ctx context.Context, addr, slug string) *cli.Client {
+func publishPage(t *testing.T, ctx context.Context, addr, slug string) *apiclient.Client {
 	t.Helper()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	alice := member(t, ctx, admin, addr, "alice")
 	if _, err := alice.Create(ctx, api.CreateArtifactRequest{Slug: slug, Files: []api.FileInput{
 		{Path: "index.html", Content: "<h1>page</h1>"},

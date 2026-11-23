@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/PeterBooker/kazari/internal/apiclient"
 )
 
 // LoginCmd saves the API URL and a key once /me accepts them.
@@ -52,7 +53,7 @@ func (c *LoginCmd) Run(r *runner) error {
 		return err
 	}
 	r.apiURL = apiURL
-	me, err := r.newClient(apiURL, key).Me(r.ctx)
+	me, err := r.newClient(apiURL, key, "", apiclient.Options{}).Me(r.ctx)
 	if err != nil {
 		return err
 	}
@@ -76,8 +77,8 @@ func (c *LoginCmd) Run(r *runner) error {
 func (r *runner) readKey(apiURL string) (string, error) {
 	var line string
 	read := func() error {
-		s, err := bufio.NewReader(r.stdin).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		s, err := r.readLine(bufio.NewReader(r.stdin))
+		if err != nil {
 			return fmt.Errorf("login: read the key: %w", err)
 		}
 		line = strings.TrimSpace(s)

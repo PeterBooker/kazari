@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"strings"
@@ -12,15 +13,27 @@ import (
 	"google.golang.org/grpc/grpclog"
 )
 
-// CaptureLibraryLogs sends what the OpenTelemetry SDK and gRPC log by
-// themselves to l; left alone, both write plain text to stderr whatever
-// log.format says. Their errors are telemetry problems, logged at warn like
-// Kazari's own, and the rest is for debugging. Both loggers are process-wide
-// and gRPC's must be set before its first use, so serve calls this once,
-// before New.
+// CaptureLibraryLogs sends what the OpenTelemetry SDK, gRPC and the
+// standard log package log by themselves to l; left alone, they write plain
+// text to stderr whatever log.format says. The OpenTelemetry and gRPC errors
+// are telemetry problems, logged at warn like Kazari's own, and the rest is
+// for debugging. The standard log package carries certmagic's recovered
+// panics and OCSP warnings, at warn. These loggers are process-wide and
+// gRPC's must be set before its first use, so serve calls this once, before
+// New.
 func CaptureLibraryLogs(l *slog.Logger) {
 	otel.SetLogger(otelLogger(l))
 	grpclog.SetLoggerV2(grpcLogger{l.With("logger", "grpc")})
+	log.SetFlags(0)
+	log.SetOutput(stdLogger{l.With("logger", "stdlib")})
+}
+
+// stdLogger logs each line the standard log package writes at warn.
+type stdLogger struct{ log *slog.Logger }
+
+func (s stdLogger) Write(p []byte) (int, error) {
+	s.log.Warn(strings.TrimSuffix(string(p), "\n"))
+	return len(p), nil
 }
 
 func otelLogger(l *slog.Logger) logr.Logger {

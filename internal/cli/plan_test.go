@@ -1,13 +1,57 @@
-package cli
+package cli_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/PeterBooker/kazari/internal/api"
 )
+
+type plannedFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type skipped struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// dryPlan is what --dry-run --json prints.
+type dryPlan struct {
+	Files     []plannedFile `json:"files"`
+	Unchanged []plannedFile `json:"unchanged"`
+	Skipped   []skipped     `json:"skipped"`
+	Removed   []string      `json:"removed"`
+	Bytes     int64         `json:"bytes"`
+}
+
+func (p dryPlan) paths() []string {
+	out := []string{}
+	for _, f := range p.Files {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
+// planOf is the plan publish --dry-run prints for src, and the summary.
+func planOf(t *testing.T, src string) (dryPlan, string) {
+	t.Helper()
+	r := runCLI(t, nil, "--json", "publish", src, "--slug", "demo", "--dry-run")
+	var p dryPlan
+	if err := json.Unmarshal([]byte(r.stdout), &p); err != nil || r.code != 0 {
+		t.Fatalf("publish %s --dry-run --json: %+v: %v", src, r, err)
+	}
+	r = runCLI(t, nil, "publish", src, "--slug", "demo", "--dry-run")
+	return p, strings.TrimPrefix(strings.TrimSuffix(r.stderr, "\n"), "dry run, nothing sent: ")
+}
 
 // fakeKey has the shape of an API key, so the scan must find it.
 var fakeKey = "kzk_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 52)
@@ -17,13 +61,13 @@ func TestPlanBundle(t *testing.T) {
 		name        string
 		files       map[string]string
 		wantFiles   []string
-		wantSkipped []skippedFile
+		wantSkipped []skipped
 	}{
 		{
 			name:      "dotfiles but .well-known",
 			files:     map[string]string{"index.html": "x", ".env": "A=1", ".git/HEAD": "ref", ".well-known/security.txt": "s"},
 			wantFiles: []string{".well-known/security.txt", "index.html"},
-			wantSkipped: []skippedFile{
+			wantSkipped: []skipped{
 				{Path: ".env", Reason: "dotfile"},
 				{Path: ".git", Reason: "dotfile"},
 			},
@@ -33,7 +77,7 @@ func TestPlanBundle(t *testing.T) {
 			files: map[string]string{"index.html": "x", "server.pem": "p", "tls.KEY": "k", "id_rsa.pub": "pub",
 				"id_ed25519": "k", "credentials.json": "{}", "vault.kdbx": "v", "cert.p12": "c", "keyboard.html": "fine"},
 			wantFiles: []string{"index.html", "keyboard.html"},
-			wantSkipped: []skippedFile{
+			wantSkipped: []skipped{
 				{Path: "cert.p12", Reason: "looks like a secret"},
 				{Path: "credentials.json", Reason: "looks like a secret"},
 				{Path: "id_ed25519", Reason: "looks like a secret"},
@@ -48,7 +92,7 @@ func TestPlanBundle(t *testing.T) {
 			files: map[string]string{"index.html": "x", "deploy.sh": "export KAZARI_TOKEN=" + fakeKey + "\n",
 				"big.js": strings.Repeat("x", 64<<10-10) + fakeKey, "docs.html": "kzk_ab12cd34_..."},
 			wantFiles:   []string{"docs.html", "index.html"},
-			wantSkipped: []skippedFile{{Path: "big.js", Reason: "looks like a secret"}, {Path: "deploy.sh", Reason: "looks like a secret"}},
+			wantSkipped: []skipped{{Path: "big.js", Reason: "looks like a secret"}, {Path: "deploy.sh", Reason: "looks like a secret"}},
 		},
 		{
 			name: "kazariignore",
@@ -63,10 +107,7 @@ func TestPlanBundle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := planBundle(writeTree(t, tt.files))
-			if err != nil {
-				t.Fatal(err)
-			}
+			p, _ := planOf(t, writeTree(t, tt.files))
 			if diff := cmp.Diff(tt.wantFiles, p.paths()); diff != "" {
 				t.Errorf("files (-want +got):\n%s", diff)
 			}
@@ -87,15 +128,12 @@ func TestPlanBundleSymlinks(t *testing.T) {
 	if err := os.Symlink(site, link); err != nil {
 		t.Fatal(err)
 	}
-	p, err := planBundle(link)
-	if err != nil {
-		t.Fatalf("planBundle(%s), a symlink to a directory: %v", link, err)
-	}
+	p, summary := planOf(t, link)
 	if diff := cmp.Diff([]string{"index.html", "real.png"}, p.paths()); diff != "" {
 		t.Errorf("files (-want +got):\n%s", diff)
 	}
-	if want := "2 files, 14 B; skipped: logo.png (symlink)"; p.summary() != want {
-		t.Errorf("summary = %q, want %q", p.summary(), want)
+	if want := "2 files, 14 B; skipped: logo.png (symlink)"; summary != want {
+		t.Errorf("summary = %q, want %q", summary, want)
 	}
 }
 
@@ -104,38 +142,39 @@ func TestPlanBundleSingleFile(t *testing.T) {
 	tests := []struct {
 		file        string
 		wantFiles   []string
-		wantSkipped []skippedFile
+		wantSkipped []skipped
 	}{
 		{"Report.HTML", []string{"index.html"}, nil},
 		{"data.csv", []string{"data.csv"}, nil},
-		{"id_rsa", []string{}, []skippedFile{{Path: "id_rsa", Reason: "looks like a secret"}}},
+	}
+	if r := runCLI(t, nil, "publish", filepath.Join(dir, "id_rsa"), "--slug", "demo", "--dry-run"); r.code != exitError ||
+		!strings.Contains(r.stderr, "nothing to publish in "+filepath.Join(dir, "id_rsa")+" (0 files, 0 B; skipped: id_rsa (looks like a secret))") {
+		t.Errorf("publish id_rsa: %+v, want nothing to publish", r)
 	}
 	for _, tt := range tests {
-		p, err := planBundle(filepath.Join(dir, tt.file))
-		if err != nil {
-			t.Fatalf("planBundle(%s): %v", tt.file, err)
-		}
+		p, _ := planOf(t, filepath.Join(dir, tt.file))
 		if diff := cmp.Diff(tt.wantFiles, p.paths()); diff != "" {
-			t.Errorf("planBundle(%s) files (-want +got):\n%s", tt.file, diff)
+			t.Errorf("publish %s: files (-want +got):\n%s", tt.file, diff)
 		}
 		if diff := cmp.Diff(tt.wantSkipped, p.Skipped); diff != "" {
-			t.Errorf("planBundle(%s) skipped (-want +got):\n%s", tt.file, diff)
+			t.Errorf("publish %s: skipped (-want +got):\n%s", tt.file, diff)
 		}
 	}
 }
 
 func TestPlanSummary(t *testing.T) {
-	p := &bundlePlan{Bytes: 312 << 10, Removed: []string{"sub/a.txt"}}
-	for range 14 {
-		p.Files = append(p.Files, bundleFile{})
+	files := map[string]string{}
+	for i := range 14 {
+		files[fmt.Sprintf("f%02d.txt", i)] = strings.Repeat("x", 312<<10/14)
 	}
 	for i := range 12 {
-		p.Skipped = append(p.Skipped, skippedFile{Path: string(rune('a' + i)), Reason: "dotfile"})
+		files[fmt.Sprintf(".%c", 'a'+i)] = "x"
 	}
-	want := "14 files, 312.0 KiB; skipped: a (dotfile), b (dotfile), c (dotfile), d (dotfile), e (dotfile), " +
-		"f (dotfile), g (dotfile), h (dotfile), i (dotfile), j (dotfile) and 2 more; removed: sub/a.txt"
-	if got := p.summary(); got != want {
-		t.Errorf("summary =\n %q\nwant\n %q", got, want)
+	_, summary := planOf(t, writeTree(t, files))
+	want := "14 files, 312 KiB; skipped: .a (dotfile), .b (dotfile), .c (dotfile), .d (dotfile), .e (dotfile), " +
+		".f (dotfile), .g (dotfile), .h (dotfile), .i (dotfile), .j (dotfile) and 2 more"
+	if summary != want {
+		t.Errorf("summary =\n %q\nwant\n %q", summary, want)
 	}
 }
 
@@ -147,18 +186,25 @@ func TestSlugFor(t *testing.T) {
 		{filepath.Join(dir, "My Site"), "my-site", ""},
 		{filepath.Join(dir, "My Site") + "/", "my-site", ""},
 		{filepath.Join(dir, "Q3 Report.html"), "q3-report", ""},
-		{filepath.Join(dir, "a"), "", `publish: "a" does not make a slug; give --slug`},
+		{filepath.Join(dir, "a"), "", `kazari: publish: "a" does not make a slug; give --slug` + "\n"},
 	}
 	for _, tt := range tests {
-		got, err := slugFor("publish", "", tt.src)
+		var slug any
+		_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
+			"POST /v1/artifacts": func(w http.ResponseWriter, r *http.Request) {
+				slug = decodeBundleRequest(t, r).manifest["slug"]
+				reply(w, 201, api.PublishResult{URL: "https://x.art.test", Version: 1})
+			},
+		})
+		r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "publish", tt.src)
 		if tt.wantErr != "" {
-			if err == nil || err.Error() != tt.wantErr {
-				t.Errorf("slugFor(%q) = %q, %v; want error %q", tt.src, got, err, tt.wantErr)
+			if r.code != exitUsage || r.stderr != tt.wantErr {
+				t.Errorf("publish %s: %+v, want exit %d and %q", tt.src, r, exitUsage, tt.wantErr)
 			}
 			continue
 		}
-		if err != nil || got != tt.want {
-			t.Errorf("slugFor(%q) = %q, %v; want %q", tt.src, got, err, tt.want)
+		if r.code != 0 || slug != tt.want {
+			t.Errorf("publish %s: %+v, slug %v; want %q", tt.src, r, slug, tt.want)
 		}
 	}
 }

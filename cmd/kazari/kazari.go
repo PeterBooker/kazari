@@ -3,17 +3,37 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
 func main() {
-	os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, clientEnv()))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// The first signal lets the command stop and say what it left behind;
+	// a second one ends the process at once.
+	context.AfterFunc(ctx, stop)
+	code := cli.Run(ctx, os.Args[1:], processEnv())
+	stop()
+	os.Exit(code)
+}
+
+func processEnv() cli.Env {
+	return cli.Env{
+		Stdin:         os.Stdin,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		LookupEnv:     clientEnv(),
+		IsTerminal:    cli.IsTerminal,
+		DefaultConfig: cli.DefaultConfigPath,
+	}
 }
 
 // clientEnv lets the dotenv file named by $KAZARI_ENV_FILE hold the client's

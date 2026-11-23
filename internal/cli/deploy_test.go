@@ -1,16 +1,20 @@
-package cli
+package cli_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 func TestRunDeploy(t *testing.T) {
@@ -89,7 +93,7 @@ func TestRunDeploy(t *testing.T) {
 	}
 
 	r = runCLI(t, nil, append(base, "--json", "deploy", site, "--base", "3", "--dry-run")...)
-	var plan bundlePlan
+	var plan dryPlan
 	if err := json.Unmarshal([]byte(r.stdout), &plan); err != nil || r.code != 0 {
 		t.Fatalf("deploy --dry-run --json: %+v: %v", r, err)
 	}
@@ -196,6 +200,42 @@ func TestRunUpdateUnchanged(t *testing.T) {
 	}
 }
 
+// Ctrl-C at a prompt ends the command, which would otherwise wait for a
+// line, and leaves the terminal as it was.
+func TestPromptInterrupted(t *testing.T) {
+	for _, args := range [][]string{
+		{"rm", "demo", "--hard"},
+		{"--url", "http://127.0.0.1:1", "--token", "t", "share", "create", "demo", "--password"},
+		{"login", "--url", "http://127.0.0.1:1"},
+	} {
+		t.Run(args[len(args)-1], func(t *testing.T) {
+			stdin, typing := io.Pipe()
+			t.Cleanup(func() { typing.Close() })
+			var stderr lockedBuffer
+			ctx, interrupt := context.WithCancel(t.Context())
+			done := make(chan int, 1)
+			go func() {
+				done <- cli.Run(ctx, args, cli.Env{Stdin: stdin, Stderr: &stderr,
+					LookupEnv:  envMap(map[string]string{"HOME": t.TempDir()}),
+					IsTerminal: func(stream any) bool { return stream == stdin }})
+			}()
+			deadline := time.Now().Add(10 * time.Second)
+			for !strings.Contains(stderr.String(), ": ") && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			interrupt()
+			select {
+			case code := <-done:
+				if code != exitError || !strings.Contains(stderr.String(), "interrupted") {
+					t.Errorf("kazari %s interrupted at its prompt: exit %d, stderr %q", strings.Join(args, " "), code, stderr.String())
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("kazari %s still waits for a line after the interrupt", strings.Join(args, " "))
+			}
+		})
+	}
+}
+
 func TestRunRmHardOnATerminal(t *testing.T) {
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
 		"DELETE /v1/artifacts/demo": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) },
@@ -234,7 +274,7 @@ func TestRunFilesLs(t *testing.T) {
 	})
 	base := []string{"--url", srv.URL, "--token", "t", "files", "ls", "demo"}
 	r := runCLI(t, nil, base...)
-	want := "PATH        SIZE     TYPE       HASH\nindex.html  2.0 KiB  text/html  sha256:bbbbbbbbbbbb\n"
+	want := "PATH        SIZE   TYPE       HASH\nindex.html  2 KiB  text/html  sha256:bbbbbbbbbbbb\n"
 	if r.code != 0 || r.stdout != want {
 		t.Errorf("files ls (the published version 2): %+v, want %q", r, want)
 	}
@@ -307,8 +347,8 @@ func TestRunURLForms(t *testing.T) {
 		"api.kazari.localhost:8080/v1":    "http://api.kazari.localhost:8080",
 		"HTTPS://api.art.test:8443/v1/v1": "https://api.art.test:8443",
 	} {
-		if got, err := normalizeURL(in); got != want || err != nil {
-			t.Errorf("normalizeURL(%q) = %q, %v; want %q", in, got, err, want)
+		if got, err := cli.NormalizeURL(in); got != want || err != nil {
+			t.Errorf("cli.NormalizeURL(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
 }
@@ -331,11 +371,15 @@ func TestRunPlainHTTP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &runner{lookupEnv: envMap(tt.env), g: &CLI{}}
-			r.g.AllowHTTP = len(tt.args) > 0
-			err := r.checkScheme(tt.url, "t")
-			if (err == nil) != tt.ok {
-				t.Errorf("checkScheme(%q) = %v, want ok %t", tt.url, err, tt.ok)
+			rec := &recorder{}
+			env := map[string]string{"HOME": t.TempDir()}
+			maps.Copy(env, tt.env)
+			r := runEnv(t, cli.Env{LookupEnv: envMap(env), Transport: rec}, append(tt.args, "--url", tt.url, "--token", "t", "me")...)
+			if sent := len(rec.seen) > 0; sent != tt.ok || (r.code == 0) != tt.ok {
+				t.Errorf("me --url %s: %+v, sent %t; want sent and exit 0 to be %t", tt.url, r, sent, tt.ok)
+			}
+			if !tt.ok && !strings.Contains(r.stderr, "not sending the key") {
+				t.Errorf("me --url %s: stderr %q, want it to say why", tt.url, r.stderr)
 			}
 		})
 	}

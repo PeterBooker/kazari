@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
-	"os/signal"
 	"strings"
 	"syscall"
 
@@ -16,8 +14,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/telemetry"
 )
-
-const defaultConfigPath = "/etc/kazari/kazari.yaml"
 
 // serverFlags are shared by serve and check; each command adds its own
 // --local, whose help differs.
@@ -34,25 +30,23 @@ func (f *serverFlags) load(r *runner, local bool, cmd string) (cfg config.Config
 	}
 	if local {
 		cfg, origin, err = config.LoadLocal(envFile)
-		return cfg, origin, wrapConfig(err, origin, cmd)
+		return cfg, origin, r.wrapConfig(err, origin, cmd)
 	}
 	path := f.Config
 	if path == "" {
 		path = r.env("KAZARI_CONFIG")
 	}
 	if path == "" {
-		if _, err := os.Stat(defaultConfigPath); err == nil {
-			path = defaultConfigPath
-		}
+		path = r.existingDefaultConfig()
 	}
 	cfg, origin, err = config.Load(path, envFile)
-	return cfg, origin, wrapConfig(err, origin, cmd)
+	return cfg, origin, r.wrapConfig(err, origin, cmd)
 }
 
 // wrapConfig makes a configuration error exit 2, with what may explain it:
 // a dotenv file that could not be read, no configuration file at all, and
 // a pointer to the docs.
-func wrapConfig(err error, origin config.Origin, cmd string) error {
+func (r *runner) wrapConfig(err error, origin config.Origin, cmd string) error {
 	if err == nil {
 		return nil
 	}
@@ -64,8 +58,11 @@ func wrapConfig(err error, origin config.Origin, cmd string) error {
 		notes = append(notes, fmt.Sprintf("%s was skipped; run kazari %s as root, or name a readable file with --env-file", origin.Unreadable, cmd))
 	}
 	if origin.File == "" && origin.Preset == "" {
-		notes = append(notes, "no configuration file: none was named with --config or $KAZARI_CONFIG, and "+defaultConfigPath+
-			" does not exist; to try Kazari on this machine, run kazari "+cmd+" --local")
+		none := "no configuration file: none was named with --config or $KAZARI_CONFIG"
+		if r.defaultConfig != "" {
+			none += ", and " + r.defaultConfig + " does not exist"
+		}
+		notes = append(notes, none+"; to try Kazari on this machine, run kazari "+cmd+" --local")
 	}
 	see := "see https://kazari.io/docs/configuration/"
 	if cmd != "check" {
@@ -87,15 +84,12 @@ func (c *ServeCmd) Run(r *runner) error {
 		return err
 	}
 	logger := cfg.Logger(r.stderr, journald(r.env("JOURNAL_STREAM"), r.stderr))
-	slog.SetDefault(logger)
 	telemetry.CaptureLibraryLogs(logger)
-	ctx, stop := signal.NotifyContext(r.ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	a, err := app.New(ctx, cfg, app.Options{Logger: logger, Origin: origin})
+	a, err := app.New(r.ctx, cfg, app.Options{Logger: logger, Origin: origin, Stderr: r.stderr})
 	if err != nil {
 		return err
 	}
-	return a.Run(ctx)
+	return a.Run(r.ctx)
 }
 
 // journald reports whether w is the journal stream systemd connected, which

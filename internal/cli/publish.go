@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 // artifactFlags are the fields publish and deploy set on the artifact.
@@ -17,7 +20,7 @@ type artifactFlags struct {
 	Name        *string           `help:"Display name (default: the <title> of index.html)." placeholder:"NAME"`
 	Description *string           `help:"Description." placeholder:"TEXT"`
 	Label       string            `help:"Version label." placeholder:"LABEL"`
-	Visibility  string            `help:"public, unlisted or members (default: the instance's)." placeholder:"VISIBILITY"`
+	Visibility  string            `help:"public, unlisted or members (default: the instance's)." enum:"public,unlisted,members," default:"" placeholder:"VISIBILITY"`
 	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
 }
 
@@ -26,7 +29,7 @@ type PublishCmd struct {
 	Dir  string `arg:"" help:"Directory to publish, or one file (an HTML file becomes index.html)."`
 	Slug string `help:"Artifact slug (default: the directory's or file's name)." placeholder:"SLUG"`
 	artifactFlags
-	Update bool `help:"The same as kazari deploy: if the slug exists, add a version that mirrors the directory."`
+	Update bool `help:"The same as kazari deploy: if the slug exists, add a version that mirrors the directory, sending only the files that changed."`
 	Base   int  `help:"With --update, the version to build on; needed when an earlier version is published." placeholder:"N"`
 	DryRun bool `name:"dry-run" help:"List what would be sent, skipped and removed, and send nothing."`
 }
@@ -35,7 +38,8 @@ func (c *PublishCmd) Run(r *runner) error {
 	if c.Base != 0 && !c.Update {
 		return usagef("publish: --base needs --update; a new artifact has no versions")
 	}
-	return r.publish("publish", c.Dir, c.Slug, &c.artifactFlags, c.Update, c.Base, false, c.DryRun)
+	return r.publish(publishOptions{cmd: "publish", src: c.Dir, slug: c.Slug, fields: &c.artifactFlags,
+		mirror: c.Update, base: c.Base, dryRun: c.DryRun})
 }
 
 // DeployCmd makes an artifact match a directory.
@@ -45,33 +49,43 @@ type DeployCmd struct {
 	artifactFlags
 	Base   int  `help:"The version to build on and delete from; needed when an earlier version is published." placeholder:"N"`
 	Stage  bool `help:"Add the version without publishing it, for review at its version URL; kazari rollback SLUG N publishes it."`
-	DryRun bool `name:"dry-run" help:"List what would be sent, skipped and removed, and send nothing."`
+	DryRun bool `name:"dry-run" help:"List what would be sent, left unchanged, skipped and removed, and send nothing."`
 }
 
 func (c *DeployCmd) Run(r *runner) error {
-	return r.publish("deploy", c.Dir, c.Slug, &c.artifactFlags, true, c.Base, c.Stage, c.DryRun)
+	return r.publish(publishOptions{cmd: "deploy", src: c.Dir, slug: c.Slug, fields: &c.artifactFlags,
+		mirror: true, base: c.Base, stage: c.Stage, dryRun: c.DryRun})
+}
+
+// publishOptions are what publish and deploy ask of runner.publish.
+type publishOptions struct {
+	cmd, src, slug string
+	fields         *artifactFlags
+	// mirror makes an existing artifact match src, from its base version.
+	mirror bool
+	base   int
+	stage  bool
+	dryRun bool
 }
 
 // publish creates the artifact, or with mirror adds a version holding
-// exactly the plan's files when the slug exists.
-func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, base int, stage, dryRun bool) error {
-	switch f.Visibility {
-	case "", "public", "unlisted", "members":
-	default:
-		return usagef("%s: --visibility must be public, unlisted or members", cmd)
-	}
-	slug, err := slugFor(cmd, slug, src)
+// exactly the plan's files when the slug exists, sending only the files the
+// base version does not already hold.
+func (r *runner) publish(o publishOptions) error {
+	f := o.fields
+	slug, err := slugFor(o.cmd, o.slug, o.src)
 	if err != nil {
 		return err
 	}
-	plan, err := planBundle(src)
+	plan, err := planBundle(o.src)
 	if err != nil {
 		return err
 	}
+	defer plan.close()
 	if len(plan.Files) == 0 {
-		return fmt.Errorf("%s: nothing to publish in %s (%s)", cmd, src, plan.summary())
+		return fmt.Errorf("%s: nothing to publish in %s (%s)", o.cmd, o.src, plan.summary())
 	}
-	if dryRun && !mirror {
+	if o.dryRun && !o.mirror {
 		return r.printPlan(plan)
 	}
 	cl, err := r.userClient()
@@ -87,40 +101,41 @@ func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, b
 			Metadata: nilIfEmpty(f.Meta), Label: f.Label,
 		}, bundle)
 	}
+	sent := plan
 	// update mirrors onto the base version: what it has and the plan does
-	// not is deleted.
+	// not is deleted, and what it has as the plan has it is not sent.
 	update := func() (*api.PublishResult, bool, error) {
-		want := LatestVersion
-		if base > 0 {
-			want = base
+		want := apiclient.LatestVersion
+		if o.base > 0 {
+			want = o.base
 		}
 		cur, v, err := cl.VersionFiles(r.ctx, slug, want)
 		if err != nil {
 			return nil, false, err
 		}
-		plan.Removed = removedFiles(v.Files, plan.paths())
-		if dryRun {
-			return nil, true, r.printPlan(plan)
+		sent = plan.mirror(v.Files)
+		if o.dryRun {
+			return nil, true, r.printPlan(sent)
 		}
-		m := api.UpdateArtifactRequest{Label: f.Label, ExpectedVersion: cur.Artifact.LatestVersion, BaseVersion: base,
-			Stage: stage, Name: f.Name, Description: f.Description, Metadata: metaPatch(f.Meta)}
+		m := api.UpdateArtifactRequest{Label: f.Label, ExpectedVersion: cur.Artifact.LatestVersion, BaseVersion: o.base,
+			Stage: o.stage, Name: f.Name, Description: f.Description, Metadata: metaPatch(f.Meta)}
 		if f.Visibility != "" {
 			m.Visibility = &f.Visibility
 		}
-		for _, p := range plan.Removed {
+		for _, p := range sent.Removed {
 			m.Files = append(m.Files, api.FileInput{Path: p, Delete: true})
 		}
-		bundle := plan.reader()
+		bundle := sent.reader()
 		defer bundle.Close()
 		res, err := cl.UpdateBundle(r.ctx, slug, m, bundle)
 		return res, false, r.baseHint(err, cl, slug)
 	}
 
 	var res *api.PublishResult
-	if !mirror {
+	if !o.mirror {
 		res, err = create()
-		if IsCode(err, api.CodeSlugTaken) && strings.Contains(err.Error(), "already taken") {
-			err = withHints(err, fmt.Sprintf("to make it match %s: kazari deploy %s --slug %s", src, shellQuote(src), slug))
+		if apiclient.IsCode(err, api.CodeSlugTaken) && strings.Contains(err.Error(), "already taken") {
+			err = withHints(err, fmt.Sprintf("to make it match %s: kazari deploy %s --slug %s", o.src, shellQuote(o.src), slug))
 		}
 	} else {
 		var done bool
@@ -128,18 +143,19 @@ func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, b
 		switch {
 		case done:
 			return err
-		case IsCode(err, api.CodeNotFound) && stage:
-			return usagef("%s: --stage needs an existing artifact; %s does not exist, and a new one is published as version 1", cmd, slug)
-		case IsCode(err, api.CodeNotFound):
-			if dryRun {
+		case apiclient.IsCode(err, api.CodeNotFound) && o.stage:
+			return usagef("%s: --stage needs an existing artifact; %s does not exist, and a new one is published as version 1", o.cmd, slug)
+		case apiclient.IsCode(err, api.CodeNotFound):
+			sent = plan
+			if o.dryRun {
 				fmt.Fprintf(r.stderr, "%s does not exist yet and would be created\n", slug)
 				return r.printPlan(plan)
 			}
 			res, err = create()
-			if IsCode(err, api.CodeSlugTaken) {
+			if apiclient.IsCode(err, api.CodeSlugTaken) {
 				// Created meanwhile, unless it is a slug the caller cannot
 				// see, whose create error says why.
-				if res2, _, err2 := update(); !IsCode(err2, api.CodeNotFound) {
+				if res2, _, err2 := update(); !apiclient.IsCode(err2, api.CodeNotFound) {
 					res, err = res2, err2
 				}
 			}
@@ -148,7 +164,7 @@ func (r *runner) publish(cmd, src, slug string, f *artifactFlags, mirror bool, b
 	if err != nil {
 		return err
 	}
-	return r.printPublished(slug, res, plan)
+	return r.printPublished(slug, res, sent)
 }
 
 // slugFor defaults the slug to the name of the directory or file, lower-
@@ -208,6 +224,7 @@ func (c *UpdateCmd) Run(r *runner) error {
 		if plan, err = planBundle(c.Dir); err != nil {
 			return err
 		}
+		defer plan.close()
 		plan.Removed = c.Delete
 	}
 	if c.DryRun {
@@ -236,8 +253,8 @@ func (c *UpdateCmd) Run(r *runner) error {
 
 // baseHint follows published_not_latest with the command run again with
 // either --base it needs.
-func (r *runner) baseHint(err error, cl *Client, slug string) error {
-	if !IsCode(err, api.CodePublishedNotLatest) {
+func (r *runner) baseHint(err error, cl userAPI, slug string) error {
+	if !apiclient.IsCode(err, api.CodePublishedNotLatest) {
 		return err
 	}
 	d, gerr := cl.Get(r.ctx, slug, false)
@@ -281,24 +298,26 @@ func shellQuote(s string) string {
 // printPlan is --dry-run's output: one line per file sent, deleted or
 // skipped, and the summary on stderr.
 func (r *runner) printPlan(p *bundlePlan) error {
-	if r.g.JSON {
-		return r.printJSON(p)
-	}
-	tw := newTable(r.stdout)
-	for _, f := range p.Files {
-		fmt.Fprintf(tw, "send\t%s\t%s\n", f.Path, humanSize(f.Size))
-	}
-	for _, path := range p.Removed {
-		fmt.Fprintf(tw, "delete\t%s\t\n", path)
-	}
-	for _, s := range p.Skipped {
-		fmt.Fprintf(tw, "skip\t%s\t%s\n", s.Path, s.Reason)
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	fmt.Fprintf(termSafe{r.stderr}, "dry run, nothing sent: %s\n", p.summary())
-	return nil
+	return r.emit(p, func(w io.Writer) error {
+		tw := newTable(w)
+		for _, f := range p.Files {
+			tw.row("send", f.Path, bytesize.Format(f.Size))
+		}
+		for _, f := range p.Unchanged {
+			tw.row("unchanged", f.Path, bytesize.Format(f.Size))
+		}
+		for _, path := range p.Removed {
+			tw.row("delete", path, "")
+		}
+		for _, s := range p.Skipped {
+			tw.row("skip", s.Path, s.Reason)
+		}
+		if err := tw.flush(); err != nil {
+			return err
+		}
+		fmt.Fprintf(termSafe{r.stderr}, "dry run, nothing sent: %s\n", p.summary())
+		return nil
+	})
 }
 
 // printPublished puts what was sent and what the server noticed on stderr,
@@ -314,16 +333,15 @@ func (r *runner) printPublished(slug string, res *api.PublishResult, plan *bundl
 	for _, w := range res.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", w)
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	out := termSafe{r.stdout}
-	if res.Version == 0 {
-		fmt.Fprintf(out, "%s → %s\n", slug, res.URL)
+	return r.emit(res, func(w io.Writer) error {
+		out := termSafe{w}
+		if res.Version == 0 {
+			fmt.Fprintf(out, "%s → %s\n", slug, res.URL)
+			return nil
+		}
+		fmt.Fprintln(out, versionLine(slug, res.Version, res.URL, res.VersionURL, res.Staged, res.Artifact.PublishedVersion))
 		return nil
-	}
-	fmt.Fprintln(out, versionLine(slug, res.Version, res.URL, res.VersionURL, res.Staged, res.Artifact.PublishedVersion))
-	return nil
+	})
 }
 
 // versionLine names the version a change made and where it opens; a staged

@@ -4,14 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/bytesize"
+	"github.com/PeterBooker/kazari/internal/config"
 )
+
+// emit prints v as JSON with --json, and else what text writes.
+func (r *runner) emit(v any, text func(w io.Writer) error) error {
+	if r.g.JSON {
+		return r.printJSON(v)
+	}
+	return text(r.stdout)
+}
 
 func (r *runner) printJSON(v any) error {
 	enc := json.NewEncoder(r.stdout)
@@ -23,11 +32,26 @@ func (r *runner) printJSON(v any) error {
 	return nil
 }
 
-// newTable goes through termSafe because its cells hold text other members
-// wrote.
-func newTable(w io.Writer) *tabwriter.Writer {
-	return tabwriter.NewWriter(termSafe{w}, 0, 0, 2, ' ', 0)
+// table lines up cells that hold text other members wrote: each cell stays
+// on its line and in its column, and goes through termSafe.
+type table struct{ w *tabwriter.Writer }
+
+func newTable(w io.Writer) *table { return newTablePadded(w, 2) }
+
+func newTablePadded(w io.Writer, padding int) *table {
+	return &table{tabwriter.NewWriter(termSafe{w}, 0, 0, padding, ' ', 0)}
 }
+
+// row writes one line of cells, each as fmt.Sprint writes it.
+func (t *table) row(cells ...any) {
+	parts := make([]string, len(cells))
+	for i, c := range cells {
+		parts[i] = oneLine(fmt.Sprint(c))
+	}
+	fmt.Fprintln(t.w, strings.Join(parts, "\t"))
+}
+
+func (t *table) flush() error { return t.w.Flush() }
 
 // termSafe replaces control characters but tab and newline, and the bidi
 // controls, with U+FFFD, so server text cannot drive or reorder the terminal.
@@ -94,51 +118,17 @@ func dash(s string) string {
 	return s
 }
 
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit && exp < 5; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
 func fmtQuota(used, quota int64) string {
 	if quota <= 0 {
-		return humanSize(used) + " used (no quota)"
+		return bytesize.Format(used) + " used (no quota)"
 	}
-	return fmt.Sprintf("%s of %s used", humanSize(used), humanSize(quota))
+	return fmt.Sprintf("%s of %s used", bytesize.Format(used), bytesize.Format(quota))
 }
 
+// parseSize reads a size as the configuration writes one, such as 500MiB.
 func parseSize(s string) (int64, error) {
-	t := strings.TrimSpace(s)
-	units := []struct {
-		suffix string
-		mult   int64
-	}{
-		{"kib", 1 << 10}, {"mib", 1 << 20}, {"gib", 1 << 30}, {"tib", 1 << 40},
-		{"kb", 1e3}, {"mb", 1e6}, {"gb", 1e9}, {"tb", 1e12},
-		{"k", 1 << 10}, {"m", 1 << 20}, {"g", 1 << 30}, {"t", 1 << 40},
-		{"b", 1},
-	}
-	mult := int64(1)
-	lower := strings.ToLower(t)
-	for _, u := range units {
-		if strings.HasSuffix(lower, u.suffix) {
-			mult = u.mult
-			t = strings.TrimSpace(t[:len(t)-len(u.suffix)])
-			break
-		}
-	}
-	f, err := strconv.ParseFloat(t, 64)
-	if err != nil || f < 0 {
-		return 0, fmt.Errorf("invalid size %q", s)
-	}
-	return int64(f * float64(mult)), nil
+	b, err := config.ParseBytes(s)
+	return int64(b), err
 }
 
 func shortHash(h string) string {

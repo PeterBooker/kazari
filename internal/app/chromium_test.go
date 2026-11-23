@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -183,8 +183,8 @@ func TestChromiumSignIn(t *testing.T) {
 		t.Error("the browser showed the client's callback page, but the client saw no request")
 	}
 
-	local := cli.NewClient("http://kazari", "", socketClient(in.app.Addrs().Socket))
-	events, err := local.Audit(t.Context(), cli.AuditParams{Actions: []string{"oauth.signin"}})
+	local := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(in.app.Addrs().Socket)})
+	events, err := local.Audit(t.Context(), apiclient.AuditParams{Actions: []string{"oauth.signin"}})
 	if err != nil {
 		t.Fatalf("Audit(oauth.signin): %v", err)
 	}

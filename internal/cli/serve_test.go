@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"archive/tar"
@@ -8,17 +8,41 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
+// lockedBuffer is written by the server's goroutines while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+var startedHTTP = regexp.MustCompile(`"?http"?[=:]"?(127\.0\.0\.1:[0-9]+)`)
+
 // startLocal runs kazari serve --local on a free port with its data in a
-// temporary directory and returns that directory and the environment the
-// client needs to find the socket.
-func startLocal(t *testing.T) (string, map[string]string) {
+// temporary directory and returns that directory, the environment the
+// client needs to find the socket, and the address it serves HTTP on.
+func startLocal(t *testing.T) (string, map[string]string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	// The server reads the process environment, as it does under main.
@@ -26,10 +50,10 @@ func startLocal(t *testing.T) (string, map[string]string) {
 	t.Setenv("KAZARI_LISTEN_HTTP", "127.0.0.1:0")
 	env := map[string]string{"HOME": t.TempDir(), "KAZARI_DATA_DIR": dir}
 	ctx, cancel := context.WithCancel(context.Background())
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- RunContext(ctx, []string{"serve", "--local"}, strings.NewReader(""), &stdout, &stderr, envMap(env))
+		done <- cli.Run(ctx, []string{"serve", "--local"}, cli.Env{Stdout: &stdout, Stderr: &stderr, LookupEnv: envMap(env)})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -45,8 +69,9 @@ func startLocal(t *testing.T) (string, map[string]string) {
 	socket := filepath.Join(dir, "admin.sock")
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if info, err := os.Stat(socket); err == nil && info.Mode().Type() == fs.ModeSocket {
-			return dir, env
+		m := startedHTTP.FindStringSubmatch(stderr.String())
+		if info, err := os.Stat(socket); err == nil && info.Mode().Type() == fs.ModeSocket && m != nil {
+			return dir, env, m[1]
 		}
 		select {
 		case code := <-done:
@@ -55,14 +80,14 @@ func startLocal(t *testing.T) (string, map[string]string) {
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no admin socket after 10s: %s", stderr.String())
+			t.Fatalf("no admin socket and HTTP address after 10s: %s", stderr.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 func TestServeLocalAdminSocket(t *testing.T) {
-	dir, env := startLocal(t)
+	dir, env, _ := startLocal(t)
 	socket := filepath.Join(dir, "admin.sock")
 
 	// Found from KAZARI_DATA_DIR: no URL, no token.
@@ -113,9 +138,10 @@ func TestServeConfigErrors(t *testing.T) {
 		t.Errorf("missing config file: %+v", r)
 	}
 	t.Chdir(t.TempDir())
-	r = runCLI(t, map[string]string{"HOME": t.TempDir()}, "check")
+	absent := filepath.Join(t.TempDir(), "kazari.yaml")
+	r = runEnv(t, cli.Env{LookupEnv: envMap(map[string]string{"HOME": t.TempDir()}), DefaultConfig: absent}, "check")
 	if r.code != 2 || !strings.Contains(r.stderr, "base_domain: required") ||
-		!strings.Contains(r.stderr, "no configuration file: none was named with --config or $KAZARI_CONFIG, and /etc/kazari/kazari.yaml does not exist") ||
+		!strings.Contains(r.stderr, "no configuration file: none was named with --config or $KAZARI_CONFIG, and "+absent+" does not exist") ||
 		!strings.Contains(r.stderr, "run kazari check --local") {
 		t.Errorf("unconfigured: %+v", r)
 	}
@@ -156,7 +182,7 @@ func TestCheckReportsSources(t *testing.T) {
 }
 
 func TestBackupStreamAndRestore(t *testing.T) {
-	dir, env := startLocal(t)
+	dir, env, _ := startLocal(t)
 	if r := runCLI(t, env, "admin", "users", "create", "ana", "--role", "admin"); r.code != 0 {
 		t.Fatalf("create user: %+v", r)
 	}
@@ -220,13 +246,13 @@ func TestJournald(t *testing.T) {
 	st := fi.Sys().(*syscall.Stat_t)
 	stream := fmt.Sprintf("%d:%d", st.Dev, st.Ino)
 
-	if !journald(stream, f) {
+	if !cli.Journald(stream, f) {
 		t.Error("stderr is the stream JOURNAL_STREAM names, but journald = false")
 	}
-	if journald(fmt.Sprintf("%d:%d", st.Dev, st.Ino+1), f) {
+	if cli.Journald(fmt.Sprintf("%d:%d", st.Dev, st.Ino+1), f) {
 		t.Error("journald = true for another inode, as after a redirect")
 	}
-	if journald("", f) || journald(stream, &bytes.Buffer{}) {
+	if cli.Journald("", f) || cli.Journald(stream, &bytes.Buffer{}) {
 		t.Error("journald = true without JOURNAL_STREAM or without a file")
 	}
 }

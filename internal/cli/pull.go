@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 // PullCmd writes a version's files to a directory.
@@ -33,7 +35,7 @@ func (c *PullCmd) Run(r *runner) error {
 		dir = c.Slug
 	}
 	// Before the download, which may be large.
-	if err := pullTarget(dir, c.Force); err != nil {
+	if err := emptyDir("pull", dir, c.Force, ", or add --force to replace the files the version holds"); err != nil {
 		return err
 	}
 	cl, err := r.userClient()
@@ -67,20 +69,14 @@ func (c *PullCmd) Run(r *runner) error {
 			NotDeployed []string `json:"not_deployed,omitempty"`
 		}{c.Slug, version, dir, len(pulled), size, left})
 	}
-	noun := "files"
-	if len(pulled) == 1 {
-		noun = "file"
-	}
-	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %d %s, %s\n", version, c.Slug, dir, len(pulled), noun, humanSize(size))
+	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %s, %s\n", version, c.Slug, dir, count(len(pulled), "file"), bytesize.Format(size))
 	return nil
 }
 
 // stream writes the archive as the server sent it, for a pipeline.
 func (c *PullCmd) stream(r *runner) error {
-	if f, ok := r.stdout.(*os.File); ok {
-		if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-			return usagef("pull -: standard output is a terminal; redirect it to a file, such as > %s.tar.gz", c.Slug)
-		}
+	if err := r.notTerminal("pull -", c.Slug+".tar.gz"); err != nil {
+		return err
 	}
 	cl, err := r.userClient()
 	if err != nil {
@@ -97,26 +93,35 @@ func (c *PullCmd) stream(r *runner) error {
 	return nil
 }
 
-// pullTarget reports why dir cannot take a pull: without force it must be
-// empty or not exist yet.
-func pullTarget(dir string, force bool) error {
+// emptyDir reports why dir cannot take what cmd writes: it must be an empty
+// directory or not exist yet, or with force any directory.
+func emptyDir(cmd, dir string, force bool, forceHint string) error {
+	const want = "name an empty directory or one that does not exist yet"
 	info, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil
 	case err != nil:
-		return fmt.Errorf("pull: %w", err)
+		return fmt.Errorf("%s: %w", cmd, err)
 	case !info.IsDir():
-		return usagef("pull: %s is a file; name a directory", dir)
+		return usagef("%s: %s is a file; %s", cmd, dir, want)
 	case force:
 		return nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("pull: %w", err)
+		return fmt.Errorf("%s: %w", cmd, err)
 	}
 	if len(entries) > 0 {
-		return usagef("pull: %s is not empty; name an empty directory or one that does not exist yet, or add --force to replace the files the version holds", dir)
+		return usagef("%s: %s is not empty; %s%s", cmd, dir, want, forceHint)
+	}
+	return nil
+}
+
+// notTerminal stops cmd writing an archive to a terminal.
+func (r *runner) notTerminal(cmd, file string) error {
+	if r.isTerminal(r.stdout) {
+		return usagef("%s: standard output is a terminal; redirect it to a file, such as > %s", cmd, file)
 	}
 	return nil
 }
@@ -256,6 +261,7 @@ func notDeployed(dir string, pulled []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan.close()
 	sent := make(map[string]bool, len(plan.Files))
 	for _, f := range plan.Files {
 		sent[f.Path] = true

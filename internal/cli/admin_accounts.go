@@ -10,6 +10,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/backup"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/dirlock"
 	"github.com/PeterBooker/kazari/internal/preflight"
 )
@@ -17,12 +18,11 @@ import (
 // printLink prints a new link's address alone on stdout, so it can be piped,
 // and what the person handing it over needs to know on stderr.
 func (r *runner) printLink(v any, l *api.CreatedLink, what string) error {
-	if r.g.JSON {
-		return r.printJSON(v)
-	}
-	fmt.Fprintln(r.stdout, l.URL)
-	fmt.Fprintf(termSafe{r.stderr}, "%s: it works once, until %s; send it over a channel you trust\n", what, fmtTime(l.ExpiresAt))
-	return nil
+	return r.emit(v, func(w io.Writer) error {
+		fmt.Fprintln(w, l.URL)
+		fmt.Fprintf(termSafe{r.stderr}, "%s: it works once, until %s; send it over a channel you trust\n", what, fmtTime(l.ExpiresAt))
+		return nil
+	})
 }
 
 // AdminUsersShowCmd shows one user.
@@ -30,11 +30,7 @@ type AdminUsersShowCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 }
 
-func (c *AdminUsersShowCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminUsersShowCmd) Run(r *runner, cl adminAPI) error {
 	u, err := cl.GetUser(r.ctx, c.Handle)
 	if err != nil {
 		return err
@@ -92,11 +88,7 @@ type AdminUsersResetPasswordCmd struct {
 	RevokeAll bool   `name:"revoke-all" help:"Using the link also revokes the user's API keys and disconnects their apps."`
 }
 
-func (c *AdminUsersResetPasswordCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminUsersResetPasswordCmd) Run(r *runner, cl adminAPI) error {
 	l, err := cl.IssueLink(r.ctx, c.Handle, api.LinkRequest{Purpose: "reset", RevokeAll: c.RevokeAll})
 	if err != nil {
 		return err
@@ -113,19 +105,14 @@ type AdminUsersSignOutCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 }
 
-func (c *AdminUsersSignOutCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminUsersSignOutCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.EndSessions(r.ctx, c.Handle); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "signed %s out of every browser\n", c.Handle)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "signed %s out of every browser\n", c.Handle)
+		return nil
+	})
 }
 
 // AdminInvitesCmd manages the links that have not been used.
@@ -137,28 +124,23 @@ type AdminInvitesCmd struct {
 // AdminInvitesListCmd lists the live links.
 type AdminInvitesListCmd struct{}
 
-func (c *AdminInvitesListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminInvitesListCmd) Run(r *runner, cl adminAPI) error {
 	links, err := cl.ListLinks(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(links)
-	}
-	tw := newTable(r.stdout)
-	fmt.Fprintln(tw, "ID\tUSER\tPURPOSE\tBY\tCREATED\tEXPIRES")
-	for _, l := range links {
-		purpose := l.Purpose
-		if l.RevokeAll {
-			purpose += " (revokes keys and apps)"
+	return r.emit(links, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("ID", "USER", "PURPOSE", "BY", "CREATED", "EXPIRES")
+		for _, l := range links {
+			purpose := l.Purpose
+			if l.RevokeAll {
+				purpose += " (revokes keys and apps)"
+			}
+			tw.row(l.ID, dash(l.User), purpose, dash(l.CreatedBy), fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt))
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", l.ID, dash(l.User), purpose, dash(l.CreatedBy), fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt))
-	}
-	return tw.Flush()
+		return tw.flush()
+	})
 }
 
 // AdminInvitesRevokeCmd ends a link.
@@ -166,29 +148,20 @@ type AdminInvitesRevokeCmd struct {
 	ID int64 `arg:"" help:"The link's id, from invites list."`
 }
 
-func (c *AdminInvitesRevokeCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminInvitesRevokeCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.RevokeLink(r.ctx, c.ID); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "revoked link %d\n", c.ID)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "revoked link %d\n", c.ID)
+		return nil
+	})
 }
 
 // AdminSetupLinkCmd makes the first-run setup link.
 type AdminSetupLinkCmd struct{}
 
-func (c *AdminSetupLinkCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminSetupLinkCmd) Run(r *runner, cl adminAPI) error {
 	l, err := cl.SetupLink(r.ctx)
 	if err != nil {
 		return err
@@ -209,7 +182,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	}
 	// Before the server is asked: a backup started for a directory that
 	// cannot take it copies the whole database for nothing.
-	if err := backupTarget(c.Dir); err != nil {
+	if err := emptyDir("admin backup", c.Dir, false, ""); err != nil {
 		return err
 	}
 	cl, err := r.adminClient(true)
@@ -218,7 +191,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	}
 	// The server hands the private key to the socket alone, so over a URL
 	// asking would only be refused.
-	certs := cl.local && !c.NoCerts
+	certs := cl.Local() && !c.NoCerts
 	body, err := cl.Backup(r.ctx, certs)
 	if err != nil {
 		return err
@@ -237,7 +210,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	if err != nil {
 		return fmt.Errorf("admin backup: %w", err)
 	}
-	if !cl.local {
+	if !cl.Local() {
 		fmt.Fprintln(r.stderr, "certmagic/ is not included: the certificate's private key leaves the server only over the admin socket; "+
 			"an instance restored from this backup asks for a new certificate")
 	}
@@ -252,23 +225,21 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 			Certificates bool   `json:"certificates"`
 		}{c.Dir, files, size, err == nil})
 	}
-	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, humanSize(size), c.Dir)
+	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, bytesize.Format(size), c.Dir)
 	return nil
 }
 
 // stream writes the archive to standard output, for a backup that leaves a
 // container through docker exec or goes straight to other storage.
 func (c *AdminBackupCmd) stream(r *runner) error {
-	if f, ok := r.stdout.(*os.File); ok {
-		if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-			return usagef("admin backup -: standard output is a terminal; redirect it to a file, such as > kazari-backup.tar")
-		}
+	if err := r.notTerminal("admin backup -", "kazari-backup.tar"); err != nil {
+		return err
 	}
 	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	body, err := cl.Backup(r.ctx, cl.local && !c.NoCerts)
+	body, err := cl.Backup(r.ctx, cl.Local() && !c.NoCerts)
 	if err != nil {
 		return err
 	}
@@ -276,30 +247,8 @@ func (c *AdminBackupCmd) stream(r *runner) error {
 	if _, err := io.Copy(r.stdout, body); err != nil {
 		return fmt.Errorf("admin backup: the archive is incomplete: %w", err)
 	}
-	if !cl.local {
+	if !cl.Local() {
 		fmt.Fprintln(r.stderr, "certmagic/ is not included: the certificate's private key leaves the server only over the admin socket")
-	}
-	return nil
-}
-
-// backupTarget reports why dir cannot take a backup: it must be a directory
-// that is empty, or not exist yet.
-func backupTarget(dir string) error {
-	info, err := os.Stat(dir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
-		return fmt.Errorf("admin backup: %w", err)
-	case !info.IsDir():
-		return usagef("admin backup: %s is a file; name an empty directory or one that does not exist yet", dir)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("admin backup: %w", err)
-	}
-	if len(entries) > 0 {
-		return usagef("admin backup: %s is not empty; name an empty directory or one that does not exist yet", dir)
 	}
 	return nil
 }
@@ -342,9 +291,8 @@ func (c *AdminRestoreBackupCmd) Run(r *runner) error {
 		return fmt.Errorf("admin restore-backup: %w", err)
 	}
 	lock, err := dirlock.Acquire(dataDir)
-	var locked *dirlock.LockedError
-	switch {
-	case errors.As(err, &locked):
+	switch _, locked := errors.AsType[*dirlock.LockedError](err); {
+	case locked:
 		return usagef("admin restore-backup: %v; stop the server first (sudo systemctl stop kazari, or docker compose stop kazari)", err)
 	case errors.Is(err, fs.ErrPermission):
 		return usagef("admin restore-backup: %v; run it as root, for example with sudo", err)
@@ -370,7 +318,7 @@ func (c *AdminRestoreBackupCmd) Run(r *runner) error {
 			Bytes   int64  `json:"bytes"`
 		}{dataDir, sum.Files, sum.Bytes})
 	}
-	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, humanSize(sum.Bytes), dataDir)
+	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, bytesize.Format(sum.Bytes), dataDir)
 	return nil
 }
 
@@ -379,11 +327,7 @@ type AdminReadyCmd struct {
 	Fresh bool `help:"Run the checks now; without it the server answers from its last run when that is recent."`
 }
 
-func (c *AdminReadyCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminReadyCmd) Run(r *runner, cl adminAPI) error {
 	out, err := cl.Ready(r.ctx, c.Fresh)
 	if err != nil {
 		return err

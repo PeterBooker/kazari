@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"net/http"
@@ -117,16 +117,9 @@ func TestConfigReadableByOthers(t *testing.T) {
 			if err := os.Chmod(path, tt.mode); err != nil {
 				t.Fatal(err)
 			}
-			r := &runner{lookupEnv: envMap(nil), g: &CLI{ClientConfig: path}}
-			_, err := r.settings()
-			if !tt.wantErr {
-				if err != nil {
-					t.Errorf("settings() = %v, want no error", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), "run chmod 600 "+path) {
-				t.Errorf("settings() = %v, want an error naming chmod 600 %s", err, path)
+			r := runCLI(t, nil, "--client-config", path, "me")
+			if got := strings.Contains(r.stderr, "run chmod 600 "+path); got != tt.wantErr {
+				t.Errorf("me with %s: %+v; want an error naming chmod 600: %t", path, r, tt.wantErr)
 			}
 		})
 	}

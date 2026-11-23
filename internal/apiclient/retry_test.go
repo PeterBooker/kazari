@@ -1,7 +1,8 @@
-package cli
+package apiclient_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 )
 
 // busyServer answers status with Retry-After for the first busy requests,
@@ -44,46 +46,45 @@ func busyServer(t *testing.T, busy, status int, retryAfter string, ok any) (*htt
 	}
 }
 
-func recordingClient(url string) (*Client, *[]time.Duration) {
+func recordingClient(url string) (*apiclient.Client, *[]time.Duration) {
 	var waits []time.Duration
-	c := NewClient(url, "tok", nil)
-	c.sleep = func(_ context.Context, d time.Duration) error {
+	c := apiclient.New(url, "tok", apiclient.Options{Sleep: func(_ context.Context, d time.Duration) error {
 		waits = append(waits, d)
 		return nil
-	}
+	}})
 	return c, &waits
 }
 
 func TestClientRetries(t *testing.T) {
-	slow := api.ArtifactDetail{Artifact: demo}
+	slow := api.ArtifactDetail{Artifact: api.Artifact{Slug: "demo", PublishedVersion: 2, LatestVersion: 3}}
 	tests := []struct {
 		name       string
 		busy       int
 		status     int
 		retryAfter string
-		call       func(c *Client) error
+		call       func(c *apiclient.Client) error
 		wantSeen   int
 		wantWaits  []time.Duration
 		wantErr    string
 	}{
 		{
 			name: "read after Retry-After", busy: 2, status: 429, retryAfter: "3",
-			call:     func(c *Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
+			call:     func(c *apiclient.Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
 			wantSeen: 3, wantWaits: []time.Duration{3 * time.Second, 3 * time.Second},
 		},
 		{
 			name: "read gives up after two retries", busy: 5, status: 503,
-			call:     func(c *Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
+			call:     func(c *apiclient.Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
 			wantSeen: 3, wantWaits: []time.Duration{time.Second, time.Second}, wantErr: api.CodeRateLimited,
 		},
 		{
 			name: "a long Retry-After is cut short", busy: 1, status: 429, retryAfter: "3600",
-			call:     func(c *Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
+			call:     func(c *apiclient.Client) error { _, err := c.Get(t.Context(), "demo", false); return err },
 			wantSeen: 2, wantWaits: []time.Duration{30 * time.Second},
 		},
 		{
 			name: "write that expects a version", busy: 1, status: 429, retryAfter: "1",
-			call: func(c *Client) error {
+			call: func(c *apiclient.Client) error {
 				_, err := c.Update(t.Context(), "demo", api.UpdateArtifactRequest{ExpectedVersion: 3, Label: "x"})
 				return err
 			},
@@ -91,7 +92,7 @@ func TestClientRetries(t *testing.T) {
 		},
 		{
 			name: "write that expects no version", busy: 1, status: 429, retryAfter: "1",
-			call: func(c *Client) error {
+			call: func(c *apiclient.Client) error {
 				_, err := c.Create(t.Context(), api.CreateArtifactRequest{Slug: "demo"})
 				return err
 			},
@@ -99,7 +100,7 @@ func TestClientRetries(t *testing.T) {
 		},
 		{
 			name: "streamed bundle", busy: 1, status: 429, retryAfter: "1",
-			call: func(c *Client) error {
+			call: func(c *apiclient.Client) error {
 				_, err := c.UpdateBundle(t.Context(), "demo", api.UpdateArtifactRequest{ExpectedVersion: 3}, strings.NewReader("x"))
 				return err
 			},
@@ -114,7 +115,7 @@ func TestClientRetries(t *testing.T) {
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Errorf("err = %v, want none", err)
-			case tt.wantErr != "" && !IsCode(err, tt.wantErr):
+			case tt.wantErr != "" && !apiclient.IsCode(err, tt.wantErr):
 				t.Errorf("err = %v, want %s", err, tt.wantErr)
 			}
 			got := seen()
@@ -133,28 +134,41 @@ func TestClientRetries(t *testing.T) {
 	}
 }
 
+// roundTrip answers every request without a network.
+type roundTrip func(*http.Request) *http.Response
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r), nil }
+
+func answer(status int, header http.Header, body string) roundTrip {
+	return func(r *http.Request) *http.Response {
+		return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}
+	}
+}
+
 func TestRetryAfter(t *testing.T) {
-	for _, tt := range []struct {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
 		in   string
 		want time.Duration
 	}{
 		{"", time.Second}, {"0", 0}, {"7", 7 * time.Second}, {"31", 30 * time.Second}, {"-3", time.Second}, {"soon", time.Second},
-	} {
-		if got := retryAfter(tt.in); got != tt.want {
-			t.Errorf("retryAfter(%q) = %v, want %v", tt.in, got, tt.want)
+		{now.Add(12 * time.Second).Format(http.TimeFormat), 12 * time.Second},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0},
+	}
+	for _, tt := range tests {
+		var waits []time.Duration
+		c := apiclient.New("https://api.art.test", "tok", apiclient.Options{
+			HTTP: &http.Client{Transport: answer(http.StatusTooManyRequests, http.Header{"Retry-After": {tt.in}}, "")},
+			Now:  func() time.Time { return now },
+			Sleep: func(_ context.Context, d time.Duration) error {
+				waits = append(waits, d)
+				return nil
+			},
+		})
+		_, _ = c.Health(t.Context())
+		if len(waits) == 0 || waits[0] != tt.want {
+			t.Errorf("Retry-After %q: waits %v, want %v first", tt.in, waits, tt.want)
 		}
-	}
-}
-
-func TestRunTimeout(t *testing.T) {
-	r := newRunner(t.Context(), nil, strings.NewReader(""), io.Discard, io.Discard, envMap(nil))
-	if err := r.run([]string{"--timeout", "90s", "version"}); err != nil {
-		t.Fatal(err)
-	}
-	hc := r.httpClient()
-	tr, ok := hc.Transport.(*http.Transport)
-	if hc.Timeout != 90*time.Second || !ok || tr.ResponseHeaderTimeout != time.Minute {
-		t.Errorf("http client: timeout %v, transport %T; want 90s and a 60s header timeout", hc.Timeout, hc.Transport)
 	}
 }
 
@@ -170,9 +184,17 @@ func TestNotKazari(t *testing.T) {
 		{"https://api.art.test", "api", "https://api.<base>"},
 	}
 	for _, tt := range tests {
-		c := &Client{base: tt.base, host: tt.host}
-		if got := c.notKazari("404 Not Found"); !strings.HasSuffix(got, tt.want) {
-			t.Errorf("notKazari for %s on %s = %q, want it to end %q", tt.host, tt.base, got, tt.want)
+		c := apiclient.New(tt.base, "", apiclient.Options{Host: tt.host,
+			HTTP: &http.Client{Transport: answer(http.StatusNotFound, http.Header{}, "404 page not found\n")}})
+		_, err := c.Health(t.Context())
+		if err == nil || !strings.HasSuffix(err.Error(), tt.want) {
+			t.Errorf("a 404 for %s on %s: %v, want an error that ends %q", tt.host, tt.base, err, tt.want)
 		}
 	}
+}
+
+func reply(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

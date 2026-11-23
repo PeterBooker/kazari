@@ -85,7 +85,7 @@ To publish a build again, run `kazari deploy` with the same slug:
 kazari deploy ./dist --slug q3-report --label "fix chart"
 ```
 
-The new version holds exactly the files in `./dist`: files gone from the directory, such as a bundler's old `assets/index-<hash>.js`, are removed. If the slug does not exist yet, `deploy` creates it, so the same command serves the first build and every one after.
+The new version holds exactly the files in `./dist`: files gone from the directory, such as a bundler's old `assets/index-<hash>.js`, are removed. Only the files that changed since the version it builds on are sent, so a small change to a large site uploads little. If the slug does not exist yet, `deploy` creates it, so the same command serves the first build and every one after.
 
 ## Editing a published page locally
 
@@ -211,7 +211,7 @@ curl -sS https://api.art.example.com/v1/artifacts \
 
 To update an artifact, send either format to `PUT /v1/artifacts/{slug}`, with an `If-Match: "<version>"` header for the concurrency check. `GET /v1/artifacts/{slug}` returns the latest version in its `ETag`. Bundles too large for one request go through [chunked uploads](api.md#chunked-uploads).
 
-To deploy the way `kazari deploy` does, in one request, add `?create=true` and `"mirror": true`:
+To get what `kazari deploy` makes in one request, sending the whole directory, add `?create=true` and `"mirror": true`:
 
 ```sh
 curl -sS -X PUT 'https://api.art.example.com/v1/artifacts/q3-report?create=true' \

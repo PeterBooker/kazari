@@ -2,10 +2,12 @@ package cli
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -16,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -27,7 +31,11 @@ const ignoreFile = ".kazariignore"
 type bundleFile struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
-	abs  string
+	// name is the file's name in the plan's root, info the file the plan
+	// read and sum the hex sha256 of the bytes it read.
+	name string
+	info os.FileInfo
+	sum  string
 }
 
 // skippedFile is a file a publish leaves out, with the reason.
@@ -37,29 +45,76 @@ type skippedFile struct {
 }
 
 // bundlePlan is what a publish of a directory or a file sends, sorted by
-// path. Removed is filled in by a mirror: the files the new version drops.
+// path. A deploy onto an existing artifact fills in Unchanged, the files the
+// base version already holds as they are, which it does not send, and
+// Removed, the files the new version drops.
 type bundlePlan struct {
-	Files   []bundleFile  `json:"files"`
-	Skipped []skippedFile `json:"skipped,omitempty"`
-	Removed []string      `json:"removed,omitempty"`
-	Bytes   int64         `json:"bytes"`
+	Files     []bundleFile  `json:"files"`
+	Unchanged []bundleFile  `json:"unchanged,omitempty"`
+	Skipped   []skippedFile `json:"skipped,omitempty"`
+	Removed   []string      `json:"removed,omitempty"`
+	Bytes     int64         `json:"bytes"`
+	// root is where the files were read, and are read again to be sent.
+	root *os.Root
 }
 
-func (p *bundlePlan) paths() []string {
-	out := make([]string, len(p.Files))
-	for i, f := range p.Files {
-		out[i] = f.Path
+func (p *bundlePlan) close() {
+	if p != nil && p.root != nil {
+		p.root.Close()
 	}
+}
+
+// paths are every local file the plan holds, sent or not, sorted.
+func (p *bundlePlan) paths() []string {
+	out := make([]string, 0, len(p.Files)+len(p.Unchanged))
+	for _, f := range p.Files {
+		out = append(out, f.Path)
+	}
+	for _, f := range p.Unchanged {
+		out = append(out, f.Path)
+	}
+	slices.Sort(out)
 	return out
 }
 
-// summary is "14 files, 312.0 KiB; skipped: .env (dotfile); removed: a.txt".
-func (p *bundlePlan) summary() string {
-	noun := "files"
-	if len(p.Files) == 1 {
-		noun = "file"
+// mirror is the plan as the change from the base version's files: it sends
+// only the files whose path or content differ from base's, and deletes the
+// files base holds and the directory does not. With nothing to send or
+// delete, the smallest file is sent all the same, so the server answers as
+// it does for any publish that changes nothing.
+func (p *bundlePlan) mirror(base []api.File) *bundlePlan {
+	m := &bundlePlan{Skipped: p.Skipped, Removed: removedFiles(base, p.paths()), root: p.root}
+	sums := make(map[string]string, len(base))
+	for _, f := range base {
+		sums[f.Path] = strings.ToLower(strings.TrimPrefix(f.Hash, "sha256:"))
 	}
-	s := fmt.Sprintf("%d %s, %s", len(p.Files), noun, humanSize(p.Bytes))
+	for _, f := range p.Files {
+		if sum, ok := sums[f.Path]; ok && sum == f.sum {
+			m.Unchanged = append(m.Unchanged, f)
+			continue
+		}
+		m.add(f)
+	}
+	if len(m.Files) == 0 && len(m.Removed) == 0 && len(m.Unchanged) > 0 {
+		i := 0
+		for j, f := range m.Unchanged {
+			if f.Size < m.Unchanged[i].Size {
+				i = j
+			}
+		}
+		m.add(m.Unchanged[i])
+		m.Unchanged = slices.Delete(m.Unchanged, i, i+1)
+	}
+	return m
+}
+
+// summary is "3 files, 12 KiB; 11 unchanged; skipped: .env (dotfile);
+// removed: a.txt".
+func (p *bundlePlan) summary() string {
+	s := fmt.Sprintf("%s, %s", count(len(p.Files), "file"), bytesize.Format(p.Bytes))
+	if len(p.Unchanged) > 0 {
+		s += fmt.Sprintf("; %d unchanged", len(p.Unchanged))
+	}
 	if len(p.Skipped) > 0 {
 		items := make([]string, len(p.Skipped))
 		for i, sk := range p.Skipped {
@@ -71,6 +126,14 @@ func (p *bundlePlan) summary() string {
 		s += "; removed: " + shortList(p.Removed)
 	}
 	return s
+}
+
+// count is "1 file" or "3 files".
+func count(n int, noun string) string {
+	if n != 1 {
+		noun += "s"
+	}
+	return fmt.Sprintf("%d %s", n, noun)
 }
 
 func shortList(items []string) string {
@@ -85,47 +148,62 @@ func shortList(items []string) string {
 // regular files, less dotfiles (but .well-known), symlinks, files that look
 // like secrets and what its .kazariignore excludes; a "!pattern" there sends
 // a dotfile or a secret-looking file after all. A file is sent alone, as
-// index.html when it is HTML. A symlink to either is followed.
+// index.html when it is HTML. A symlink to either is followed. Each file is
+// read once here, for its checksum and the secret scan; the caller closes
+// the plan.
 func planBundle(src string) (*bundlePlan, error) {
-	root, err := filepath.EvalSymlinks(src)
+	abs, err := filepath.EvalSymlinks(src)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, usagef("no such directory: %s", src)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", src, err)
 	}
-	st, err := os.Stat(root)
+	st, err := os.Stat(abs)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", src, err)
 	}
-	if st.Mode().IsRegular() {
-		return planFile(root, st.Size())
-	}
-	if !st.IsDir() {
+	dir := abs
+	switch {
+	case st.Mode().IsRegular():
+		dir = filepath.Dir(abs)
+	case !st.IsDir():
 		return nil, usagef("%s is neither a directory nor a file", src)
 	}
-	rules, err := readIgnore(filepath.Join(root, ignoreFile))
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open %s: %w", src, err)
 	}
-	p := &bundlePlan{}
+	p := &bundlePlan{root: root}
+	if st.Mode().IsRegular() {
+		err = p.planFile(filepath.Base(abs))
+	} else {
+		err = p.planDir()
+	}
+	if err != nil {
+		p.close()
+		return nil, fmt.Errorf("read %s: %w", src, err)
+	}
+	return p, nil
+}
+
+func (p *bundlePlan) planDir() error {
+	rules, err := readIgnore(p.root)
+	if err != nil {
+		return err
+	}
 	skip := func(rel, reason string) { p.Skipped = append(p.Skipped, skippedFile{Path: rel, Reason: reason}) }
-	err = filepath.WalkDir(root, func(abs string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(p.root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if abs == root {
+		if rel == "." {
 			return nil
 		}
-		rel, err := filepath.Rel(root, abs)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
 		matched, include := rules.match(rel, d.IsDir())
 		if matched && !include {
 			if d.IsDir() {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
@@ -145,7 +223,7 @@ func planBundle(src string) (*bundlePlan, error) {
 				skip(rel, reason)
 			}
 			if d.IsDir() {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
@@ -156,49 +234,73 @@ func planBundle(src string) (*bundlePlan, error) {
 			skip(rel, "not a regular file")
 			return nil
 		}
-		if !include {
-			found, err := holdsKey(abs)
-			if err != nil {
-				return err
-			}
-			if found {
-				skip(rel, "looks like a secret")
-				return nil
-			}
-		}
-		info, err := d.Info()
+		f, key, err := p.read(rel, filepath.FromSlash(rel), !include)
 		if err != nil {
 			return err
 		}
-		p.Files = append(p.Files, bundleFile{Path: rel, Size: info.Size(), abs: abs})
-		p.Bytes += info.Size()
+		if key {
+			skip(rel, "looks like a secret")
+			return nil
+		}
+		p.add(f)
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", src, err)
+		return err
 	}
 	slices.SortFunc(p.Files, func(a, b bundleFile) int { return strings.Compare(a.Path, b.Path) })
-	return p, nil
+	return nil
 }
 
-func planFile(abs string, size int64) (*bundlePlan, error) {
-	name := filepath.Base(abs)
+func (p *bundlePlan) planFile(name string) error {
+	sent := name
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".html", ".htm":
-		name = "index.html"
+		sent = "index.html"
 	}
-	p := &bundlePlan{}
-	found, err := holdsKey(abs)
+	f, key, err := p.read(sent, name, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if secretName(filepath.Base(abs)) || found {
-		p.Skipped = []skippedFile{{Path: filepath.Base(abs), Reason: "looks like a secret"}}
-		return p, nil
+	if key || secretName(name) {
+		p.Skipped = []skippedFile{{Path: name, Reason: "looks like a secret"}}
+		return nil
 	}
-	p.Files = []bundleFile{{Path: name, Size: size, abs: abs}}
-	p.Bytes = size
-	return p, nil
+	p.add(f)
+	return nil
+}
+
+func (p *bundlePlan) add(f bundleFile) {
+	p.Files = append(p.Files, f)
+	p.Bytes += f.Size
+}
+
+// read reads the file at name in the root once: its size, its checksum and,
+// with scan, whether it holds an API key.
+func (p *bundlePlan) read(sent, name string, scan bool) (bundleFile, bool, error) {
+	fh, err := p.root.Open(name)
+	if err != nil {
+		return bundleFile{}, false, err
+	}
+	defer fh.Close()
+	st, err := fh.Stat()
+	if err != nil {
+		return bundleFile{}, false, err
+	}
+	if !st.Mode().IsRegular() {
+		return bundleFile{}, false, fmt.Errorf("%s is not a regular file", name)
+	}
+	h := sha256.New()
+	var w io.Writer = h
+	var keys keyScanner
+	if scan {
+		w = io.MultiWriter(h, &keys)
+	}
+	n, err := io.Copy(w, fh)
+	if err != nil {
+		return bundleFile{}, false, err
+	}
+	return bundleFile{Path: sent, Size: n, name: name, info: st, sum: hex.EncodeToString(h.Sum(nil))}, keys.found, nil
 }
 
 func hidden(name string) bool {
@@ -219,34 +321,25 @@ func secretName(name string) bool {
 
 var keyPattern = regexp.MustCompile(fmt.Sprintf(`%s[a-z2-7]{%d}_[a-z2-7]{%d}`, user.KeyPrefix, user.PrefixLen, user.SecretLen))
 
-// holdsKey reads the file in blocks that overlap by a key's length, so a
-// key across two blocks is found.
-func holdsKey(abs string) (bool, error) {
-	f, err := os.Open(abs)
-	if err != nil {
-		return false, err
+// keyScanner reports whether what was written to it holds an API key, also
+// one split across two writes.
+type keyScanner struct {
+	tail  []byte
+	found bool
+}
+
+func (k *keyScanner) Write(b []byte) (int, error) {
+	if k.found {
+		return len(b), nil
 	}
-	defer f.Close()
-	const block = 64 << 10
-	buf := make([]byte, 0, block+user.KeyLen)
-	r := bufio.NewReaderSize(f, block)
-	chunk := make([]byte, block)
-	for {
-		n, err := io.ReadFull(r, chunk)
-		buf = append(buf, chunk[:n]...)
-		if keyPattern.Match(buf) {
-			return true, nil
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return false, nil
-			}
-			return false, err
-		}
-		if keep := user.KeyLen - 1; len(buf) > keep {
-			buf = append(buf[:0], buf[len(buf)-keep:]...)
-		}
+	buf := append(k.tail, b...)
+	if keyPattern.Match(buf) {
+		k.found = true
+		return len(b), nil
 	}
+	keep := min(len(buf), user.KeyLen-1)
+	k.tail = append(k.tail[:0:0], buf[len(buf)-keep:]...)
+	return len(b), nil
 }
 
 // ignoreRule is one line of .kazariignore, in the subset of gitignore's
@@ -262,8 +355,8 @@ type ignoreRule struct {
 
 type ignoreRules []ignoreRule
 
-func readIgnore(name string) (ignoreRules, error) {
-	b, err := os.ReadFile(name)
+func readIgnore(root *os.Root) (ignoreRules, error) {
+	b, err := root.ReadFile(ignoreFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -350,6 +443,9 @@ func matchSegments(pat, segs []string) bool {
 	return len(segs) == 0
 }
 
+// errChanged is a file that no longer holds the bytes the plan read.
+var errChanged = errors.New("the file changed after it was checked; run the command again")
+
 // writeTarGz writes the plan's files to w as a gzip-compressed tar. Entries
 // are sorted, with zero ownership, mode 0644 and epoch mtime, so the same
 // tree always yields the same bytes.
@@ -357,7 +453,7 @@ func (p *bundlePlan) writeTarGz(w io.Writer) error {
 	zw := gzip.NewWriter(w)
 	tw := tar.NewWriter(zw)
 	for _, f := range p.Files {
-		if err := addFile(tw, f); err != nil {
+		if err := p.addFile(tw, f); err != nil {
 			return err
 		}
 	}
@@ -370,34 +466,44 @@ func (p *bundlePlan) writeTarGz(w io.Writer) error {
 	return nil
 }
 
-func addFile(tw *tar.Writer, bf bundleFile) error {
-	f, err := os.Open(bf.abs)
+// addFile sends the bytes the plan checked, from the file it read, or fails
+// before the archive ends.
+func (p *bundlePlan) addFile(tw *tar.Writer, bf bundleFile) error {
+	f, err := p.root.Open(bf.name)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bf.Path, err)
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", bf.Path, err)
+	if st, err := f.Stat(); err != nil || !os.SameFile(st, bf.info) {
+		return fmt.Errorf("tar %s: %w", bf.Path, errChanged)
 	}
 	hdr := &tar.Header{
 		Typeflag: tar.TypeReg,
 		Name:     bf.Path,
-		Size:     st.Size(),
+		Size:     bf.Size,
 		Mode:     0o644,
 		ModTime:  time.Unix(0, 0),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return fmt.Errorf("tar header %s: %w", bf.Path, err)
 	}
-	n, err := io.Copy(tw, f)
-	if err != nil {
+	h := sha256.New()
+	if _, err := io.CopyN(tw, io.TeeReader(f, h), bf.Size); err != nil {
+		if errors.Is(err, io.EOF) {
+			err = errChanged
+		}
 		return fmt.Errorf("tar %s: %w", bf.Path, err)
 	}
-	if n != st.Size() {
-		return fmt.Errorf("tar %s: %w", bf.Path, errors.New("file changed while reading"))
+	if !unchangedAfter(f, h, bf.sum) {
+		return fmt.Errorf("tar %s: %w", bf.Path, errChanged)
 	}
 	return nil
+}
+
+// unchangedAfter reports whether r is at its end and h holds sum.
+func unchangedAfter(r io.Reader, h hash.Hash, sum string) bool {
+	n, _ := r.Read(make([]byte, 1))
+	return n == 0 && hex.EncodeToString(h.Sum(nil)) == sum
 }
 
 // reader streams writeTarGz without holding it in memory. Closing the
@@ -408,26 +514,4 @@ func (p *bundlePlan) reader() io.ReadCloser {
 		pw.CloseWithError(p.writeTarGz(pw))
 	}()
 	return pr
-}
-
-// TarGz writes what a publish of src sends to w as a gzip-compressed tar;
-// see planBundle for what that is.
-func TarGz(src string, w io.Writer) error {
-	p, err := planBundle(src)
-	if err != nil {
-		return err
-	}
-	return p.writeTarGz(w)
-}
-
-// TarGzReader streams TarGz(src) without holding it in memory. Closing the
-// reader early stops the writer; walk and read errors surface from Read.
-func TarGzReader(src string) io.ReadCloser {
-	p, err := planBundle(src)
-	if err != nil {
-		pr, pw := io.Pipe()
-		pw.CloseWithError(err)
-		return pr
-	}
-	return p.reader()
 }

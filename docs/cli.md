@@ -58,7 +58,9 @@ Each setting comes from the first of these that is set: the flag, the environmen
 
 The client takes a URL as people write it. A URL without a scheme means `https://`, or `http://` for `localhost`, a `*.localhost` name or a loopback address. A trailing `/` or `/v1` is dropped, since the client adds `/v1` itself.
 
-By default, a request has no overall time limit, so a large upload can take as long as it needs, but the server must accept the connection within 10 seconds and start answering within 60. `--timeout` bounds the whole request.
+By default, a request has no overall time limit, so a large upload can take as long as it needs, but the server must accept the connection within 10 seconds and start answering within 60. `--timeout` bounds the whole request, over the admin socket too.
+
+Ctrl-C, or `SIGTERM`, stops a command at its request or prompt, and it says what it left behind, such as the files a `pull` had written; a prompt that hides the typing shows it again. A second Ctrl-C ends the command at once.
 
 The client sends a key over plain `http://` only to this machine. For another host it stops with an error that names `--allow-http`, which lets the request through.
 
@@ -225,7 +227,7 @@ kazari publish ./site --slug q3-report --name "Q3 report" --meta team=finance
 The command prints what it sent on stderr, then the result on stdout:
 
 ```text
-14 files, 312.0 KiB; skipped: .env (dotfile), logo.png (symlink)
+14 files, 312 KiB; skipped: .env (dotfile), logo.png (symlink)
 q3-report v1 → https://q3-report.art.example.com/ (pinned: https://q3-report--v1.art.example.com/)
 ```
 
@@ -293,9 +295,11 @@ To deploy a build, the first time and every time after:
 kazari deploy ./dist --slug q3-report --label "numbers fixed"
 ```
 
-It prints the same summary as `publish`, with the files it removed, such as `14 files, 312.0 KiB; removed: assets/index-3fa0c2.js`. When the files equal the latest version's, no version is added and stderr says `no changes: version 5 is already this content`.
+A deploy onto an existing artifact sends only what changed. Each file is read once, for its checksum and the secret check, and a file whose path and content match the base version's stays as it is without being sent. The new version holds it all the same.
 
-The slug, what is sent, `.kazariignore` and `--dry-run` work as for [`publish`](#publish). With `--dry-run`, the lines also list the files the new version would delete.
+The summary counts what was sent, then the files left unchanged and the files removed, such as `3 files, 12 KiB; 11 unchanged; removed: assets/index-3fa0c2.js`. When nothing changed, the smallest file is sent all the same, so the server answers as it does for any deploy: when the files equal the latest version's, no version is added and stderr says `no changes: version 5 is already this content`.
+
+The slug, what is sent, `.kazariignore` and `--dry-run` work as for [`publish`](#publish). With `--dry-run`, the lines also list the files left unchanged and the files the new version would delete. A file that changes on disk after the deploy has checked it fails the deploy, which nothing then publishes; run it again.
 
 `deploy` fails with `version_conflict` if someone else published between its read and its write. After a [rollback](#rollback), or while a version is staged, it needs `--base` or `--stage` to say which version to build on, and the error prints the commands to choose from.
 
@@ -402,7 +406,7 @@ kazari pull q3-report
 kazari deploy q3-report --label "fix chart"
 ```
 
-It prints `pulled version 5 of q3-report to q3-report: 14 files, 312.0 KiB`. A staged version can be pulled by its number. The files of an unpublished or soft-deleted artifact can be pulled by the same people who can [read them](api.md#read-a-file-get-artifactsslugfilespath).
+It prints `pulled version 5 of q3-report to q3-report: 14 files, 312 KiB`. A staged version can be pulled by its number. The files of an unpublished or soft-deleted artifact can be pulled by the same people who can [read them](api.md#read-a-file-get-artifactsslugfilespath).
 
 `--force` writes into a directory that is not empty: the files the version holds replace those at the same paths, and other files stay. A symlink on the way to a pulled path stops the pull instead of being written through.
 
@@ -782,7 +786,7 @@ The [dashboard](dashboard.md) does the same from a browser: it has no task that 
 
 The admin flags take these values:
 
-- `--quota`: bytes or a unit, such as `500MiB` or `2GB`; `0` means unlimited. A new user's quota defaults to `limits.default_user_quota`.
+- `--quota`: a whole number of bytes, or with a unit as the configuration writes sizes (`B`, `KiB` to `TiB`, `KB` to `TB`), such as `500MiB` or `2GB`; `0` means unlimited. A new user's quota defaults to `limits.default_user_quota`.
 - `--name`: the person's display name, such as `"Ana Lima"`. On `users update`, `--name ""` clears it.
 - `--scopes`: a comma-separated list from `artifacts:read`, `artifacts:write`, `artifacts:share`, `artifacts:delete` and `admin`, which only admin users can hold. By default, a key gets the four artifact scopes.
 - `--slugs`: a comma-separated list of [slug patterns](api.md#restricted-credentials) that restricts the key to some artifacts, such as `'weekly-*'`. By default, a key is not restricted.

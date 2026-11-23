@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/artifact"
-	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // member creates a user and returns a client with that user's key.
-func member(t *testing.T, ctx context.Context, admin *cli.Client, addr, handle string) *cli.Client {
+func member(t *testing.T, ctx context.Context, admin *apiclient.Client, addr, handle string) *apiclient.Client {
 	t.Helper()
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: handle}); err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func member(t *testing.T, ctx context.Context, admin *cli.Client, addr, handle s
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	return apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(addr)})
 }
 
 // updateCheck asks for a worker script the way a browser does, past any
@@ -65,7 +65,7 @@ func wantEvicted(t *testing.T, addr, slug, what string) {
 	}
 }
 
-func publishWorker(t *testing.T, ctx context.Context, c *cli.Client, slug string) {
+func publishWorker(t *testing.T, ctx context.Context, c *apiclient.Client, slug string) {
 	t.Helper()
 	_, err := c.Create(ctx, api.CreateArtifactRequest{Slug: slug, Files: []api.FileInput{
 		{Path: "index.html", Content: "page"},
@@ -82,7 +82,7 @@ func TestWorkerEndsWithItsAuthor(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	mallory, alice := member(t, ctx, admin, addr, "mallory"), member(t, ctx, admin, addr, "alice")
 
 	publishWorker(t, ctx, mallory, "pwa")
@@ -124,7 +124,7 @@ func TestWorkerEndsWithTransfer(t *testing.T) {
 			in := start(t, cfg)
 			addr := in.app.Addrs().HTTP
 			ctx := context.Background()
-			admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+			admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 			mallory := member(t, ctx, admin, addr, "mallory")
 			member(t, ctx, admin, addr, "victim")
 
@@ -148,7 +148,7 @@ func TestWorkerEndsWithPurge(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	mallory := member(t, ctx, admin, addr, "mallory")
 
 	publishWorker(t, ctx, mallory, "pwa")

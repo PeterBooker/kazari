@@ -9,10 +9,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// isTerminal is true for a terminal, and false for /dev/null, which is a
+// IsTerminal is true for a terminal, and false for /dev/null, which is a
 // character device too.
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
+func IsTerminal(stream any) bool {
+	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}

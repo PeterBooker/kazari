@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"archive/tar"
@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 func FuzzIgnore(f *testing.F) {
@@ -16,22 +18,19 @@ func FuzzIgnore(f *testing.F) {
 	f.Add("**\n!**/", "a/b", true)
 	f.Add("[", "[", false)
 	f.Fuzz(func(t *testing.T, rules, rel string, dir bool) {
-		parsed := parseIgnore(rules)
-		matched, include := parsed.match(rel, dir)
+		matched, include := cli.IgnoreMatch(rules, rel, dir)
 		if include && !matched {
-			t.Errorf("parseIgnore(%q).match(%q) includes without a matching rule", rules, rel)
+			t.Errorf("IgnoreMatch(%q, %q) includes without a matching rule", rules, rel)
 		}
 		// A last rule that names the path exactly decides it.
 		if rel == "" || strings.ContainsAny(rel, "*?[\\\n\r") || strings.HasPrefix(rel, "!") || strings.HasPrefix(rel, "#") ||
 			strings.HasSuffix(rel, "/") || strings.Contains(rel, "//") || strings.TrimRight(rel, " \t") != rel {
 			return
 		}
-		exact := parseIgnore(rules + "\n/" + rel + "\n")
-		if m, inc := exact.match(rel, dir); !m || inc {
+		if m, inc := cli.IgnoreMatch(rules+"\n/"+rel+"\n", rel, dir); !m || inc {
 			t.Errorf("rules %q then /%s: match(%q) = %t, %t; want left out", rules, rel, rel, m, inc)
 		}
-		back := parseIgnore(rules + "\n!/" + rel + "\n")
-		if m, inc := back.match(rel, dir); !m || !inc {
+		if m, inc := cli.IgnoreMatch(rules+"\n!/"+rel+"\n", rel, dir); !m || !inc {
 			t.Errorf("rules %q then !/%s: match(%q) = %t, %t; want sent", rules, rel, rel, m, inc)
 		}
 	})
@@ -42,16 +41,16 @@ func FuzzNormalizeURL(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
-		got, err := normalizeURL(raw)
+		got, err := cli.NormalizeURL(raw)
 		if err != nil {
 			return
 		}
-		again, err := normalizeURL(got)
+		again, err := cli.NormalizeURL(got)
 		if err != nil || again != got {
-			t.Errorf("normalizeURL(%q) = %q, then %q, %v; want the same again", raw, got, again, err)
+			t.Errorf("cli.NormalizeURL(%q) = %q, then %q, %v; want the same again", raw, got, again, err)
 		}
 		if strings.HasSuffix(got, "/") {
-			t.Errorf("normalizeURL(%q) = %q, which ends in /", raw, got)
+			t.Errorf("cli.NormalizeURL(%q) = %q, which ends in /", raw, got)
 		}
 	})
 }
@@ -68,7 +67,7 @@ func FuzzExtractBundle(f *testing.F) {
 		archive := gz(t, raw)
 		parent := t.TempDir()
 		dir := filepath.Join(parent, "out")
-		pulled, size, err := extractBundle(bytes.NewReader(archive), dir)
+		pulled, size, err := cli.ExtractBundle(bytes.NewReader(archive), dir)
 		entries, rerr := os.ReadDir(parent)
 		if rerr != nil {
 			t.Fatal(rerr)
@@ -90,7 +89,7 @@ func FuzzExtractBundle(f *testing.F) {
 		if sum != size {
 			t.Errorf("extractBundle reported %d bytes, the files hold %d", size, sum)
 		}
-		if _, _, err := extractBundle(bytes.NewReader(archive), dir); errors.Is(err, errUnsafeEntry) {
+		if _, _, err := cli.ExtractBundle(bytes.NewReader(archive), dir); errors.Is(err, cli.ErrUnsafeEntry) {
 			t.Errorf("extractBundle refused an archive the second time that it took the first: %v", err)
 		}
 	})

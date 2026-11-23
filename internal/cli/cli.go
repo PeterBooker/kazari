@@ -3,7 +3,9 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/config"
 )
@@ -123,23 +126,28 @@ type fileConfig struct {
 }
 
 type runner struct {
-	ctx       context.Context
-	args      []string
-	stdin     io.Reader
-	stdout    io.Writer
-	stderr    io.Writer
-	lookupEnv func(string) (string, bool)
-	// hc is built on first use, once --timeout is parsed.
-	hc  *http.Client
-	now func() time.Time
-	// sleep waits between retries; tests replace it.
-	sleep func(context.Context, time.Duration) error
-	// terminal reports whether stdin is a terminal a person types at.
-	terminal func() bool
-	g        *CLI
+	ctx           context.Context
+	args          []string
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	lookupEnv     func(string) (string, bool)
+	isTerminal    func(any) bool
+	transport     http.RoundTripper
+	now           func() time.Time
+	sleep         func(context.Context, time.Duration) error
+	defaultConfig string
+	g             *CLI
 	// apiURL is the user API the command used, for the hints on errors.
 	apiURL string
 }
+
+// userAPI and adminAPI are the clients a command's Run asks for; kong makes
+// them from the settings when the command runs.
+type (
+	userAPI  struct{ *apiclient.Client }
+	adminAPI struct{ *apiclient.Client }
+)
 
 // hintError is an error followed by lines that say what to do next.
 type hintError struct {
@@ -157,71 +165,139 @@ func withHints(err error, hints ...string) error {
 	return &hintError{err: err, hints: hints}
 }
 
-// Run executes one command and returns the exit code: 0 on success, 1 when
-// the command or the server fails, 2 for usage and configuration errors.
-// args excludes the program name. lookupEnv resolves the KAZARI_* variables
-// of the client; the server reads the process environment itself.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) int {
-	return RunContext(context.Background(), args, stdin, stdout, stderr, lookupEnv)
+// DefaultConfigPath is where a server on this host keeps its configuration
+// when neither --config nor $KAZARI_CONFIG names one.
+const DefaultConfigPath = "/etc/kazari/kazari.yaml"
+
+// Env is what a command reads and writes besides its arguments. cmd/kazari
+// fills it from the process; a nil or empty field reaches nothing outside.
+type Env struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+	// LookupEnv resolves the client's variables: KAZARI_*, HOME and
+	// XDG_CONFIG_HOME. The server reads the process environment itself.
+	LookupEnv func(string) (string, bool)
+	// IsTerminal reports whether Stdin or Stdout is a terminal a person
+	// uses; nil means neither is.
+	IsTerminal func(stream any) bool
+	// Transport sends the requests to a URL; nil dials the network. The
+	// admin socket is always dialled.
+	Transport http.RoundTripper
+	// Now is time.Now when nil.
+	Now func() time.Time
+	// Sleep waits before a retry; nil waits on a timer.
+	Sleep func(context.Context, time.Duration) error
+	// DefaultConfig is the server configuration read when it exists and
+	// neither --config nor $KAZARI_CONFIG names one, normally
+	// DefaultConfigPath; "" reads none.
+	DefaultConfig string
 }
 
-// RunContext is Run under ctx, whose end stops serve.
-func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) int {
-	r := newRunner(ctx, args, stdin, stdout, stderr, lookupEnv)
+// Run executes one command and returns the exit code: 0 on success, 1 when
+// the command or the server fails, 2 for usage and configuration errors.
+// args excludes the program name. The end of ctx stops the command.
+func Run(ctx context.Context, args []string, env Env) int {
+	r := &runner{
+		ctx:           ctx,
+		args:          args,
+		stdin:         cmp.Or[io.Reader](env.Stdin, strings.NewReader("")),
+		stdout:        cmp.Or[io.Writer](env.Stdout, io.Discard),
+		stderr:        cmp.Or[io.Writer](env.Stderr, io.Discard),
+		lookupEnv:     env.LookupEnv,
+		isTerminal:    env.IsTerminal,
+		transport:     env.Transport,
+		now:           env.Now,
+		sleep:         env.Sleep,
+		defaultConfig: env.DefaultConfig,
+		g:             &CLI{},
+	}
+	if r.lookupEnv == nil {
+		r.lookupEnv = func(string) (string, bool) { return "", false }
+	}
+	if r.isTerminal == nil {
+		r.isTerminal = func(any) bool { return false }
+	}
+	if r.now == nil {
+		r.now = time.Now
+	}
+	if r.sleep == nil {
+		r.sleep = apiclient.SleepContext
+	}
 	return r.exit(r.run(args))
 }
 
-func newRunner(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) *runner {
-	return &runner{
-		ctx:       ctx,
-		args:      args,
-		stdin:     stdin,
-		stdout:    stdout,
-		stderr:    stderr,
-		lookupEnv: lookupEnv,
-		now:       time.Now,
-		sleep:     sleepContext,
-		terminal:  func() bool { return isTerminal(stdin) },
-		g:         &CLI{},
-	}
-}
+// errInterrupted ends a read of stdin that a signal cut short.
+var errInterrupted = errors.New("interrupted")
 
-func sleepContext(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
+// interruptibly returns what read returns, or errInterrupted as soon as ctx
+// ends: a read of a terminal returns only when a line is typed, and a
+// prompt with the echo off must restore the terminal on Ctrl-C.
+func interruptibly[T any](ctx context.Context, read func() (T, error)) (T, error) {
+	type result struct {
+		v   T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := read()
+		done <- result{v, err}
+	}()
 	select {
+	case res := <-done:
+		return res.v, res.err
 	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
+		var zero T
+		return zero, errInterrupted
 	}
 }
 
-// httpClient gives up on a server that accepts no connection within 10s or
-// sends no response header within 60s; --timeout bounds the whole request,
-// upload included.
-func (r *runner) httpClient() *http.Client {
-	if r.hc == nil {
-		r.hc = &http.Client{
-			Timeout: r.g.Timeout,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Second,
-				ForceAttemptHTTP2:     true,
-				MaxIdleConns:          10,
-				IdleConnTimeout:       90 * time.Second,
-			},
+// readLine reads a line of stdin, or what is left before its end.
+func (r *runner) readLine(in *bufio.Reader) (string, error) {
+	return interruptibly(r.ctx, func() (string, error) {
+		s, err := in.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		return s, err
+	})
+}
+
+// terminal reports whether stdin is a terminal a person types at.
+func (r *runner) terminal() bool { return r.isTerminal(r.stdin) }
+
+// transportFor gives up on a server that accepts no connection within 10s
+// or sends no response header within 60s. A socket path dials the admin
+// socket instead of the network.
+func (r *runner) transportFor(socket string) http.RoundTripper {
+	if socket == "" && r.transport != nil {
+		return r.transport
+	}
+	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	t := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           d.DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	if socket != "" {
+		t.Proxy = nil
+		t.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, "unix", socket)
 		}
 	}
-	return r.hc
+	return t
 }
 
-func (r *runner) newClient(base, token string) *Client {
-	c := NewClient(base, token, r.httpClient())
-	c.sleep = r.sleep
-	return c
+// newClient builds every client the commands use; --timeout bounds the
+// whole request, upload included.
+func (r *runner) newClient(base, token, socket string, opts apiclient.Options) *apiclient.Client {
+	opts.HTTP = &http.Client{Timeout: r.g.Timeout, Transport: r.transportFor(socket)}
+	opts.Sleep, opts.Now = r.sleep, r.now
+	return apiclient.New(base, token, opts)
 }
 
 func (r *runner) run(args []string) (err error) {
@@ -246,6 +322,8 @@ func (r *runner) run(args []string) (err error) {
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true, NoExpandSubcommands: true}),
 		kong.Help(focusedHelp),
 		kong.Bind(r),
+		kong.BindToProvider(r.userClient),
+		kong.BindToProvider(func() (adminAPI, error) { return r.adminClient(true) }),
 	)
 	if err != nil {
 		return err
@@ -289,13 +367,18 @@ func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
 }
 
 func (r *runner) exit(err error) int {
-	var ue *usageError
-	var he *HTTPError
-	var pe *kong.ParseError
+	ue, usage := errors.AsType[*usageError](err)
+	he, httpErr := errors.AsType[*apiclient.HTTPError](err)
+	pe, parse := errors.AsType[*kong.ParseError](err)
 	switch {
 	case err == nil:
 		return exitOK
-	case errors.As(err, &pe):
+	case usage:
+		// Also inside the parse error a command's Validate makes, whose usage
+		// lines would bury the message.
+		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
+		return exitUsage
+	case parse:
 		// The usage line, then the mistake, on stderr; a mistyped command
 		// gets the mistake and kong's suggestion alone, not the whole list.
 		if pe.Context != nil && !unknownCommand(pe) {
@@ -309,10 +392,7 @@ func (r *runner) exit(err error) int {
 			fmt.Fprintln(r.stderr, "run kazari --help for the commands")
 		}
 		return exitUsage
-	case errors.As(err, &ue):
-		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
-		return exitUsage
-	case errors.As(err, &he):
+	case httpErr:
 		if r.g.JSON {
 			enc := json.NewEncoder(termSafe{r.stderr})
 			enc.SetEscapeHTML(false)
@@ -329,7 +409,7 @@ func (r *runner) exit(err error) int {
 	}
 }
 
-func (r *runner) printHints(err error, he *HTTPError) {
+func (r *runner) printHints(err error, he *apiclient.HTTPError) {
 	var hints []string
 	if hint, ok := errors.AsType[*hintError](err); ok {
 		hints = hint.hints
@@ -353,9 +433,6 @@ func unknownCommand(pe *kong.ParseError) bool {
 }
 
 func (r *runner) env(name string) string {
-	if r.lookupEnv == nil {
-		return ""
-	}
 	v, _ := r.lookupEnv(name)
 	return v
 }
@@ -548,50 +625,48 @@ func adminFromUserURL(raw string) string {
 	return u.String()
 }
 
-func (r *runner) userClient() (*Client, error) {
+func (r *runner) userClient() (userAPI, error) {
 	s, err := r.settings()
 	if err != nil {
-		return nil, err
+		return userAPI{}, err
 	}
 	if s.URL == "" {
-		return nil, usagef("no API URL: run kazari login --url https://api.<base>, or set --url, KAZARI_URL or url in %s", r.configHint())
+		return userAPI{}, usagef("no API URL: run kazari login --url https://api.<base>, or set --url, KAZARI_URL or url in %s", r.configHint())
 	}
 	if s.Token == "" {
-		return nil, usagef("no API token: run kazari login, or set --token, KAZARI_TOKEN or token in %s", r.configHint())
+		return userAPI{}, usagef("no API token: run kazari login, or set --token, KAZARI_TOKEN or token in %s", r.configHint())
 	}
 	if err := r.checkScheme(s.URL, s.Token); err != nil {
-		return nil, err
+		return userAPI{}, err
 	}
 	r.apiURL = s.URL
-	return r.newClient(s.URL, s.Token), nil
+	return userAPI{r.newClient(s.URL, s.Token, "", apiclient.Options{})}, nil
 }
 
 // adminClient prefers an explicit socket, then an explicit admin URL (with
 // a token unless the command needs none), then a socket found on this host.
-func (r *runner) adminClient(needToken bool) (*Client, error) {
+func (r *runner) adminClient(needToken bool) (adminAPI, error) {
 	s, err := r.settings()
 	if err != nil {
-		return nil, err
+		return adminAPI{}, err
 	}
 	if s.AdminSocket != "" {
-		return socketClient(s.AdminSocket), nil
+		return adminAPI{r.socketClient(s.AdminSocket)}, nil
 	}
 	if s.AdminURL != "" && (s.AdminToken != "" || !needToken) {
 		if err := r.checkScheme(s.AdminURL, s.AdminToken); err != nil {
-			return nil, err
+			return adminAPI{}, err
 		}
-		c := r.newClient(s.AdminURL, s.AdminToken)
-		c.host = "admin"
-		return c, nil
+		return adminAPI{r.newClient(s.AdminURL, s.AdminToken, "", apiclient.Options{Host: "admin"})}, nil
 	}
 	if socket := r.discoverSocket(); socket != "" {
-		return socketClient(socket), nil
+		return adminAPI{r.socketClient(socket)}, nil
 	}
 	if s.AdminURL == "" {
-		return nil, usagef("no admin API: run this on the server's host (as its user, as root, or with docker exec) to use the admin socket, " +
+		return adminAPI{}, usagef("no admin API: run this on the server's host (as its user, as root, or with docker exec) to use the admin socket, " +
 			"or set --admin-url (KAZARI_ADMIN_URL) and --admin-token (KAZARI_ADMIN_TOKEN)")
 	}
-	return nil, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
+	return adminAPI{}, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
 }
 
 // serverConfig reads, without validating it, the configuration of a server
@@ -601,14 +676,9 @@ func (r *runner) adminClient(needToken bool) (*Client, error) {
 func (r *runner) serverConfig() (config.Config, error) {
 	path := r.env("KAZARI_CONFIG")
 	if path == "" {
-		if _, err := os.Stat(defaultConfigPath); err == nil {
-			path = defaultConfigPath
-		}
+		path = r.existingDefaultConfig()
 	}
 	lookup := r.lookupEnv
-	if lookup == nil {
-		lookup = func(string) (string, bool) { return "", false }
-	}
 	if path != "" {
 		if dotenv, err := config.LoadEnvFile(filepath.Join(filepath.Dir(path), config.EnvFileName)); err == nil {
 			env := lookup
@@ -646,16 +716,19 @@ func (r *runner) discoverSocket() string {
 
 // socketClient talks to the admin API over the Unix socket at path, which
 // needs no token.
-func socketClient(path string) *Client {
-	hc := &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", path)
-		},
-	}}
-	c := NewClient("http://kazari", "", hc)
-	c.local = true
-	return c
+func (r *runner) socketClient(path string) *apiclient.Client {
+	return r.newClient("http://kazari", "", path, apiclient.Options{Host: "admin", Local: true})
+}
+
+// existingDefaultConfig is the default server configuration if it exists.
+func (r *runner) existingDefaultConfig() string {
+	if r.defaultConfig == "" {
+		return ""
+	}
+	if _, err := os.Stat(r.defaultConfig); err != nil {
+		return ""
+	}
+	return r.defaultConfig
 }
 
 func (r *runner) configHint() string {
@@ -670,11 +743,10 @@ type VersionCmd struct{}
 
 func (c *VersionCmd) Run(r *runner) error {
 	info := buildinfo.Get()
-	if r.g.JSON {
-		return r.printJSON(info)
-	}
-	fmt.Fprintf(r.stdout, "kazari %s\n", info)
-	return nil
+	return r.emit(info, func(w io.Writer) error {
+		fmt.Fprintf(w, "kazari %s\n", info)
+		return nil
+	})
 }
 
 // HelpCmd is "kazari help [command]".

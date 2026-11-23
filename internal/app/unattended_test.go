@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -92,7 +92,7 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	now := in.clock.Now()
 
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "ana"}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 		t.Errorf("a key without an expiry under max_key_ttl: %+v, %v", open, err)
 	}
 
-	me, err := cli.NewClient("http://api.localhost", key, hc).Me(ctx)
+	me, err := apiclient.New("http://api.localhost", key, apiclient.Options{HTTP: hc}).Me(ctx)
 	if err != nil || len(me.Slugs) != 1 || me.Slugs[0] != "weekly-*" || !me.ExpiresAt.Equal(now.Add(90*day)) {
 		t.Fatalf("GET /me = %+v, %v", me, err)
 	}
@@ -173,7 +173,7 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 		t.Fatalf("token response = %+v, want an access token of auth.tokens.access_ttl with the key's scopes", first)
 	}
 
-	viaOAuth, err := cli.NewClient("http://api.localhost", first.AccessToken, hc).Me(ctx)
+	viaOAuth, err := apiclient.New("http://api.localhost", first.AccessToken, apiclient.Options{HTTP: hc}).Me(ctx)
 	if err != nil || viaOAuth.Source != "oauth" || len(viaOAuth.Slugs) != 1 || viaOAuth.Slugs[0] != "weekly-*" ||
 		!viaOAuth.ExpiresAt.Equal(now.Add(90*day)) {
 		t.Fatalf("GET /me with the connection = %+v, %v; want the key's restriction and expiry", viaOAuth, err)
@@ -195,7 +195,7 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 	if g.Client != "Routine" || g.KeyPrefix != prefix || !g.ExpiresAt.Equal(now.Add(45*day)) || !g.CreatedAt.Equal(now) {
 		t.Errorf("grant = %+v, want the client's name, the key and auth.tokens.refresh_ttl", g)
 	}
-	events, err := admin.Audit(ctx, cli.AuditParams{Slug: "weekly-report"})
+	events, err := admin.Audit(ctx, apiclient.AuditParams{Slug: "weekly-report"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,10 +229,10 @@ func TestUnattendedAgentEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.NewClient("http://api.localhost", second.AccessToken, hc).Me(ctx); err == nil {
+	if _, err := apiclient.New("http://api.localhost", second.AccessToken, apiclient.Options{HTTP: hc}).Me(ctx); err == nil {
 		t.Error("the connection outlived the key it was approved with")
 	}
-	if me, err := cli.NewClient("http://api.localhost", rotated.Key, hc).Me(ctx); err != nil || me.Slugs[0] != "weekly-*" {
+	if me, err := apiclient.New("http://api.localhost", rotated.Key, apiclient.Options{HTTP: hc}).Me(ctx); err != nil || me.Slugs[0] != "weekly-*" {
 		t.Errorf("the rotated key: %+v, %v", me, err)
 	}
 	if err := admin.RevokeGrant(ctx, g.ID); err != nil {
@@ -259,7 +259,7 @@ func TestKeySecretsStayOutOfSpansAndLogs(t *testing.T) {
 	<-a.Started()
 	hc := client(a.Addrs().HTTP)
 
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "ana"}); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestKeySecretsStayOutOfSpansAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys = append(keys, issued.Key)
-	own := cli.NewClient("http://api.localhost", issued.Key, hc)
+	own := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: hc})
 	child, err := own.IssueMyKey(ctx, api.IssueKeyRequest{Slugs: []string{"weekly-*"}, ExpiresIn: "30d"})
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestKeySecretsStayOutOfSpansAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A revoked key and a malformed one are refused, and still not logged.
-	if _, err := cli.NewClient("http://api.localhost", byAdmin.Key, hc).Me(ctx); err == nil {
+	if _, err := apiclient.New("http://api.localhost", byAdmin.Key, apiclient.Options{HTTP: hc}).Me(ctx); err == nil {
 		t.Error("a revoked key was accepted")
 	}
 	cs := mcpSession(t, a.Addrs().HTTP, issued.Key)
