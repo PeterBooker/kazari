@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -210,5 +211,73 @@ func TestFirstRunSetupLink(t *testing.T) {
 		if strings.Contains(line, m[1]) || strings.Contains(line, "kzl_") {
 			t.Errorf("a log record carries the setup token: %s", line)
 		}
+	}
+}
+
+func TestListenSocket(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "admin.sock")
+	var bound string
+	listen := func(ctx context.Context, network, address string) (net.Listener, error) {
+		bound = address
+		ln, err := new(net.ListenConfig).Listen(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("at bind, Lstat(%q) err = %v, want nothing at the path yet", path, err)
+		}
+		if info, err := os.Stat(filepath.Dir(address)); err != nil {
+			t.Error(err)
+		} else if info.Mode().Perm() != 0o700 {
+			t.Errorf("at bind, the directory of %q has mode %v, want 0700", address, info.Mode())
+		}
+		return ln, nil
+	}
+	ln, err := app.ListenSocket(t.Context(), path, listen)
+	if err != nil {
+		t.Fatalf("ListenSocket(%q) err = %v", path, err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	if filepath.Dir(bound) == dir {
+		t.Errorf("ListenSocket(%q) bound %q, want a directory of its own", path, bound)
+	}
+	if info, err := os.Lstat(path); err != nil {
+		t.Error(err)
+	} else if info.Mode().Type() != fs.ModeSocket || info.Mode().Perm() != 0o600 {
+		t.Errorf("Lstat(%q) mode = %v, want a socket with 0600", path, info.Mode())
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+		t.Errorf("ReadDir(%q) = %v, %v; want the socket alone", dir, entries, err)
+	}
+
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			conn.Close()
+		}
+		accepted <- err
+	}()
+	conn, err := new(net.Dialer).DialContext(t.Context(), "unix", path)
+	if err != nil {
+		t.Fatalf("dial %q: %v", path, err)
+	}
+	conn.Close()
+	if err := <-accepted; err != nil {
+		t.Errorf("Accept on %q: %v", path, err)
+	}
+}
+
+func TestListenSocketBindFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "admin.sock")
+	refused := errors.New("refused")
+	listen := func(context.Context, string, string) (net.Listener, error) { return nil, refused }
+	if _, err := app.ListenSocket(t.Context(), path, listen); !errors.Is(err, refused) {
+		t.Errorf("ListenSocket(%q) err = %v, want %v", path, err, refused)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("ReadDir(%q) = %v, %v; want nothing left behind", dir, entries, err)
 	}
 }
