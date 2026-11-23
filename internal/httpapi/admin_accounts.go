@@ -172,7 +172,7 @@ func (h *adminAPI) backup(w http.ResponseWriter, r *http.Request, _ auth.Princip
 	// A large archive outlasts the server's write timeout, so each write
 	// renews it: the download lasts while its reader reads, and one that
 	// stalls ends, which frees the backup for the next caller.
-	out := &archiveWriter{w: w, body: middleware.Streaming(w, backupStall), name: h.backupFileName(), contentType: "application/x-tar"}
+	out := &archiveWriter{w: w, body: middleware.Streaming(w, downloadStall), name: h.backupFileName(), contentType: "application/x-tar"}
 	if _, err := h.d.Backup.Write(r.Context(), out, backup.WriteOptions{Certs: certs}); err != nil {
 		if !out.started {
 			return err
@@ -211,9 +211,9 @@ type archiveWriter struct {
 	started     bool
 }
 
-// backupStall is how long a backup's reader may take over one write before
-// the server gives the download up.
-const backupStall = time.Minute
+// downloadStall is how long the reader of a backup or a bundle may take over
+// one write before the server gives the download up.
+const downloadStall = time.Minute
 
 func (a *archiveWriter) start() {
 	if a.started {

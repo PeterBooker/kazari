@@ -149,6 +149,10 @@ var slugOps = []struct {
 		}
 		return err
 	}},
+	{"OpenVersion", false, func(e *env, actor artifact.Actor, slug string) error {
+		_, _, err := e.svc.OpenVersion(e.ctx, actor, slug, 0)
+		return err
+	}},
 	{"Update fields", false, func(e *env, actor artifact.Actor, slug string) error {
 		_, _, err := e.svc.Update(e.ctx, actor, artifact.UpdateRequest{Slug: slug, Name: new("renamed")})
 		return err

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // PullCmd writes a version's files to a directory.
@@ -46,10 +47,7 @@ func (c *PullCmd) Run(r *runner) error {
 	defer body.Close()
 	pulled, size, err := extractBundle(body, dir)
 	if err != nil {
-		if errors.Is(err, errUnsafeEntry) {
-			return fmt.Errorf("pull: %w; the server sent an archive pull does not write", err)
-		}
-		return fmt.Errorf("pull: %w; what was written before it stays in %s", err, dir)
+		return fmt.Errorf("pull: %w; what was written before it stays in %s, so pull again with --force", err, dir)
 	}
 	left, err := notDeployed(dir, pulled)
 	if err != nil {
@@ -128,7 +126,10 @@ var errUnsafeEntry = errors.New("unsafe archive entry")
 // extractBundle writes a gzip-compressed tar of regular files into dir,
 // replacing files of the same name, and returns the paths it wrote, sorted,
 // and their total size. An entry that is not a regular file or directory,
-// leads outside dir or comes twice fails with errUnsafeEntry.
+// whose name is not a clean relative path, or that lands on a file an
+// earlier entry wrote fails with errUnsafeEntry. A symlink already in dir
+// on an entry's path fails too, so --force replaces files and never writes
+// through a link to another one.
 func extractBundle(r io.Reader, dir string) ([]string, int64, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -137,18 +138,20 @@ func extractBundle(r io.Reader, dir string) ([]string, int64, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, 0, err
 	}
-	// os.Root refuses names that leave dir, through a symlink already in it
-	// too, which --force may meet.
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer root.Close()
 
+	type written struct {
+		name string
+		info os.FileInfo
+	}
 	var (
 		pulled []string
 		size   int64
-		seen   = map[string]bool{}
+		files  []written
 	)
 	tr := tar.NewReader(zr)
 	for {
@@ -159,25 +162,42 @@ func extractBundle(r io.Reader, dir string) ([]string, int64, error) {
 		if err != nil {
 			return pulled, size, fmt.Errorf("read archive: %w", err)
 		}
-		name := filepath.FromSlash(hdr.Name)
-		if !filepath.IsLocal(name) {
-			return pulled, size, fmt.Errorf("%w: %q leads outside the directory", errUnsafeEntry, hdr.Name)
+		name := hdr.Name
+		if hdr.Typeflag == tar.TypeDir {
+			name = strings.TrimSuffix(name, "/")
+		}
+		local := filepath.FromSlash(name)
+		if !fs.ValidPath(name) || name == "." || !filepath.IsLocal(local) {
+			return pulled, size, fmt.Errorf("%w: %q is not a clean path inside the directory", errUnsafeEntry, hdr.Name)
+		}
+		if err := noSymlink(root, local); err != nil {
+			return pulled, size, err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := root.MkdirAll(name, 0o755); err != nil {
+			if err := root.MkdirAll(local, 0o755); err != nil {
 				return pulled, size, fmt.Errorf("write %s: %w", hdr.Name, err)
 			}
 		case tar.TypeReg:
-			if seen[name] {
-				return pulled, size, fmt.Errorf("%w: %q comes twice", errUnsafeEntry, hdr.Name)
+			// On a file system that folds case or normalises names, two
+			// paths of the version can be one file.
+			if fi, err := root.Lstat(local); err == nil {
+				for _, w := range files {
+					if os.SameFile(fi, w.info) {
+						return pulled, size, fmt.Errorf("%w: %q and %q are the same file in %s", errUnsafeEntry, w.name, hdr.Name, dir)
+					}
+				}
 			}
-			seen[name] = true
-			n, err := writePulled(root, name, tr)
+			n, err := writePulled(root, local, tr)
 			if err != nil {
 				return pulled, size, fmt.Errorf("write %s: %w", hdr.Name, err)
 			}
-			pulled = append(pulled, filepath.ToSlash(name))
+			fi, err := root.Lstat(local)
+			if err != nil {
+				return pulled, size, fmt.Errorf("write %s: %w", hdr.Name, err)
+			}
+			files = append(files, written{hdr.Name, fi})
+			pulled = append(pulled, name)
 			size += n
 		default:
 			return pulled, size, fmt.Errorf("%w: %q is neither a file nor a directory", errUnsafeEntry, hdr.Name)
@@ -190,6 +210,25 @@ func extractBundle(r io.Reader, dir string) ([]string, int64, error) {
 	}
 	slices.Sort(pulled)
 	return pulled, size, nil
+}
+
+// noSymlink fails if name, or a directory on its way, is a symlink in root.
+func noSymlink(root *os.Root, name string) error {
+	p := ""
+	for part := range strings.SplitSeq(name, string(filepath.Separator)) {
+		p = filepath.Join(p, part)
+		fi, err := root.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink, which pull does not write through; remove it or pull into an empty directory", filepath.Join(root.Name(), p))
+		}
+	}
+	return nil
 }
 
 func writePulled(root *os.Root, name string, r io.Reader) (int64, error) {

@@ -19,12 +19,30 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 )
 
-// tarGz writes entries as an archive; a zero Type is a regular file.
+// tarGz writes entries as a gzip-compressed archive; a zero Type is a
+// regular file.
 func tarGz(t testing.TB, entries ...tarEntry) []byte {
+	t.Helper()
+	return gz(t, rawTar(t, entries...))
+}
+
+func gz(t testing.TB, b []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(zw)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func rawTar(t testing.TB, entries ...tarEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
 	for _, e := range entries {
 		typ := e.Type
 		if typ == 0 {
@@ -44,9 +62,6 @@ func tarGz(t testing.TB, entries ...tarEntry) []byte {
 		}
 	}
 	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
@@ -198,6 +213,9 @@ func TestExtractBundleRefuses(t *testing.T) {
 		{"absolute", tarGz(t, tarEntry{Name: "/escape", Content: "x"}), true},
 		{"symlink", tarGz(t, tarEntry{Name: "link", Type: tar.TypeSymlink}), true},
 		{"twice", tarGz(t, tarEntry{Name: "a", Content: "1"}, tarEntry{Name: "a", Content: "2"}), true},
+		{"dot slash", tarGz(t, tarEntry{Name: "a", Content: "1"}, tarEntry{Name: "./a", Content: "2"}), true},
+		{"double slash", tarGz(t, tarEntry{Name: "d//b", Content: "1"}), true},
+		{"dot dot inside", tarGz(t, tarEntry{Name: "a/../b", Content: "1"}), true},
 		{"cut short", long[:len(long)-4], false},
 		{"not gzip", []byte("plain text"), false},
 	}
@@ -219,20 +237,58 @@ func TestExtractBundleRefuses(t *testing.T) {
 	}
 }
 
-func TestExtractBundleThroughSymlink(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "out")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func TestExtractBundleRefusesSymlinksInTheDirectory(t *testing.T) {
+	tests := []struct {
+		name  string
+		link  string // made in the directory, pointing at target
+		entry string
+	}{
+		{"out of the directory", "up", "up/escape"},
+		{"to another file", "index.html", "index.html"},
+		{"to another directory", "css", "css/site.css"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			dir := filepath.Join(parent, "out")
+			if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "other.html"), []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := map[string]string{"up": parent, "index.html": "other.html", "css": "assets"}[tc.link]
+			if err := os.Symlink(target, filepath.Join(dir, tc.link)); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := extractBundle(bytes.NewReader(tarGz(t, tarEntry{Name: tc.entry, Content: "new"})), dir)
+			if err == nil {
+				t.Errorf("extractBundle(%s) through the symlink %s = nil error, want one", tc.entry, tc.link)
+			}
+			if b, _ := os.ReadFile(filepath.Join(dir, "other.html")); string(b) != "old" {
+				t.Errorf("extractBundle(%s) changed other.html to %q", tc.entry, b)
+			}
+			for _, p := range []string{filepath.Join(parent, "escape"), filepath.Join(dir, "assets", "site.css")} {
+				if _, err := os.Lstat(p); err == nil {
+					t.Errorf("extractBundle(%s) wrote %s through the symlink %s", tc.entry, p, tc.link)
+				}
+			}
+		})
+	}
+}
+
+// Two paths that are one file, as a hard link shows here and a file system
+// that folds case shows for Index.html and index.html, are refused.
+func TestExtractBundleRefusesTwoPathsOneFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.html"), []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(parent, filepath.Join(dir, "up")); err != nil {
+	if err := os.Link(filepath.Join(dir, "a.html"), filepath.Join(dir, "b.html")); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := extractBundle(bytes.NewReader(tarGz(t, tarEntry{Name: "up/escape", Content: "x"})), dir)
-	if err == nil {
-		t.Error("extractBundle through a symlink out of the directory = nil error, want one")
-	}
-	if _, err := os.Lstat(filepath.Join(parent, "escape")); err == nil {
-		t.Error("extractBundle followed a symlink out of the directory")
+	archive := tarGz(t, tarEntry{Name: "a.html", Content: "a"}, tarEntry{Name: "b.html", Content: "b"})
+	if _, _, err := extractBundle(bytes.NewReader(archive), dir); !errors.Is(err, errUnsafeEntry) {
+		t.Errorf("extractBundle of two paths that are one file = %v, want %v", err, errUnsafeEntry)
 	}
 }

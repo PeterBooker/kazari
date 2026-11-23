@@ -56,13 +56,16 @@ func FuzzNormalizeURL(f *testing.F) {
 	})
 }
 
+// FuzzExtractBundle mutates the tar inside the gzip stream, where the names
+// and types are, rather than the compressed bytes.
 func FuzzExtractBundle(f *testing.F) {
-	f.Add(tarGz(f, tarEntry{Name: "index.html", Content: "<h1>x</h1>"}, tarEntry{Name: "a/b.css", Content: "b{}"}))
-	f.Add(tarGz(f, tarEntry{Name: "../escape", Content: "x"}))
-	f.Add(tarGz(f, tarEntry{Name: "link", Type: tar.TypeSymlink}))
-	f.Add(tarGz(f, tarEntry{Name: "a", Type: tar.TypeDir}, tarEntry{Name: "a", Content: "x"}))
-	f.Add([]byte{0x1f, 0x8b})
-	f.Fuzz(func(t *testing.T, archive []byte) {
+	f.Add(rawTar(f, tarEntry{Name: "index.html", Content: "<h1>x</h1>"}, tarEntry{Name: "a/b.css", Content: "b{}"}))
+	f.Add(rawTar(f, tarEntry{Name: "../escape", Content: "x"}))
+	f.Add(rawTar(f, tarEntry{Name: "link", Type: tar.TypeSymlink}))
+	f.Add(rawTar(f, tarEntry{Name: "a", Type: tar.TypeDir}, tarEntry{Name: "a", Content: "x"}))
+	f.Add(rawTar(f, tarEntry{Name: "a", Content: "xx"}, tarEntry{Name: "./a", Content: "y"}))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		archive := gz(t, raw)
 		parent := t.TempDir()
 		dir := filepath.Join(parent, "out")
 		pulled, size, err := extractBundle(bytes.NewReader(archive), dir)

@@ -30,13 +30,15 @@ func (h *userAPI) downloadBundle(w http.ResponseWriter, r *http.Request, p auth.
 		return err
 	}
 	w.Header().Set(api.VersionHeader, strconv.Itoa(v.Number))
-	out := &archiveWriter{w: w, body: middleware.Streaming(w, backupStall),
+	out := &archiveWriter{w: w, body: middleware.Streaming(w, downloadStall),
 		name: slug + "-v" + strconv.Itoa(v.Number) + ".tar.gz", contentType: "application/gzip"}
 	if err := writeBundle(r.Context(), out, v, open); err != nil {
 		if !out.started {
 			return err
 		}
-		h.log.ErrorContext(r.Context(), "httpapi: bundle failed mid-stream", "slug", slug, "version", v.Number, "err", err)
+		if r.Context().Err() == nil {
+			h.log.ErrorContext(r.Context(), "httpapi: bundle failed mid-stream", "slug", slug, "version", v.Number, "err", err)
+		}
 		// A handler that returns ends the body cleanly, and the client would
 		// keep a truncated archive as a whole one.
 		panic(http.ErrAbortHandler)

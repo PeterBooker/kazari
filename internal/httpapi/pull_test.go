@@ -144,8 +144,10 @@ func TestDownloadBundleMissingBlob(t *testing.T) {
 				return
 			}
 			defer resp.Body.Close()
-			if _, err := untarGz(resp.Body); err == nil {
-				t.Errorf("bundle with %s missing read as a whole archive (status %d), want an error", tc.missing, resp.StatusCode)
+			// A gzip stream left unclosed fails to decode either way; only a
+			// failed read of the body shows the connection was cut.
+			if b, err := io.ReadAll(resp.Body); err == nil {
+				t.Errorf("bundle with %s missing: status %d and %d bytes read to a clean end, want the connection cut", tc.missing, resp.StatusCode, len(b))
 			}
 		})
 	}
