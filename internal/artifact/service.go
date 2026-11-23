@@ -61,9 +61,7 @@ func (NoQuotas) QuotaBytes(context.Context, string) (int64, error) { return 0, n
 
 // Options configures a Service. Zero values get the Default* values.
 type Options struct {
-	MaxVersionBytes  int64
-	MaxFileBytes     int64
-	MaxFiles         int
+	Limits
 	MaxMetadataPairs int
 	ReservedSlugs    []string
 	DefaultGrace     time.Duration // MarkStale grace when the caller gives none
@@ -96,15 +94,7 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
-	if o.MaxVersionBytes <= 0 {
-		o.MaxVersionBytes = DefaultMaxVersionBytes
-	}
-	if o.MaxFileBytes <= 0 {
-		o.MaxFileBytes = DefaultMaxFileBytes
-	}
-	if o.MaxFiles <= 0 {
-		o.MaxFiles = DefaultMaxFiles
-	}
+	o.Limits = o.Limits.WithDefaults()
 	if o.MaxMetadataPairs <= 0 {
 		o.MaxMetadataPairs = DefaultMaxPairs
 	}

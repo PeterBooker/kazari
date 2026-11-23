@@ -25,8 +25,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
-
 // UserDeps are the collaborators of the user API. Every field is required
 // unless its comment says otherwise.
 type UserDeps struct {
@@ -40,6 +38,8 @@ type UserDeps struct {
 	// Writes is shared with the MCP server so a key has one write budget on
 	// both; nil disables it.
 	Writes *ratelimit.Limiter
+	// IPs limits each client IP before authentication; nil disables it.
+	IPs *ratelimit.Limiter
 	// Fetch downloads files named by url; nil refuses them.
 	Fetch *fetch.Client
 }
@@ -50,25 +50,16 @@ type UserOptions struct {
 	// size, and a JSON body with inline files at its size in base64.
 	// Default: MaxVersionBytes plus 1 MiB.
 	MaxBodyBytes int64
-	// MaxVersionBytes caps the files one request names by url, together.
-	// Default: artifact.DefaultMaxVersionBytes.
-	MaxVersionBytes int64
-	// MaxChunkBytes caps one upload chunk. Default: the upload service's.
-	MaxChunkBytes int64
-	// MaxFileBytes caps a file named by url. Default: artifact.DefaultMaxFileBytes.
-	MaxFileBytes int64
-	// MaxTotalBytes is only echoed in POST /v1/uploads. Default:
-	// upload.DefaultMaxTotalBytes.
-	MaxTotalBytes int64
-	// IPRatePerMinute applies per client IP, before authentication. 0 means
-	// DefaultIPRatePerMinute; negative disables it.
-	IPRatePerMinute int
+	// Limits cap the files one request names by url, and are echoed in POST
+	// /v1/uploads. MaxChunkBytes caps one upload chunk; its default is the
+	// upload service's.
+	artifact.Limits
 	// TempDir holds spilled multipart bundles and archives. Default: os.TempDir().
 	TempDir string
 	// APIBaseURL is the REST root an upload's archive URL is built on, e.g.
 	// https://api.<base>/v1.
 	APIBaseURL string
-	// Now clocks the rate limiters. Default: time.Now.
+	// Now decides whether a share link is active. Default: time.Now.
 	Now func() time.Time
 	// Skill is the SKILL.md served at GET /v1/skill; empty answers 404.
 	Skill     string
@@ -76,23 +67,12 @@ type UserOptions struct {
 }
 
 func (o UserOptions) withDefaults(d UserDeps) UserOptions {
-	if o.MaxVersionBytes <= 0 {
-		o.MaxVersionBytes = artifact.DefaultMaxVersionBytes
-	}
-	if o.MaxBodyBytes <= 0 {
-		o.MaxBodyBytes = o.MaxVersionBytes + 1<<20
-	}
 	if o.MaxChunkBytes <= 0 {
 		o.MaxChunkBytes = d.Uploads.MaxChunkBytes()
 	}
-	if o.MaxTotalBytes <= 0 {
-		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
-	}
-	if o.MaxFileBytes <= 0 {
-		o.MaxFileBytes = artifact.DefaultMaxFileBytes
-	}
-	if o.IPRatePerMinute == 0 {
-		o.IPRatePerMinute = DefaultIPRatePerMinute
+	o.Limits = o.Limits.WithDefaults()
+	if o.MaxBodyBytes <= 0 {
+		o.MaxBodyBytes = o.MaxVersionBytes + 1<<20
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -114,7 +94,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 	o = o.withDefaults(d)
 	h := &userAPI{base: newBase(d.Logger, d.Links, o.Telemetry), d: d, o: o,
 		intake: intake.New(intake.Deps{Uploads: d.Uploads, Fetch: d.Fetch, Logger: d.Logger},
-			intake.Options{MaxFileBytes: o.MaxFileBytes, MaxVersionBytes: o.MaxVersionBytes})}
+			intake.Options{Limits: o.Limits})}
 
 	mux := http.NewServeMux()
 	for _, rt := range h.routes() {
@@ -135,7 +115,7 @@ func NewUserAPI(d UserDeps, o UserOptions) http.Handler {
 		receive.ServeHTTP(w, r)
 	})
 	open.Handle("/", protected)
-	return h.limit(ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry}), ratelimit.IPKey)(open)
+	return h.limit(d.IPs, ratelimit.IPKey)(open)
 }
 
 // route is one route behind the bearer check: the scope it needs ("" for
@@ -842,14 +822,14 @@ func (h *userAPI) beginUpload(w http.ResponseWriter, r *http.Request, p auth.Pri
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusCreated, present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes))
+		writeJSON(w, http.StatusCreated, present.Upload(u, h.o.MaxChunkBytes, h.o.MaxVersionBytes))
 		return nil
 	}
 	u, token, err := h.d.Uploads.BeginArchive(r.Context(), p.Handle, req.ArchiveSHA256, req.ArchiveBytes, req.ArchivePath)
 	if err != nil {
 		return err
 	}
-	out := present.Upload(u, h.o.MaxChunkBytes, h.o.MaxTotalBytes)
+	out := present.Upload(u, h.o.MaxChunkBytes, h.o.MaxVersionBytes)
 	out.ArchiveURL = present.ArchiveURL(h.o.APIBaseURL, u.ID, token)
 	writeJSON(w, http.StatusCreated, out)
 	return nil

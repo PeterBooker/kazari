@@ -489,7 +489,7 @@ func TestChunkedUpload(t *testing.T) {
 	e := newEnv(t, config{upload: upload.Options{MaxChunkBytes: 16}})
 	var up api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice, nil, http.StatusCreated, &up)
-	if up.UploadID == "" || up.MaxChunkBytes != 16 || up.MaxTotalBytes != upload.DefaultMaxTotalBytes || !up.ExpiresAt.After(t0) {
+	if up.UploadID == "" || up.MaxChunkBytes != 16 || up.MaxTotalBytes != artifact.DefaultMaxVersionBytes || !up.ExpiresAt.After(t0) {
 		t.Fatalf("upload = %+v", up)
 	}
 	chunk := func(path, offset, body, ct string) *http.Response {
@@ -707,7 +707,7 @@ func TestRateLimits(t *testing.T) {
 		e.call(http.MethodPost, e.u("/v1/uploads"), e.member("bob", nil), nil, http.StatusCreated, nil)
 	})
 	t.Run("per IP", func(t *testing.T) {
-		e := newEnv(t, config{user: httpapi.UserOptions{IPRatePerMinute: 2}})
+		e := newEnv(t, config{userIPRate: 2})
 		e.call(http.MethodGet, e.u("/v1/me"), e.alice, nil, http.StatusOK, nil)
 		// Counts too: the IP limit runs before authentication.
 		e.apiErr(e.send(req{method: http.MethodGet, url: e.u("/v1/me")}), http.StatusUnauthorized, api.CodeUnauthorized)

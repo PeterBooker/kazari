@@ -98,7 +98,7 @@ func newTexts(links present.Links, o Options) texts {
 		"be at most %s. 3) curl --fail-with-body -T site.zip '<archive_url>': the URL needs no credential, accepts only "+
 		"a body with that digest, and is spent by the first one that matches; after %d bodies that do not, the upload "+
 		"is removed. 4) create_artifact or update_artifact with upload_id. If curl cannot reach the host, the sandbox's "+
-		"network policy blocks it: tell the user, and fall back to upload_chunk.", bytesize.Exact(o.MaxTotalBytes), upload.MaxArchiveAttempts)
+		"network policy blocks it: tell the user, and fall back to upload_chunk.", bytesize.Exact(o.MaxVersionBytes), upload.MaxArchiveAttempts)
 
 	t.chunks = fmt.Sprintf("Offset rule: the first chunk of each path has offset 0; every next chunk's offset is the "+
 		"bytes_received returned by the previous chunk of that path. Each chunk is at most %s after base64 decoding "+
@@ -106,7 +106,7 @@ func newTexts(links present.Links, o Options) texts {
 		"files and \"utf8\" for text. If a call failed or you are unsure it arrived, resend the same chunk at the same "+
 		"offset: a repeat of the last chunk is acknowledged without being written twice. On upload_offset_mismatch "+
 		"the error says current=<n>: resume that path from offset n.",
-		bytesize.Exact(o.MaxChunkBytes), bytesize.Exact(o.MaxTotalBytes))
+		bytesize.Exact(o.MaxChunkBytes), bytesize.Exact(o.MaxVersionBytes))
 
 	copyLine := ""
 	if o.Fetch {

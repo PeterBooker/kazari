@@ -26,7 +26,6 @@ func exampleOptions() mcpserver.Options {
 		MaxFileBytes:        int64(cfg.Limits.MaxFileBytes),
 		MaxFiles:            cfg.Limits.MaxFiles,
 		MaxChunkBytes:       int64(cfg.Limits.MaxChunkBytes),
-		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
 		CSP:                 cfg.Serve.CSP,
 		AllowCSPOverride:    cfg.Serve.AllowCSPOverride,
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,

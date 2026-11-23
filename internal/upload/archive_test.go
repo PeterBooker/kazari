@@ -47,7 +47,7 @@ func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
 func TestBeginArchive(t *testing.T) {
 	ctx := context.Background()
-	e := newEnv(t, upload.Options{MaxTotalBytes: 1 << 20})
+	e := newEnv(t, upload.Options{MaxVersionBytes: 1 << 20})
 	u, token := e.beginArchive(t, "alice", "archive bytes")
 	if len(token) != 43 || strings.ContainsAny(token, "+/=") {
 		t.Errorf("token = %q, want 43 base64url characters", token)
@@ -170,7 +170,7 @@ func TestReceiveArchiveFailureRemovesUpload(t *testing.T) {
 		{"path twice", upload.Options{}, []artifact.FileInput{
 			{Path: "a", Content: strings.NewReader("1")}, {Path: "./a", Content: strings.NewReader("2")}}, artifact.ErrInvalidArgument},
 		{"too many files", upload.Options{MaxFiles: 2}, inputs(map[string]string{"a": "1", "b": "2", "c": "3"}), artifact.ErrTooManyFiles},
-		{"too large", upload.Options{MaxTotalBytes: 5}, inputs(map[string]string{"a": "123", "b": "456"}), artifact.ErrTooLarge},
+		{"too large", upload.Options{MaxVersionBytes: 5}, inputs(map[string]string{"a": "123", "b": "456"}), artifact.ErrTooLarge},
 		{"coded reader error", upload.Options{}, []artifact.FileInput{{Path: "a", Content: errReader{coded}}}, artifact.ErrInvalidArgument},
 	}
 	for _, tt := range tests {

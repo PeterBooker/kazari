@@ -68,12 +68,8 @@ type Options struct {
 	AllowedOrigins []string
 	// InlineGuidanceBytes is the size above which descriptions advise begin_upload.
 	InlineGuidanceBytes int64
-	MaxVersionBytes     int64
-	MaxFileBytes        int64
-	MaxFiles            int
-	MaxChunkBytes       int64
-	MaxTotalBytes       int64
-	CSP                 string
+	artifact.Limits
+	CSP string
 	// AllowCSPOverride says the instance adds an artifact's kazari.csp to CSP.
 	AllowCSPOverride bool
 	ReservedSlugs    []string
@@ -102,21 +98,7 @@ func (o Options) withDefaults() Options {
 	if o.InlineGuidanceBytes <= 0 {
 		o.InlineGuidanceBytes = DefaultInlineGuidanceBytes
 	}
-	if o.MaxVersionBytes <= 0 {
-		o.MaxVersionBytes = artifact.DefaultMaxVersionBytes
-	}
-	if o.MaxFileBytes <= 0 {
-		o.MaxFileBytes = artifact.DefaultMaxFileBytes
-	}
-	if o.MaxFiles <= 0 {
-		o.MaxFiles = artifact.DefaultMaxFiles
-	}
-	if o.MaxChunkBytes <= 0 {
-		o.MaxChunkBytes = upload.DefaultMaxChunkBytes
-	}
-	if o.MaxTotalBytes <= 0 {
-		o.MaxTotalBytes = upload.DefaultMaxTotalBytes
-	}
+	o.Limits = o.Limits.WithDefaults()
 	if o.MaxInlineReadBytes <= 0 {
 		o.MaxInlineReadBytes = DefaultMaxInlineReadBytes
 	}
@@ -175,7 +157,7 @@ func newBuilder(d Deps, o Options) *builder {
 		previewUI:    ui,
 		obs:          newObserver(o.Telemetry, toolNames(text, o)),
 		intake: intake.New(intake.Deps{Uploads: d.Uploads, Fetch: d.Fetch, Logger: log},
-			intake.Options{MaxFileBytes: o.MaxFileBytes, MaxVersionBytes: o.MaxVersionBytes}),
+			intake.Options{Limits: o.Limits}),
 	}
 }
 

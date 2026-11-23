@@ -50,6 +50,10 @@ type AdminDeps struct {
 	Views   *views.Service
 	Links   present.Links
 	Logger  *slog.Logger
+	// IPs limits each client IP before authentication, so the admin token
+	// cannot be guessed at speed; nil disables it. The admin socket
+	// (AdminOptions.Local) has no limit.
+	IPs *ratelimit.Limiter
 }
 
 // AdminOptions tunes the admin API.
@@ -57,11 +61,7 @@ type AdminOptions struct {
 	// AdminToken is accepted as a bearer token; empty leaves only admin-role
 	// keys.
 	AdminToken string
-	// IPRatePerMinute applies per client IP, before authentication, so the
-	// admin token cannot be guessed at speed. 0 means DefaultIPRatePerMinute;
-	// negative disables it.
-	IPRatePerMinute int
-	// Now clocks the rate limiter. Default: time.Now.
+	// Now names the file of a backup. Default: time.Now.
 	Now func() time.Time
 	// Local serves every request as the admin principal, with no credential
 	// and no rate limit, for the admin Unix socket. AdminToken is ignored.
@@ -85,9 +85,6 @@ type adminAPI struct {
 // admin-role key (or open, with AdminOptions.Local), /health open and
 // /metrics behind AdminOptions.MetricsToken.
 func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
-	if o.IPRatePerMinute == 0 {
-		o.IPRatePerMinute = DefaultIPRatePerMinute
-	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -158,8 +155,7 @@ func NewAdminAPI(d AdminDeps, o AdminOptions) http.Handler {
 		return jsonFallback(top, &h.base)
 	}
 	guarded := auth.RequireAdmin(o.AdminToken, d.Auth, auth.Options{Telemetry: o.Telemetry})(jsonFallback(v1, &h.base))
-	ipLimit := ratelimit.New(o.IPRatePerMinute, ratelimit.Options{Now: o.Now, Scope: ratelimit.ScopeIP, Telemetry: o.Telemetry})
-	top.Handle("/v1/", h.limit(ipLimit, ratelimit.IPKey)(guarded))
+	top.Handle("/v1/", h.limit(d.IPs, ratelimit.IPKey)(guarded))
 	return jsonFallback(top, &h.base)
 }
 

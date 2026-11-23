@@ -499,7 +499,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 				if err != nil {
 					return api.Upload{}, "", err
 				}
-				out := present.Upload(u, b.o.MaxChunkBytes, b.o.MaxTotalBytes)
+				out := present.Upload(u, b.o.MaxChunkBytes, b.o.MaxVersionBytes)
 				out.ArchiveURL = present.ArchiveURL(b.o.APIBaseURL, u.ID, token)
 				return out, fmt.Sprintf("Upload %s open until %s. Send the archive with: curl --fail-with-body -T <archive> '%s' "+
 					"(no credential needed), then call create_artifact or update_artifact with upload_id.",
@@ -509,7 +509,7 @@ func (b *builder) addTools(s *mcp.Server, p auth.Principal) {
 			if err != nil {
 				return api.Upload{}, "", err
 			}
-			out := present.Upload(u, b.o.MaxChunkBytes, b.o.MaxTotalBytes)
+			out := present.Upload(u, b.o.MaxChunkBytes, b.o.MaxVersionBytes)
 			return out, fmt.Sprintf("Upload %s open until %s; send chunks of at most %d bytes, starting at offset 0.",
 				out.UploadID, out.ExpiresAt.Format(time.RFC3339), out.MaxChunkBytes), nil
 		})

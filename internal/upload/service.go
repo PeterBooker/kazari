@@ -28,9 +28,6 @@ import (
 )
 
 const (
-	DefaultMaxChunkBytes   = 4 << 20
-	DefaultMaxTotalBytes   = 50 << 20
-	DefaultMaxFiles        = artifact.DefaultMaxFiles
 	DefaultTTL             = time.Hour
 	DefaultMaxOpenPerOwner = 5
 	// MaxArchiveAttempts bounds what a leaked archive URL costs: after this
@@ -48,12 +45,11 @@ const (
 	tokenLen   = 43
 )
 
-// Options configures a Service. Zero fields take the Default constants.
+// Options configures a Service. Zero fields take the Default constants;
+// the limits those of artifact.Limits.
 type Options struct {
-	Dir             string // staging root; default os.TempDir()/kazari-uploads
-	MaxChunkBytes   int64  // after any transport decoding
-	MaxTotalBytes   int64  // all files of one upload
-	MaxFiles        int
+	Dir string // staging root; default os.TempDir()/kazari-uploads
+	artifact.Limits
 	TTL             time.Duration
 	MaxOpenPerOwner int
 	Now             func() time.Time
@@ -74,15 +70,7 @@ func New(store Store, opts Options) *Service {
 	if opts.Dir == "" {
 		opts.Dir = filepath.Join(os.TempDir(), "kazari-uploads")
 	}
-	if opts.MaxChunkBytes <= 0 {
-		opts.MaxChunkBytes = DefaultMaxChunkBytes
-	}
-	if opts.MaxTotalBytes <= 0 {
-		opts.MaxTotalBytes = DefaultMaxTotalBytes
-	}
-	if opts.MaxFiles <= 0 {
-		opts.MaxFiles = DefaultMaxFiles
-	}
+	opts.Limits = opts.Limits.WithDefaults()
 	if opts.TTL <= 0 {
 		opts.TTL = DefaultTTL
 	}
@@ -146,8 +134,8 @@ func (s *Service) BeginArchive(ctx context.Context, owner, sum string, size int6
 	if size <= 0 {
 		return nil, "", artifact.Errorf(artifact.ErrInvalidArgument, "archive_bytes must be the size of the archive")
 	}
-	if size > s.opts.MaxTotalBytes {
-		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %s", bytesize.Format(s.opts.MaxTotalBytes))
+	if size > s.opts.MaxVersionBytes {
+		return nil, "", artifact.Errorf(artifact.ErrTooLarge, "archive larger than %s", bytesize.Format(s.opts.MaxVersionBytes))
 	}
 	if path != "" {
 		clean, err := artifact.ValidatePath(path)
@@ -252,9 +240,9 @@ func (s *Service) AppendChunk(ctx context.Context, owner, id, path string, offse
 	default:
 		return StagedFile{}, &OffsetMismatchError{Path: clean, Current: f.Bytes}
 	}
-	if u.Bytes+size > s.opts.MaxTotalBytes {
+	if u.Bytes+size > s.opts.MaxVersionBytes {
 		return StagedFile{}, artifact.Errorf(artifact.ErrTooLarge,
-			"upload larger than %s", bytesize.Format(s.opts.MaxTotalBytes))
+			"upload larger than %s", bytesize.Format(s.opts.MaxVersionBytes))
 	}
 
 	if err := s.write(id, f, chunk); err != nil {
@@ -448,7 +436,7 @@ func (s *Service) stage(ctx context.Context, u *Upload, files []artifact.FileInp
 		taken[f.Path] = true
 		next = max(next, f.StagingIndex+1)
 	}
-	left := s.opts.MaxTotalBytes - u.Bytes
+	left := s.opts.MaxVersionBytes - u.Bytes
 	staged := make([]StagedFile, 0, len(files))
 	for _, in := range files {
 		if err := ctx.Err(); err != nil {
@@ -495,7 +483,7 @@ func (s *Service) writeNew(id string, index int, r io.Reader, left int64) (int64
 	case err != nil:
 		return 0, fmt.Errorf("upload: stage %s: %w", id, err)
 	case n > left:
-		return 0, artifact.Errorf(artifact.ErrTooLarge, "upload larger than %s", bytesize.Format(s.opts.MaxTotalBytes))
+		return 0, artifact.Errorf(artifact.ErrTooLarge, "upload larger than %s", bytesize.Format(s.opts.MaxVersionBytes))
 	}
 	return n, nil
 }
