@@ -495,7 +495,7 @@ func randomLabel() string {
 func Describe(cfg config.Config, origin config.Origin) string {
 	mode := cfg.TLS.Mode + " via " + cfg.TLS.DNSProvider
 	if cfg.Listen.ProxyMode {
-		mode = "proxy"
+		mode = "proxy, client IP from " + cfg.Listen.ClientIPHeader
 	} else if cfg.TLS.Mode != "acme" {
 		mode = cfg.TLS.Mode
 	}
