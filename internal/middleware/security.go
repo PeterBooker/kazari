@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
 // SecurityHeaders sets control-plane defaults before the handler runs, so
@@ -70,7 +72,7 @@ func Pages(origin string) func(http.Handler) http.Handler {
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("Cross-Origin-Resource-Policy", "same-origin")
 			if !pageRequest(r, origin) {
-				SetErrorCode(r.Context(), "forbidden")
+				SetErrorCode(r.Context(), errcode.Forbidden)
 				http.Error(w, "This request did not come from this server's own pages.", http.StatusForbidden)
 				return
 			}

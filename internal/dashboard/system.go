@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
@@ -343,8 +342,8 @@ func (s *server) runJob(w http.ResponseWriter, r *http.Request, _ *request) erro
 	case errors.Is(err, scheduler.ErrUnknownJob):
 		return notFound("There is no job with that name.")
 	case errors.Is(err, scheduler.ErrRunning):
-		return &problem{status: http.StatusConflict, title: "The job is already running",
-			message: "Wait for the run in progress to finish, then look at its result on the System page."}
+		return explained(err, "The job is already running",
+			"Wait for the run in progress to finish, then look at its result on the System page.")
 	case err != nil:
 		// The scheduler has logged it and keeps it as the job's last error.
 		return &problem{status: http.StatusInternalServerError, title: "The job failed",
@@ -375,15 +374,15 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 	}
 	switch {
 	case errors.Is(err, backup.ErrRunning):
-		return &problem{status: http.StatusConflict, code: api.CodeBackupRunning, title: "A backup is already running",
-			message: "One backup is written at a time. Wait for the download in progress to finish, then try again."}
+		return explained(err, "A backup is already running",
+			"One backup is written at a time. Wait for the download in progress to finish, then try again.")
 	case errors.Is(err, backup.ErrNoSpace):
 		msg := "The server has too little free space for the temporary copy of the database. Free some space on the data disk, then try again."
 		if est, eerr := s.d.Backup.Estimate(ctx); eerr == nil {
 			msg = fmt.Sprintf("The copy of the database needs up to %s and the data disk has %s free. Free some space, then try again.",
 				humanBytes(est.DatabaseBytes), humanBytes(est.FreeBytes))
 		}
-		return &problem{status: http.StatusInsufficientStorage, code: api.CodeNoSpace, title: "Not enough free space", message: msg}
+		return explained(err, "Not enough free space", msg)
 	}
 	return err
 }

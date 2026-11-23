@@ -17,13 +17,11 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
-	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
-	"github.com/PeterBooker/kazari/internal/backup"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
-	"github.com/PeterBooker/kazari/internal/user"
 )
 
 // jsonLimit caps JSON bodies that cannot carry inline files; those use
@@ -32,7 +30,7 @@ const jsonLimit = 1 << 20
 
 // ErrGrantNotFound is what a GrantStore returns (or wraps) for an unknown
 // grant id, so DELETE /v1/grants/{id} answers 404.
-var ErrGrantNotFound = errors.New("httpapi: grant not found")
+var ErrGrantNotFound = errcode.Shown(errcode.NotFound, "httpapi: grant not found", "grant not found")
 
 // statusError is for failures that are HTTP concerns, not domain errors.
 type statusError struct {
@@ -110,18 +108,6 @@ func (b *base) writeError(w http.ResponseWriter, r *http.Request, err error) {
 func errorResponse(err error) (int, api.Error, time.Duration) {
 	if se, ok := errors.AsType[*statusError](err); ok {
 		return se.status, api.Error{Code: se.code, Message: se.msg}, se.retryAfter
-	}
-	switch {
-	case errors.Is(err, user.ErrInvalidIdentity):
-		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
-	case errors.Is(err, audit.ErrInvalidQuery):
-		return http.StatusUnprocessableEntity, api.Error{Code: api.CodeInvalidArgument, Message: err.Error()}, 0
-	case errors.Is(err, ErrGrantNotFound):
-		return http.StatusNotFound, api.Error{Code: api.CodeNotFound, Message: "grant not found"}, 0
-	case errors.Is(err, backup.ErrRunning):
-		return http.StatusConflict, api.Error{Code: api.CodeBackupRunning, Message: "a backup is already running; wait for it to finish"}, 0
-	case errors.Is(err, backup.ErrNoSpace):
-		return http.StatusInsufficientStorage, api.Error{Code: api.CodeNoSpace, Message: err.Error()}, 0
 	}
 	status, body := present.Error(err)
 	if body.Code == api.CodeBusy {

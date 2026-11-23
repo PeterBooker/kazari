@@ -265,7 +265,7 @@ func (s *ArtifactStore) Create(ctx context.Context, a *artifact.Artifact, v *art
 }
 
 func artifactErr(op string, err error) error {
-	if artifact.CodeOf(err) != "" {
+	if err == nil || artifact.CodeOf(err) != "" {
 		return err
 	}
 	return fmt.Errorf("sqlite: artifact %s: %w", op, err)
@@ -556,7 +556,7 @@ func (s *ArtifactStore) Update(ctx context.Context, slug, by string, fn func(a *
 		}
 		return nil
 	})
-	return artifactErrOrNil("update", err)
+	return artifactErr("update", err)
 }
 
 func (s *ArtifactStore) TransferOwned(ctx context.Context, from, to, by string, at time.Time) (_ []string, err error) {
@@ -623,13 +623,6 @@ func (s *ArtifactStore) Involved(ctx context.Context, slug, handle string) (_ bo
 		return false, artifactErr("involved", err)
 	}
 	return ok, nil
-}
-
-func artifactErrOrNil(op string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return artifactErr(op, err)
 }
 
 type artifactCursor struct {
@@ -997,7 +990,7 @@ func (s *ArtifactStore) Purge(ctx context.Context, slug string, at time.Time, fn
 		}
 		return nil
 	})
-	return artifactErrOrNil("purge", err)
+	return artifactErr("purge", err)
 }
 
 // DeleteTombstone returns ErrInvalidArgument unless the artifact is purged.
@@ -1019,7 +1012,7 @@ func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) (err e
 		_, err = tx.ExecContext(ctx, `DELETE FROM artifact WHERE slug = ?`, slug)
 		return err
 	})
-	return artifactErrOrNil("delete tombstone", err)
+	return artifactErr("delete tombstone", err)
 }
 
 // RecordBlob only moves created_at forward.
@@ -1027,7 +1020,7 @@ func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64,
 	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlob")
 	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
-	return artifactErrOrNil("record blob", err)
+	return artifactErr("record blob", err)
 }
 
 func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) (_ []string, err error) {
@@ -1075,7 +1068,7 @@ func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error)
 	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlob")
 	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
-	return artifactErrOrNil("delete blob", err)
+	return artifactErr("delete blob", err)
 }
 
 // artifactStatus applies the lifecycle's precedence, so each artifact has

@@ -24,7 +24,7 @@ func (s *ArtifactStore) CreateShareLink(ctx context.Context, slug string, l *art
 			aid, l.Prefix, hash, passwordHash, l.Label, l.CreatedBy, toNanos(l.CreatedAt), toNanos(l.ExpiresAt))
 		return err
 	})
-	return artifactErrOrNil("create share link", err)
+	return artifactErr("create share link", err)
 }
 
 const shareLinkSelect = `SELECT l.prefix, l.label, l.created_by, l.created_at, l.expires_at, l.revoked_at,

@@ -20,8 +20,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
 )
@@ -189,7 +189,7 @@ func (p *Provider) exchange(ctx context.Context, code, codeVerifier string) (_ *
 // a client span below it.
 func (p *Provider) verify(ctx context.Context, raw string) (_ *gooidc.IDToken, err error) {
 	ctx, span := instrument.StartChild(ctx, p.tracer, "oidc.verify")
-	defer func() { instrument.End(span, err, api.CodeUnauthorized) }()
+	defer func() { instrument.End(span, err, errcode.Unauthorized) }()
 	return p.verifier.Verify(ctx, raw)
 }
 

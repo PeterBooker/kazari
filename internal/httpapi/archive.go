@@ -102,7 +102,7 @@ func (h *userAPI) dropArchive(ctx context.Context, u *upload.Upload, err error) 
 // ended it, so the next step is a new begin_upload rather than a retry.
 func removedArchive(err error) error {
 	if ae, ok := errors.AsType[*artifact.Error](err); ok {
-		return &artifact.Error{Code: ae.Code, Message: ae.Message + "; the upload is removed, begin a new one"}
+		return artifact.Errorf(ae, "%s; the upload is removed, begin a new one", ae.Message)
 	}
 	return err
 }

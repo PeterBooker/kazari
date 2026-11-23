@@ -5,31 +5,29 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/PeterBooker/kazari/internal/api"
 )
 
-// declaredCodes reads the Code constants from the package's source, which
-// is the only place that lists them without ErrorCodes.
-func declaredCodes(t *testing.T) []string {
+// constants reads the constants declared in dir's source with their values,
+// which a leaf's tests read rather than import.
+func constants(t *testing.T, dir string) map[string]ast.Expr {
 	t.Helper()
-	entries, err := os.ReadDir(".")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var codes []string
+	out := map[string]ast.Expr{}
 	fset := token.NewFileSet()
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		f, err := parser.ParseFile(fset, e.Name(), nil, parser.SkipObjectResolution)
+		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,34 +39,47 @@ func declaredCodes(t *testing.T) []string {
 			for _, s := range gd.Specs {
 				vs := s.(*ast.ValueSpec)
 				for i, name := range vs.Names {
-					if !strings.HasPrefix(name.Name, "Code") || i >= len(vs.Values) {
-						continue
+					if i < len(vs.Values) {
+						out[name.Name] = vs.Values[i]
 					}
-					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
-						t.Fatalf("%s is not a string literal", name.Name)
-					}
-					code, err := strconv.Unquote(lit.Value)
-					if err != nil {
-						t.Fatalf("%s: %v", name.Name, err)
-					}
-					codes = append(codes, code)
 				}
 			}
 		}
 	}
-	if len(codes) == 0 {
-		t.Fatal("found no Code constants in the package's source")
-	}
-	return codes
+	return out
 }
 
-func TestErrorCodesListsEveryCode(t *testing.T) {
-	want := declaredCodes(t)
+func isSelector(e ast.Expr, pkg, name string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == pkg && sel.Sel.Name == name
+}
+
+// Every error code has a Code constant on the wire that is the code itself.
+func TestCodeForEveryErrorCode(t *testing.T) {
+	var want []string
+	for name := range constants(t, filepath.Join("..", "errcode")) {
+		want = append(want, "Code"+name)
+	}
+	if len(want) == 0 {
+		t.Fatal("found no constants in internal/errcode's source")
+	}
+	var got []string
+	for name, value := range constants(t, ".") {
+		if !strings.HasPrefix(name, "Code") {
+			continue
+		}
+		got = append(got, name)
+		if !isSelector(value, "errcode", strings.TrimPrefix(name, "Code")) {
+			t.Errorf("%s is not errcode.%s", name, strings.TrimPrefix(name, "Code"))
+		}
+	}
 	slices.Sort(want)
-	got := slices.Clone(api.ErrorCodes)
 	slices.Sort(got)
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("ErrorCodes differs from the Code constants (-constants +ErrorCodes):\n%s", diff)
+		t.Errorf("the Code constants differ from internal/errcode's (-errcode +api):\n%s", diff)
 	}
 }

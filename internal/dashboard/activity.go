@@ -151,7 +151,7 @@ func (s *server) activity(w http.ResponseWriter, r *http.Request, c *request) er
 	q.Cursor = r.URL.Query().Get("cursor")
 	found, err := s.d.Audit.List(r.Context(), q)
 	if errors.Is(err, audit.ErrInvalidQuery) {
-		return refused("That page of results is no longer there. Start again from the first page of the activity.")
+		return explained(err, "That did not work", "That page of results is no longer there. Start again from the first page of the activity.")
 	}
 	if err != nil {
 		return err

@@ -1,63 +1,60 @@
-// Package api holds the wire types and error codes shared by the REST API, the
-// MCP server and the CLI. It has no logic and imports only the standard library.
+// Package api holds the wire types shared by the REST API, the MCP server and
+// the CLI, and the error codes of internal/errcode under their wire names.
+// It has no logic.
 package api
 
-import "time"
+import (
+	"time"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
+)
 
 // VersionHeader names the version a bundle download holds, which a request
 // for the published version does not know in advance.
 const VersionHeader = "Kazari-Version"
 
 const (
-	CodeNotFound           = "not_found"
-	CodeVersionNotFound    = "version_not_found"
-	CodeFileNotFound       = "file_not_found"
-	CodeUploadNotFound     = "upload_not_found"
-	CodeSlugTaken          = "slug_taken"
-	CodeVersionConflict    = "version_conflict"
-	CodePublishedNotLatest = "published_not_latest"
-	CodeTooLarge           = "too_large"
-	CodeTooManyFiles       = "too_many_files"
-	CodeTooManyUploads     = "too_many_uploads"
-	CodeQuotaExceeded      = "quota_exceeded"
-	CodeInvalidSlug        = "invalid_slug"
-	CodeInvalidPath        = "invalid_path"
-	CodeInvalidMetadata    = "invalid_metadata"
-	CodeInvalidArgument    = "invalid_argument"
-	CodeForbidden          = "forbidden"
-	CodeUnauthorized       = "unauthorized"
-	CodeGone               = "gone"
-	CodeOffsetMismatch     = "upload_offset_mismatch"
-	CodeDigestMismatch     = "upload_digest_mismatch"
-	CodeRateLimited        = "rate_limited"
-	CodeHandleTaken        = "handle_taken"
-	CodeEmailTaken         = "email_taken"
-	CodeInternal           = "internal"
-	CodeMethodNotAllowed   = "method_not_allowed"
-	CodeEditNotFound       = "edit_not_found"
-	CodeEditAmbiguous      = "edit_ambiguous"
-	CodeAnchorMismatch     = "anchor_mismatch"
-	CodeLinkNotFound       = "share_link_not_found"
-	CodeFetchFailed        = "fetch_failed"
-	CodeJobRunning         = "job_running"
-	CodeLastAdmin          = "last_admin"
-	CodeTooManyKeys        = "too_many_keys"
-	CodeSetupDone          = "setup_done"
-	CodeBackupRunning      = "backup_running"
-	CodeNoSpace            = "no_space"
-	CodeBusy               = "busy"
+	CodeNotFound           = errcode.NotFound
+	CodeVersionNotFound    = errcode.VersionNotFound
+	CodeFileNotFound       = errcode.FileNotFound
+	CodeUploadNotFound     = errcode.UploadNotFound
+	CodeSlugTaken          = errcode.SlugTaken
+	CodeVersionConflict    = errcode.VersionConflict
+	CodePublishedNotLatest = errcode.PublishedNotLatest
+	CodeTooLarge           = errcode.TooLarge
+	CodeTooManyFiles       = errcode.TooManyFiles
+	CodeTooManyUploads     = errcode.TooManyUploads
+	CodeQuotaExceeded      = errcode.QuotaExceeded
+	CodeInvalidSlug        = errcode.InvalidSlug
+	CodeInvalidPath        = errcode.InvalidPath
+	CodeInvalidMetadata    = errcode.InvalidMetadata
+	CodeInvalidArgument    = errcode.InvalidArgument
+	CodeForbidden          = errcode.Forbidden
+	CodeUnauthorized       = errcode.Unauthorized
+	CodeGone               = errcode.Gone
+	CodeOffsetMismatch     = errcode.OffsetMismatch
+	CodeDigestMismatch     = errcode.DigestMismatch
+	CodeRateLimited        = errcode.RateLimited
+	CodeHandleTaken        = errcode.HandleTaken
+	CodeEmailTaken         = errcode.EmailTaken
+	CodeInternal           = errcode.Internal
+	CodeMethodNotAllowed   = errcode.MethodNotAllowed
+	CodeEditNotFound       = errcode.EditNotFound
+	CodeEditAmbiguous      = errcode.EditAmbiguous
+	CodeAnchorMismatch     = errcode.AnchorMismatch
+	CodeLinkNotFound       = errcode.LinkNotFound
+	CodeFetchFailed        = errcode.FetchFailed
+	CodeJobRunning         = errcode.JobRunning
+	CodeLastAdmin          = errcode.LastAdmin
+	CodeTooManyKeys        = errcode.TooManyKeys
+	CodeSetupDone          = errcode.SetupDone
+	CodeBackupRunning      = errcode.BackupRunning
+	CodeNoSpace            = errcode.NoSpace
+	CodeBusy               = errcode.Busy
 )
 
 // ErrorCodes is every code above, the bounded set metrics count errors by.
-var ErrorCodes = []string{
-	CodeNotFound, CodeVersionNotFound, CodeFileNotFound, CodeUploadNotFound, CodeSlugTaken,
-	CodeVersionConflict, CodePublishedNotLatest, CodeTooLarge, CodeTooManyFiles, CodeTooManyUploads, CodeQuotaExceeded,
-	CodeInvalidSlug, CodeInvalidPath, CodeInvalidMetadata, CodeInvalidArgument, CodeForbidden,
-	CodeUnauthorized, CodeGone, CodeOffsetMismatch, CodeDigestMismatch, CodeRateLimited, CodeHandleTaken,
-	CodeEmailTaken, CodeInternal, CodeMethodNotAllowed, CodeEditNotFound, CodeEditAmbiguous,
-	CodeAnchorMismatch, CodeLinkNotFound, CodeFetchFailed, CodeJobRunning, CodeLastAdmin,
-	CodeTooManyKeys, CodeSetupDone, CodeBackupRunning, CodeNoSpace, CodeBusy,
-}
+var ErrorCodes = errcode.Codes
 
 // Error is the body of every error response.
 type Error struct {

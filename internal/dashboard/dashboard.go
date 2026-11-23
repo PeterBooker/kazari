@@ -438,6 +438,13 @@ func refused(format string, args ...any) error {
 	return &problem{status: http.StatusUnprocessableEntity, title: "That did not work", message: fmt.Sprintf(format, args...)}
 }
 
+// explained is err in the dashboard's own words, under the status and code
+// the APIs answer it with.
+func explained(err error, title, message string) error {
+	status, body := present.Error(err)
+	return &problem{status: status, code: body.Code, title: title, message: message}
+}
+
 // fail writes the error page for err.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, c *request, err error) {
 	var p *problem

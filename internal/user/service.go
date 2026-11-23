@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
 const (
@@ -920,7 +921,7 @@ func (s *Service) login(ctx context.Context, u *User, id auth.Identity) (*User, 
 	return u, nil
 }
 
-var ErrInvalidIdentity = errors.New("user: identity needs an issuer and a subject")
+var ErrInvalidIdentity = errcode.Text(errcode.InvalidArgument, "user: identity needs an issuer and a subject")
 
 // ListIdentities returns the user's identities ordered by issuer and
 // subject. ErrNotFound if the user does not exist.

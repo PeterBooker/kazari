@@ -7,6 +7,8 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
 // ScopeShare covers who can open an artifact: its visibility and its share
@@ -38,7 +40,7 @@ const (
 
 // ErrInvalidToken is returned by an Authenticator that does not recognise
 // the credential. Chain tries the next authenticator only on this error.
-var ErrInvalidToken = errors.New("auth: invalid token")
+var ErrInvalidToken = errcode.Shown(errcode.Unauthorized, "auth: invalid token", "invalid or expired token")
 
 // Principal is the authenticated caller.
 type Principal struct {

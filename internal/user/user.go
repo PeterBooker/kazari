@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
 // Role of a user.
@@ -20,49 +22,56 @@ const (
 const KeyPrefix = "kzk_"
 
 var (
-	ErrNotFound      = errors.New("user: not found")
-	ErrKeyNotFound   = errors.New("user: key not found")
-	ErrHandleTaken   = errors.New("user: handle is taken")
-	ErrEmailTaken    = errors.New("user: email is taken")
-	ErrInvalidHandle = errors.New("user: invalid handle")
-	ErrInvalidRole   = errors.New("user: invalid role")
-	ErrInvalidScope  = errors.New("user: invalid scope")
+	ErrNotFound      = errcode.Shown(errcode.NotFound, "user: not found", "user not found")
+	ErrKeyNotFound   = errcode.Shown(errcode.NotFound, "user: key not found", "key not found")
+	ErrHandleTaken   = errcode.Text(errcode.HandleTaken, "user: handle is taken")
+	ErrEmailTaken    = errcode.Text(errcode.EmailTaken, "user: email is taken")
+	ErrInvalidHandle = errcode.Text(errcode.InvalidArgument, "user: invalid handle")
+	ErrInvalidRole   = errcode.Text(errcode.InvalidArgument, "user: invalid role")
+	ErrInvalidScope  = errcode.Text(errcode.InvalidArgument, "user: invalid scope")
 	// ErrInvalidKey is a request for a key that cannot exist: a malformed
 	// slug pattern, a lifetime over the limit.
-	ErrInvalidKey = errors.New("user: invalid key")
+	ErrInvalidKey = errcode.Text(errcode.InvalidArgument, "user: invalid key")
 	// ErrKeyTooWide is a person's key asked to issue, rotate or revoke a key
 	// that holds more than it does.
-	ErrKeyTooWide     = errors.New("user: the key making the request is too narrow")
-	ErrDisabled       = errors.New("user: disabled")
-	ErrNotProvisioned = errors.New("user: identity is not allowed on this instance")
+	ErrKeyTooWide     = errcode.Text(errcode.Forbidden, "user: the key making the request is too narrow")
+	ErrDisabled       = errcode.Text(errcode.Forbidden, "user: disabled")
+	ErrNotProvisioned = errcode.Text(errcode.Forbidden, "user: identity is not allowed on this instance")
 	// ErrLastAdmin is a change that would leave the instance without an
 	// active admin.
-	ErrLastAdmin = errors.New("user: the last active admin cannot be disabled or demoted")
+	ErrLastAdmin = errcode.Shown(errcode.LastAdmin, "user: the last active admin cannot be disabled or demoted",
+		"the last active admin cannot be disabled or demoted; make another person an admin first")
 	// ErrSelf is a person disabling or demoting their own account.
-	ErrSelf = errors.New("user: nobody disables or demotes their own account")
+	ErrSelf = errcode.Shown(errcode.Forbidden, "user: nobody disables or demotes their own account",
+		"nobody disables or demotes their own account; ask another admin")
 	// ErrTooManyKeys is a key refused because its owner holds
 	// Options.MaxKeys live ones.
-	ErrTooManyKeys = errors.New("user: too many live keys")
+	ErrTooManyKeys = errcode.Text(errcode.TooManyKeys, "user: too many live keys")
 	// ErrBadPassword is a refused sign-in: an unknown name, an account
 	// without a password, a disabled one or a wrong password, never told
 	// apart.
-	ErrBadPassword = errors.New("user: wrong name or password")
+	ErrBadPassword = errcode.Shown(errcode.Unauthorized, "user: wrong name or password", "wrong name or password")
 	// ErrWeakPassword is a new password outside the length limits.
-	ErrWeakPassword = errors.New("user: password not accepted")
+	ErrWeakPassword = errcode.Text(errcode.InvalidArgument, "user: password not accepted")
 	// ErrLinkNotFound is a link that sets no password: unknown, used,
 	// replaced, revoked or expired, or its person disabled.
-	ErrLinkNotFound = errors.New("user: link not found")
+	ErrLinkNotFound = errcode.Shown(errcode.NotFound, "user: link not found",
+		"link not found, or it was used, replaced or has expired")
 	// ErrSetupDone is a first-run setup asked of an instance that has users.
-	ErrSetupDone = errors.New("user: the instance is already set up")
+	ErrSetupDone = errcode.Shown(errcode.SetupDone, "user: the instance is already set up",
+		"the instance already has users; an admin invites the others")
 	// ErrBusy is a password that was not checked or set because too many
 	// are being hashed and none finished in time. Trying again works.
-	ErrBusy = errors.New("user: too many passwords are being checked; try again in a moment")
+	ErrBusy = errcode.Shown(errcode.Busy, "user: too many passwords are being checked; try again in a moment",
+		"too many passwords are being checked at once; try again in a few seconds")
 	// ErrHasPassword is an invite asked for a person who has set a
 	// password: what they need is a reset link.
-	ErrHasPassword = errors.New("user: the person already has a password")
+	ErrHasPassword = errcode.Shown(errcode.InvalidArgument, "user: the person already has a password",
+		"the person already has a password, so an invite link is not for them; make a reset link instead")
 	// ErrLocalOff is a password or a link asked of an instance whose people
 	// sign in elsewhere (Options.LocalAccounts is off).
-	ErrLocalOff = errors.New("user: built-in accounts are off on this instance")
+	ErrLocalOff = errcode.Shown(errcode.Forbidden, "user: built-in accounts are off on this instance",
+		"built-in accounts are off on this instance; people sign in at the identity provider")
 	// ErrBadRecoveryCode is a refused recovery: an unknown name, a disabled
 	// account, or a code that is wrong or used, never told apart.
 	ErrBadRecoveryCode = errors.New("user: wrong name or recovery code")

@@ -18,6 +18,8 @@ import (
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/PeterBooker/kazari/internal/errcode"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
@@ -94,7 +96,7 @@ func rootType(err error) string {
 }
 
 // CodeInternal is the error code of every failure that is not the caller's.
-const CodeInternal = "internal"
+const CodeInternal = errcode.Internal
 
 // Other is the value a bounded attribute takes when its input is outside the
 // known set, as for http.request.method and error.type.

@@ -18,9 +18,9 @@ import (
 	"golang.org/x/net/html/atom"
 	"golang.org/x/net/html/charset"
 
-	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/csp"
+	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/fetch"
 )
 
@@ -46,6 +46,7 @@ const (
 var (
 	errBudgetExhausted = errors.New("import budget exhausted")
 	errRenderTooLarge  = errors.New("rendering exceeds the file limit")
+	errTooManyImports  = errcode.New(errcode.RateLimited, "too many imports are running")
 )
 
 // Options bounds a snapshot. The limits are the artifact service's, so a
@@ -121,7 +122,7 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	case t.slots <- struct{}{}:
 		defer func() { <-t.slots }()
 	default:
-		return nil, &artifact.Error{Code: api.CodeRateLimited, Message: fmt.Sprintf("%d imports are already running; retry in a few seconds", maxConcurrent)}
+		return nil, errcode.Errorf(errTooManyImports, "%d imports are already running; retry in a few seconds", maxConcurrent)
 	}
 	ctx, cancel := context.WithTimeout(fetch.WithPurpose(ctx, fetch.PurposeImport), t.client.Budget())
 	defer cancel()
