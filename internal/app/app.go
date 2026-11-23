@@ -314,12 +314,12 @@ func plainHTTP(address string) bool {
 // controlCallback returns where a browser sign-in ends on a control host:
 // the dashboard at admin.public_url, and the account pages on the apex. Both come
 // from the configuration, never from a request.
-func controlCallback(cfg config.Config) func(host string) (string, bool) {
-	admin := dashboardURL(cfg)
+func controlCallback(u urls) func(host string) (string, bool) {
+	admin := u.dashboard
 	if admin != "" {
 		admin += dashboard.CallbackPath
 	}
-	apex := cfg.ExternalURL("") + strings.TrimPrefix(account.CallbackPath, "/")
+	apex := u.apex + strings.TrimPrefix(account.CallbackPath, "/")
 	return func(host string) (string, bool) {
 		switch host {
 		case signin.HostAdmin:

@@ -39,11 +39,43 @@ import (
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
+// urls are the addresses the configuration gives the hosts, worked out
+// once for every surface.
+type urls struct {
+	apex       string // https://<base>/
+	apexOrigin string // https://<base>
+	mcp        string // https://mcp.<base>/
+	mcpOrigin  string // https://mcp.<base>
+	api        string // the REST root, https://api.<base>/v1
+	signIn     string
+	signOut    string
+	dashboard  string // "" when the dashboard is not served
+	// plainHTTP is external_scheme http, where cookies cannot carry the
+	// Secure attribute.
+	plainHTTP bool
+}
+
+func newURLs(cfg config.Config) urls {
+	u := urls{
+		apex:      cfg.ExternalURL(""),
+		mcp:       cfg.ExternalURL(config.MCPHost),
+		api:       cfg.ExternalURL(config.APIHost) + "v1",
+		dashboard: dashboardURL(cfg),
+		plainHTTP: cfg.ExternalScheme == "http",
+	}
+	u.apexOrigin = strings.TrimSuffix(u.apex, "/")
+	u.mcpOrigin = strings.TrimSuffix(u.mcp, "/")
+	u.signIn = u.mcp + strings.TrimPrefix(signin.PathSignIn, "/")
+	u.signOut = u.mcp + strings.TrimPrefix(signin.PathSignOut, "/")
+	return u
+}
+
 // parts are what build has made so far, handed from one step to the next.
 type parts struct {
 	now      func() time.Time
 	tel      instrument.Providers
 	fetchObs *fetch.Observer
+	urls     urls
 
 	blobs    *blob.FS
 	audit    *sqlite.AuditStore
@@ -101,7 +133,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 	cfg, log := a.cfg, a.log
 	tel := a.tel.Providers()
-	p := &parts{now: now, tel: tel, fetchObs: fetch.NewObserver(tel)}
+	p := &parts{now: now, tel: tel, fetchObs: fetch.NewObserver(tel), urls: newURLs(cfg)}
 
 	var err error
 	p.blobs, err = blob.NewFS(cfg.BlobDir(), blob.Options{Telemetry: tel})
@@ -203,14 +235,13 @@ func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 // identity builds who may sign in and how: the identity provider, passkeys,
 // the sign-in host and the authorization server.
 func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
-	cfg, log, now, tel := a.cfg, a.log, p.now, p.tel
-	mcpURL := cfg.ExternalURL(config.MCPHost)
+	cfg, log, now, tel, u := a.cfg, a.log, p.now, p.tel, p.urls
 	if o := cfg.Auth.OIDC; o != nil {
 		idp, err := oidc.NewLazy(oidc.Config{
 			Issuer:       o.Issuer,
 			ClientID:     o.ClientID,
 			ClientSecret: o.ClientSecret,
-			RedirectURL:  mcpURL + strings.TrimPrefix(oauth.PathCallback, "/"),
+			RedirectURL:  u.mcp + strings.TrimPrefix(oauth.PathCallback, "/"),
 			HTTPClient:   opts.OIDCClient,
 			Telemetry:    tel,
 			Fetch:        p.fetchObs,
@@ -237,7 +268,7 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 	)
 	if cfg.LocalAccounts() {
 		passwords = p.users
-		recoverURL = cfg.ExternalURL("") + "account/recover"
+		recoverURL = u.apex + "account/recover"
 	}
 	if cfg.LocalAccounts() && passkey.Supported(cfg.BaseDomain) {
 		// The apex and the sign-in host share the base domain, so a passkey
@@ -245,7 +276,7 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 		var err error
 		p.passkeys, err = passkey.New(p.users, passkey.Options{
 			RPID:    cfg.BaseDomain,
-			Origins: []string{strings.TrimSuffix(cfg.ExternalURL(""), "/"), strings.TrimSuffix(mcpURL, "/")},
+			Origins: []string{u.apexOrigin, u.mcpOrigin},
 			Now:     now,
 		})
 		if err != nil {
@@ -254,7 +285,7 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 	}
 	signInDeps := signin.Deps{
 		Users: p.users, Keys: p.users, Passwords: passwords, IdP: p.idp, Audit: p.audit,
-		ViewCallback: viewCallback(cfg), ControlCallback: controlCallback(cfg),
+		ViewCallback: viewCallback(cfg), ControlCallback: controlCallback(u),
 	}
 	// Set only when there is one: a nil *passkey.Service in the interface
 	// would not be a nil interface.
@@ -262,9 +293,9 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 		signInDeps.Passkeys = p.passkeys
 	}
 	p.signins = signin.New(sqlite.NewSignInStore(a.db), signInDeps, signin.Options{
-		Origin:          strings.TrimSuffix(mcpURL, "/"),
+		Origin:          u.mcpOrigin,
 		RecoverURL:      recoverURL,
-		InsecureCookies: cfg.ExternalScheme == "http",
+		InsecureCookies: u.plainHTTP,
 		Now:             now,
 		Logger:          log,
 		Telemetry:       tel,
@@ -272,14 +303,14 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 	p.oauth = oauth.New(sqlite.NewOAuthStore(a.db), oauth.Deps{
 		Users: p.users, Keys: p.users, IdP: p.idp, SignIn: p.signins, Audit: p.audit,
 	}, oauth.Options{
-		Issuer:             strings.TrimSuffix(mcpURL, "/"),
-		Resource:           mcpURL,
+		Issuer:             u.mcpOrigin,
+		Resource:           u.mcp,
 		AccessTTL:          cfg.Auth.Tokens.AccessTTL.Std(),
 		RefreshTTL:         cfg.Auth.Tokens.RefreshTTL.Std(),
 		RefreshReuseWindow: cfg.Auth.Tokens.RefreshReuseWindow.Std(),
 		Now:                now,
 		Logger:             log,
-		InsecureCookies:    cfg.ExternalScheme == "http",
+		InsecureCookies:    u.plainHTTP,
 		Fetch:              p.fetchObs,
 		Telemetry:          tel,
 	})
@@ -406,17 +437,15 @@ func (a *App) jobs(p *parts, opts Options) []scheduler.Job {
 // surfaces builds the handler of every host the router serves, and those of
 // the admin listener and socket.
 func (a *App) surfaces(p *parts) hosts {
-	cfg, log, now, tel := a.cfg, a.log, p.now, p.tel
-	mcpURL := cfg.ExternalURL(config.MCPHost)
+	cfg, log, now, tel, u := a.cfg, a.log, p.now, p.tel, p.urls
 	grants := grantsAndSessions{p.oauth, p.signins}
 	// One write budget per credential across the user API and MCP.
 	writes := ratelimit.New(cfg.Limits.WriteRatePerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential, Telemetry: tel})
 
-	apiBase := cfg.ExternalURL(config.APIHost) + "v1"
 	mcpOpts := mcpserver.Options{
 		BaseDomain:          cfg.BaseDomain,
-		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
-		AllowedOrigins:      []string{strings.TrimSuffix(mcpURL, "/")},
+		ResourceMetadataURL: u.mcp + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
+		AllowedOrigins:      []string{u.mcpOrigin},
 		InlineGuidanceBytes: int64(cfg.Limits.InlineGuidanceBytes),
 		MaxVersionBytes:     int64(cfg.Limits.MaxVersionBytes),
 		MaxFileBytes:        int64(cfg.Limits.MaxFileBytes),
@@ -426,8 +455,8 @@ func (a *App) surfaces(p *parts) hosts {
 		CSP:                 cfg.Serve.CSP,
 		AllowCSPOverride:    cfg.Serve.AllowCSPOverride,
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,
-		APIBaseURL:          apiBase,
-		MCPURL:              mcpURL,
+		APIBaseURL:          u.api,
+		MCPURL:              u.mcp,
 		DefaultVisibility:   cfg.Serve.DefaultVisibility,
 		MaxShareLinkTTL:     cfg.Serve.ShareLinkMaxTTL.Std(),
 		Fetch:               cfg.Fetch.Enabled,
@@ -445,7 +474,7 @@ func (a *App) surfaces(p *parts) hosts {
 		MaxTotalBytes:   int64(cfg.Limits.MaxVersionBytes),
 		Now:             now,
 		TempDir:         tempDir(cfg),
-		APIBaseURL:      apiBase,
+		APIBaseURL:      u.api,
 		Skill:           mcpserver.Skill(p.links, mcpOpts),
 		Telemetry:       tel,
 	})
@@ -461,9 +490,9 @@ func (a *App) surfaces(p *parts) hosts {
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
 		Gate: gate.New(p.signins, p.shares, gate.Options{
-			SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
-			SignOutURL:      mcpURL + strings.TrimPrefix(signin.PathSignOut, "/"),
-			InsecureCookies: cfg.ExternalScheme == "http",
+			SignInURL:       u.signIn,
+			SignOutURL:      u.signOut,
+			InsecureCookies: u.plainHTTP,
 			Now:             now,
 			Logger:          log,
 			Telemetry:       tel,
@@ -481,15 +510,15 @@ func (a *App) surfaces(p *parts) hosts {
 		accountDeps.Passkeys = p.passkeys
 	}
 	accountH := account.New(accountDeps, account.Options{
-		URL:             strings.TrimSuffix(cfg.ExternalURL(""), "/"),
-		SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
-		AdminURL:        dashboardURL(cfg),
-		MCPURL:          mcpURL,
-		APIURL:          apiBase,
+		URL:             u.apexOrigin,
+		SignInURL:       u.signIn,
+		AdminURL:        u.dashboard,
+		MCPURL:          u.mcp,
+		APIURL:          u.api,
 		LocalAccounts:   cfg.LocalAccounts(),
 		MaxKeyTTL:       cfg.Auth.Tokens.MaxKeyTTL.Std(),
 		MaxShareLinkTTL: cfg.Serve.ShareLinkMaxTTL.Std(),
-		InsecureCookies: cfg.ExternalScheme == "http",
+		InsecureCookies: u.plainHTTP,
 		Now:             now,
 		Telemetry:       tel,
 	})
@@ -498,10 +527,10 @@ func (a *App) surfaces(p *parts) hosts {
 	accountIPs := ratelimit.New(ratelimit.DefaultIPPerMinute, ratelimit.Options{Now: now, Scope: ratelimit.ScopeIP, Telemetry: tel})
 	accountLimit := ratelimit.Middleware(accountIPs, ratelimit.IPKey, nil)
 	front := account.NewFront(account.FrontOptions{
-		URL: strings.TrimSuffix(cfg.ExternalURL(""), "/"), MCPURL: mcpURL, APIURL: apiBase, AdminURL: dashboardURL(cfg),
+		URL: u.apexOrigin, MCPURL: u.mcp, APIURL: u.api, AdminURL: u.dashboard,
 	})
 
-	a.admin = a.surface(instrument.SurfaceAdmin, true, a.adminHost(p, grants, apiBase))
+	a.admin = a.surface(instrument.SurfaceAdmin, true, a.adminHost(p, grants))
 	publicAdmin := a.admin
 	if cfg.Admin.Listen != "" {
 		publicAdmin = a.surface(instrument.SurfaceAdmin, true, http.NotFoundHandler())
@@ -522,9 +551,8 @@ func (a *App) surfaces(p *parts) hosts {
 
 // adminHost is the admin API, beside the dashboard when that is served. It
 // also builds the admin socket's handler.
-func (a *App) adminHost(p *parts, grants grantsAndSessions, apiBase string) http.Handler {
-	cfg, log, now, tel := a.cfg, a.log, p.now, p.tel
-	mcpURL := cfg.ExternalURL(config.MCPHost)
+func (a *App) adminHost(p *parts, grants grantsAndSessions) http.Handler {
+	cfg, log, now, tel, u := a.cfg, a.log, p.now, p.tel, p.urls
 	adminDeps := httpapi.AdminDeps{
 		Artifacts: p.arts,
 		Users:     p.users,
@@ -576,10 +604,10 @@ func (a *App) adminHost(p *parts, grants grantsAndSessions, apiBase string) http
 	}
 	return adminMux(adminH, dashboard.New(deps, dashboard.Options{
 		URL:             cfg.AdminURL(),
-		SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
-		AccountURL:      cfg.ExternalURL("") + "account/",
-		MCPURL:          mcpURL,
-		APIURL:          apiBase,
+		SignInURL:       u.signIn,
+		AccountURL:      u.apex + "account/",
+		MCPURL:          u.mcp,
+		APIURL:          u.api,
 		BaseDomain:      cfg.BaseDomain,
 		LocalAccounts:   cfg.LocalAccounts(),
 		InsecureCookies: plainHTTP(cfg.AdminURL()),
