@@ -45,7 +45,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/telemetry"
 	"github.com/PeterBooker/kazari/internal/user"
-	"github.com/PeterBooker/kazari/internal/views"
 )
 
 const (
@@ -118,15 +117,14 @@ type App struct {
 	obs        *middleware.Observer
 	sched      *scheduler.Scheduler
 	users      *user.Service
-	views      *views.Recorder // nil with analytics off
+	views      recorder // nil with analytics off
 	ready      *preflight.Checker
 	stderr     io.Writer
 	certs      certs.Source // nil in proxy mode
 	router     http.Handler
 	admin      http.Handler // on cfg.Admin.Listen when set, else on the router
 	adminLocal http.Handler // on the admin socket, without credentials
-	oidcOn     bool
-	idp        *oidc.Lazy // nil without auth.oidc
+	idp        *oidc.Lazy   // nil without auth.oidc
 	origin     config.Origin
 	lock       *dirlock.Lock
 	started    chan struct{}

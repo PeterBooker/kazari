@@ -87,15 +87,33 @@ type parts struct {
 	backups  *backup.Service
 	viewsSvc *views.Service // nil with analytics off
 
-	idp      signin.IdentityProvider
-	passkeys *passkey.Service
+	idp      signin.IdentityProvider // nil without auth.oidc
+	passkeys passkeys                // nil without built-in accounts or where passkeys cannot work
 	signins  *signin.Service
 	oauth    *oauth.Service
 	authn    auth.Authenticator
 	links    present.Links
 
-	updates *update.Checker // nil with admin.update_check off
+	updates updates // nil with admin.update_check off
 }
+
+// The optional parts are held as interfaces, so that one which is absent
+// passes on as a nil interface and not as one holding a nil pointer.
+type (
+	passkeys interface {
+		signin.Passkeys
+		account.Passkeys
+	}
+	updates interface {
+		Enabled() bool
+		Check(ctx context.Context) error
+		Result() update.Result
+	}
+	recorder interface {
+		site.Views
+		Flush(ctx context.Context) error
+	}
+)
 
 func (a *App) build(ctx context.Context, now func() time.Time, opts Options) error {
 	cfg, log := a.cfg, a.log
@@ -260,7 +278,6 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 		}
 		p.idp = idp
 		a.idp = idp
-		a.oidcOn = true
 	}
 	var (
 		passwords  signin.Passwords
@@ -273,8 +290,7 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 	if cfg.LocalAccounts() && passkey.Supported(cfg.BaseDomain) {
 		// The apex and the sign-in host share the base domain, so a passkey
 		// made on the account page signs in on the sign-in page.
-		var err error
-		p.passkeys, err = passkey.New(p.users, passkey.Options{
+		pk, err := passkey.New(p.users, passkey.Options{
 			RPID:    cfg.BaseDomain,
 			Origins: []string{u.apexOrigin, u.mcpOrigin},
 			Now:     now,
@@ -282,17 +298,12 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 		if err != nil {
 			return fmt.Errorf("app: %w", err)
 		}
+		p.passkeys = pk
 	}
-	signInDeps := signin.Deps{
-		Users: p.users, Keys: p.users, Passwords: passwords, IdP: p.idp, Audit: p.audit,
+	p.signins = signin.New(sqlite.NewSignInStore(a.db), signin.Deps{
+		Users: p.users, Keys: p.users, Passwords: passwords, Passkeys: p.passkeys, IdP: p.idp, Audit: p.audit,
 		ViewCallback: viewCallback(cfg), ControlCallback: controlCallback(u),
-	}
-	// Set only when there is one: a nil *passkey.Service in the interface
-	// would not be a nil interface.
-	if p.passkeys != nil {
-		signInDeps.Passkeys = p.passkeys
-	}
-	p.signins = signin.New(sqlite.NewSignInStore(a.db), signInDeps, signin.Options{
+	}, signin.Options{
 		Origin:          u.mcpOrigin,
 		RecoverURL:      recoverURL,
 		InsecureCookies: u.plainHTTP,
@@ -322,7 +333,7 @@ func (a *App) identity(ctx context.Context, p *parts, opts Options) error {
 // updateChecker is nil with admin.update_check off. It is the one call
 // Kazari makes on its own account: a failure is the scheduler's to log, and
 // never anything an admin is asked to act on.
-func (a *App) updateChecker(p *parts, opts Options) *update.Checker {
+func (a *App) updateChecker(p *parts, opts Options) updates {
 	if !a.cfg.Admin.UpdateCheck {
 		return nil
 	}
@@ -489,6 +500,7 @@ func (a *App) surfaces(p *parts) hosts {
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
+		Views:            a.views,
 		Gate: gate.New(p.signins, p.shares, gate.Options{
 			SignInURL:       u.signIn,
 			SignOutURL:      u.signOut,
@@ -498,18 +510,11 @@ func (a *App) surfaces(p *parts) hosts {
 			Telemetry:       tel,
 		}),
 	}
-	if a.views != nil {
-		siteOpts.Views = a.views
-	}
 	siteH := site.NewHandler(p.arts, p.blobs, siteOpts)
-	accountDeps := account.Deps{
+	accountH := account.New(account.Deps{
 		Sessions: p.signins, Users: p.users, Grants: grants, Artifacts: p.arts, Audit: p.audit, Links: p.links, Logger: log,
-		ShareLinks: p.shares,
-	}
-	if p.passkeys != nil {
-		accountDeps.Passkeys = p.passkeys
-	}
-	accountH := account.New(accountDeps, account.Options{
+		ShareLinks: p.shares, Passkeys: p.passkeys,
+	}, account.Options{
 		URL:             u.apexOrigin,
 		SignInURL:       u.signIn,
 		AdminURL:        u.dashboard,
@@ -567,13 +572,9 @@ func (a *App) adminHost(p *parts, grants grantsAndSessions) http.Handler {
 		Sources:   a.origin.Sources,
 		Metrics:   a.tel.MetricsHandler(),
 		Views:     p.viewsSvc,
+		Updates:   p.updates,
 		Links:     p.links,
 		Logger:    log,
-	}
-	// Set only when there is one: a nil *update.Checker in the interface
-	// would not be a nil interface.
-	if p.updates != nil {
-		adminDeps.Updates = p.updates
 	}
 	if cfg.AdminSocketPath() != "" {
 		a.adminLocal = a.surface(instrument.SurfaceAdmin, true, httpapi.NewAdminAPI(adminDeps,
@@ -595,12 +596,7 @@ func (a *App) adminHost(p *parts, grants grantsAndSessions) http.Handler {
 	deps := dashboard.Deps{
 		Sessions: p.signins, Users: p.users, Artifacts: p.arts, Grants: grants, Audit: p.audit, Recorder: p.audit,
 		Jobs: a.sched, Ready: a.ready, Backup: p.backups, Settings: cfg.Redacted, Views: p.viewsSvc, Links: p.links, Logger: log,
-		Flags: sqlite.NewFlagStore(a.db), ShareLinks: p.shares,
-	}
-	// Assigned only when there is one: a nil *update.Checker in the
-	// interface would not be a nil interface.
-	if p.updates != nil {
-		deps.Updates = p.updates
+		Flags: sqlite.NewFlagStore(a.db), ShareLinks: p.shares, Updates: p.updates,
 	}
 	return adminMux(adminH, dashboard.New(deps, dashboard.Options{
 		URL:             cfg.AdminURL(),

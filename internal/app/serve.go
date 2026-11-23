@@ -68,7 +68,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		"http", addrs.HTTP,
 		"admin", addrs.Admin,
 		"socket", addrs.Socket,
-		"oidc", a.oidcOn,
+		"oidc", a.idp != nil,
 	)
 	a.log.Info("serving",
 		"pages", a.cfg.ExternalURL("<slug>"),
