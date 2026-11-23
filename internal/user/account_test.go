@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -128,6 +131,49 @@ func (f *fixture) account(t *testing.T, handle string) user.Account {
 	}
 	t.Fatalf("no account for %q in %+v", handle, all)
 	return user.Account{}
+}
+
+type ownersFunc func(context.Context) ([]artifact.OwnerUsage, error)
+
+func (f ownersFunc) OwnerUsage(ctx context.Context) ([]artifact.OwnerUsage, error) { return f(ctx) }
+
+func TestPeople(t *testing.T) {
+	f := accounts(t, user.Options{})
+	f.invite(t, "ana", "ana@example.com")
+	f.mustCreate(t, "bob", "", user.RoleAdmin)
+	owners := ownersFunc(func(context.Context) ([]artifact.OwnerUsage, error) {
+		return []artifact.OwnerUsage{{Handle: "ana", Artifacts: 2, Bytes: 300}}, nil
+	})
+
+	people, err := f.svc.People(t.Context(), owners)
+	if err != nil {
+		t.Fatalf("People: %v", err)
+	}
+	type row struct {
+		Handle      string
+		HasPassword bool
+		Usage       artifact.OwnerUsage
+	}
+	got := make([]row, 0, len(people))
+	for _, p := range people {
+		if p.Account.Handle != p.User.Handle {
+			t.Errorf("People: %q has the account of %q", p.User.Handle, p.Account.Handle)
+		}
+		got = append(got, row{p.User.Handle, p.Account.HasPassword, p.Usage})
+	}
+	want := []row{
+		{"ana", true, artifact.OwnerUsage{Handle: "ana", Artifacts: 2, Bytes: 300}},
+		{"bob", false, artifact.OwnerUsage{Handle: "bob"}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("People (-want +got):\n%s", diff)
+	}
+
+	failed := errors.New("usage unavailable")
+	_, err = f.svc.People(t.Context(), ownersFunc(func(context.Context) ([]artifact.OwnerUsage, error) { return nil, failed }))
+	if !errors.Is(err, failed) {
+		t.Errorf("People with failing owners: err = %v, want %v", err, failed)
+	}
 }
 
 func TestCheckPasswordRefusals(t *testing.T) {

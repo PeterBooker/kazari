@@ -8,8 +8,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/PeterBooker/kazari/internal/middleware"
 )
+
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.deadlines = append(d.deadlines, t)
+	return nil
+}
+
+// A download of any size is written under a deadline that every write
+// renews, never with the deadline lifted: a reader that stalls ends the
+// download and frees the backup for the next caller.
+func TestDownload(t *testing.T) {
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	rec.Header().Set("Content-Length", "1")
+	out := middleware.NewDownload(rec, "kazari.tar", "application/x-tar")
+	if out.Started() {
+		t.Fatal("Started before a write = true")
+	}
+	began := time.Now()
+	const part = "part of the archive"
+	for range 3 {
+		if _, err := out.Write([]byte(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out.Start()
+	if !out.Started() || rec.Code != http.StatusOK || rec.Body.String() != part+part+part {
+		t.Errorf("after three writes: started %t, status %d, body %q", out.Started(), rec.Code, rec.Body)
+	}
+	want := http.Header{
+		"Content-Type":           {"application/x-tar"},
+		"X-Content-Type-Options": {"nosniff"},
+		"Content-Disposition":    {`attachment; filename="kazari.tar"`},
+		"Cache-Control":          {"no-store"},
+	}
+	if diff := cmp.Diff(want, rec.Header()); diff != "" {
+		t.Errorf("headers (-want +got):\n%s", diff)
+	}
+	if len(rec.deadlines) != 3 {
+		t.Fatalf("deadlines set = %d, want one per write", len(rec.deadlines))
+	}
+	for _, d := range rec.deadlines {
+		if d.Before(began.Add(middleware.DownloadStall)) || d.After(time.Now().Add(middleware.DownloadStall)) {
+			t.Errorf("deadline %v is not %v after its write", d, middleware.DownloadStall)
+		}
+	}
+}
 
 // A client that stops reading ends the response, and with it the handler,
 // once it has stalled; one that keeps reading gets all of it however long

@@ -145,32 +145,16 @@ func newPeopleRow(u *user.User, acc user.Account, own artifact.OwnerUsage) peopl
 	return r
 }
 
-// peopleRows returns every person as a row, ordered by handle, in three
-// queries however many people there are.
+// peopleRows returns every person as a row, ordered by handle.
 func (s *server) peopleRows(ctx context.Context) ([]peopleRow, error) {
-	users, err := s.d.Users.ListUsers(ctx)
+	people, err := s.d.Users.People(ctx, s.d.Artifacts)
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := s.d.Users.Accounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	owned, err := s.d.Artifacts.OwnerUsage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byHandle := make(map[string]user.Account, len(accounts))
-	for _, a := range accounts {
-		byHandle[a.Handle] = a
-	}
-	usage := make(map[string]artifact.OwnerUsage, len(owned))
-	for _, o := range owned {
-		usage[o.Handle] = o
-	}
-	rows := make([]peopleRow, 0, len(users))
-	for i := range users {
-		rows = append(rows, newPeopleRow(&users[i], byHandle[users[i].Handle], usage[users[i].Handle]))
+	rows := make([]peopleRow, 0, len(people))
+	for i := range people {
+		p := &people[i]
+		rows = append(rows, newPeopleRow(&p.User, p.Account, p.Usage))
 	}
 	return rows, nil
 }

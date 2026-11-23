@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/instrument"
@@ -495,6 +496,49 @@ func (s *Service) replacePassword(ctx context.Context, handle, next string, keep
 // ordered by handle.
 func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
 	return s.store.ListAccounts(ctx, s.now())
+}
+
+// Person is a user with how they sign in and what they own.
+type Person struct {
+	User    User
+	Account Account
+	Usage   artifact.OwnerUsage
+}
+
+// Owners is where People finds what each person owns: artifact.Service.
+type Owners interface {
+	OwnerUsage(ctx context.Context) ([]artifact.OwnerUsage, error)
+}
+
+// People returns every user ordered by handle, with their account and what
+// they own, in three queries however many people there are.
+func (s *Service) People(ctx context.Context, owners Owners) ([]Person, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accounts, err := s.store.ListAccounts(ctx, s.now())
+	if err != nil {
+		return nil, err
+	}
+	owned, err := owners.OwnerUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byHandle := make(map[string]Account, len(accounts))
+	for _, a := range accounts {
+		byHandle[a.Handle] = a
+	}
+	usage := make(map[string]artifact.OwnerUsage, len(owned))
+	for _, o := range owned {
+		usage[o.Handle] = o
+	}
+	out := make([]Person, len(users))
+	for i, u := range users {
+		out[i] = Person{User: u, Account: byHandle[u.Handle], Usage: usage[u.Handle]}
+		out[i].Usage.Handle = u.Handle
+	}
+	return out, nil
 }
 
 // Account is Accounts for one person. ErrNotFound.

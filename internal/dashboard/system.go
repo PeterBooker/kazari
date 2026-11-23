@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"net/http"
 	"slices"
 	"sort"
@@ -68,7 +67,6 @@ const (
 	docsChangelogURL = "https://kazari.io/docs/changelog/"
 	redactedSetting  = "***"
 	generalSection   = "general"
-	backupTimeLayout = "20060102-150405"
 )
 
 func (s *server) systemRoutes(mux *http.ServeMux) {
@@ -360,14 +358,14 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 		return notFound("This instance has no built-in backup.")
 	}
 	ctx := r.Context()
-	out := &backupDownload{w: w, out: middleware.Streaming(w, backupStall), name: "kazari-" + fileSafe(s.o.BaseDomain) + "-" + s.now().UTC().Format(backupTimeLayout) + ".tar"}
+	out := middleware.NewDownload(w, backup.FileName(s.o.BaseDomain, s.now()), "application/x-tar")
 	// Never with the certificates: the private key stays on the server.
 	_, err := s.d.Backup.Write(ctx, out, backup.WriteOptions{})
 	if err == nil {
-		out.start()
+		out.Start()
 		return nil
 	}
-	if out.started {
+	if out.Started() {
 		// The status is sent; only a broken transfer tells the browser the
 		// file is not whole.
 		s.log.ErrorContext(ctx, "dashboard: backup failed mid-transfer", "err", err)
@@ -386,46 +384,4 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request, _ *reque
 		return &problem{status: http.StatusInsufficientStorage, code: api.CodeNoSpace, title: "Not enough free space", message: msg}
 	}
 	return err
-}
-
-// backupDownload sends its headers with the first byte, so a backup that is
-// refused before it writes anything can still be answered with a page.
-type backupDownload struct {
-	w       http.ResponseWriter
-	out     io.Writer
-	name    string
-	started bool
-}
-
-// backupStall is how long the browser may stop reading before the download
-// ends. A backup holds the one backup slot and keeps the collector waiting
-// until it is over.
-const backupStall = time.Minute
-
-func (d *backupDownload) start() {
-	if d.started {
-		return
-	}
-	d.started = true
-	h := d.w.Header()
-	h.Set("Content-Type", "application/x-tar")
-	h.Set("Content-Disposition", `attachment; filename="`+d.name+`"`)
-	h.Set("Cache-Control", "no-store")
-	h.Del("Content-Length")
-	d.w.WriteHeader(http.StatusOK)
-}
-
-func (d *backupDownload) Write(p []byte) (int, error) {
-	d.start()
-	return d.out.Write(p)
-}
-
-// fileSafe keeps what a host name is made of, so the name needs no quoting.
-func fileSafe(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-' {
-			return r
-		}
-		return -1
-	}, strings.ToLower(s))
 }

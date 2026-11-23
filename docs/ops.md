@@ -285,7 +285,7 @@ dns          ok    api.art.example.com -> 203.0.113.10 (this host)
 dns          ok    check-7f3a9c01.art.example.com -> 203.0.113.10 (this host)
 dns token    ok    cloudflare wrote and removed a TXT record in zone example.com.
 certificate  ok    valid until 2027-02-12 (83 days)
-disk         ok    31.2 GiB free of 49.0 GiB on the disk holding /var/lib/kazari (64%)
+disk         ok    31.2 GiB free of 49 GiB on the disk holding /var/lib/kazari (64%)
 database     ok    18.4 MiB in /var/lib/kazari/kazari.db
 blobs        ok    1.2 GiB in /var/lib/kazari/blobs
 dashboard    ok    https://admin.art.example.com

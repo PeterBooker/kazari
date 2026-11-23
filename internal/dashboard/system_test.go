@@ -289,9 +289,10 @@ func TestBackupDownload(t *testing.T) {
 		t.Fatalf("download: status %d: %s", r.StatusCode, r.body)
 	}
 	for name, want := range map[string]string{
-		"Content-Type":        "application/x-tar",
-		"Content-Disposition": `attachment; filename="kazari-art.test-20261121-120000.tar"`,
-		"Cache-Control":       "no-store",
+		"Content-Type":           "application/x-tar",
+		"X-Content-Type-Options": "nosniff",
+		"Content-Disposition":    `attachment; filename="kazari-art.test-20261121-120000.tar"`,
+		"Cache-Control":          "no-store",
 	} {
 		if got := r.Header.Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)

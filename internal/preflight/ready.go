@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/certs"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/disk"
@@ -157,7 +158,7 @@ func checkDisk(cfg config.Config, opts ReadyOptions, add adder) {
 		return
 	}
 	share := float64(free) / float64(total)
-	detail := fmt.Sprintf("%s free of %s on the disk holding %s (%.0f%%)", humanBytes(free), humanBytes(total), cfg.DataDir, share*100)
+	detail := fmt.Sprintf("%s free of %s on the disk holding %s (%.0f%%)", bytesize.Format(int64(free)), bytesize.Format(int64(total)), cfg.DataDir, share*100)
 	const next = "purge pages from the bin, lower lifecycle.retention or grow the disk"
 	switch {
 	case share < DiskFailFree:
@@ -176,27 +177,13 @@ func checkSizes(cfg config.Config, add adder) {
 			db += fi.Size()
 		}
 	}
-	add("database", OK, "%s in %s", humanBytes(uint64(db)), cfg.DBPath())
+	add("database", OK, "%s in %s", bytesize.Format(db), cfg.DBPath())
 	blobs, err := disk.TreeSize(cfg.BlobDir())
 	if err != nil {
 		add("blobs", Warn, "%s cannot be read: %v; check its permissions", cfg.BlobDir(), err)
 		return
 	}
-	add("blobs", OK, "%s in %s", humanBytes(uint64(blobs)), cfg.BlobDir())
-}
-
-// humanBytes prints n with one decimal in the largest binary unit below it.
-func humanBytes(n uint64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := uint64(unit), 0
-	for m := n / unit; m >= unit && exp < 3; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+	add("blobs", OK, "%s in %s", bytesize.Format(blobs), cfg.BlobDir())
 }
 
 // Report is one run of Ready.

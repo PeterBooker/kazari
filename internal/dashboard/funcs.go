@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 // commonFuncs are the template functions every page uses.
@@ -87,17 +89,7 @@ func humanBytes(v any) string {
 	case uint64:
 		n = int64(x)
 	}
-	const unit = 1024
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	s := strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64)
-	return strings.TrimSuffix(s, ".0") + " " + string("KMGTPE"[exp]) + "iB"
+	return bytesize.Format(n)
 }
 
 // percent is used of quota as a whole number from 0 to 100; 0 when there

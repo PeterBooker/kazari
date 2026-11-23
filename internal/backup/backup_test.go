@@ -384,3 +384,22 @@ func TestRemoveStale(t *testing.T) {
 		t.Errorf("RemoveStale of a missing directory = %d, %v", n, err)
 	}
 }
+
+func TestFileName(t *testing.T) {
+	at := time.Date(2026, 11, 21, 13, 4, 5, 0, time.FixedZone("CET", 3600))
+	tests := []struct {
+		name, instance, want string
+	}{
+		{"a host name", "art.example.com", "kazari-art.example.com-20261121-120405.tar"},
+		{"upper case", "Art.Test", "kazari-art.test-20261121-120405.tar"},
+		{"quotes and slashes", `a"b/../c`, "kazari-ab..c-20261121-120405.tar"},
+		{"no name", "", "kazari-20261121-120405.tar"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := backup.FileName(tt.instance, at); got != tt.want {
+				t.Errorf("FileName(%q) = %q, want %q", tt.instance, got, tt.want)
+			}
+		})
+	}
+}
