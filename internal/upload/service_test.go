@@ -158,7 +158,7 @@ func TestBeginConcurrentLimit(t *testing.T) {
 			t.Errorf("concurrent Begin: %v", err)
 		}
 	}
-	n, err := e.store.CountOpen(ctx, "alice")
+	n, err := e.store.CountAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,8 +546,8 @@ func TestAbort(t *testing.T) {
 	if _, err := e.store.Get(ctx, u.ID); !errors.Is(err, artifact.ErrUploadNotFound) {
 		t.Errorf("store Get after Abort: err = %v, want ErrUploadNotFound", err)
 	}
-	if n, err := e.store.CountOpen(ctx, "alice"); err != nil || n != 0 {
-		t.Errorf("CountOpen = %d, %v; want 0, nil", n, err)
+	if n, err := e.store.CountAll(ctx); err != nil || n != 0 {
+		t.Errorf("CountAll = %d, %v; want 0, nil", n, err)
 	}
 }
 
