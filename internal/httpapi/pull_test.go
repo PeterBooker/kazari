@@ -13,7 +13,6 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
-	"github.com/PeterBooker/kazari/internal/httpapi"
 )
 
 func TestDownloadBundle(t *testing.T) {
@@ -47,8 +46,8 @@ func TestDownloadBundle(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, body := e.with(t).bundle(e.alice, "demo", tc.query)
-			if got := resp.Header.Get(httpapi.VersionHeader); got != tc.version {
-				t.Errorf("%s = %q, want %q", httpapi.VersionHeader, got, tc.version)
+			if got := resp.Header.Get(api.VersionHeader); got != tc.version {
+				t.Errorf("%s = %q, want %q", api.VersionHeader, got, tc.version)
 			}
 			if got, want := resp.Header.Get("Content-Disposition"), `attachment; filename="demo-v`+tc.version+`.tar.gz"`; got != want {
 				t.Errorf("Content-Disposition = %q, want %q", got, want)

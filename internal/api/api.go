@@ -4,6 +4,10 @@ package api
 
 import "time"
 
+// VersionHeader names the version a bundle download holds, which a request
+// for the published version does not know in advance.
+const VersionHeader = "Kazari-Version"
+
 const (
 	CodeNotFound           = "not_found"
 	CodeVersionNotFound    = "version_not_found"

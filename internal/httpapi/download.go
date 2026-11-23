@@ -10,15 +10,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 )
-
-// VersionHeader names the version a bundle holds, which a request for the
-// published one does not know in advance.
-const VersionHeader = "Kazari-Version"
 
 // downloadBundle streams a version's files as a gzip-compressed tar, the
 // form a publish takes, so a pulled directory can be deployed again.
@@ -32,7 +29,7 @@ func (h *userAPI) downloadBundle(w http.ResponseWriter, r *http.Request, p auth.
 	if err != nil {
 		return err
 	}
-	w.Header().Set(VersionHeader, strconv.Itoa(v.Number))
+	w.Header().Set(api.VersionHeader, strconv.Itoa(v.Number))
 	out := &archiveWriter{w: w, body: middleware.Streaming(w, backupStall),
 		name: slug + "-v" + strconv.Itoa(v.Number) + ".tar.gz", contentType: "application/gzip"}
 	if err := writeBundle(r.Context(), out, v, open); err != nil {

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Smoke test of a built binary: starts it with serve --local in an empty
-# directory, publishes a page with its own CLI and fetches the page.
+# directory, publishes a page with its own CLI, fetches it, pulls it and
+# deploys the pulled directory again.
 #
 #   .github/scripts/smoke.sh ./kazari
 set -eu
@@ -37,6 +38,18 @@ KAZARI_URL="http://api.kazari.localhost:$port" KAZARI_TOKEN="$key" \
 
 if ! curl -fsS "http://smoke.kazari.localhost:$port/" | grep -q 'kazari smoke test'; then
 	echo "the published page was not served:" >&2
+	cat server.log >&2
+	exit 1
+fi
+
+KAZARI_URL="http://api.kazari.localhost:$port" KAZARI_TOKEN="$key" \
+	"$kazari" pull smoke pulled
+diff -r page pulled
+echo '<!doctype html><title>Smoke</title><p>kazari smoke test, pulled</p>' >pulled/index.html
+KAZARI_URL="http://api.kazari.localhost:$port" KAZARI_TOKEN="$key" \
+	"$kazari" deploy pulled --slug smoke
+if ! curl -fsS "http://smoke.kazari.localhost:$port/" | grep -q 'kazari smoke test, pulled'; then
+	echo "the pulled and deployed page was not served:" >&2
 	cat server.log >&2
 	exit 1
 fi
