@@ -472,15 +472,14 @@ func TestClientErrors(t *testing.T) {
 			tt.want.Err.Message = strings.NewReplacer("{url}", srv.URL, "{host}", strings.TrimPrefix(srv.URL, "http://")).Replace(tt.want.Err.Message)
 			c := apiclient.New(srv.URL, "tok", apiclient.Options{Sleep: func(context.Context, time.Duration) error { return nil }})
 			_, err := c.Get(t.Context(), "demo", false)
-			var he *apiclient.HTTPError
-			if !errors.As(err, &he) {
+			he, ok := errors.AsType[*apiclient.HTTPError](err)
+			if !ok {
 				t.Fatalf("err = %v (%T), want *apiclient.HTTPError", err, err)
 			}
 			if diff := cmp.Diff(tt.want, *he); diff != "" {
 				t.Errorf("error (-want +got):\n%s", diff)
 			}
-			var ae *api.Error
-			if !errors.As(err, &ae) || ae.Code != tt.want.Err.Code {
+			if ae, ok := errors.AsType[*api.Error](err); !ok || ae.Code != tt.want.Err.Code {
 				t.Errorf("errors.As api.Error = %v", ae)
 			}
 			if !apiclient.IsCode(err, tt.want.Err.Code) {

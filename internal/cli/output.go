@@ -14,6 +14,14 @@ import (
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
+// emit prints v as JSON with --json, and else what text writes.
+func (r *runner) emit(v any, text func(w io.Writer) error) error {
+	if r.g.JSON {
+		return r.printJSON(v)
+	}
+	return text(r.stdout)
+}
+
 func (r *runner) printJSON(v any) error {
 	enc := json.NewEncoder(r.stdout)
 	enc.SetIndent("", "  ")

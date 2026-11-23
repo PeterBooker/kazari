@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -52,28 +53,23 @@ type AdminUsersCmd struct {
 // AdminUsersListCmd lists users.
 type AdminUsersListCmd struct{}
 
-func (c *AdminUsersListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminUsersListCmd) Run(r *runner, cl adminAPI) error {
 	users, err := cl.ListUsers(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(users)
-	}
-	tw := newTable(r.stdout)
-	tw.row("HANDLE", "EMAIL", "ROLE", "STATE", "USED", "QUOTA", "LAST ACTIVE", "CREATED")
-	for _, u := range users {
-		quota := "-"
-		if u.QuotaBytes > 0 {
-			quota = artifact.FormatBytes(u.QuotaBytes)
+	return r.emit(users, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("HANDLE", "EMAIL", "ROLE", "STATE", "USED", "QUOTA", "LAST ACTIVE", "CREATED")
+		for _, u := range users {
+			quota := "-"
+			if u.QuotaBytes > 0 {
+				quota = artifact.FormatBytes(u.QuotaBytes)
+			}
+			tw.row(u.Handle, dash(u.Email), u.Role, userState(&u), artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
 		}
-		tw.row(u.Handle, dash(u.Email), u.Role, userState(&u), artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
-	}
-	return tw.flush()
+		return tw.flush()
+	})
 }
 
 // userState is disabled, invited (an invite waits for the person to set a
@@ -89,43 +85,42 @@ func userState(u *api.User) string {
 }
 
 func (r *runner) printUser(u *api.User) error {
-	if r.g.JSON {
-		return r.printJSON(u)
-	}
-	tw := newTable(r.stdout)
-	tw.row("handle:", u.Handle)
-	if u.DisplayName != "" {
-		tw.row("name:", u.DisplayName)
-	}
-	tw.row("email:", dash(u.Email))
-	tw.row("role:", u.Role)
-	tw.row("storage:", fmtQuota(u.UsedBytes, u.QuotaBytes))
-	if u.DisabledAt != nil {
-		tw.row("disabled:", fmtTime(*u.DisabledAt))
-	}
-	switch {
-	case u.Password:
-		tw.row("password:", "set")
-	case u.Invited:
-		tw.row("password:", "not set, invited")
-	}
-	if u.Passkeys > 0 {
-		tw.row("passkeys:", u.Passkeys)
-	}
-	if u.RecoveryCodes > 0 {
-		tw.row("recovery codes:", fmt.Sprintf("%d unused", u.RecoveryCodes))
-	}
-	if u.Keys > 0 {
-		tw.row("keys:", u.Keys)
-	}
-	if u.LastActiveAt != nil {
-		tw.row("last active:", fmtTime(*u.LastActiveAt))
-	}
-	if u.Sessions != nil {
-		tw.row("sessions:", *u.Sessions)
-	}
-	tw.row("created:", fmtTime(u.CreatedAt))
-	return tw.flush()
+	return r.emit(u, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("handle:", u.Handle)
+		if u.DisplayName != "" {
+			tw.row("name:", u.DisplayName)
+		}
+		tw.row("email:", dash(u.Email))
+		tw.row("role:", u.Role)
+		tw.row("storage:", fmtQuota(u.UsedBytes, u.QuotaBytes))
+		if u.DisabledAt != nil {
+			tw.row("disabled:", fmtTime(*u.DisabledAt))
+		}
+		switch {
+		case u.Password:
+			tw.row("password:", "set")
+		case u.Invited:
+			tw.row("password:", "not set, invited")
+		}
+		if u.Passkeys > 0 {
+			tw.row("passkeys:", u.Passkeys)
+		}
+		if u.RecoveryCodes > 0 {
+			tw.row("recovery codes:", fmt.Sprintf("%d unused", u.RecoveryCodes))
+		}
+		if u.Keys > 0 {
+			tw.row("keys:", u.Keys)
+		}
+		if u.LastActiveAt != nil {
+			tw.row("last active:", fmtTime(*u.LastActiveAt))
+		}
+		if u.Sessions != nil {
+			tw.row("sessions:", *u.Sessions)
+		}
+		tw.row("created:", fmtTime(u.CreatedAt))
+		return tw.flush()
+	})
 }
 
 // AdminUsersCreateCmd creates a user.
@@ -206,31 +201,26 @@ type AdminUsersTransferCmd struct {
 	Owner  string `arg:"" help:"The new owner's handle."`
 }
 
-func (c *AdminUsersTransferCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminUsersTransferCmd) Run(r *runner, cl adminAPI) error {
 	out, err := cl.TransferAll(r.ctx, c.Handle, c.Owner)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(out)
-	}
-	if len(out.Transferred) == 0 {
-		fmt.Fprintf(r.stdout, "%s owns no artifacts\n", c.Handle)
+	return r.emit(out, func(w io.Writer) error {
+		if len(out.Transferred) == 0 {
+			fmt.Fprintf(w, "%s owns no artifacts\n", c.Handle)
+			return nil
+		}
+		noun := "artifacts"
+		if len(out.Transferred) == 1 {
+			noun = "artifact"
+		}
+		fmt.Fprintf(w, "%d %s of %s now belong to %s\n", len(out.Transferred), noun, c.Handle, c.Owner)
+		for _, slug := range out.Transferred {
+			fmt.Fprintln(w, slug)
+		}
 		return nil
-	}
-	noun := "artifacts"
-	if len(out.Transferred) == 1 {
-		noun = "artifact"
-	}
-	fmt.Fprintf(r.stdout, "%d %s of %s now belong to %s\n", len(out.Transferred), noun, c.Handle, c.Owner)
-	for _, slug := range out.Transferred {
-		fmt.Fprintln(r.stdout, slug)
-	}
-	return nil
+	})
 }
 
 // AdminIdentitiesCmd manages the links between users and the identity
@@ -246,11 +236,7 @@ type AdminIdentitiesListCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 }
 
-func (c *AdminIdentitiesListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminIdentitiesListCmd) Run(r *runner, cl adminAPI) error {
 	u, err := cl.GetUser(r.ctx, c.Handle)
 	if err != nil {
 		return err
@@ -278,20 +264,15 @@ type AdminIdentitiesLinkCmd struct {
 	Email   string `help:"The email address to show with the identity." placeholder:"EMAIL"`
 }
 
-func (c *AdminIdentitiesLinkCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminIdentitiesLinkCmd) Run(r *runner, cl adminAPI) error {
 	req := api.LinkIdentityRequest{Issuer: c.Issuer, Subject: c.Subject, Email: c.Email}
 	if err := cl.LinkIdentity(r.ctx, c.Handle, req); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "linked %s to %s\n", oneLine(c.Subject), c.Handle)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "linked %s to %s\n", oneLine(c.Subject), c.Handle)
+		return nil
+	})
 }
 
 // AdminIdentitiesUnlinkCmd removes an identity from a user.
@@ -301,19 +282,14 @@ type AdminIdentitiesUnlinkCmd struct {
 	Subject string `required:"" help:"The identity's subject, from identities list." placeholder:"SUB"`
 }
 
-func (c *AdminIdentitiesUnlinkCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminIdentitiesUnlinkCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.UnlinkIdentity(r.ctx, c.Handle, c.Issuer, c.Subject); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "unlinked %s from %s\n", oneLine(c.Subject), c.Handle)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "unlinked %s from %s\n", oneLine(c.Subject), c.Handle)
+		return nil
+	})
 }
 
 // AdminKeysCmd manages API keys.
@@ -329,11 +305,7 @@ type AdminKeysListCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 }
 
-func (c *AdminKeysListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminKeysListCmd) Run(r *runner, cl adminAPI) error {
 	keys, err := cl.ListKeys(r.ctx, c.Handle)
 	if err != nil {
 		return err
@@ -347,11 +319,7 @@ type AdminKeysIssueCmd struct {
 	keyFlags
 }
 
-func (c *AdminKeysIssueCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminKeysIssueCmd) Run(r *runner, cl adminAPI) error {
 	k, err := cl.IssueKey(r.ctx, c.Handle, c.request())
 	if err != nil {
 		return err
@@ -366,11 +334,7 @@ type AdminKeysRotateCmd struct {
 	Overlap string `help:"How long the old key keeps working, such as 24h (the default), 7d (the most) or 0." placeholder:"DURATION"`
 }
 
-func (c *AdminKeysRotateCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminKeysRotateCmd) Run(r *runner, cl adminAPI) error {
 	k, err := cl.RotateKey(r.ctx, c.Handle, c.Prefix, c.Overlap)
 	if err != nil {
 		return err
@@ -384,19 +348,14 @@ type AdminKeysRevokeCmd struct {
 	Prefix string `arg:"" help:"The key's prefix, from keys list."`
 }
 
-func (c *AdminKeysRevokeCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminKeysRevokeCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.RevokeKey(r.ctx, c.Handle, c.Prefix); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "revoked %s\n", c.Prefix)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "revoked %s\n", c.Prefix)
+		return nil
+	})
 }
 
 // AdminGrantsCmd manages OAuth grants: the connections of MCP clients.
@@ -410,28 +369,23 @@ type AdminGrantsListCmd struct {
 	Handle string `arg:"" help:"The user's handle."`
 }
 
-func (c *AdminGrantsListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminGrantsListCmd) Run(r *runner, cl adminAPI) error {
 	grants, err := cl.ListGrants(r.ctx, c.Handle)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(grants)
-	}
-	tw := newTable(r.stdout)
-	tw.row("ID", "CLIENT", "SCOPES", "KEY", "LAST REFRESH", "EXPIRES")
-	for _, g := range grants {
-		client := g.Client
-		if client == "" {
-			client = g.ClientID
+	return r.emit(grants, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("ID", "CLIENT", "SCOPES", "KEY", "LAST REFRESH", "EXPIRES")
+		for _, g := range grants {
+			client := g.Client
+			if client == "" {
+				client = g.ClientID
+			}
+			tw.row(g.ID, dash(client), dash(strings.Join(g.Scopes, ",")), dash(g.KeyPrefix), fmtTime(g.CreatedAt), fmtTime(g.ExpiresAt))
 		}
-		tw.row(g.ID, dash(client), dash(strings.Join(g.Scopes, ",")), dash(g.KeyPrefix), fmtTime(g.CreatedAt), fmtTime(g.ExpiresAt))
-	}
-	return tw.flush()
+		return tw.flush()
+	})
 }
 
 // AdminGrantsRevokeCmd revokes a grant.
@@ -439,19 +393,14 @@ type AdminGrantsRevokeCmd struct {
 	ID int64 `arg:"" help:"The grant's id, from grants list or an oauth:<id> credential in the audit log."`
 }
 
-func (c *AdminGrantsRevokeCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminGrantsRevokeCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.RevokeGrant(r.ctx, c.ID); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "revoked grant %d\n", c.ID)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "revoked grant %d\n", c.ID)
+		return nil
+	})
 }
 
 // AdminArtifactsCmd lists artifacts across owners.
@@ -465,11 +414,7 @@ type AdminArtifactsListCmd struct {
 	Owner string `help:"Only artifacts this user owns." placeholder:"HANDLE"`
 }
 
-func (c *AdminArtifactsListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminArtifactsListCmd) Run(r *runner, cl adminAPI) error {
 	l, err := r.fetchList(&c.listFlags, func(p apiclient.ListParams) (*api.ArtifactList, error) {
 		p.Owner = c.Owner
 		return cl.AdminListArtifacts(r.ctx, p)
@@ -486,20 +431,15 @@ type AdminTransferCmd struct {
 	Handle string `arg:"" help:"The new owner's handle."`
 }
 
-func (c *AdminTransferCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminTransferCmd) Run(r *runner, cl adminAPI) error {
 	a, err := cl.Transfer(r.ctx, c.Slug, c.Handle)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(a)
-	}
-	fmt.Fprintf(r.stdout, "%s now belongs to %s\n", c.Slug, c.Handle)
-	return nil
+	return r.emit(a, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s now belongs to %s\n", c.Slug, c.Handle)
+		return nil
+	})
 }
 
 // AdminHideCmd unpublishes an artifact.
@@ -507,57 +447,46 @@ type AdminHideCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
 }
 
-func (c *AdminHideCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminHideCmd) Run(r *runner, cl adminAPI) error {
 	a, err := cl.Hide(r.ctx, c.Slug)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(a)
-	}
-	fmt.Fprintf(r.stdout, "%s is hidden (unpublished)\n", c.Slug)
-	return nil
+	return r.emit(a, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s is hidden (unpublished)\n", c.Slug)
+		return nil
+	})
 }
 
 // AdminSettingsCmd prints the effective configuration.
 type AdminSettingsCmd struct{}
 
-func (c *AdminSettingsCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminSettingsCmd) Run(r *runner, cl adminAPI) error {
 	s, err := cl.Settings(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(s)
-	}
-	// A server older than the sources route answers 404: the values alone.
-	sources, err := cl.SettingSources(r.ctx)
-	var he *apiclient.HTTPError
-	if errors.As(err, &he) && he.Status == http.StatusNotFound {
-		err = nil
-	}
-	if err != nil {
-		return err
-	}
-	lines := map[string]string{}
-	flatten("", s, lines)
-	tw := newTablePadded(r.stdout, 1)
-	for _, k := range slices.Sorted(maps.Keys(lines)) {
-		if src := sourceOf(sources, k); src != "" {
-			tw.row(k, "= "+lines[k], "("+src+")")
-			continue
+	return r.emit(s, func(w io.Writer) error {
+		// A server older than the sources route answers 404: the values alone.
+		sources, err := cl.SettingSources(r.ctx)
+		if he, ok := errors.AsType[*apiclient.HTTPError](err); ok && he.Status == http.StatusNotFound {
+			err = nil
 		}
-		tw.row(k, "= "+lines[k])
-	}
-	return tw.flush()
+		if err != nil {
+			return err
+		}
+		lines := map[string]string{}
+		flatten("", s, lines)
+		tw := newTablePadded(w, 1)
+		for _, k := range slices.Sorted(maps.Keys(lines)) {
+			if src := sourceOf(sources, k); src != "" {
+				tw.row(k, "= "+lines[k], "("+src+")")
+				continue
+			}
+			tw.row(k, "= "+lines[k])
+		}
+		return tw.flush()
+	})
 }
 
 // sourceOf finds where key, or the mapping holding it, was set: a header
@@ -620,24 +549,19 @@ type AdminJobsCmd struct {
 // AdminJobsListCmd lists the jobs.
 type AdminJobsListCmd struct{}
 
-func (c *AdminJobsListCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminJobsListCmd) Run(r *runner, cl adminAPI) error {
 	jobs, err := cl.Jobs(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(jobs)
-	}
-	tw := newTable(r.stdout)
-	tw.row("NAME", "EVERY", "RUNNING", "LAST RUN", "NEXT RUN", "LAST ERROR")
-	for _, j := range jobs {
-		tw.row(j.Name, j.Every, j.Running, fmtTimePtr(j.LastRun), fmtTimePtr(j.NextRun), dash(j.LastError))
-	}
-	return tw.flush()
+	return r.emit(jobs, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("NAME", "EVERY", "RUNNING", "LAST RUN", "NEXT RUN", "LAST ERROR")
+		for _, j := range jobs {
+			tw.row(j.Name, j.Every, j.Running, fmtTimePtr(j.LastRun), fmtTimePtr(j.NextRun), dash(j.LastError))
+		}
+		return tw.flush()
+	})
 }
 
 // AdminJobsRunCmd runs one job.
@@ -645,19 +569,14 @@ type AdminJobsRunCmd struct {
 	Name string `arg:"" help:"sweep, gc, uploads-expire, oauth-cleanup, oidc-discovery, update-check, views-flush or views-prune."`
 }
 
-func (c *AdminJobsRunCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminJobsRunCmd) Run(r *runner, cl adminAPI) error {
 	if err := cl.RunJob(r.ctx, c.Name); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "triggered %s\n", c.Name)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "triggered %s\n", c.Name)
+		return nil
+	})
 }
 
 // AdminAuditCmd reads the audit log.
@@ -704,21 +623,20 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(l)
-	}
-	tw := newTable(r.stdout)
-	tw.row("AT", "ACTOR", "ACTION", "SLUG", "SUBJECT", "DETAILS")
-	for _, e := range l.Events {
-		tw.row(fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(e.Subject), dash(fmtMap(e.Details)))
-	}
-	if err := tw.flush(); err != nil {
-		return err
-	}
-	if l.NextCursor != "" {
-		fmt.Fprintf(r.stderr, "more results: --cursor %s\n", l.NextCursor)
-	}
-	return nil
+	return r.emit(l, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("AT", "ACTOR", "ACTION", "SLUG", "SUBJECT", "DETAILS")
+		for _, e := range l.Events {
+			tw.row(fmtTime(e.At), e.Actor, e.Action, dash(e.Slug), dash(e.Subject), dash(fmtMap(e.Details)))
+		}
+		if err := tw.flush(); err != nil {
+			return err
+		}
+		if l.NextCursor != "" {
+			fmt.Fprintf(r.stderr, "more results: --cursor %s\n", l.NextCursor)
+		}
+		return nil
+	})
 }
 
 // AdminViewsCmd shows page views.
@@ -727,11 +645,7 @@ type AdminViewsCmd struct {
 	Days int    `default:"30" help:"How many days back, today included." placeholder:"N"`
 }
 
-func (c *AdminViewsCmd) Run(r *runner) error {
-	cl, err := r.adminClient(true)
-	if err != nil {
-		return err
-	}
+func (c *AdminViewsCmd) Run(r *runner, cl adminAPI) error {
 	if c.Slug == "" {
 		s, err := cl.ViewSummary(r.ctx, c.Days)
 		if err != nil {
@@ -759,34 +673,33 @@ func (c *AdminViewsCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(a)
-	}
-	fmt.Fprintf(r.stdout, "%s, %s to %s: %s\n", a.Slug, a.From, a.To, viewLine(a.Totals))
-	if len(a.Files) > 0 {
-		fmt.Fprintln(r.stdout)
-		tw := newTable(r.stdout)
-		tw.row("FILE", "VIEWS")
-		for _, f := range a.Files {
-			tw.row(f.Path, f.Views)
+	return r.emit(a, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s, %s to %s: %s\n", a.Slug, a.From, a.To, viewLine(a.Totals))
+		if len(a.Files) > 0 {
+			fmt.Fprintln(w)
+			tw := newTable(w)
+			tw.row("FILE", "VIEWS")
+			for _, f := range a.Files {
+				tw.row(f.Path, f.Views)
+			}
+			if err := tw.flush(); err != nil {
+				return err
+			}
 		}
-		if err := tw.flush(); err != nil {
+		if err := printViewDays(r, a.Days); err != nil {
 			return err
 		}
-	}
-	if err := printViewDays(r, a.Days); err != nil {
-		return err
-	}
-	if len(a.Readers) > 0 {
-		fmt.Fprintln(r.stdout)
-		tw := newTable(r.stdout)
-		tw.row("READER", "NAME", "VIEWS", "FIRST OPENED", "LAST OPENED")
-		for _, rd := range a.Readers {
-			tw.row(rd.Handle, dash(rd.Name), rd.Views, fmtTime(rd.FirstAt), fmtTime(rd.LastAt))
+		if len(a.Readers) > 0 {
+			fmt.Fprintln(w)
+			tw := newTable(w)
+			tw.row("READER", "NAME", "VIEWS", "FIRST OPENED", "LAST OPENED")
+			for _, rd := range a.Readers {
+				tw.row(rd.Handle, dash(rd.Name), rd.Views, fmtTime(rd.FirstAt), fmtTime(rd.LastAt))
+			}
+			return tw.flush()
 		}
-		return tw.flush()
-	}
-	return nil
+		return nil
+	})
 }
 
 func viewLine(t api.ViewTotals) string {
@@ -822,9 +735,8 @@ func (c *AdminHealthCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(h)
-	}
-	fmt.Fprintf(r.stdout, "%s (server %s)\n", h.Status, dash(h.Version))
-	return nil
+	return r.emit(h, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s (server %s)\n", h.Status, dash(h.Version))
+		return nil
+	})
 }

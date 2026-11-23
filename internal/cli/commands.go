@@ -45,21 +45,20 @@ func (c *ImportCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintln(r.stdout, res.URL)
-	if imp := res.Import; imp != nil {
-		out := termSafe{r.stdout}
-		fmt.Fprintf(out, "%d files from %s; %d scripts removed\n", imp.Fetched+1, imp.Source, imp.ScriptsRemoved)
-		for _, s := range imp.Skipped {
-			fmt.Fprintf(out, "left remote: %s (%s)\n", s.URL, s.Reason)
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintln(w, res.URL)
+		if imp := res.Import; imp != nil {
+			out := termSafe{w}
+			fmt.Fprintf(out, "%d files from %s; %d scripts removed\n", imp.Fetched+1, imp.Source, imp.ScriptsRemoved)
+			for _, s := range imp.Skipped {
+				fmt.Fprintf(out, "left remote: %s (%s)\n", s.URL, s.Reason)
+			}
+			for _, n := range imp.Notes {
+				fmt.Fprintf(out, "note: %s\n", n)
+			}
 		}
-		for _, n := range imp.Notes {
-			fmt.Fprintf(out, "note: %s\n", n)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // GetCmd shows an artifact and its versions.
@@ -68,53 +67,48 @@ type GetCmd struct {
 	Files bool   `help:"Include each version's files."`
 }
 
-func (c *GetCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *GetCmd) Run(r *runner, cl userAPI) error {
 	d, err := cl.Get(r.ctx, c.Slug, c.Files)
 	if err != nil {
 		return r.nearSlug(err, cl, c.Slug)
 	}
-	if r.g.JSON {
-		return r.printJSON(d)
-	}
-	r.printArtifact(&d.Artifact)
-	if len(d.Versions) == 0 {
-		return nil
-	}
-	fmt.Fprintln(r.stdout)
-	tw := newTable(r.stdout)
-	tw.row("VERSION", "LABEL", "CREATED BY", "CREATED", "SIZE", "URL")
-	for _, v := range d.Versions {
-		num := strconv.Itoa(v.Number)
-		switch {
-		case v.Number == d.Artifact.PublishedVersion:
-			num += " *"
-		case v.Staged:
-			num += " staged"
+	return r.emit(d, func(w io.Writer) error {
+		r.printArtifact(&d.Artifact)
+		if len(d.Versions) == 0 {
+			return nil
 		}
-		tw.row(num, dash(v.Label), dash(v.CreatedBy), fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
-	}
-	tw.flush()
-	if !c.Files {
-		return nil
-	}
-	for _, v := range d.Versions {
-		if d.NextFilesBefore != 0 && v.Number < d.NextFilesBefore {
-			fmt.Fprintf(r.stdout, "\nversions below %d not listed; ask the API with files_before=%d\n", d.NextFilesBefore, d.NextFilesBefore)
-			break
-		}
-		fmt.Fprintf(r.stdout, "\nversion %d files:\n", v.Number)
-		tw := newTable(r.stdout)
-		tw.row("PATH", "SIZE", "TYPE", "HASH")
-		for _, f := range v.Files {
-			tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+		fmt.Fprintln(w)
+		tw := newTable(w)
+		tw.row("VERSION", "LABEL", "CREATED BY", "CREATED", "SIZE", "URL")
+		for _, v := range d.Versions {
+			num := strconv.Itoa(v.Number)
+			switch {
+			case v.Number == d.Artifact.PublishedVersion:
+				num += " *"
+			case v.Staged:
+				num += " staged"
+			}
+			tw.row(num, dash(v.Label), dash(v.CreatedBy), fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
 		}
 		tw.flush()
-	}
-	return nil
+		if !c.Files {
+			return nil
+		}
+		for _, v := range d.Versions {
+			if d.NextFilesBefore != 0 && v.Number < d.NextFilesBefore {
+				fmt.Fprintf(w, "\nversions below %d not listed; ask the API with files_before=%d\n", d.NextFilesBefore, d.NextFilesBefore)
+				break
+			}
+			fmt.Fprintf(w, "\nversion %d files:\n", v.Number)
+			tw := newTable(w)
+			tw.row("PATH", "SIZE", "TYPE", "HASH")
+			for _, f := range v.Files {
+				tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+			}
+			tw.flush()
+		}
+		return nil
+	})
 }
 
 func (r *runner) printArtifact(a *api.Artifact) {
@@ -196,11 +190,7 @@ type ListCmd struct {
 	listFlags
 }
 
-func (c *ListCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *ListCmd) Run(r *runner, cl userAPI) error {
 	l, err := r.fetchList(&c.listFlags, func(p apiclient.ListParams) (*api.ArtifactList, error) { return cl.List(r.ctx, p) })
 	if err != nil {
 		return err
@@ -209,38 +199,37 @@ func (c *ListCmd) Run(r *runner) error {
 }
 
 func (r *runner) printList(l *api.ArtifactList, owner bool) error {
-	if r.g.JSON {
-		return r.printJSON(l)
-	}
-	tw := newTable(r.stdout)
-	head := []any{"SLUG", "VERSION", "VISIBILITY", "STATE", "SIZE", "UPDATED", "NAME"}
-	if owner {
-		head = append([]any{"OWNER"}, head...)
-	}
-	tw.row(head...)
-	for _, a := range l.Items {
-		ver := strconv.Itoa(a.PublishedVersion)
-		if a.LatestVersion != a.PublishedVersion {
-			ver += "/" + strconv.Itoa(a.LatestVersion)
-		}
-		cells := []any{a.Slug, ver, a.Visibility, artifactState(&a), artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name}
+	return r.emit(l, func(w io.Writer) error {
+		tw := newTable(w)
+		head := []any{"SLUG", "VERSION", "VISIBILITY", "STATE", "SIZE", "UPDATED", "NAME"}
 		if owner {
-			cells = append([]any{a.Owner}, cells...)
+			head = append([]any{"OWNER"}, head...)
 		}
-		tw.row(cells...)
-	}
-	if err := tw.flush(); err != nil {
-		return err
-	}
-	if l.NextCursor != "" {
-		fmt.Fprintf(r.stderr, "more results: --cursor %s (or --all)\n", l.NextCursor)
-	}
-	return nil
+		tw.row(head...)
+		for _, a := range l.Items {
+			ver := strconv.Itoa(a.PublishedVersion)
+			if a.LatestVersion != a.PublishedVersion {
+				ver += "/" + strconv.Itoa(a.LatestVersion)
+			}
+			cells := []any{a.Slug, ver, a.Visibility, artifactState(&a), artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), a.Name}
+			if owner {
+				cells = append([]any{a.Owner}, cells...)
+			}
+			tw.row(cells...)
+		}
+		if err := tw.flush(); err != nil {
+			return err
+		}
+		if l.NextCursor != "" {
+			fmt.Fprintf(r.stderr, "more results: --cursor %s (or --all)\n", l.NextCursor)
+		}
+		return nil
+	})
 }
 
 // nearSlug adds the closest slug the caller can see to not_found, when
 // one is close enough to be a typo.
-func (r *runner) nearSlug(err error, cl *apiclient.Client, slug string) error {
+func (r *runner) nearSlug(err error, cl userAPI, slug string) error {
 	if !apiclient.IsCode(err, api.CodeNotFound) {
 		return err
 	}
@@ -300,15 +289,14 @@ func (c *RmCmd) Run(r *runner) error {
 	if err := cl.Delete(r.ctx, c.Slug, c.Hard); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	verb := "deleted"
-	if c.Hard {
-		verb = "purged"
-	}
-	fmt.Fprintf(r.stdout, "%s %s\n", verb, c.Slug)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		verb := "deleted"
+		if c.Hard {
+			verb = "purged"
+		}
+		fmt.Fprintf(w, "%s %s\n", verb, c.Slug)
+		return nil
+	})
 }
 
 // confirmPurge asks for the slug typed out, since a purge cannot be undone.
@@ -333,25 +321,24 @@ type StaleCmd struct {
 	Grace string `help:"Time until expiry, such as 72h, 3d or 2w (default: the server's)." placeholder:"DURATION"`
 }
 
-func (c *StaleCmd) Run(r *runner) error {
+func (c *StaleCmd) Validate() error {
 	if c.Grace != "" {
 		if _, err := config.ParseDuration(c.Grace); err != nil {
 			return usagef("stale: --grace: %v", err)
 		}
 	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *StaleCmd) Run(r *runner, cl userAPI) error {
 	res, err := cl.MarkStale(r.ctx, c.Slug, c.Grace)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintf(r.stdout, "%s is stale since %s and expires at %s\n", c.Slug, fmtTime(res.StaleAt), fmtTime(res.ExpiresAt))
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s is stale since %s and expires at %s\n", c.Slug, fmtTime(res.StaleAt), fmtTime(res.ExpiresAt))
+		return nil
+	})
 }
 
 // UnstaleCmd clears the stale mark.
@@ -359,20 +346,15 @@ type UnstaleCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
 }
 
-func (c *UnstaleCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *UnstaleCmd) Run(r *runner, cl userAPI) error {
 	a, err := cl.UnmarkStale(r.ctx, c.Slug)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(a)
-	}
-	fmt.Fprintf(r.stdout, "%s is no longer stale\n", c.Slug)
-	return nil
+	return r.emit(a, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s is no longer stale\n", c.Slug)
+		return nil
+	})
 }
 
 // VisibilityCmd sets an artifact's visibility.
@@ -381,20 +363,15 @@ type VisibilityCmd struct {
 	Visibility string `arg:"" help:"public, unlisted, members or unpublished." enum:"public,unlisted,members,unpublished"`
 }
 
-func (c *VisibilityCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *VisibilityCmd) Run(r *runner, cl userAPI) error {
 	res, err := cl.SetVisibility(r.ctx, c.Slug, c.Visibility)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintf(r.stdout, "%s is now %s\n", c.Slug, c.Visibility)
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s is now %s\n", c.Slug, c.Visibility)
+		return nil
+	})
 }
 
 // ShareCmd manages share links.
@@ -430,21 +407,20 @@ func (c *ShareCreateCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintln(r.stdout, res.URL)
-	who := "anyone with the URL"
-	if res.ShareLink.Password {
-		who = "anyone with the URL and the password; send the password apart from it"
-	}
-	fmt.Fprintf(r.stderr, "share link %s opens %s until %s; %s can open it\n",
-		res.ShareLink.Prefix, c.Slug, fmtTime(res.ShareLink.ExpiresAt), who)
-	if res.Artifact.Visibility != "members" {
-		fmt.Fprintf(r.stderr, "note: %s is %s, so it opens without the link too (kazari visibility %s members)\n",
-			c.Slug, res.Artifact.Visibility, c.Slug)
-	}
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintln(w, res.URL)
+		who := "anyone with the URL"
+		if res.ShareLink.Password {
+			who = "anyone with the URL and the password; send the password apart from it"
+		}
+		fmt.Fprintf(r.stderr, "share link %s opens %s until %s; %s can open it\n",
+			res.ShareLink.Prefix, c.Slug, fmtTime(res.ShareLink.ExpiresAt), who)
+		if res.Artifact.Visibility != "members" {
+			fmt.Fprintf(r.stderr, "note: %s is %s, so it opens without the link too (kazari visibility %s members)\n",
+				c.Slug, res.Artifact.Visibility, c.Slug)
+		}
+		return nil
+	})
 }
 
 // readLinkPassword reads a share link's password: typed twice with the
@@ -496,35 +472,30 @@ type ShareListCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
 }
 
-func (c *ShareListCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *ShareListCmd) Run(r *runner, cl userAPI) error {
 	list, err := cl.ListShareLinks(r.ctx, c.Slug)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(list)
-	}
-	tw := newTable(r.stdout)
-	tw.row("PREFIX", "LABEL", "CREATED BY", "CREATED", "EXPIRES", "USES", "LAST USED", "PASSWORD", "STATE")
-	for _, l := range list.Items {
-		state := "active"
-		switch {
-		case l.RevokedAt != nil:
-			state = "revoked"
-		case !l.Active:
-			state = "expired"
+	return r.emit(list, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("PREFIX", "LABEL", "CREATED BY", "CREATED", "EXPIRES", "USES", "LAST USED", "PASSWORD", "STATE")
+		for _, l := range list.Items {
+			state := "active"
+			switch {
+			case l.RevokedAt != nil:
+				state = "revoked"
+			case !l.Active:
+				state = "expired"
+			}
+			password := "no"
+			if l.Password {
+				password = "yes"
+			}
+			tw.row(l.Prefix, dash(l.Label), l.CreatedBy, fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), password, state)
 		}
-		password := "no"
-		if l.Password {
-			password = "yes"
-		}
-		tw.row(l.Prefix, dash(l.Label), l.CreatedBy, fmtTime(l.CreatedAt), fmtTime(l.ExpiresAt), l.Uses, fmtTimePtr(l.LastUsedAt), password, state)
-	}
-	return tw.flush()
+		return tw.flush()
+	})
 }
 
 // ShareRevokeCmd revokes a share link.
@@ -533,19 +504,14 @@ type ShareRevokeCmd struct {
 	Prefix string `arg:"" help:"The link's prefix, from share list."`
 }
 
-func (c *ShareRevokeCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *ShareRevokeCmd) Run(r *runner, cl userAPI) error {
 	if err := cl.RevokeShareLink(r.ctx, c.Slug, c.Prefix); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "revoked share link %s of %s\n", c.Prefix, c.Slug)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "revoked share link %s of %s\n", c.Prefix, c.Slug)
+		return nil
+	})
 }
 
 // VersionsCmd deletes versions.
@@ -558,23 +524,25 @@ type VersionsCmd struct {
 type VersionsRmCmd struct {
 	Slug     string   `arg:"" help:"Artifact slug."`
 	Versions []string `arg:"" help:"Version numbers to delete."`
+	numbers  []int
 }
 
-func (c *VersionsRmCmd) Run(r *runner) error {
-	numbers := make([]int, len(c.Versions))
+func (c *VersionsRmCmd) Validate() error {
+	c.numbers = make([]int, len(c.Versions))
 	for i, s := range c.Versions {
 		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 {
 			return usagef("versions rm: version must be a positive integer, got %q", s)
 		}
-		numbers[i] = n
+		c.numbers[i] = n
 	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *VersionsRmCmd) Run(r *runner, cl userAPI) error {
 	var last *api.DeletedVersions
-	for _, n := range numbers {
+	for _, n := range c.numbers {
+		var err error
 		if last, err = cl.DeleteVersion(r.ctx, c.Slug, n); err != nil {
 			return err
 		}
@@ -583,7 +551,7 @@ func (c *VersionsRmCmd) Run(r *runner) error {
 		}
 	}
 	if r.g.JSON {
-		return r.printJSON(api.DeletedVersions{Deleted: slices.Sorted(slices.Values(numbers)), Artifact: last.Artifact})
+		return r.printJSON(api.DeletedVersions{Deleted: slices.Sorted(slices.Values(c.numbers)), Artifact: last.Artifact})
 	}
 	return nil
 }
@@ -595,34 +563,33 @@ type VersionsPruneCmd struct {
 	DryRun bool   `name:"dry-run" help:"List the versions it would delete, and delete nothing."`
 }
 
-func (c *VersionsPruneCmd) Run(r *runner) error {
+func (c *VersionsPruneCmd) Validate() error {
 	if c.Keep < 1 {
 		return usagef("versions prune: --keep must be at least 1")
 	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *VersionsPruneCmd) Run(r *runner, cl userAPI) error {
 	res, err := cl.PruneVersions(r.ctx, c.Slug, c.Keep, c.DryRun)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	parts := make([]string, len(res.Deleted))
-	for i, n := range res.Deleted {
-		parts[i] = strconv.Itoa(n)
-	}
-	switch {
-	case len(parts) == 0:
-		fmt.Fprintf(r.stdout, "nothing to delete: %s keeps every version it has\n", c.Slug)
-	case c.DryRun:
-		fmt.Fprintf(r.stdout, "would delete versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
-	default:
-		fmt.Fprintf(r.stdout, "deleted versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
-	}
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		parts := make([]string, len(res.Deleted))
+		for i, n := range res.Deleted {
+			parts[i] = strconv.Itoa(n)
+		}
+		switch {
+		case len(parts) == 0:
+			fmt.Fprintf(w, "nothing to delete: %s keeps every version it has\n", c.Slug)
+		case c.DryRun:
+			fmt.Fprintf(w, "would delete versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
+		default:
+			fmt.Fprintf(w, "deleted versions %s of %s\n", strings.Join(parts, ", "), c.Slug)
+		}
+		return nil
+	})
 }
 
 // RestoreCmd takes a soft-deleted artifact out of the bin.
@@ -630,20 +597,15 @@ type RestoreCmd struct {
 	Slug string `arg:"" help:"Artifact slug."`
 }
 
-func (c *RestoreCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *RestoreCmd) Run(r *runner, cl userAPI) error {
 	res, err := cl.Patch(r.ctx, c.Slug, api.UpdateArtifactRequest{Restore: true})
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintf(r.stdout, "restored %s: %s\n", c.Slug, res.URL)
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintf(w, "restored %s: %s\n", c.Slug, res.URL)
+		return nil
+	})
 }
 
 // RollbackCmd publishes an earlier version.
@@ -652,28 +614,27 @@ type RollbackCmd struct {
 	Version string `arg:"" help:"Version number to publish."`
 }
 
-func (c *RollbackCmd) Run(r *runner) error {
-	v, err := strconv.Atoi(c.Version)
-	if err != nil || v < 1 {
+func (c *RollbackCmd) Validate() error {
+	if v, err := strconv.Atoi(c.Version); err != nil || v < 1 {
 		return usagef("rollback: version must be a positive integer, got %q", c.Version)
 	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *RollbackCmd) Run(r *runner, cl userAPI) error {
+	v, _ := strconv.Atoi(c.Version)
 	res, err := cl.Publish(r.ctx, c.Slug, v)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintf(r.stdout, "%s now serves version %d: %s\n", c.Slug, res.Version, res.URL)
-	if res.Artifact.LatestVersion > res.Version {
-		fmt.Fprintf(r.stderr, "the next change needs --base: %d to build on this version, %d to build on the latest\n",
-			res.Version, res.Artifact.LatestVersion)
-	}
-	return nil
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintf(w, "%s now serves version %d: %s\n", c.Slug, res.Version, res.URL)
+		if res.Artifact.LatestVersion > res.Version {
+			fmt.Fprintf(r.stderr, "the next change needs --base: %d to build on this version, %d to build on the latest\n",
+				res.Version, res.Artifact.LatestVersion)
+		}
+		return nil
+	})
 }
 
 // EditCmd changes text in one file.
@@ -728,23 +689,22 @@ func (c *EditCmd) Run(r *runner) error {
 	for _, w := range res.Warnings {
 		fmt.Fprintf(termSafe{r.stderr}, "warning: %s\n", w)
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	fmt.Fprintln(termSafe{r.stdout}, versionLine(c.Slug, res.Version, res.URL, res.VersionURL, res.Staged,
-		res.Artifact.PublishedVersion))
-	for i, e := range res.Edits {
-		where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
-		if e.EndLine < e.StartLine {
-			where = fmt.Sprintf("removed at line %d", e.StartLine)
+	return r.emit(res, func(w io.Writer) error {
+		fmt.Fprintln(termSafe{w}, versionLine(c.Slug, res.Version, res.URL, res.VersionURL, res.Staged,
+			res.Artifact.PublishedVersion))
+		for i, e := range res.Edits {
+			where := fmt.Sprintf("lines %d-%d", e.StartLine, e.EndLine)
+			if e.EndLine < e.StartLine {
+				where = fmt.Sprintf("removed at line %d", e.StartLine)
+			}
+			fmt.Fprintf(w, "edit %d: %s (%s", i+1, where, e.Match)
+			if e.Replacements > 1 {
+				fmt.Fprintf(w, ", %d places", e.Replacements)
+			}
+			fmt.Fprintln(w, ")")
 		}
-		fmt.Fprintf(r.stdout, "edit %d: %s (%s", i+1, where, e.Match)
-		if e.Replacements > 1 {
-			fmt.Fprintf(r.stdout, ", %d places", e.Replacements)
-		}
-		fmt.Fprintln(r.stdout, ")")
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *runner) readEdits(name string) ([]api.Edit, error) {
@@ -784,27 +744,26 @@ type FilesLsCmd struct {
 	Version int    `help:"List version N instead of the published one." placeholder:"N"`
 }
 
-func (c *FilesLsCmd) Run(r *runner) error {
+func (c *FilesLsCmd) Validate() error {
 	if c.Version < 0 {
 		return usagef("files ls: --version must be a positive integer")
 	}
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *FilesLsCmd) Run(r *runner, cl userAPI) error {
 	_, v, err := cl.VersionFiles(r.ctx, c.Slug, c.Version)
 	if err != nil {
 		return r.nearSlug(err, cl, c.Slug)
 	}
-	if r.g.JSON {
-		return r.printJSON(v.Files)
-	}
-	tw := newTable(r.stdout)
-	tw.row("PATH", "SIZE", "TYPE", "HASH")
-	for _, f := range v.Files {
-		tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
-	}
-	return tw.flush()
+	return r.emit(v.Files, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("PATH", "SIZE", "TYPE", "HASH")
+		for _, f := range v.Files {
+			tw.row(f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
+		}
+		return tw.flush()
+	})
 }
 
 // FilesCatCmd writes one file to stdout.
@@ -815,11 +774,7 @@ type FilesCatCmd struct {
 	Anchors bool   `help:"Prefix each line with its anchor, for kazari edit --start and --end."`
 }
 
-func (c *FilesCatCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *FilesCatCmd) Run(r *runner, cl userAPI) error {
 	body, _, err := cl.ReadFile(r.ctx, c.Slug, c.Path, c.Version, c.Anchors)
 	if err != nil {
 		return err
@@ -834,11 +789,7 @@ func (c *FilesCatCmd) Run(r *runner) error {
 // SkillCmd prints the instance's skill.
 type SkillCmd struct{}
 
-func (c *SkillCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *SkillCmd) Run(r *runner, cl userAPI) error {
 	md, err := cl.Skill(r.ctx)
 	if err != nil {
 		return err
@@ -850,38 +801,33 @@ func (c *SkillCmd) Run(r *runner) error {
 // MeCmd shows the caller.
 type MeCmd struct{}
 
-func (c *MeCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *MeCmd) Run(r *runner, cl userAPI) error {
 	me, err := cl.Me(r.ctx)
 	if err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(me)
-	}
-	tw := newTable(r.stdout)
-	tw.row("handle:", me.Handle)
-	switch {
-	case me.Role == "":
-		tw.row("admin:", me.Admin)
-	case me.Role == "admin" && !me.Admin:
-		tw.row("role:", "admin (this key has no admin scope)")
-	default:
-		tw.row("role:", me.Role)
-	}
-	tw.row("scopes:", dash(strings.Join(me.Scopes, ", ")))
-	tw.row("source:", dash(me.Source))
-	if len(me.Slugs) > 0 {
-		tw.row("slugs:", strings.Join(me.Slugs, ", "))
-	}
-	if me.ExpiresAt != nil {
-		tw.row("expires:", fmtTime(*me.ExpiresAt))
-	}
-	tw.row("storage:", fmtQuota(me.UsedBytes, me.QuotaBytes))
-	return tw.flush()
+	return r.emit(me, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("handle:", me.Handle)
+		switch {
+		case me.Role == "":
+			tw.row("admin:", me.Admin)
+		case me.Role == "admin" && !me.Admin:
+			tw.row("role:", "admin (this key has no admin scope)")
+		default:
+			tw.row("role:", me.Role)
+		}
+		tw.row("scopes:", dash(strings.Join(me.Scopes, ", ")))
+		tw.row("source:", dash(me.Source))
+		if len(me.Slugs) > 0 {
+			tw.row("slugs:", strings.Join(me.Slugs, ", "))
+		}
+		if me.ExpiresAt != nil {
+			tw.row("expires:", fmtTime(*me.ExpiresAt))
+		}
+		tw.row("storage:", fmtQuota(me.UsedBytes, me.QuotaBytes))
+		return tw.flush()
+	})
 }
 
 // KeysCmd manages the caller's own keys. Without a subcommand it lists them.
@@ -895,11 +841,7 @@ type KeysCmd struct {
 // KeysListCmd lists the caller's keys.
 type KeysListCmd struct{}
 
-func (c *KeysListCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *KeysListCmd) Run(r *runner, cl userAPI) error {
 	keys, err := cl.MyKeys(r.ctx)
 	if err != nil {
 		return err
@@ -932,12 +874,11 @@ func splitList(s string) []string {
 // printIssued prints the key string alone on stdout, so it can be piped
 // into a secret store, and what it is on stderr.
 func (r *runner) printIssued(k *api.IssuedKey, note string) error {
-	if r.g.JSON {
-		return r.printJSON(k)
-	}
-	fmt.Fprintln(r.stdout, k.Key)
-	fmt.Fprintf(termSafe{r.stderr}, "%s; the key is shown only once\n", note)
-	return nil
+	return r.emit(k, func(w io.Writer) error {
+		fmt.Fprintln(w, k.Key)
+		fmt.Fprintf(termSafe{r.stderr}, "%s; the key is shown only once\n", note)
+		return nil
+	})
 }
 
 func keyNote(k api.APIKey) string {
@@ -964,11 +905,7 @@ type KeysIssueCmd struct {
 	keyFlags
 }
 
-func (c *KeysIssueCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *KeysIssueCmd) Run(r *runner, cl userAPI) error {
 	k, err := cl.IssueMyKey(r.ctx, c.request())
 	if err != nil {
 		return err
@@ -982,11 +919,7 @@ type KeysRotateCmd struct {
 	Overlap string `help:"How long the old key keeps working, such as 24h (the default), 7d (the most) or 0." placeholder:"DURATION"`
 }
 
-func (c *KeysRotateCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *KeysRotateCmd) Run(r *runner, cl userAPI) error {
 	k, err := cl.RotateMyKey(r.ctx, c.Prefix, c.Overlap)
 	if err != nil {
 		return err
@@ -999,31 +932,25 @@ type KeysRevokeCmd struct {
 	Prefix string `arg:"" help:"The key's prefix, from keys list."`
 }
 
-func (c *KeysRevokeCmd) Run(r *runner) error {
-	cl, err := r.userClient()
-	if err != nil {
-		return err
-	}
+func (c *KeysRevokeCmd) Run(r *runner, cl userAPI) error {
 	if err := cl.RevokeMyKey(r.ctx, c.Prefix); err != nil {
 		return err
 	}
-	if r.g.JSON {
-		return r.printJSON(api.OK{OK: true})
-	}
-	fmt.Fprintf(r.stdout, "revoked %s\n", c.Prefix)
-	return nil
+	return r.emit(api.OK{OK: true}, func(w io.Writer) error {
+		fmt.Fprintf(w, "revoked %s\n", c.Prefix)
+		return nil
+	})
 }
 
 func (r *runner) printKeys(keys []api.APIKey) error {
-	if r.g.JSON {
-		return r.printJSON(keys)
-	}
-	tw := newTable(r.stdout)
-	tw.row("PREFIX", "LABEL", "SCOPES", "SLUGS", "ISSUED BY", "CREATED", "LAST USED", "EXPIRES", "REVOKED")
-	for _, k := range keys {
-		tw.row(k.Prefix, dash(k.Label), dash(strings.Join(k.Scopes, ",")), dash(strings.Join(k.Slugs, ",")), dash(k.IssuedBy), fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
-	}
-	return tw.flush()
+	return r.emit(keys, func(w io.Writer) error {
+		tw := newTable(w)
+		tw.row("PREFIX", "LABEL", "SCOPES", "SLUGS", "ISSUED BY", "CREATED", "LAST USED", "EXPIRES", "REVOKED")
+		for _, k := range keys {
+			tw.row(k.Prefix, dash(k.Label), dash(strings.Join(k.Scopes, ",")), dash(strings.Join(k.Slugs, ",")), dash(k.IssuedBy), fmtTime(k.CreatedAt), fmtTimePtr(k.LastUsedAt), fmtTimePtr(k.ExpiresAt), fmtTimePtr(k.RevokedAt))
+		}
+		return tw.flush()
+	})
 }
 
 func fmtMap(m map[string]string) string {

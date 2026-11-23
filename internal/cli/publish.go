@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -251,7 +252,7 @@ func (c *UpdateCmd) Run(r *runner) error {
 
 // baseHint follows published_not_latest with the command run again with
 // either --base it needs.
-func (r *runner) baseHint(err error, cl *apiclient.Client, slug string) error {
+func (r *runner) baseHint(err error, cl userAPI, slug string) error {
 	if !apiclient.IsCode(err, api.CodePublishedNotLatest) {
 		return err
 	}
@@ -296,27 +297,26 @@ func shellQuote(s string) string {
 // printPlan is --dry-run's output: one line per file sent, deleted or
 // skipped, and the summary on stderr.
 func (r *runner) printPlan(p *bundlePlan) error {
-	if r.g.JSON {
-		return r.printJSON(p)
-	}
-	tw := newTable(r.stdout)
-	for _, f := range p.Files {
-		tw.row("send", f.Path, artifact.FormatBytes(f.Size))
-	}
-	for _, f := range p.Unchanged {
-		tw.row("unchanged", f.Path, artifact.FormatBytes(f.Size))
-	}
-	for _, path := range p.Removed {
-		tw.row("delete", path, "")
-	}
-	for _, s := range p.Skipped {
-		tw.row("skip", s.Path, s.Reason)
-	}
-	if err := tw.flush(); err != nil {
-		return err
-	}
-	fmt.Fprintf(termSafe{r.stderr}, "dry run, nothing sent: %s\n", p.summary())
-	return nil
+	return r.emit(p, func(w io.Writer) error {
+		tw := newTable(w)
+		for _, f := range p.Files {
+			tw.row("send", f.Path, artifact.FormatBytes(f.Size))
+		}
+		for _, f := range p.Unchanged {
+			tw.row("unchanged", f.Path, artifact.FormatBytes(f.Size))
+		}
+		for _, path := range p.Removed {
+			tw.row("delete", path, "")
+		}
+		for _, s := range p.Skipped {
+			tw.row("skip", s.Path, s.Reason)
+		}
+		if err := tw.flush(); err != nil {
+			return err
+		}
+		fmt.Fprintf(termSafe{r.stderr}, "dry run, nothing sent: %s\n", p.summary())
+		return nil
+	})
 }
 
 // printPublished puts what was sent and what the server noticed on stderr,
@@ -332,16 +332,15 @@ func (r *runner) printPublished(slug string, res *api.PublishResult, plan *bundl
 	for _, w := range res.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", w)
 	}
-	if r.g.JSON {
-		return r.printJSON(res)
-	}
-	out := termSafe{r.stdout}
-	if res.Version == 0 {
-		fmt.Fprintf(out, "%s → %s\n", slug, res.URL)
+	return r.emit(res, func(w io.Writer) error {
+		out := termSafe{w}
+		if res.Version == 0 {
+			fmt.Fprintf(out, "%s → %s\n", slug, res.URL)
+			return nil
+		}
+		fmt.Fprintln(out, versionLine(slug, res.Version, res.URL, res.VersionURL, res.Staged, res.Artifact.PublishedVersion))
 		return nil
-	}
-	fmt.Fprintln(out, versionLine(slug, res.Version, res.URL, res.VersionURL, res.Staged, res.Artifact.PublishedVersion))
-	return nil
+	})
 }
 
 // versionLine names the version a change made and where it opens; a staged

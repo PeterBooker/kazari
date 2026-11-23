@@ -142,6 +142,13 @@ type runner struct {
 	apiURL string
 }
 
+// userAPI and adminAPI are the clients a command's Run asks for; kong makes
+// them from the settings when the command runs.
+type (
+	userAPI  struct{ *apiclient.Client }
+	adminAPI struct{ *apiclient.Client }
+)
+
 // hintError is an error followed by lines that say what to do next.
 type hintError struct {
 	err   error
@@ -315,6 +322,8 @@ func (r *runner) run(args []string) (err error) {
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true, NoExpandSubcommands: true}),
 		kong.Help(focusedHelp),
 		kong.Bind(r),
+		kong.BindToProvider(r.userClient),
+		kong.BindToProvider(func() (adminAPI, error) { return r.adminClient(true) }),
 	)
 	if err != nil {
 		return err
@@ -358,13 +367,17 @@ func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
 }
 
 func (r *runner) exit(err error) int {
-	var ue *usageError
-	var he *apiclient.HTTPError
-	var pe *kong.ParseError
+	ue, usage := errors.AsType[*usageError](err)
+	he, httpErr := errors.AsType[*apiclient.HTTPError](err)
+	pe, parse := errors.AsType[*kong.ParseError](err)
 	switch {
 	case err == nil:
 		return exitOK
-	case errors.As(err, &pe):
+	case usage:
+		// Before a parse error, which a command's Validate returns it in.
+		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
+		return exitUsage
+	case parse:
 		// The usage line, then the mistake, on stderr; a mistyped command
 		// gets the mistake and kong's suggestion alone, not the whole list.
 		if pe.Context != nil && !unknownCommand(pe) {
@@ -378,10 +391,7 @@ func (r *runner) exit(err error) int {
 			fmt.Fprintln(r.stderr, "run kazari --help for the commands")
 		}
 		return exitUsage
-	case errors.As(err, &ue):
-		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
-		return exitUsage
-	case errors.As(err, &he):
+	case httpErr:
 		if r.g.JSON {
 			enc := json.NewEncoder(termSafe{r.stderr})
 			enc.SetEscapeHTML(false)
@@ -614,48 +624,48 @@ func adminFromUserURL(raw string) string {
 	return u.String()
 }
 
-func (r *runner) userClient() (*apiclient.Client, error) {
+func (r *runner) userClient() (userAPI, error) {
 	s, err := r.settings()
 	if err != nil {
-		return nil, err
+		return userAPI{}, err
 	}
 	if s.URL == "" {
-		return nil, usagef("no API URL: run kazari login --url https://api.<base>, or set --url, KAZARI_URL or url in %s", r.configHint())
+		return userAPI{}, usagef("no API URL: run kazari login --url https://api.<base>, or set --url, KAZARI_URL or url in %s", r.configHint())
 	}
 	if s.Token == "" {
-		return nil, usagef("no API token: run kazari login, or set --token, KAZARI_TOKEN or token in %s", r.configHint())
+		return userAPI{}, usagef("no API token: run kazari login, or set --token, KAZARI_TOKEN or token in %s", r.configHint())
 	}
 	if err := r.checkScheme(s.URL, s.Token); err != nil {
-		return nil, err
+		return userAPI{}, err
 	}
 	r.apiURL = s.URL
-	return r.newClient(s.URL, s.Token, "", apiclient.Options{}), nil
+	return userAPI{r.newClient(s.URL, s.Token, "", apiclient.Options{})}, nil
 }
 
 // adminClient prefers an explicit socket, then an explicit admin URL (with
 // a token unless the command needs none), then a socket found on this host.
-func (r *runner) adminClient(needToken bool) (*apiclient.Client, error) {
+func (r *runner) adminClient(needToken bool) (adminAPI, error) {
 	s, err := r.settings()
 	if err != nil {
-		return nil, err
+		return adminAPI{}, err
 	}
 	if s.AdminSocket != "" {
-		return r.socketClient(s.AdminSocket), nil
+		return adminAPI{r.socketClient(s.AdminSocket)}, nil
 	}
 	if s.AdminURL != "" && (s.AdminToken != "" || !needToken) {
 		if err := r.checkScheme(s.AdminURL, s.AdminToken); err != nil {
-			return nil, err
+			return adminAPI{}, err
 		}
-		return r.newClient(s.AdminURL, s.AdminToken, "", apiclient.Options{Host: "admin"}), nil
+		return adminAPI{r.newClient(s.AdminURL, s.AdminToken, "", apiclient.Options{Host: "admin"})}, nil
 	}
 	if socket := r.discoverSocket(); socket != "" {
-		return r.socketClient(socket), nil
+		return adminAPI{r.socketClient(socket)}, nil
 	}
 	if s.AdminURL == "" {
-		return nil, usagef("no admin API: run this on the server's host (as its user, as root, or with docker exec) to use the admin socket, " +
+		return adminAPI{}, usagef("no admin API: run this on the server's host (as its user, as root, or with docker exec) to use the admin socket, " +
 			"or set --admin-url (KAZARI_ADMIN_URL) and --admin-token (KAZARI_ADMIN_TOKEN)")
 	}
-	return nil, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
+	return adminAPI{}, usagef("no admin token: set --admin-token, KAZARI_ADMIN_TOKEN or admin_token in %s", r.configHint())
 }
 
 // serverConfig reads, without validating it, the configuration of a server
@@ -732,11 +742,10 @@ type VersionCmd struct{}
 
 func (c *VersionCmd) Run(r *runner) error {
 	info := buildinfo.Get()
-	if r.g.JSON {
-		return r.printJSON(info)
-	}
-	fmt.Fprintf(r.stdout, "kazari %s\n", info)
-	return nil
+	return r.emit(info, func(w io.Writer) error {
+		fmt.Fprintf(w, "kazari %s\n", info)
+		return nil
+	})
 }
 
 // HelpCmd is "kazari help [command]".
