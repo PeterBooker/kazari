@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -43,21 +42,14 @@ func migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	)`); err != nil {
 		return fmt.Errorf("sqlite: migrate: %w", err)
 	}
-	applied := map[int]bool{}
 	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migration`)
+	versions, err := collect(rows, err, scalar[int])
 	if err != nil {
 		return fmt.Errorf("sqlite: migrate: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			return err
-		}
+	applied := map[int]bool{}
+	for _, v := range versions {
 		applied[v] = true
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
 	}
 
 	entries, err := fs.ReadDir(fsys, ".")

@@ -145,30 +145,26 @@ func (s *AuditStore) List(ctx context.Context, q audit.Query) (_ audit.Page, err
 	args = append(args, limit+1)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return audit.Page{}, fmt.Errorf("sqlite: list audit: %w", err)
-	}
-	defer rows.Close()
 	var page audit.Page
-	for rows.Next() {
+	page.Events, err = collect(rows, err, func(row rowScanner) (audit.Event, error) {
 		var (
 			e       audit.Event
 			at      int64
 			details string
 		)
-		if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.Slug, &e.Subject, &details); err != nil {
-			return audit.Page{}, fmt.Errorf("sqlite: list audit: %w", err)
+		if err := row.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.Slug, &e.Subject, &details); err != nil {
+			return e, err
 		}
 		e.At = fromNanos(at)
 		if err := json.Unmarshal([]byte(details), &e.Details); err != nil {
-			return audit.Page{}, fmt.Errorf("sqlite: list audit: event %d details: %w", e.ID, err)
+			return e, fmt.Errorf("event %d details: %w", e.ID, err)
 		}
 		if len(e.Details) == 0 {
 			e.Details = nil
 		}
-		page.Events = append(page.Events, e)
-	}
-	if err := rows.Err(); err != nil {
+		return e, nil
+	})
+	if err != nil {
 		return audit.Page{}, fmt.Errorf("sqlite: list audit: %w", err)
 	}
 	if len(page.Events) > limit {

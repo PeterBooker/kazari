@@ -138,7 +138,7 @@ const linkSelect = `SELECT v.id, coalesce(u.handle, ''), v.purpose, v.token_hash
 	v.created_at, v.expires_at, v.used_at, v.revoked_at
 	FROM invite v LEFT JOIN user u ON u.id = v.user_id`
 
-func scanLink(row userRowScanner, l *user.Link, extra ...any) error {
+func scanLink(row rowScanner, l *user.Link, extra ...any) error {
 	var (
 		purpose          string
 		created, expires int64
@@ -201,19 +201,11 @@ func (s *UserStore) ListLinks(ctx context.Context, now time.Time) (_ []user.Link
 		  AND u.disabled_at IS NULL
 		  AND (v.purpose <> 'setup' OR NOT EXISTS (SELECT 1 FROM user))
 		ORDER BY v.created_at DESC, v.id DESC`, toNanos(now))
+	links, err := collect(rows, err, func(row rowScanner) (l user.Link, err error) {
+		err = scanLink(row, &l)
+		return l, err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: list links: %w", err)
-	}
-	defer rows.Close()
-	var links []user.Link
-	for rows.Next() {
-		var l user.Link
-		if err := scanLink(rows, &l); err != nil {
-			return nil, fmt.Errorf("sqlite: list links: %w", err)
-		}
-		links = append(links, l)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list links: %w", err)
 	}
 	return links, nil
@@ -322,7 +314,7 @@ const accountSelect = `SELECT u.handle, p.user_id IS NOT NULL, p.last_login_at,
 		(SELECT MAX(k.last_used_at) FROM passkey k WHERE k.user_id = u.id)
 	FROM user u LEFT JOIN user_password p ON p.user_id = u.id`
 
-func scanAccount(row userRowScanner, a *user.Account) error {
+func scanAccount(row rowScanner, a *user.Account) error {
 	var (
 		password, identity, key, passkey sql.NullInt64
 		invited                          bool
@@ -341,19 +333,8 @@ func (s *UserStore) ListAccounts(ctx context.Context, now time.Time) (_ []user.A
 	ctx, end := s.db.op(ctx, "UserStore.ListAccounts")
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, accountSelect+` ORDER BY u.handle`, toNanos(now))
+	out, err := collect(rows, err, fill(scanAccount))
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: list accounts: %w", err)
-	}
-	defer rows.Close()
-	var out []user.Account
-	for rows.Next() {
-		var a user.Account
-		if err := scanAccount(rows, &a); err != nil {
-			return nil, fmt.Errorf("sqlite: list accounts: %w", err)
-		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list accounts: %w", err)
 	}
 	return out, nil

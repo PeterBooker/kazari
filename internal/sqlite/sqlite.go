@@ -217,3 +217,45 @@ func runTx(ctx context.Context, db beginner, opts *sql.TxOptions, fn func(tx *sq
 	}()
 	return fn(tx)
 }
+
+// rowScanner is a *sql.Row or a *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// collect scans every row of a query, taking the query's error too, and
+// closes rows on every path.
+func collect[T any](rows *sql.Rows, err error, scan func(rowScanner) (T, error)) ([]T, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// fill turns a function that scans a row into a *T into one for collect.
+func fill[T any](scan func(rowScanner, *T) error) func(rowScanner) (T, error) {
+	return func(row rowScanner) (T, error) {
+		var v T
+		err := scan(row, &v)
+		return v, err
+	}
+}
+
+// scalar scans a row of one column.
+func scalar[T any](row rowScanner) (T, error) {
+	var v T
+	err := row.Scan(&v)
+	return v, err
+}

@@ -377,7 +377,7 @@ func (s *OAuthStore) CreateTokens(ctx context.Context, access, refresh *oauth.To
 const oauthTokenColumns = `t.id, t.token_hash, t.kind, t.client_id, u.handle, t.scopes, t.resource,
 	t.key_prefix, t.created_at, t.expires_at, t.revoked_at, t.replaced_by, t.family_id`
 
-func oauthScanToken(s interface{ Scan(dest ...any) error }, t *oauth.Token) error {
+func oauthScanToken(s rowScanner, t *oauth.Token) error {
 	var (
 		scopes           string
 		created, expires int64
@@ -499,19 +499,8 @@ func (s *OAuthStore) ListGrants(ctx context.Context, handle string, now time.Tim
 			WHERE x.family_id = t.family_id AND x.kind = 'refresh' AND x.id > t.id
 			  AND x.revoked_at IS NULL AND x.expires_at > ?2)
 		ORDER BY t.created_at DESC, t.id DESC`, handle, toNanos(now))
+	out, err := collect(rows, err, fill(oauthScanToken))
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: list oauth grants: %w", err)
-	}
-	defer rows.Close()
-	var out []oauth.Token
-	for rows.Next() {
-		var t oauth.Token
-		if err := oauthScanToken(rows, &t); err != nil {
-			return nil, fmt.Errorf("sqlite: list oauth grants: %w", err)
-		}
-		out = append(out, t)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list oauth grants: %w", err)
 	}
 	return out, nil

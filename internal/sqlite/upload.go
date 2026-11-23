@@ -223,19 +223,8 @@ func (s *UploadStore) ListExpired(ctx context.Context, now time.Time) (_ []strin
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id FROM upload WHERE expires_at <= ? ORDER BY expires_at, id`, toNanos(now))
+	ids, err := collect(rows, err, scalar[string])
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list expired uploads: %w", err)
 	}
 	return ids, nil
@@ -270,19 +259,11 @@ func uploadFiles(ctx context.Context, tx *sql.Tx, id string) ([]upload.StagedFil
 	rows, err := tx.QueryContext(ctx,
 		`SELECT path, staging_index, bytes, content_type FROM upload_file
 		 WHERE upload_id = ? ORDER BY path`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []upload.StagedFile
-	for rows.Next() {
+	return collect(rows, err, func(row rowScanner) (upload.StagedFile, error) {
 		var f upload.StagedFile
-		if err := rows.Scan(&f.Path, &f.StagingIndex, &f.Bytes, &f.ContentType); err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
-	return files, rows.Err()
+		err := row.Scan(&f.Path, &f.StagingIndex, &f.Bytes, &f.ContentType)
+		return f, err
+	})
 }
 
 func (s *UploadStore) CountAll(ctx context.Context) (n int64, err error) {

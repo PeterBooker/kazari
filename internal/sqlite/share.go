@@ -32,7 +32,7 @@ const shareLinkSelect = `SELECT l.prefix, l.label, l.created_by, l.created_at, l
 FROM share_link l JOIN artifact a ON a.id = l.artifact_id`
 
 // scanShareLink returns the link and its password hash, "" for none.
-func scanShareLink(row artifactRowScanner) (*artifact.ShareLink, string, error) {
+func scanShareLink(row rowScanner) (*artifact.ShareLink, string, error) {
 	var (
 		l                artifact.ShareLink
 		created, expires int64
@@ -55,20 +55,18 @@ func (s *ArtifactStore) ListShareLinks(ctx context.Context, slug string) (_ []ar
 	ctx, end := s.db.op(ctx, "ArtifactStore.ListShareLinks")
 	defer func() { end(err) }()
 	rows, err := s.db.QueryContext(ctx, shareLinkSelect+` WHERE a.slug = ? ORDER BY l.created_at DESC, l.id DESC`, slug)
+	out, err := collect(rows, err, func(row rowScanner) (artifact.ShareLink, error) {
+		l, _, err := scanShareLink(row)
+		if err != nil {
+			return artifact.ShareLink{}, err
+		}
+		return *l, nil
+	})
 	if err != nil {
 		return nil, artifactErr("list share links", err)
 	}
-	defer rows.Close()
-	out := []artifact.ShareLink{}
-	for rows.Next() {
-		l, _, err := scanShareLink(rows)
-		if err != nil {
-			return nil, artifactErr("list share links", err)
-		}
-		out = append(out, *l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, artifactErr("list share links", err)
+	if out == nil {
+		out = []artifact.ShareLink{}
 	}
 	return out, nil
 }
@@ -95,18 +93,12 @@ func (s *ArtifactStore) RevokeUserShareLinks(ctx context.Context, handle string,
 		rows, err := tx.QueryContext(ctx,
 			`UPDATE share_link SET revoked_at = ? WHERE created_by = ? AND revoked_at IS NULL
 			 RETURNING (SELECT slug FROM artifact WHERE id = artifact_id), prefix`, toNanos(at), handle)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
+		out, err = collect(rows, err, func(row rowScanner) (artifact.RevokedShareLink, error) {
 			var l artifact.RevokedShareLink
-			if err := rows.Scan(&l.Slug, &l.Prefix); err != nil {
-				return err
-			}
-			out = append(out, l)
-		}
-		return rows.Err()
+			err := row.Scan(&l.Slug, &l.Prefix)
+			return l, err
+		})
+		return err
 	})
 	if err != nil {
 		return nil, artifactErr("revoke user share links", err)
