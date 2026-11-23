@@ -1006,17 +1006,19 @@ func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64,
 	return artifactErr("record blob", err)
 }
 
+// unreferencedBlobs takes the cutoff and the limit; blob_created serves it.
+const unreferencedBlobs = `SELECT b.hash FROM blob b
+	WHERE b.created_at < ?
+	  AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = b.hash)
+	ORDER BY b.created_at, b.hash LIMIT ?`
+
 func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) (_ []string, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.UnreferencedBlobs")
 	defer func() { end(err) }()
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT b.hash FROM blob b
-		 WHERE b.created_at < ?
-		   AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = b.hash)
-		 ORDER BY b.created_at, b.hash LIMIT ?`, toNanos(before), limit)
+	rows, err := s.db.QueryContext(ctx, unreferencedBlobs, toNanos(before), limit)
 	if err != nil {
 		return nil, artifactErr("unreferenced blobs", err)
 	}
