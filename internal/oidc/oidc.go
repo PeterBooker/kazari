@@ -61,6 +61,18 @@ type Config struct {
 	Fetch *fetch.Observer
 }
 
+func (c Config) check() error {
+	switch {
+	case c.Issuer == "":
+		return errors.New("oidc: issuer is required")
+	case c.ClientID == "":
+		return errors.New("oidc: client id is required")
+	case c.RedirectURL == "":
+		return errors.New("oidc: redirect URL is required")
+	}
+	return nil
+}
+
 // Provider is a discovered OpenID Connect provider.
 type Provider struct {
 	issuer   string
@@ -74,13 +86,8 @@ type Provider struct {
 // New discovers the provider; it fails when the discovery document names a
 // different issuer.
 func New(ctx context.Context, cfg Config) (_ *Provider, err error) {
-	switch {
-	case cfg.Issuer == "":
-		return nil, errors.New("oidc: issuer is required")
-	case cfg.ClientID == "":
-		return nil, errors.New("oidc: client id is required")
-	case cfg.RedirectURL == "":
-		return nil, errors.New("oidc: redirect URL is required")
+	if err := cfg.check(); err != nil {
+		return nil, err
 	}
 	if len(cfg.Scopes) == 0 {
 		cfg.Scopes = DefaultScopes
@@ -272,13 +279,8 @@ type Lazy struct {
 
 // NewLazy checks cfg without any network I/O.
 func NewLazy(cfg Config) (*Lazy, error) {
-	switch {
-	case cfg.Issuer == "":
-		return nil, errors.New("oidc: issuer is required")
-	case cfg.ClientID == "":
-		return nil, errors.New("oidc: client id is required")
-	case cfg.RedirectURL == "":
-		return nil, errors.New("oidc: redirect URL is required")
+	if err := cfg.check(); err != nil {
+		return nil, err
 	}
 	return &Lazy{cfg: cfg}, nil
 }

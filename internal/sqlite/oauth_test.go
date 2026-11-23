@@ -17,7 +17,8 @@ import (
 
 var oauthT0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
-func oauthTestStores(t *testing.T) *OAuthStore {
+// oauthTestDB returns a database with the users alice and bob.
+func oauthTestDB(t *testing.T) *DB {
 	t.Helper()
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "kazari.db"), Options{})
@@ -31,7 +32,13 @@ func oauthTestStores(t *testing.T) *OAuthStore {
 			t.Fatal(err)
 		}
 	}
-	s := NewOAuthStore(db)
+	return db
+}
+
+func oauthTestStores(t *testing.T) *OAuthStore {
+	t.Helper()
+	ctx := context.Background()
+	s := NewOAuthStore(oauthTestDB(t))
 	if err := s.UpsertClient(ctx, &oauth.Client{ID: "dcr_test", Name: "Test", RedirectURIs: []string{"https://app.example/cb"}, CreatedAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}

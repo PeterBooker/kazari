@@ -9,14 +9,14 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-func TestOAuthStoreSignIn(t *testing.T) {
+func TestSignInStoreSignIn(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
-	want := &oauth.SignInRequest{ID: "v.state", Binding: "b", Nonce: "n", UpstreamVerifier: "pv",
+	s := NewSignInStore(oauthTestDB(t))
+	want := &signin.Request{ID: "v.state", Binding: "b", Nonce: "n", UpstreamVerifier: "pv",
 		Host: "demo--v2", Path: "/report?x=1", NonceHash: "nh", ExpiresAt: oauthT0.Add(10 * time.Minute)}
 	if err := s.CreateSignIn(ctx, want); err != nil {
 		t.Fatal(err)
@@ -32,30 +32,30 @@ func TestOAuthStoreSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The second delete loses, so two racing callbacks cannot both go on.
-	if err := s.DeleteSignIn(ctx, "v.state"); !errors.Is(err, oauth.ErrNotFound) {
+	if err := s.DeleteSignIn(ctx, "v.state"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("second DeleteSignIn = %v, want ErrNotFound", err)
 	}
-	if _, err := s.GetSignIn(ctx, "v.state"); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.GetSignIn(ctx, "v.state"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("GetSignIn after delete = %v", err)
 	}
 }
 
-func TestOAuthStoreSessions(t *testing.T) {
+func TestSignInStoreSessions(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
-	sess := &oauth.Session{Hash: "sh", Browser: "bh", UserHandle: "alice", KeyPrefix: "abcdefgh", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(12 * time.Hour)}
+	s := NewSignInStore(oauthTestDB(t))
+	sess := &signin.Session{Hash: "sh", Browser: "bh", UserHandle: "alice", KeyPrefix: "abcdefgh", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(12 * time.Hour)}
 	if err := s.CreateSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 	if sess.ID == 0 {
 		t.Fatal("CreateSession set no ID")
 	}
-	if err := s.CreateSession(ctx, &oauth.Session{Hash: "x", UserHandle: "nobody", CreatedAt: oauthT0, ExpiresAt: oauthT0}); !errors.Is(err, user.ErrNotFound) {
+	if err := s.CreateSession(ctx, &signin.Session{Hash: "x", UserHandle: "nobody", CreatedAt: oauthT0, ExpiresAt: oauthT0}); !errors.Is(err, user.ErrNotFound) {
 		t.Fatalf("CreateSession for an unknown user = %v", err)
 	}
-	for _, get := range []func() (*oauth.Session, error){
-		func() (*oauth.Session, error) { return s.GetSession(ctx, "sh") },
-		func() (*oauth.Session, error) { return s.GetSessionByID(ctx, sess.ID) },
+	for _, get := range []func() (*signin.Session, error){
+		func() (*signin.Session, error) { return s.GetSession(ctx, "sh") },
+		func() (*signin.Session, error) { return s.GetSessionByID(ctx, sess.ID) },
 	} {
 		got, err := get()
 		if err != nil {
@@ -66,7 +66,7 @@ func TestOAuthStoreSessions(t *testing.T) {
 		}
 	}
 
-	code := &oauth.ViewCode{Hash: "ch", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh", ExpiresAt: oauthT0.Add(time.Minute)}
+	code := &signin.ViewCode{Hash: "ch", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh", ExpiresAt: oauthT0.Add(time.Minute)}
 	if err := s.CreateViewCode(ctx, code); err != nil {
 		t.Fatal(err)
 	}
@@ -79,14 +79,14 @@ func TestOAuthStoreSessions(t *testing.T) {
 	if diff := cmp.Diff(code, got); diff != "" {
 		t.Errorf("ConsumeViewCode (-want +got):\n%s", diff)
 	}
-	if _, err := s.ConsumeViewCode(ctx, "ch", used); !errors.Is(err, oauth.ErrCodeUsed) {
+	if _, err := s.ConsumeViewCode(ctx, "ch", used); !errors.Is(err, signin.ErrCodeUsed) {
 		t.Fatalf("second ConsumeViewCode = %v, want ErrCodeUsed", err)
 	}
-	if _, err := s.ConsumeViewCode(ctx, "unknown", used); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.ConsumeViewCode(ctx, "unknown", used); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("ConsumeViewCode unknown = %v, want ErrNotFound", err)
 	}
 
-	view := &oauth.ViewSession{Hash: "vh", SessionID: sess.ID, Host: "demo", CreatedAt: oauthT0, ExpiresAt: sess.ExpiresAt}
+	view := &signin.ViewSession{Hash: "vh", SessionID: sess.ID, Host: "demo", CreatedAt: oauthT0, ExpiresAt: sess.ExpiresAt}
 	if err := s.CreateViewSession(ctx, view); err != nil {
 		t.Fatal(err)
 	}
@@ -100,11 +100,11 @@ func TestOAuthStoreSessions(t *testing.T) {
 	}
 
 	// Deleting the session ends its codes and view sessions.
-	if err := s.CreateViewCode(ctx, &oauth.ViewCode{Hash: "ch2", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh", ExpiresAt: oauthT0}); err != nil {
+	if err := s.CreateViewCode(ctx, &signin.ViewCode{Hash: "ch2", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh", ExpiresAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}
 	// Deleting a view session leaves its session; a second delete is fine.
-	if err := s.CreateViewSession(ctx, &oauth.ViewSession{Hash: "vh2", SessionID: sess.ID, Host: "other",
+	if err := s.CreateViewSession(ctx, &signin.ViewSession{Hash: "vh2", SessionID: sess.ID, Host: "other",
 		CreatedAt: oauthT0, ExpiresAt: sess.ExpiresAt}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestOAuthStoreSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.GetViewSession(ctx, "vh2"); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.GetViewSession(ctx, "vh2"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("view session after DeleteViewSession = %v", err)
 	}
 	if _, err := s.GetViewSession(ctx, "vh"); err != nil {
@@ -122,10 +122,10 @@ func TestOAuthStoreSessions(t *testing.T) {
 	if err := s.DeleteSession(ctx, sess.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetViewSession(ctx, "vh"); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.GetViewSession(ctx, "vh"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("view session after DeleteSession = %v", err)
 	}
-	if _, err := s.ConsumeViewCode(ctx, "ch2", used); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.ConsumeViewCode(ctx, "ch2", used); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("code after DeleteSession = %v", err)
 	}
 	if err := s.DeleteSession(ctx, sess.ID); err != nil {
@@ -136,24 +136,25 @@ func TestOAuthStoreSessions(t *testing.T) {
 // Disabling a user (RevokeAllForUser) ends their browser sessions too.
 func TestOAuthStoreRevokeAllEndsSessions(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
+	db := oauthTestDB(t)
+	o, s := NewOAuthStore(db), NewSignInStore(db)
 	for _, h := range []string{"alice", "bob"} {
-		sess := &oauth.Session{Hash: "s-" + h, UserHandle: h, CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+		sess := &signin.Session{Hash: "s-" + h, UserHandle: h, CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
 		if err := s.CreateSession(ctx, sess); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.CreateViewSession(ctx, &oauth.ViewSession{Hash: "v-" + h, SessionID: sess.ID, Host: "demo",
+		if err := s.CreateViewSession(ctx, &signin.ViewSession{Hash: "v-" + h, SessionID: sess.ID, Host: "demo",
 			CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RevokeAllForUser(ctx, "alice", oauthT0); err != nil {
+	if err := o.RevokeAllForUser(ctx, "alice", oauthT0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetSession(ctx, "s-alice"); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.GetSession(ctx, "s-alice"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("alice's session = %v, want gone", err)
 	}
-	if _, err := s.GetViewSession(ctx, "v-alice"); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := s.GetViewSession(ctx, "v-alice"); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("alice's view session = %v, want gone", err)
 	}
 	if _, err := s.GetViewSession(ctx, "v-bob"); err != nil {
@@ -163,18 +164,18 @@ func TestOAuthStoreRevokeAllEndsSessions(t *testing.T) {
 
 // DeleteSession takes the session's browser with it, and nothing else:
 // sessions with no browser are not one browser.
-func TestOAuthStoreDeleteSessionEndsItsBrowser(t *testing.T) {
+func TestSignInStoreDeleteSessionEndsItsBrowser(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
+	s := NewSignInStore(oauthTestDB(t))
 	ids := map[string]int64{}
 	for _, c := range []struct{ hash, browser string }{
 		{"one", "b1"}, {"two", "b1"}, {"elsewhere", "b2"}, {"old", ""}, {"older", ""},
 	} {
-		sess := &oauth.Session{Hash: c.hash, Browser: c.browser, UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+		sess := &signin.Session{Hash: c.hash, Browser: c.browser, UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
 		if err := s.CreateSession(ctx, sess); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.CreateViewSession(ctx, &oauth.ViewSession{Hash: "v-" + c.hash, SessionID: sess.ID, Host: "demo",
+		if err := s.CreateViewSession(ctx, &signin.ViewSession{Hash: "v-" + c.hash, SessionID: sess.ID, Host: "demo",
 			CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
@@ -183,10 +184,10 @@ func TestOAuthStoreDeleteSessionEndsItsBrowser(t *testing.T) {
 	check := func(gone, kept []string) {
 		t.Helper()
 		for _, h := range gone {
-			if _, err := s.GetSession(ctx, h); !errors.Is(err, oauth.ErrNotFound) {
+			if _, err := s.GetSession(ctx, h); !errors.Is(err, signin.ErrNotFound) {
 				t.Errorf("session %s = %v, want gone", h, err)
 			}
-			if _, err := s.GetViewSession(ctx, "v-"+h); !errors.Is(err, oauth.ErrNotFound) {
+			if _, err := s.GetViewSession(ctx, "v-"+h); !errors.Is(err, signin.ErrNotFound) {
 				t.Errorf("view session %s = %v, want gone", h, err)
 			}
 		}
@@ -209,14 +210,48 @@ func TestOAuthStoreDeleteSessionEndsItsBrowser(t *testing.T) {
 	}
 }
 
-func TestOAuthStoreConsumeViewCodeConcurrent(t *testing.T) {
+// A session and its view sessions say whether their person is disabled, so
+// that a use of one needs no second read.
+func TestSignInStoreReadsUserDisabled(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
-	sess := &oauth.Session{Hash: "sh", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+	db := oauthTestDB(t)
+	s := NewSignInStore(db)
+	sess := &signin.Session{Hash: "sh", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
 	if err := s.CreateSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateViewCode(ctx, &oauth.ViewCode{Hash: "ch", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh",
+	if err := s.CreateViewSession(ctx, &signin.ViewSession{Hash: "vh", SessionID: sess.ID, Host: "demo",
+		CreatedAt: oauthT0, ExpiresAt: sess.ExpiresAt}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		if got, err := s.GetSession(ctx, "sh"); err != nil {
+			t.Error(err)
+		} else if got.UserDisabled != want {
+			t.Errorf("GetSession: UserDisabled = %v, want %v", got.UserDisabled, want)
+		}
+		if got, err := s.GetViewSession(ctx, "vh"); err != nil {
+			t.Error(err)
+		} else if got.UserDisabled != want {
+			t.Errorf("GetViewSession: UserDisabled = %v, want %v", got.UserDisabled, want)
+		}
+	}
+	check(false)
+	if _, err := NewUserStore(db).UpdateUser(ctx, "alice", func(u *user.User) error { u.DisabledAt = &oauthT0; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+}
+
+func TestSignInStoreConsumeViewCodeConcurrent(t *testing.T) {
+	ctx := context.Background()
+	s := NewSignInStore(oauthTestDB(t))
+	sess := &signin.Session{Hash: "sh", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateViewCode(ctx, &signin.ViewCode{Hash: "ch", SessionID: sess.ID, Host: "demo", Path: "/", NonceHash: "nh",
 		ExpiresAt: oauthT0.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
@@ -240,25 +275,25 @@ func TestOAuthStoreConsumeViewCodeConcurrent(t *testing.T) {
 	}
 }
 
-func TestOAuthStoreDeleteExpiredSignIns(t *testing.T) {
+func TestSignInStoreDeleteExpiredSignIns(t *testing.T) {
 	ctx := context.Background()
-	s := oauthTestStores(t)
-	if err := s.CreateSignIn(ctx, &oauth.SignInRequest{ID: "v.old", ExpiresAt: oauthT0}); err != nil {
+	s := NewSignInStore(oauthTestDB(t))
+	if err := s.CreateSignIn(ctx, &signin.Request{ID: "v.old", ExpiresAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}
-	old := &oauth.Session{Hash: "old", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0}
-	live := &oauth.Session{Hash: "live", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
-	for _, sess := range []*oauth.Session{old, live} {
+	old := &signin.Session{Hash: "old", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0}
+	live := &signin.Session{Hash: "live", UserHandle: "alice", CreatedAt: oauthT0, ExpiresAt: oauthT0.Add(time.Hour)}
+	for _, sess := range []*signin.Session{old, live} {
 		if err := s.CreateSession(ctx, sess); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// An expired code and view session of the live session go; so does the
 	// view session of the expired one.
-	if err := s.CreateViewCode(ctx, &oauth.ViewCode{Hash: "c", SessionID: live.ID, ExpiresAt: oauthT0}); err != nil {
+	if err := s.CreateViewCode(ctx, &signin.ViewCode{Hash: "c", SessionID: live.ID, ExpiresAt: oauthT0}); err != nil {
 		t.Fatal(err)
 	}
-	for i, v := range []*oauth.ViewSession{
+	for i, v := range []*signin.ViewSession{
 		{Hash: "v1", SessionID: live.ID, ExpiresAt: oauthT0},
 		{Hash: "v2", SessionID: old.ID, ExpiresAt: oauthT0},
 		{Hash: "v3", SessionID: live.ID, ExpiresAt: oauthT0.Add(time.Hour)},

@@ -4,12 +4,12 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"github.com/PeterBooker/kazari/internal/instrument"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -248,8 +248,8 @@ func (s *Service) replayed(w http.ResponseWriter, r *http.Request, old *Token, n
 
 // userActive writes invalid_grant when the user is gone or disabled.
 func (s *Service) userActive(w http.ResponseWriter, r *http.Request, handle string) bool {
-	u, err := s.users.GetUser(r.Context(), handle)
-	if errors.Is(err, user.ErrNotFound) || (err == nil && u.DisabledAt != nil) {
+	_, err := s.users.ActiveUser(r.Context(), handle)
+	if errors.Is(err, user.ErrNotFound) {
 		writeOAuthError(w, r, http.StatusBadRequest, "invalid_grant", "the user may no longer sign in")
 		return false
 	}

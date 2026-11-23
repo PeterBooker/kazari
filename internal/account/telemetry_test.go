@@ -35,7 +35,7 @@ func TestSessionAuthenticationsAreCounted(t *testing.T) {
 	}
 	// The sign-in ends everywhere; the cookie the browser still sends is
 	// then a session that is no more.
-	if err := e.oauth.EndSessions(t.Context(), "ana", 0); err != nil {
+	if err := e.signin.EndSessions(t.Context(), "ana", 0); err != nil {
 		t.Fatal(err)
 	}
 	b.get("/account/")

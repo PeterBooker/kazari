@@ -17,6 +17,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -75,8 +76,8 @@ func TestSessionNeeded(t *testing.T) {
 	// A page load goes to sign in and comes back to where it was going.
 	resp, _ := b.get("/account/keys/abcdefgh/revoke")
 	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil || resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), e.mcp.URL+oauth.PathSignIn) ||
-		loc.Query().Get("host") != oauth.HostAccount || loc.Query().Get("path") != "/account/keys/abcdefgh/revoke" {
+	if err != nil || resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), e.mcp.URL+signin.PathSignIn) ||
+		loc.Query().Get("host") != signin.HostAccount || loc.Query().Get("path") != "/account/keys/abcdefgh/revoke" {
 		t.Fatalf("a page without a session: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	// Anything else is refused.
@@ -94,7 +95,7 @@ func TestSessionNeeded(t *testing.T) {
 	// A session that ended is no session.
 	b.signIn("ana", password)
 	token := b.token()
-	e.clock.Advance(oauth.DefaultSessionTTL)
+	e.clock.Advance(signin.DefaultSessionTTL)
 	if resp, _ = b.get("/account/"); resp.StatusCode != http.StatusFound {
 		t.Errorf("an expired session: status %d, want the redirect to sign in", resp.StatusCode)
 	}
@@ -160,7 +161,7 @@ func TestCallback(t *testing.T) {
 	resp, _ := a.get("/account/")
 	signIn, _ := url.Parse(resp.Header.Get("Location"))
 	q := signIn.Query()
-	resp, _ = a.postFrom(e.mcp.URL, e.mcp.URL+oauth.PathSignIn, url.Values{
+	resp, _ = a.postFrom(e.mcp.URL, e.mcp.URL+signin.PathSignIn, url.Values{
 		"host": {q.Get("host")}, "path": {q.Get("path")}, "nonce": {q.Get("nonce")}, "login": {"ana"}, "password": {password},
 	})
 	callback := resp.Header.Get("Location")
@@ -301,7 +302,7 @@ func TestEventsAboutTheAccount(t *testing.T) {
 	if _, _, err := e.users.IssueKey(asAna, user.IssueKeyRequest{Handle: "ben", Label: "from-ana"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.oauth.EndSessions(asAna, "ben", 0); err != nil {
+	if err := e.signin.EndSessions(asAna, "ben", 0); err != nil {
 		t.Fatal(err)
 	}
 	bens, anas := e.browser(), e.browser()

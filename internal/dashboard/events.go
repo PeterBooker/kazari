@@ -11,6 +11,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -297,7 +298,7 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 			s.words("disconnected an app")
 		}
 	},
-	oauth.ActionSignIn: func(s *eventLine, e audit.Event) {
+	signin.ActionSignIn: func(s *eventLine, e audit.Event) {
 		switch e.Details["via"] {
 		case "password":
 			s.words("signed in with their password")
@@ -307,7 +308,7 @@ var sentences = map[string]func(s *eventLine, e audit.Event){
 			s.words("signed in with key ").mono(e.Details["key_prefix"])
 		case "oidc":
 			s.words("signed in at the provider")
-		case oauth.ViaLink:
+		case signin.ViaLink:
 			s.words("signed in by choosing a password with a link")
 		default:
 			s.words("signed in")

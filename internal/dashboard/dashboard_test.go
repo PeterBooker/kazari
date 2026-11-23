@@ -24,6 +24,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 	"github.com/PeterBooker/kazari/internal/views"
@@ -60,6 +61,7 @@ type env struct {
 	artifacts *artifact.Service
 	shares    *artifact.ShareLinks
 	oauth     *oauth.Service
+	signin    *signin.Service
 	audit     *sqlite.AuditStore
 	jobs      *scheduler.Scheduler
 	views     *views.Recorder
@@ -123,7 +125,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 			return e.oauth.RevokeAllForUser(ctx, handle)
 		},
 		EndSessions: func(ctx context.Context, handle string, keep int64) error {
-			return e.oauth.EndSessions(ctx, handle, keep)
+			return e.signin.EndSessions(ctx, handle, keep)
 		},
 		RevokeGrants: func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 	})
@@ -143,12 +145,14 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	e.signIn = httptest.NewUnstartedServer(nil)
 	adminURL := "http://" + e.admin.Listener.Addr().String()
 	signInURL := "http://" + e.signIn.Listener.Addr().String()
-	e.oauth = oauth.New(sqlite.NewOAuthStore(db), e.users, e.users, nil, e.audit, oauth.Options{
-		Issuer: signInURL, Resource: signInURL + "/", Now: e.clock.Now, InsecureCookies: true, Passwords: e.users,
+	e.signin = signin.New(sqlite.NewSignInStore(db), signin.Deps{
+		Users: e.users, Keys: e.users, Passwords: e.users, Audit: e.audit,
 		ControlCallback: func(host string) (string, bool) {
-			return adminURL + dashboard.CallbackPath, host == oauth.HostAdmin
+			return adminURL + dashboard.CallbackPath, host == signin.HostAdmin
 		},
-	})
+	}, signin.Options{Origin: signInURL, Now: e.clock.Now, InsecureCookies: true})
+	e.oauth = oauth.New(sqlite.NewOAuthStore(db), oauth.Deps{Users: e.users, Keys: e.users, SignIn: e.signin, Audit: e.audit},
+		oauth.Options{Issuer: signInURL, Resource: signInURL + "/", Now: e.clock.Now, InsecureCookies: true})
 	e.signIn.Config.Handler = e.oauth.Handler()
 
 	viewStore := sqlite.NewViewStore(db)
@@ -156,9 +160,9 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	deps := dashboard.Deps{
 		Views:    views.New(viewStore, views.Options{Now: e.clock.Now}),
 		Flags:    sqlite.NewFlagStore(db),
-		Sessions: e.oauth, Users: e.users, Artifacts: e.artifacts, ShareLinks: e.shares, Grants: e.oauth, Audit: e.audit,
-		Recorder: e.audit,
-		Jobs:     e.jobs, Links: present.Links{URL: func(sub string) string {
+		Sessions: e.signin, Users: e.users, Artifacts: e.artifacts, ShareLinks: e.shares, Grants: grantsAndSessions{e.oauth, e.signin},
+		Audit: e.audit, Recorder: e.audit,
+		Jobs: e.jobs, Links: present.Links{URL: func(sub string) string {
 			if sub == "" {
 				return "https://art.test/"
 			}
@@ -166,7 +170,7 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 		}},
 	}
 	e.opts = dashboard.Options{
-		URL: adminURL, SignInURL: signInURL + oauth.PathSignIn, AccountURL: "https://art.test/account/",
+		URL: adminURL, SignInURL: signInURL + signin.PathSignIn, AccountURL: "https://art.test/account/",
 		MCPURL: "https://mcp.art.test/", APIURL: "https://api.art.test/v1", BaseDomain: "art.test",
 		LocalAccounts: true, InsecureCookies: true, Now: e.clock.Now, Started: t0, DataDir: dir, ViewReaders: true,
 		Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour, MaxShareLinkTTL: 90 * 24 * time.Hour,
@@ -361,7 +365,7 @@ func (b *browser) signInAt(signInURL string, form url.Values) response {
 	for _, k := range []string{"host", "path", "nonce"} {
 		form.Set(k, u.Query().Get(k))
 	}
-	req, _ := http.NewRequest(http.MethodPost, b.e.signIn.URL+oauth.PathSignIn, strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, b.e.signIn.URL+signin.PathSignIn, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", b.e.signIn.URL)
 	r := b.do(req)
@@ -388,7 +392,7 @@ func TestSignInToDashboard(t *testing.T) {
 
 	r := b.navigate("/people?role=admin")
 	loc, err := url.Parse(r.Header.Get("Location"))
-	if err != nil || r.StatusCode != http.StatusFound || loc.Query().Get("host") != oauth.HostAdmin || loc.Query().Get("path") != "/people?role=admin" {
+	if err != nil || r.StatusCode != http.StatusFound || loc.Query().Get("host") != signin.HostAdmin || loc.Query().Get("path") != "/people?role=admin" {
 		t.Fatalf("without a session: status %d to %q", r.StatusCode, r.Header.Get("Location"))
 	}
 	r = b.signInAt(r.Header.Get("Location"), url.Values{"login": {"boss"}, "password": {password}})
@@ -424,7 +428,7 @@ func TestSignInToDashboard(t *testing.T) {
 	if r = b.navigate("/"); r.StatusCode != http.StatusFound {
 		t.Errorf("after sign-out: status %d, want a redirect to sign in", r.StatusCode)
 	}
-	if n, _ := e.oauth.CountSessions(context.Background(), "boss"); n != 0 {
+	if n, _ := e.signin.CountSessions(context.Background(), "boss"); n != 0 {
 		t.Errorf("%d sessions outlived the sign-out", n)
 	}
 }
@@ -436,7 +440,7 @@ func TestCallbackRejectsForeignCode(t *testing.T) {
 	r := b.navigate("/")
 	u, _ := url.Parse(r.Header.Get("Location"))
 	form := url.Values{"login": {"boss"}, "password": {password}, "host": {u.Query().Get("host")}, "path": {"/"}, "nonce": {u.Query().Get("nonce")}}
-	req, _ := http.NewRequest(http.MethodPost, e.signIn.URL+oauth.PathSignIn, strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, e.signIn.URL+signin.PathSignIn, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", e.signIn.URL)
 	callback := b.do(req).Header.Get("Location")
@@ -479,7 +483,7 @@ func TestMemberIsRefused(t *testing.T) {
 	if r = b.post("/session/signout", nil); r.StatusCode != http.StatusOK || !strings.Contains(r.body, "Signed out") {
 		t.Errorf("a member signing out: status %d: %s", r.StatusCode, r.body)
 	}
-	if n, _ := e.oauth.CountSessions(context.Background(), "ana"); n != 0 {
+	if n, _ := e.signin.CountSessions(context.Background(), "ana"); n != 0 {
 		t.Errorf("%d sessions outlived the member's sign-out", n)
 	}
 }
@@ -561,7 +565,7 @@ func TestExpiredSession(t *testing.T) {
 	e.person("boss", user.RoleAdmin)
 	b := e.signedIn("boss")
 	b.navigate("/x")
-	e.clock.Advance(oauth.DefaultSessionTTL)
+	e.clock.Advance(signin.DefaultSessionTTL)
 	if r := b.navigate("/people"); r.StatusCode != http.StatusFound || !strings.HasPrefix(r.Header.Get("Location"), e.signIn.URL) {
 		t.Errorf("an expired session: status %d to %q, want a redirect to sign in", r.StatusCode, r.Header.Get("Location"))
 	}
@@ -602,14 +606,14 @@ func TestChangesNeedOriginAndToken(t *testing.T) {
 			t.Errorf("a form with %s: status %d: %s", name, r.StatusCode, r.body)
 		}
 	}
-	if n, _ := e.oauth.CountSessions(context.Background(), "boss"); n != 1 {
+	if n, _ := e.signin.CountSessions(context.Background(), "boss"); n != 1 {
 		t.Fatalf("a refused form signed the admin out: %d sessions", n)
 	}
 	// Nothing changes on a GET.
 	if r := b.navigate("/session/signout"); r.StatusCode == http.StatusOK || r.StatusCode == http.StatusFound {
 		t.Errorf("GET of an action: status %d", r.StatusCode)
 	}
-	if n, _ := e.oauth.CountSessions(context.Background(), "boss"); n != 1 {
+	if n, _ := e.signin.CountSessions(context.Background(), "boss"); n != 1 {
 		t.Errorf("a GET signed the admin out: %d sessions", n)
 	}
 	// Another admin's token is not this session's.
@@ -663,4 +667,19 @@ func TestAssets(t *testing.T) {
 		!strings.HasPrefix(css.Header.Get("Content-Type"), "text/css") {
 		t.Errorf("stylesheet: status %d, Cache-Control %q, Content-Type %q", css.StatusCode, css.Header.Get("Cache-Control"), css.Header.Get("Content-Type"))
 	}
+}
+
+// grantsAndSessions are the apps of oauth.Service and the sessions of
+// signin.Service, as internal/app hands them to the dashboard.
+type grantsAndSessions struct {
+	*oauth.Service
+	sessions *signin.Service
+}
+
+func (g grantsAndSessions) EndSessions(ctx context.Context, handle string, keep int64) error {
+	return g.sessions.EndSessions(ctx, handle, keep)
+}
+
+func (g grantsAndSessions) CountSessions(ctx context.Context, handle string) (int, error) {
+	return g.sessions.CountSessions(ctx, handle)
 }

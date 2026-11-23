@@ -5,9 +5,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"github.com/PeterBooker/kazari/internal/instrument"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 	"regexp"
 	"slices"
 	"strconv"
@@ -15,10 +12,14 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/errcode"
+	"github.com/PeterBooker/kazari/internal/instrument"
 )
 
 const (
@@ -269,6 +270,16 @@ func normalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(
 // GetUser returns the user with handle. ErrNotFound.
 func (s *Service) GetUser(ctx context.Context, handle string) (*User, error) {
 	return s.store.GetUser(ctx, handle)
+}
+
+// ActiveUser returns the user with handle if they may sign in: ErrNotFound
+// for one who is unknown or disabled.
+func (s *Service) ActiveUser(ctx context.Context, handle string) (*User, error) {
+	u, err := s.store.GetUser(ctx, handle)
+	if err == nil && u.DisabledAt != nil {
+		return nil, ErrNotFound
+	}
+	return u, err
 }
 
 // ListUsers returns every user ordered by handle.

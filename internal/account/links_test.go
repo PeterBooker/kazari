@@ -11,7 +11,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/account"
 	"github.com/PeterBooker/kazari/internal/audit"
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -110,8 +110,8 @@ func TestInviteLink(t *testing.T) {
 	if page := b.page(); strings.Contains(page, "Welcome,") {
 		t.Error("the welcome was shown twice")
 	}
-	ev, err := e.audit.List(ctx, audit.Query{Actions: []string{oauth.ActionSignIn}})
-	if err != nil || len(ev.Events) != 1 || ev.Events[0].Actor != "ana" || ev.Events[0].Details["via"] != oauth.ViaLink {
+	ev, err := e.audit.List(ctx, audit.Query{Actions: []string{signin.ActionSignIn}})
+	if err != nil || len(ev.Events) != 1 || ev.Events[0].Actor != "ana" || ev.Events[0].Details["via"] != signin.ViaLink {
 		t.Errorf("sign-in events = %+v, %v; want one of ana, via the link", ev.Events, err)
 	}
 
@@ -441,7 +441,7 @@ func TestInviteSignInIsTheBrowsers(t *testing.T) {
 	resp, _ := b.post("/account/invite", url.Values{"password": {password}, "confirm": {password}})
 	b.welcomed(resp)
 
-	signIn := e.mcp.URL + oauth.PathSignIn + "?" + url.Values{"host": {oauth.HostAccount}, "path": {"/"}, "nonce": {strings.Repeat("n", 43)}}.Encode()
+	signIn := e.mcp.URL + signin.PathSignIn + "?" + url.Values{"host": {signin.HostAccount}, "path": {"/"}, "nonce": {strings.Repeat("n", 43)}}.Encode()
 	if resp, body := b.getURL(signIn); resp.StatusCode != http.StatusFound {
 		t.Fatalf("the sign-in host after the invite: status %d, want the browser signed in: %s", resp.StatusCode, body)
 	}

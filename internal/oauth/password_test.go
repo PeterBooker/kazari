@@ -15,6 +15,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -41,7 +43,7 @@ func (e *env) passwordSignIn(host, login, pw string) (*http.Response, string) {
 
 func (e *env) signInForm(v url.Values) (*http.Response, string) {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignIn), strings.NewReader(v.Encode()))
+	req, err := http.NewRequest(http.MethodPost, e.url(signin.PathSignIn), strings.NewReader(v.Encode()))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -73,21 +75,21 @@ func TestSignInWithPassword(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("sign-in: status %d: %s", resp.StatusCode, body)
 	}
-	v, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	v, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "ana" {
+	if got, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil || got != "ana" {
 		t.Fatalf("Viewer = %q, %v; want ana", got, err)
 	}
-	if !v.ExpiresAt.Equal(t0.Add(oauth.DefaultSessionTTL)) {
+	if !v.ExpiresAt.Equal(t0.Add(signin.DefaultSessionTTL)) {
 		t.Errorf("session ends at %v, want 12 hours after the sign-in: no key bounds it", v.ExpiresAt)
 	}
-	ev := e.rec.actions(oauth.ActionSignIn)
+	ev := e.rec.actions(signin.ActionSignIn)
 	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != "password" || ev[0].Details["key_prefix"] != "" {
 		t.Fatalf("sign-in audit = %+v", ev)
 	}
-	if resp, _ := e.get(oauth.PathRecover); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "https://art.test/account/recover" {
+	if resp, _ := e.get(signin.PathRecover); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "https://art.test/account/recover" {
 		t.Errorf("recovery link: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	// The browser is signed in: the next host needs no form.
@@ -140,7 +142,7 @@ func TestPasswordRefusalsLookAlike(t *testing.T) {
 			t.Errorf("%s is answered differently from a wrong password", name)
 		}
 	}
-	if ev := e.rec.actions(oauth.ActionSignIn); len(ev) != 0 {
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 0 {
 		t.Errorf("refused sign-ins were recorded: %+v", ev)
 	}
 	resp, body := e.passwordSignIn("demo", "", "")
@@ -245,7 +247,7 @@ func TestPasswordFormFromAnotherOrigin(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
 	e.person("ana", "", "")
 	v := url.Values{"host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(browserNonce)}, "login": {"ana"}, "password": {password}}
-	req, _ := http.NewRequest(http.MethodPost, e.url(oauth.PathSignIn), strings.NewReader(v.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, e.url(signin.PathSignIn), strings.NewReader(v.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://demo.art.test")
 	resp, body := e.do(req)
@@ -259,14 +261,14 @@ func TestControlHosts(t *testing.T) {
 	ctx := context.Background()
 	e.person("boss", "", user.RoleAdmin)
 
-	resp, body := e.get(signInQuery(oauth.HostAdmin, "/people"))
+	resp, body := e.get(signInQuery(signin.HostAdmin, "/people"))
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Sign in to the dashboard") {
 		t.Fatalf("sign-in page for the dashboard: status %d: %s", resp.StatusCode, body)
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "https://admin.art.test") {
 		t.Errorf("CSP %q does not allow the redirect to the admin host", csp)
 	}
-	resp, body = e.signInForm(url.Values{"host": {oauth.HostAdmin}, "path": {"/people"}, "nonce": {nonceHash(browserNonce)},
+	resp, body = e.signInForm(url.Values{"host": {signin.HostAdmin}, "path": {"/people"}, "nonce": {nonceHash(browserNonce)},
 		"login": {"boss"}, "password": {password}})
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("sign-in: status %d: %s", resp.StatusCode, body)
@@ -278,21 +280,21 @@ func TestControlHosts(t *testing.T) {
 	code := loc.Query().Get("code")
 
 	// A code is for one host and one browser.
-	if _, err := e.svc.Redeem(ctx, code, oauth.HostAccount, browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Redeem(ctx, code, signin.HostAccount, browserNonce); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("the admin host's code redeemed on the apex: %v", err)
 	}
-	resp, _ = e.get(signInQuery(oauth.HostAdmin, "/people"))
+	resp, _ = e.get(signInQuery(signin.HostAdmin, "/people"))
 	code = location(t, resp).Query().Get("code")
-	v, err := e.svc.Redeem(ctx, code, oauth.HostAdmin, browserNonce)
+	v, err := e.signin.Redeem(ctx, code, signin.HostAdmin, browserNonce)
 	if err != nil || v.Path != "/people" {
 		t.Fatalf("Redeem = %+v, %v", v, err)
 	}
-	cs, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token)
+	cs, err := e.signin.ControlSession(ctx, signin.HostAdmin, v.Token)
 	if err != nil || cs.Handle != "boss" || cs.KeyPrefix != "" || cs.SessionID == 0 || !cs.ExpiresAt.Equal(v.ExpiresAt) {
 		t.Fatalf("ControlSession = %+v, %v", cs, err)
 	}
-	for _, host := range []string{oauth.HostAccount, "demo", "admin", ""} {
-		if _, err := e.svc.ControlSession(ctx, host, v.Token); !errors.Is(err, oauth.ErrNotFound) {
+	for _, host := range []string{signin.HostAccount, "demo", "admin", ""} {
+		if _, err := e.signin.ControlSession(ctx, host, v.Token); !errors.Is(err, signin.ErrNotFound) {
 			t.Errorf("the admin host's cookie on %q: err = %v, want ErrNotFound", host, err)
 		}
 	}
@@ -302,7 +304,7 @@ func TestControlHosts(t *testing.T) {
 	if _, err := e.users.UpdateUser(ctx, "boss", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAdmin, v.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("ControlSession of a disabled person: err = %v, want ErrNotFound", err)
 	}
 }
@@ -317,7 +319,7 @@ func TestSignInRejectsUnknownControlHosts(t *testing.T) {
 	}
 	// The callback comes from the configuration: no header of the request
 	// moves it.
-	req, _ := http.NewRequest(http.MethodGet, e.url(signInQuery(oauth.HostAdmin, "/")), nil)
+	req, _ := http.NewRequest(http.MethodGet, e.url(signInQuery(signin.HostAdmin, "/")), nil)
 	req.Host = "admin.evil.example"
 	req.Header.Set("X-Forwarded-Host", "admin.evil.example")
 	resp, body := e.do(req)
@@ -330,11 +332,12 @@ func TestSignInRejectsUnknownControlHosts(t *testing.T) {
 // nothing.
 func TestControlHostsOff(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
-	svc := oauth.New(e.store, e.users, e.users, nil, e.rec, oauth.Options{
-		Issuer: e.srv.URL, Now: e.clock.Now, InsecureCookies: true, ViewCallback: viewCallback, Passwords: e.users,
-	})
+	svc := oauth.New(e.store, oauth.Deps{Users: e.users, Keys: e.users, Audit: e.rec, SignIn: signin.New(sqlite.NewSignInStore(e.db),
+		signin.Deps{Users: e.users, Keys: e.users, Passwords: e.users, Audit: e.rec, ViewCallback: viewCallback},
+		signin.Options{Origin: e.srv.URL, Now: e.clock.Now, InsecureCookies: true})},
+		oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now, InsecureCookies: true})
 	e.srv.Config.Handler = svc.Handler()
-	resp, _ := e.get(signInQuery(oauth.HostAdmin, "/"))
+	resp, _ := e.get(signInQuery(signin.HostAdmin, "/"))
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status %d, want 400", resp.StatusCode)
 	}
@@ -344,36 +347,36 @@ func TestControlSignOut(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
 	ctx := context.Background()
 	e.person("boss", "", user.RoleAdmin)
-	resp, _ := e.passwordSignIn(oauth.HostAdmin, "boss", password)
-	admin, err := e.svc.Redeem(ctx, location(t, resp).Query().Get("code"), oauth.HostAdmin, browserNonce)
+	resp, _ := e.passwordSignIn(signin.HostAdmin, "boss", password)
+	admin, err := e.signin.Redeem(ctx, location(t, resp).Query().Get("code"), signin.HostAdmin, browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp, _ = e.get(signInQuery("demo", "/"))
-	page, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	page, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.SignOut(ctx, oauth.HostAccount, admin.Token); err != nil {
+	if err := e.signin.SignOut(ctx, signin.HostAccount, admin.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, admin.Token); err != nil {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAdmin, admin.Token); err != nil {
 		t.Fatalf("a sign-out on another host ended the session: %v", err)
 	}
-	if err := e.svc.SignOut(ctx, oauth.HostAdmin, admin.Token); err != nil {
+	if err := e.signin.SignOut(ctx, signin.HostAdmin, admin.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, admin.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAdmin, admin.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("ControlSession after sign-out: err = %v, want ErrNotFound", err)
 	}
-	if _, err := e.svc.Viewer(ctx, "demo", page.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "demo", page.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("a page opened by the same sign-in outlived it: %v", err)
 	}
-	resp, _ = e.get(signInQuery(oauth.HostAdmin, "/"))
+	resp, _ = e.get(signInQuery(signin.HostAdmin, "/"))
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("after sign-out the browser was let in without the form: status %d", resp.StatusCode)
 	}
-	if err := e.svc.SignOut(ctx, oauth.HostAdmin, "no-such-token"); err != nil {
+	if err := e.signin.SignOut(ctx, signin.HostAdmin, "no-such-token"); err != nil {
 		t.Errorf("SignOut of an unknown token: %v", err)
 	}
 }
@@ -503,8 +506,8 @@ func TestEndSessions(t *testing.T) {
 	e.get("/oauth/authorize?" + authorizeParams(clientID, redirect, "", p).Encode())
 	e.signInForm(url.Values{"request_id": {e.requestCookie()}, "login": {"ana"}, "password": {password}})
 	tr := e.exchange(clientID, redirect, e.approve(nil), p)
-	resp, _ := e.get(signInQuery(oauth.HostAccount, "/account/"))
-	here, err := e.svc.Redeem(ctx, location(t, resp).Query().Get("code"), oauth.HostAccount, browserNonce)
+	resp, _ := e.get(signInQuery(signin.HostAccount, "/account/"))
+	here, err := e.signin.Redeem(ctx, location(t, resp).Query().Get("code"), signin.HostAccount, browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,35 +515,35 @@ func TestEndSessions(t *testing.T) {
 	e.jar, _ = cookiejar.New(nil)
 	e.client.Jar = e.jar
 	resp, _ = e.passwordSignIn("demo", "ana", password)
-	there, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	there, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp, _ = e.passwordSignIn("demo", "ben", password)
-	bens, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	bens, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.jar, e.client.Jar = laptop, laptop
-	if n, err := e.svc.CountSessions(ctx, "ana"); err != nil || n != 2 {
+	if n, err := e.signin.CountSessions(ctx, "ana"); err != nil || n != 2 {
 		t.Fatalf("CountSessions = %d, %v; want 2", n, err)
 	}
 
 	// Changing the password where ana is signed in keeps that browser.
-	cs, err := e.svc.ControlSession(ctx, oauth.HostAccount, here.Token)
+	cs, err := e.signin.ControlSession(ctx, signin.HostAccount, here.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.users.ChangePassword(ctx, "ana", password, "another long password", cs.SessionID); err != nil {
+	if err := e.users.ChangePasswordConfirmed(ctx, "ana", "another long password", cs.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAccount, here.Token); err != nil {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAccount, here.Token); err != nil {
 		t.Errorf("the session the password was changed in ended: %v", err)
 	}
-	if _, err := e.svc.Viewer(ctx, "demo", there.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "demo", there.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("another browser's session outlived the password change: %v", err)
 	}
-	if _, err := e.svc.Viewer(ctx, "demo", bens.Token); err != nil {
+	if _, err := e.signin.Viewer(ctx, "demo", bens.Token); err != nil {
 		t.Errorf("another person's session ended: %v", err)
 	}
 	if _, err := e.svc.Authenticate(ctx, tr.AccessToken); err != nil {
@@ -561,10 +564,10 @@ func TestEndSessions(t *testing.T) {
 	if _, err := e.users.Redeem(ctx, token, user.RedeemRequest{Password: password}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAccount, here.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAccount, here.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("a session outlived the reset: %v", err)
 	}
-	if n, _ := e.svc.CountSessions(ctx, "ana"); n != 0 {
+	if n, _ := e.signin.CountSessions(ctx, "ana"); n != 0 {
 		t.Errorf("CountSessions after a reset = %d", n)
 	}
 	if _, err := e.svc.Authenticate(ctx, tr.AccessToken); err != nil {
@@ -591,19 +594,19 @@ func TestControlSessionWithKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, _ := e.keySignIn(oauth.HostAdmin, key, nil)
-	v, err := e.svc.Redeem(ctx, location(t, resp).Query().Get("code"), oauth.HostAdmin, browserNonce)
+	resp, _ := e.keySignIn(signin.HostAdmin, key, nil)
+	v, err := e.signin.Redeem(ctx, location(t, resp).Query().Get("code"), signin.HostAdmin, browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cs, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token)
+	cs, err := e.signin.ControlSession(ctx, signin.HostAdmin, v.Token)
 	if err != nil || cs.Handle != "boss" || cs.KeyPrefix != k.Prefix {
 		t.Fatalf("ControlSession = %+v, %v", cs, err)
 	}
 	if err := e.users.RevokeKey(ctx, user.KeyRef{Handle: "boss", Prefix: k.Prefix}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ControlSession(ctx, oauth.HostAdmin, v.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.ControlSession(ctx, signin.HostAdmin, v.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("ControlSession after the key was revoked: err = %v, want ErrNotFound", err)
 	}
 }
@@ -647,7 +650,7 @@ func TestPasswordDelaysHoldAgainstABurst(t *testing.T) {
 	for range burst {
 		go func() {
 			v := url.Values{"host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(browserNonce)}, "login": {"ana"}, "password": {"a wrong password"}}
-			req, _ := http.NewRequest(http.MethodPost, e.url(oauth.PathSignIn), strings.NewReader(v.Encode()))
+			req, _ := http.NewRequest(http.MethodPost, e.url(signin.PathSignIn), strings.NewReader(v.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Origin", e.srv.URL)
 			resp, err := http.DefaultClient.Do(req)
@@ -714,7 +717,7 @@ func TestRecoveryCarriesTheSignIn(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
 	nonce := nonceHash(browserNonce)
 
-	resp, _ := e.get(oauth.PathRecover + "?" + url.Values{"host": {"demo"}, "path": {"/report"}, "nonce": {nonce}}.Encode())
+	resp, _ := e.get(signin.PathRecover + "?" + url.Values{"host": {"demo"}, "path": {"/report"}, "nonce": {nonce}}.Encode())
 	want := "https://art.test/account/recover?" + url.Values{"host": {"demo"}, "path": {"/report"}, "nonce": {nonce}}.Encode()
 	if got := resp.Header.Get("Location"); resp.StatusCode != http.StatusSeeOther || got != want {
 		t.Errorf("recover for a host: status %d to %q, want %q", resp.StatusCode, got, want)
@@ -725,7 +728,7 @@ func TestRecoveryCarriesTheSignIn(t *testing.T) {
 		"bad request id": {"request_id": {"x"}},
 		"nothing":        {},
 	} {
-		resp, _ := e.get(oauth.PathRecover + "?" + q.Encode())
+		resp, _ := e.get(signin.PathRecover + "?" + q.Encode())
 		if got := resp.Header.Get("Location"); got != "https://art.test/account/recover" {
 			t.Errorf("recover with %s goes to %q, want the bare form", name, got)
 		}
@@ -735,7 +738,7 @@ func TestRecoveryCarriesTheSignIn(t *testing.T) {
 	clientID := e.register(redirect)
 	e.get("/oauth/authorize?" + authorizeParams(clientID, redirect, "", newPKCE("verifier")).Encode())
 	id := e.requestCookie()
-	resp, _ = e.get(oauth.PathRecover + "?" + url.Values{"request_id": {id}}.Encode())
+	resp, _ = e.get(signin.PathRecover + "?" + url.Values{"request_id": {id}}.Encode())
 	if got := resp.Header.Get("Location"); got != "https://art.test/account/recover?request_id="+id {
 		t.Errorf("recover for an authorization goes to %q", got)
 	}
@@ -774,44 +777,44 @@ func TestLinkCodeOneSignIn(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
 	ctx := context.Background()
 	e.person("ana", "", "")
-	code, err := e.svc.LinkCode(ctx, "ana")
+	code, err := e.signin.LinkCode(ctx, "ana")
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, _ := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code)
-	first, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	resp, _ := e.get(signInQuery("demo", "/") + "&" + signin.ParamHandoff + "=" + code)
+	first, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatalf("Redeem after the handoff: %v", err)
 	}
-	ev := e.rec.actions(oauth.ActionSignIn)
-	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != oauth.ViaLink {
+	ev := e.rec.actions(signin.ActionSignIn)
+	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != signin.ViaLink {
 		t.Errorf("sign-in audit = %+v, want one by ana via the link", ev)
 	}
 
 	// The next host needs no form: the browser is signed in.
 	resp, _ = e.get(signInQuery("other", "/"))
-	second, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	second, err := e.signin.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.svc.CountSessions(ctx, "ana"); err != nil || n != 1 {
+	if n, err := e.signin.CountSessions(ctx, "ana"); err != nil || n != 1 {
 		t.Errorf("CountSessions = %d, %v; want the one sign-in", n, err)
 	}
 
-	if err := e.svc.SignOut(ctx, "other", second.Token); err != nil {
+	if err := e.signin.SignOut(ctx, "other", second.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Viewer(ctx, "demo", first.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "demo", first.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Errorf("Viewer on the first host after signing out on the second = %v, want ErrNotFound", err)
 	}
 
 	// The code works once; used again, the sign-in page asks for the
 	// password with the name filled in.
-	_, body := e.get(signInQuery("demo", "/") + "&" + oauth.ParamHandoff + "=" + code + "&login=ana")
+	_, body := e.get(signInQuery("demo", "/") + "&" + signin.ParamHandoff + "=" + code + "&login=ana")
 	if !strings.Contains(body, `name="password"`) || !strings.Contains(body, `name="login" value="ana"`) {
 		t.Errorf("a used code: the sign-in form with the name, got %s", body)
 	}
-	if n, _ := e.svc.CountSessions(ctx, "ana"); n != 0 {
+	if n, _ := e.signin.CountSessions(ctx, "ana"); n != 0 {
 		t.Errorf("a used code opened a session: %d", n)
 	}
 }
@@ -821,12 +824,12 @@ func TestLinkCodeRedeemsNowhereElse(t *testing.T) {
 	e := newEnv(t, envOptions{noIDP: true, passwords: true})
 	ctx := context.Background()
 	e.person("ana", "", "")
-	code, err := e.svc.LinkCode(ctx, "ana")
+	code, err := e.signin.LinkCode(ctx, "ana")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, host := range []string{"demo", oauth.HostAccount, oauth.HostAdmin} {
-		if _, err := e.svc.Redeem(ctx, code, host, browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+	for _, host := range []string{"demo", signin.HostAccount, signin.HostAdmin} {
+		if _, err := e.signin.Redeem(ctx, code, host, browserNonce); !errors.Is(err, signin.ErrNotFound) {
 			t.Errorf("Redeem of a link code on %s = %v, want ErrNotFound", host, err)
 		}
 	}

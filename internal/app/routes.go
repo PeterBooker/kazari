@@ -11,7 +11,6 @@ import (
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
-	"github.com/PeterBooker/kazari/internal/session"
 	"github.com/PeterBooker/kazari/internal/theme"
 )
 
@@ -137,7 +136,7 @@ func apexHandler(home http.Handler) http.Handler {
 // goes on to next.
 func frontPage(page, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" && session.Navigation(r) {
+		if r.URL.Path == "/" && middleware.Navigation(r) {
 			page.ServeHTTP(w, r)
 			return
 		}

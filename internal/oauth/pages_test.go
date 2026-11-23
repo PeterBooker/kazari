@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 var (
@@ -53,8 +54,8 @@ func (e *env) checkPage(name string, resp *http.Response, body, want string) {
 		t.Fatalf("%s: the page links no stylesheet or script:\n%s", name, body)
 	}
 	for _, ref := range []string{css[1], js[1]} {
-		if !strings.HasPrefix(ref, oauth.PathAssets) {
-			t.Errorf("%s: %s is not under %s", name, ref, oauth.PathAssets)
+		if !strings.HasPrefix(ref, signin.PathAssets) {
+			t.Errorf("%s: %s is not under %s", name, ref, signin.PathAssets)
 		}
 		e.checkAsset(ref)
 	}
@@ -86,8 +87,8 @@ func TestEveryPageUnderTheStrictPolicy(t *testing.T) {
 
 	for name, tt := range map[string]struct{ host, origin, mark string }{
 		"password sign-in for an artifact host": {"demo", "https://demo.art.test", "https://demo.art.test"},
-		"password sign-in for the dashboard":    {oauth.HostAdmin, "https://admin.art.test", "Sign in to the dashboard"},
-		"password sign-in for the account page": {oauth.HostAccount, "https://art.test", "Sign in to your account"},
+		"password sign-in for the dashboard":    {signin.HostAdmin, "https://admin.art.test", "Sign in to the dashboard"},
+		"password sign-in for the account page": {signin.HostAccount, "https://art.test", "Sign in to your account"},
 	} {
 		resp, body = e.get(signInQuery(tt.host, "/"))
 		if resp.StatusCode != http.StatusOK || !strings.Contains(body, `name="password"`) || !strings.Contains(body, tt.mark) {
@@ -132,7 +133,7 @@ func TestEveryPageUnderTheStrictPolicy(t *testing.T) {
 		t.Errorf("consent: %d primary buttons, want 1", n)
 	}
 
-	resp, body = e.get(oauth.PathSignOut)
+	resp, body = e.get(signin.PathSignOut)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `action="/oauth/signout"`) {
 		t.Fatalf("sign-out: status %d:\n%s", resp.StatusCode, body)
 	}
@@ -157,9 +158,9 @@ func TestAssets(t *testing.T) {
 			t.Errorf("font %q is not beside the stylesheet", f[1])
 			continue
 		}
-		e.checkAsset(oauth.PathAssets + f[1])
+		e.checkAsset(signin.PathAssets + f[1])
 	}
-	for _, missing := range []string{oauth.PathAssets, oauth.PathAssets + "theme.css", oauth.PathAssets + "templates.html", oauth.PathAssets + "css/tokens.css"} {
+	for _, missing := range []string{signin.PathAssets, signin.PathAssets + "theme.css", signin.PathAssets + "templates.html", signin.PathAssets + "css/tokens.css"} {
 		if resp, _ := e.get(missing); resp.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s: status %d, want 404", missing, resp.StatusCode)
 		}

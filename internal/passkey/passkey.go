@@ -15,21 +15,17 @@ package passkey
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/PeterBooker/kazari/internal/seal"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -81,10 +77,7 @@ type Service struct {
 	users Users
 	wa    *webauthn.WebAuthn
 	opts  Options
-	key   [32]byte
-
-	mu   sync.Mutex
-	used map[string]time.Time // challenge -> when its ceremony began
+	once  *seal.Once
 }
 
 // New returns a Service, or an error for an RPID or origins WebAuthn
@@ -115,9 +108,7 @@ func New(users Users, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("passkey: %w", err)
 	}
-	s := &Service{users: users, wa: wa, opts: opts, used: map[string]time.Time{}}
-	// A key per process: a page made before a restart starts again.
-	_, _ = rand.Read(s.key[:])
+	s := &Service{users: users, wa: wa, opts: opts, once: seal.NewOnce(opts.TTL, opts.Now)}
 	return s, nil
 }
 
@@ -343,64 +334,34 @@ func (s *Service) keep(ctx context.Context, id int64, cred *webauthn.Credential)
 	return s.users.PasskeyUsed(ctx, id, record)
 }
 
-// ticket is what a ceremony's token seals.
-type ticket struct {
-	Made    int64                `json:"t"`
-	Session webauthn.SessionData `json:"s"`
-}
-
 func (s *Service) ceremony(kind, bind string, options any, sess *webauthn.SessionData) (Ceremony, error) {
 	opts, err := json.Marshal(options)
 	if err != nil {
 		return Ceremony{}, fmt.Errorf("passkey: encode options: %w", err)
 	}
-	payload, err := json.Marshal(ticket{Made: s.opts.Now().Unix(), Session: *sess})
+	payload, err := json.Marshal(sess)
 	if err != nil {
 		return Ceremony{}, fmt.Errorf("passkey: encode ceremony: %w", err)
 	}
-	body := base64.RawURLEncoding.EncodeToString(payload)
-	return Ceremony{Options: string(opts), Token: body + "." + base64.RawURLEncoding.EncodeToString(s.mac(kind, bind, body))}, nil
+	return Ceremony{Options: string(opts), Token: s.once.Seal(purpose(kind, bind), payload)}, nil
 }
 
-// open returns the session a token seals for kind and bind, and takes its
-// challenge so that the token works once.
+// open returns the session a token seals for kind and bind, and takes it so
+// that the token works once.
 func (s *Service) open(kind, bind, token string) (*webauthn.SessionData, error) {
-	body, sig, ok := strings.Cut(token, ".")
-	mac, err := base64.RawURLEncoding.DecodeString(sig)
-	if !ok || err != nil || !hmac.Equal(mac, s.mac(kind, bind, body)) {
-		return nil, ErrExpired
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(body)
+	payload, err := s.once.Open(purpose(kind, bind), token)
 	if err != nil {
 		return nil, ErrExpired
 	}
-	var t ticket
-	if err := json.Unmarshal(payload, &t); err != nil || t.Session.Challenge == "" {
+	var sess webauthn.SessionData
+	if err := json.Unmarshal(payload, &sess); err != nil || sess.Challenge == "" {
 		return nil, ErrExpired
 	}
-	now := s.opts.Now()
-	made := time.Unix(t.Made, 0)
-	if now.Sub(made) > s.opts.TTL || made.After(now.Add(time.Minute)) {
-		return nil, ErrExpired
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for c, at := range s.used {
-		if now.Sub(at) > s.opts.TTL {
-			delete(s.used, c)
-		}
-	}
-	if _, taken := s.used[t.Session.Challenge]; taken {
-		return nil, ErrExpired
-	}
-	s.used[t.Session.Challenge] = made
-	return &t.Session, nil
+	return &sess, nil
 }
 
-// mac binds a token to this process, what it is for and, for a
-// registration, whose account it adds to.
-func (s *Service) mac(kind, bind, body string) []byte {
-	h := hmac.New(sha256.New, s.key[:])
-	h.Write([]byte("kazari passkey\x00" + kind + "\x00" + bind + "\x00" + body))
-	return h.Sum(nil)
+// purpose binds a token to what it is for and, for a registration, whose
+// account it adds to.
+func purpose(kind, bind string) string {
+	return "passkey\x00" + kind + "\x00" + bind
 }

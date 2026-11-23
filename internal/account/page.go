@@ -13,6 +13,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -20,7 +21,7 @@ import (
 // lists, theirs and an admin's alike: nobody is told of them by email, so
 // here is where they show.
 var securityActions = []string{
-	oauth.ActionSignIn, audit.PasswordSet, "recovery.", "passkey.", "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
+	signin.ActionSignIn, audit.PasswordSet, "recovery.", "passkey.", "key.", oauth.ActionGrant, oauth.ActionRevoke, audit.SessionRevoke,
 	"invite.", audit.UserCreate, audit.UserUpdate,
 }
 
@@ -169,7 +170,7 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, status in
 		return
 	}
 	if s.d.Audit != nil {
-		signIns, err := s.d.Audit.List(ctx, audit.Query{Subject: v.user.Handle, Actions: []string{oauth.ActionSignIn}, Limit: 2})
+		signIns, err := s.d.Audit.List(ctx, audit.Query{Subject: v.user.Handle, Actions: []string{signin.ActionSignIn}, Limit: 2})
 		if err != nil {
 			s.fail(w, r, "list sign-ins", err)
 			return

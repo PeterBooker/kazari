@@ -9,6 +9,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -31,9 +32,6 @@ func (s *server) newRecoveryCodes(w http.ResponseWriter, r *http.Request, v visi
 	}
 	s.render(w, r, http.StatusOK, "recovery", recoveryPage{base: s.baseFor(v), Codes: codes})
 }
-
-// maxLoginLen is the longest email address (RFC 5321).
-const maxLoginLen = 254
 
 // recoverPageData is the form that uses a recovery code.
 type recoverPageData struct {
@@ -81,7 +79,7 @@ func (s *server) next(p pendingSignIn, login string) string {
 	q := url.Values{"login": {login}, "notice": {"recovered"}}
 	switch {
 	case p.RequestID != "":
-		return strings.TrimSuffix(s.o.SignInURL, oauth.PathSignIn) + oauth.PathConsent + "?" + q.Encode()
+		return strings.TrimSuffix(s.o.SignInURL, signin.PathSignIn) + oauth.PathConsent + "?" + q.Encode()
 	case p.Host != "":
 		q.Set("host", p.Host)
 		q.Set("path", p.Path)
@@ -129,15 +127,7 @@ func (s *server) recover(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusUnprocessableEntity, "mismatch")
 		return
 	}
-	// Counted for the person the name belongs to, so their handle and
-	// email are one account, else for the name as typed, bounded.
-	account := s.d.Users.HandleFor(r.Context(), d.Login)
-	if account == "" {
-		account = strings.ToLower(d.Login)
-		if len(account) > maxLoginLen {
-			account = account[:maxLoginLen]
-		}
-	}
+	account := s.d.Users.AccountKey(r.Context(), d.Login)
 	attempt, wait := ratelimit.BeginPair(r.Context(), s.passwordDelay, account, s.addressDelay, ratelimit.IPKey(r))
 	if wait > 0 {
 		w.Header().Set("Retry-After", ratelimit.RetryAfter(wait))

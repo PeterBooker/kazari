@@ -48,6 +48,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/site"
 	"github.com/PeterBooker/kazari/internal/snapshot"
 	"github.com/PeterBooker/kazari/internal/sqlite"
@@ -285,9 +286,10 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		userOpts.AutoProvision = o.AutoProvision
 		userOpts.AdminEmails = o.AdminEmails
 	}
-	// oauthSvc and shares are set below, before any request.
+	// oauthSvc, signins and shares are set below, before any request.
 	var (
 		oauthSvc *oauth.Service
+		signins  *signin.Service
 		shares   *artifact.ShareLinks
 	)
 	userOpts.OnDisable = func(ctx context.Context, handle string) error {
@@ -298,7 +300,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		return errors.Join(oauthSvc.RevokeAllForUser(ctx, handle), shares.RevokeUserShareLinks(ctx, actor, handle))
 	}
 	userOpts.EndSessions = func(ctx context.Context, handle string, keep int64) error {
-		return oauthSvc.EndSessions(ctx, handle, keep)
+		return signins.EndSessions(ctx, handle, keep)
 	}
 	userOpts.RevokeGrants = func(ctx context.Context, handle string) error { return oauthSvc.RevokeAllForUser(ctx, handle) }
 	users := user.New(sqlite.NewUserStore(a.db), auditStore, userOpts)
@@ -355,7 +357,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	})
 
 	mcpURL := cfg.ExternalURL(config.MCPHost)
-	var idp oauth.IdentityProvider
+	var idp signin.IdentityProvider
 	if o := cfg.Auth.OIDC; o != nil {
 		p, err := oidc.NewLazy(oidc.Config{
 			Issuer:       o.Issuer,
@@ -383,7 +385,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		a.oidcOn = true
 	}
 	var (
-		passwords  oauth.Passwords
+		passwords  signin.Passwords
 		recoverURL string
 		passkeys   *passkey.Service
 	)
@@ -403,10 +405,26 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			return fmt.Errorf("app: %w", err)
 		}
 	}
-	oauthOpts := oauth.Options{
-		Passwords:          passwords,
-		RecoverURL:         recoverURL,
-		ControlCallback:    controlCallback(cfg),
+	signInDeps := signin.Deps{
+		Users: users, Keys: users, Passwords: passwords, IdP: idp, Audit: auditStore,
+		ViewCallback: viewCallback(cfg), ControlCallback: controlCallback(cfg),
+	}
+	// Set only when there is one: a nil *passkey.Service in the interface
+	// would not be a nil interface.
+	if passkeys != nil {
+		signInDeps.Passkeys = passkeys
+	}
+	signins = signin.New(sqlite.NewSignInStore(a.db), signInDeps, signin.Options{
+		Origin:          strings.TrimSuffix(mcpURL, "/"),
+		RecoverURL:      recoverURL,
+		InsecureCookies: cfg.ExternalScheme == "http",
+		Now:             now,
+		Logger:          log,
+		Telemetry:       tel,
+	})
+	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), oauth.Deps{
+		Users: users, Keys: users, IdP: idp, SignIn: signins, Audit: auditStore,
+	}, oauth.Options{
 		Issuer:             strings.TrimSuffix(mcpURL, "/"),
 		Resource:           mcpURL,
 		AccessTTL:          cfg.Auth.Tokens.AccessTTL.Std(),
@@ -415,16 +433,10 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Now:                now,
 		Logger:             log,
 		InsecureCookies:    cfg.ExternalScheme == "http",
-		ViewCallback:       viewCallback(cfg),
 		Fetch:              fetchObs,
 		Telemetry:          tel,
-	}
-	// Set only when there is one: a nil *passkey.Service in the interface
-	// would not be a nil interface.
-	if passkeys != nil {
-		oauthOpts.Passkeys = passkeys
-	}
-	oauthSvc = oauth.New(sqlite.NewOAuthStore(a.db), users, users, idp, auditStore, oauthOpts)
+	})
+	grants := grantsAndSessions{oauthSvc, signins}
 	authn := auth.Chain(oauthSvc, users)
 	links := present.Links{URL: cfg.ExternalURL}
 	a.obs = middleware.NewObserver(tel, cfg.Listen.ProxyMode)
@@ -482,6 +494,8 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		}},
 		{Name: "oauth-cleanup", Every: oauthCleanupEvery, Run: func(ctx context.Context) error {
 			n, err := oauthSvc.Cleanup(ctx)
+			m, serr := signins.Cleanup(ctx)
+			n, err = n+m, errors.Join(err, serr)
 			if n > 0 {
 				log.DebugContext(ctx, "oauth cleanup", "rows", n)
 			}
@@ -591,7 +605,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Audit:     auditStore,
 		Jobs:      a.sched,
 		Grants:    grantStore{oauthSvc},
-		Sessions:  oauthSvc,
+		Sessions:  signins,
 		Backup:    backups,
 		Ready:     ready,
 		Settings:  cfg.Redacted,
@@ -631,9 +645,9 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
-		Gate: gate.New(oauthSvc, shares, gate.Options{
-			SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
-			SignOutURL:      mcpURL + strings.TrimPrefix(oauth.PathSignOut, "/"),
+		Gate: gate.New(signins, shares, gate.Options{
+			SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
+			SignOutURL:      mcpURL + strings.TrimPrefix(signin.PathSignOut, "/"),
 			InsecureCookies: cfg.ExternalScheme == "http",
 			Now:             now,
 			Logger:          log,
@@ -645,7 +659,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	siteH := site.NewHandler(arts, blobs, siteOpts)
 	accountDeps := account.Deps{
-		Sessions: oauthSvc, Users: users, Grants: oauthSvc, Artifacts: arts, Audit: auditStore, Links: links, Logger: log,
+		Sessions: signins, Users: users, Grants: grants, Artifacts: arts, Audit: auditStore, Links: links, Logger: log,
 		ShareLinks: shares,
 	}
 	if passkeys != nil {
@@ -653,7 +667,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	accountH := account.New(accountDeps, account.Options{
 		URL:             strings.TrimSuffix(cfg.ExternalURL(""), "/"),
-		SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
+		SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
 		AdminURL:        dashboardURL(cfg),
 		MCPURL:          mcpURL,
 		APIURL:          apiBase,
@@ -676,7 +690,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	adminHost := adminH
 	if cfg.DashboardEnabled() {
 		deps := dashboard.Deps{
-			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
+			Sessions: signins, Users: users, Artifacts: arts, Grants: grants, Audit: auditStore, Recorder: auditStore,
 			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
 			Flags: sqlite.NewFlagStore(a.db), ShareLinks: shares,
 		}
@@ -687,7 +701,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		}
 		adminHost = adminMux(adminH, dashboard.New(deps, dashboard.Options{
 			URL:             cfg.AdminURL(),
-			SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
+			SignInURL:       mcpURL + strings.TrimPrefix(signin.PathSignIn, "/"),
 			AccountURL:      cfg.ExternalURL("") + "account/",
 			MCPURL:          mcpURL,
 			APIURL:          apiBase,
@@ -811,9 +825,9 @@ func controlCallback(cfg config.Config) func(host string) (string, bool) {
 	apex := cfg.ExternalURL("") + strings.TrimPrefix(account.CallbackPath, "/")
 	return func(host string) (string, bool) {
 		switch host {
-		case oauth.HostAdmin:
+		case signin.HostAdmin:
 			return admin, admin != ""
-		case oauth.HostAccount:
+		case signin.HostAccount:
 			return apex, true
 		}
 		return "", false
@@ -950,6 +964,34 @@ func (a *App) flushTelemetry() {
 	if err := a.tel.Shutdown(ctx); err != nil {
 		a.log.Warn("telemetry: final flush failed", "err", err)
 	}
+}
+
+// grantsAndSessions are a person's connected applications, which the
+// authorization server keeps, and browser sessions, which the sign-in host
+// keeps, as the account pages and the dashboard show them together.
+type grantsAndSessions struct {
+	grants   *oauth.Service
+	sessions *signin.Service
+}
+
+func (g grantsAndSessions) ListGrants(ctx context.Context, handle string) ([]oauth.Token, error) {
+	return g.grants.ListGrants(ctx, handle)
+}
+
+func (g grantsAndSessions) RevokeGrant(ctx context.Context, id int64) error {
+	return g.grants.RevokeGrant(ctx, id)
+}
+
+func (g grantsAndSessions) GetClient(ctx context.Context, id string) (*oauth.Client, error) {
+	return g.grants.GetClient(ctx, id)
+}
+
+func (g grantsAndSessions) EndSessions(ctx context.Context, handle string, keep int64) error {
+	return g.sessions.EndSessions(ctx, handle, keep)
+}
+
+func (g grantsAndSessions) CountSessions(ctx context.Context, handle string) (int, error) {
+	return g.sessions.CountSessions(ctx, handle)
 }
 
 // grantStore adapts oauth.Service to httpapi.GrantStore.

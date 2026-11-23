@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/errcode"
@@ -28,6 +29,43 @@ func SecurityHeaders() func(http.Handler) http.Handler {
 // or a person chose can never run as either.
 const PageCSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; " +
 	"form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+const formActionSelf = "form-action 'self'"
+
+// safeOrigin matches an origin that can be put in a CSP source list as is.
+var safeOrigin = regexp.MustCompile(`^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$|^http://\[::1\](:[0-9]+)?$`)
+
+// PageCSPFor is PageCSP for a page whose form submission is redirected on
+// to targets: browsers apply form-action to the redirect after a
+// submission, so their origins join it. Nothing else is loosened, and a
+// target that is empty, unparsable or not a plain origin is left out.
+func PageCSPFor(targets ...string) string {
+	list := formActionSelf
+	for _, t := range targets {
+		u, err := url.Parse(t)
+		if err != nil || t == "" {
+			continue
+		}
+		origin := u.Scheme + "://" + u.Host
+		if safeOrigin.MatchString(origin) && !strings.Contains(list, " "+origin) {
+			list += " " + origin
+		}
+	}
+	return strings.Replace(PageCSP, formActionSelf, list, 1)
+}
+
+// Navigation reports whether r loads a page into a browser tab, where a
+// redirect to sign in helps. Browsers that send no Fetch Metadata are
+// judged by their Accept header.
+func Navigation(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
+		return mode == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
 
 // SameOrigin reports whether a form post comes from a page of origin
 // (scheme://host[:port], as configured, never taken from the request).

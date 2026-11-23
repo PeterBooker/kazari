@@ -23,6 +23,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -129,7 +130,9 @@ func (f *fakeIDP) setIdentity(id auth.Identity) {
 type env struct {
 	t      *testing.T
 	srv    *httptest.Server
+	db     *sqlite.DB
 	svc    *oauth.Service
+	signin *signin.Service
 	store  *sqlite.OAuthStore
 	users  *user.Service
 	clock  *clock
@@ -151,7 +154,7 @@ type envOptions struct {
 	passwords bool
 	// checker replaces the service that checks passwords, to count or hold
 	// its calls.
-	checker oauth.Passwords
+	checker signin.Passwords
 	// passkeys adds the passkey sign-in, for passkeys of the relying party
 	// art.test made on the apex, https://art.test.
 	passkeys bool
@@ -166,7 +169,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	e := &env{t: t, clock: &clock{now: t0}, rec: &recorder{}, store: sqlite.NewOAuthStore(db)}
+	e := &env{t: t, db: db, clock: &clock{now: t0}, rec: &recorder{}, store: sqlite.NewOAuthStore(db)}
 	e.users = user.New(sqlite.NewUserStore(db), e.rec, user.Options{
 		Now:            e.clock.Now,
 		AllowedDomains: []string{"example.com"},
@@ -175,21 +178,21 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		// As internal/app wires it.
 		OnDisable: func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
 		EndSessions: func(ctx context.Context, handle string, keep int64) error {
-			return e.svc.EndSessions(ctx, handle, keep)
+			return e.signin.EndSessions(ctx, handle, keep)
 		},
 		RevokeGrants:  func(ctx context.Context, handle string) error { return e.svc.RevokeAllForUser(ctx, handle) },
 		LocalAccounts: eo.passwords,
 		// The real parameters cost 64 MiB a hash.
 		Argon2: user.Argon2{Memory: 64, Time: 1, Threads: 1},
 	})
-	var idp oauth.IdentityProvider
+	var idp signin.IdentityProvider
 	if !eo.noIDP {
 		e.idp = &fakeIDP{identity: auth.Identity{Issuer: "https://idp.example", Subject: "alice-sub",
 			Email: "alice@example.com", EmailVerified: true, Name: "Alice"}}
 		idp = e.idp
 	}
 
-	var passwords oauth.Passwords
+	var passwords signin.Passwords
 	if eo.passwords {
 		passwords = e.users
 	}
@@ -199,7 +202,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 
 	e.srv = httptest.NewUnstartedServer(nil)
 	base := "http://" + e.srv.Listener.Addr().String()
-	var keys oauth.Passkeys
+	var keys signin.Passkeys
 	if eo.passkeys {
 		e.keys, err = passkey.New(e.users, passkey.Options{RPID: "art.test", Origins: []string{"https://art.test", base}, Now: e.clock.Now})
 		if err != nil {
@@ -207,7 +210,17 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		}
 		keys = e.keys
 	}
-	e.svc = oauth.New(e.store, e.users, e.users, idp, e.rec, oauth.Options{
+	e.signin = signin.New(sqlite.NewSignInStore(db), signin.Deps{
+		Users: e.users, Keys: e.users, Passwords: passwords, Passkeys: keys, IdP: idp, Audit: e.rec,
+		ViewCallback: viewCallback, ControlCallback: controlCallback,
+	}, signin.Options{
+		Origin:          base,
+		RecoverURL:      recoverURL(passwords),
+		Now:             e.clock.Now,
+		Logger:          eo.logger,
+		InsecureCookies: true,
+	})
+	e.svc = oauth.New(e.store, oauth.Deps{Users: e.users, Keys: e.users, IdP: idp, SignIn: e.signin, Audit: e.rec}, oauth.Options{
 		Issuer:             base,
 		Resource:           base + "/",
 		MaxUnusedClients:   eo.maxUnusedClients,
@@ -216,11 +229,6 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		HTTPClient:         eo.httpClient,
 		Logger:             eo.logger,
 		InsecureCookies:    true,
-		ViewCallback:       viewCallback,
-		ControlCallback:    controlCallback,
-		Passwords:          passwords,
-		RecoverURL:         recoverURL(passwords),
-		Passkeys:           keys,
 	})
 	e.srv.Config.Handler = e.svc.Handler()
 	e.srv.Start()
@@ -235,7 +243,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 }
 
 // recoverURL is the recovery page of an instance with built-in accounts.
-func recoverURL(p oauth.Passwords) string {
+func recoverURL(p signin.Passwords) string {
 	if p == nil {
 		return ""
 	}
@@ -256,9 +264,9 @@ func viewCallback(host string) (string, bool) {
 // from the configuration.
 func controlCallback(host string) (string, bool) {
 	switch host {
-	case oauth.HostAdmin:
+	case signin.HostAdmin:
 		return "https://admin.art.test/session/callback", true
-	case oauth.HostAccount:
+	case signin.HostAccount:
 		return "https://art.test/account/callback", true
 	}
 	return "", false

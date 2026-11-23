@@ -19,7 +19,7 @@ import (
 // The admin routes for built-in accounts (the links that set a password,
 // browser sessions), the backup and the readiness checks.
 
-// Sessions ends and counts a person's browser sessions. oauth.Service
+// Sessions ends and counts a person's browser sessions. signin.Service
 // implements it.
 type Sessions interface {
 	// EndSessions ends the user's sessions except the one with id keep; 0

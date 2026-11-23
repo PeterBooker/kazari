@@ -15,32 +15,31 @@ package session
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
-	"maps"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/cookie"
 	"github.com/PeterBooker/kazari/internal/instrument"
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/seal"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 // ErrSignIn is a sign-in that did not complete: its code is unknown, used,
 // expired or was started in another browser.
 var ErrSignIn = errors.New("session: sign-in not completed")
 
-// Provider checks and creates the sessions. oauth.Service implements it;
-// its methods return oauth.ErrNotFound for a code or token that names
+// Provider checks and creates the sessions. signin.Service implements it;
+// its methods return signin.ErrNotFound for a code or token that names
 // nothing live.
 type Provider interface {
-	Redeem(ctx context.Context, code, host, nonce string) (oauth.View, error)
-	ControlSession(ctx context.Context, host, token string) (oauth.ControlSession, error)
+	Redeem(ctx context.Context, code, host, nonce string) (signin.View, error)
+	ControlSession(ctx context.Context, host, token string) (signin.ControlSession, error)
 	SignOut(ctx context.Context, host, token string) error
 	// LinkCode is a single-use code that signs handle in at the sign-in
 	// host, for a person the host itself has just identified.
@@ -49,8 +48,8 @@ type Provider interface {
 
 // Options configures a Manager.
 type Options struct {
-	// Host is the control host's label: oauth.HostAdmin or
-	// oauth.HostAccount.
+	// Host is the control host's label: signin.HostAdmin or
+	// signin.HostAccount.
 	Host string
 	// Cookie names the session cookie before the __Host- prefix, such as
 	// kazari_admin; the nonce and flash cookies derive theirs from it.
@@ -69,10 +68,12 @@ type Options struct {
 
 // Manager keeps the session cookie of one control host.
 type Manager struct {
-	p    Provider
-	opts Options
-	auth auth.Sessions
-	once *once
+	p       Provider
+	opts    Options
+	auth    auth.Sessions
+	once    *seal.Once
+	cookies cookie.Host
+	signIn  signin.Client
 }
 
 // New returns a Manager.
@@ -80,20 +81,20 @@ func New(p Provider, opts Options) *Manager {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Manager{p: p, opts: opts, auth: auth.NewSessions(opts.Telemetry), once: newOnce()}
+	cookies := cookie.Host{Insecure: opts.InsecureCookies}
+	return &Manager{p: p, opts: opts, auth: auth.NewSessions(opts.Telemetry), once: seal.NewOnce(onceTTL, opts.Now),
+		cookies: cookies, signIn: signin.Client{SignInURL: opts.SignInURL, Cookies: cookies, NonceCookie: opts.Cookie + "_nonce"}}
 }
 
 // Session is a person signed in on the host.
 type Session struct {
-	oauth.ControlSession
+	signin.ControlSession
 	token string
 	host  string
 	m     *Manager
 }
 
 const (
-	nonceTTL = 10 * time.Minute // as long as a sign-in may take
-	nonceLen = 43               // 32 random bytes, base64url
 	flashTTL = time.Minute
 	// maxFlash bounds a flash code; it is a word the page maps to a
 	// sentence, never text of its own.
@@ -104,26 +105,25 @@ const (
 // has none that is live: the sign-in ended or expired, the person was
 // disabled, or the API key they signed in with is no longer active.
 func (m *Manager) Get(r *http.Request) (*Session, error) {
-	ck, err := r.Cookie(m.name(""))
-	if err != nil || ck.Value == "" {
-		return nil, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie is no session
+	token := m.cookies.Get(r, m.opts.Cookie)
+	if token == "" {
+		return nil, nil
 	}
-	cs, err := m.p.ControlSession(r.Context(), m.opts.Host, ck.Value)
-	if errors.Is(err, oauth.ErrNotFound) {
+	cs, err := m.p.ControlSession(r.Context(), m.opts.Host, token)
+	if errors.Is(err, signin.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ControlSession: cs, token: ck.Value, host: m.opts.Host, m: m}, nil
+	return &Session{ControlSession: cs, token: token, host: m.opts.Host, m: m}, nil
 }
 
 // Presented reports whether the request carries a session cookie at all,
 // live or not: what tells a session that has ended from a browser that
 // never had one.
 func (m *Manager) Presented(r *http.Request) bool {
-	ck, err := r.Cookie(m.name(""))
-	return err == nil && ck.Value != ""
+	return m.cookies.Get(r, m.opts.Cookie) != ""
 }
 
 // SignIn sends the browser to the sign-in host, to come back to returnTo, a
@@ -131,28 +131,7 @@ func (m *Manager) Presented(r *http.Request) bool {
 // reusing the browser's current one so that several tabs can sign in at
 // once.
 func (m *Manager) SignIn(w http.ResponseWriter, r *http.Request, returnTo string) {
-	m.redirect(w, r, returnTo, nil, http.StatusFound)
-}
-
-// redirect sends the browser to the sign-in host with extra parameters.
-func (m *Manager) redirect(w http.ResponseWriter, r *http.Request, returnTo string, extra url.Values, status int) {
-	var nonce string
-	if ck, err := r.Cookie(m.name("_nonce")); err == nil && len(ck.Value) == nonceLen {
-		nonce = ck.Value
-	} else {
-		var b [32]byte
-		_, _ = rand.Read(b[:]) // crypto/rand panics rather than fail
-		nonce = base64.RawURLEncoding.EncodeToString(b[:])
-	}
-	m.setCookie(w, "_nonce", nonce, nonceTTL)
-	sum := sha256.Sum256([]byte(nonce))
-	q := url.Values{
-		"host":  {m.opts.Host},
-		"path":  {oauth.ReturnPath(returnTo)},
-		"nonce": {base64.RawURLEncoding.EncodeToString(sum[:])},
-	}
-	maps.Copy(q, extra)
-	http.Redirect(w, r, m.opts.SignInURL+"?"+q.Encode(), status)
+	m.signIn.Start(w, r, m.opts.Host, signin.ReturnPath(returnTo), nil, http.StatusFound)
 }
 
 // Open ends a sign-in: it exchanges the code in the request's query for a
@@ -161,27 +140,23 @@ func (m *Manager) redirect(w http.ResponseWriter, r *http.Request, returnTo stri
 // does not open a session in this browser. The nonce cookie stays until it
 // expires: another tab's sign-in may still be on its way back with it.
 func (m *Manager) Open(w http.ResponseWriter, r *http.Request) (*Session, string, error) {
-	nonce := ""
-	if ck, err := r.Cookie(m.name("_nonce")); err == nil {
-		nonce = ck.Value
-	}
 	ctx := r.Context()
-	v, err := m.p.Redeem(ctx, r.URL.Query().Get("code"), m.opts.Host, nonce)
-	if errors.Is(err, oauth.ErrNotFound) {
+	v, err := m.p.Redeem(ctx, r.URL.Query().Get("code"), m.opts.Host, m.signIn.Nonce(r))
+	if errors.Is(err, signin.ErrNotFound) {
 		return nil, "", ErrSignIn
 	}
 	if err != nil {
 		return nil, "", err
 	}
 	cs, err := m.p.ControlSession(ctx, m.opts.Host, v.Token)
-	if errors.Is(err, oauth.ErrNotFound) {
+	if errors.Is(err, signin.ErrNotFound) {
 		return nil, "", ErrSignIn
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	m.setCookie(w, "", v.Token, v.ExpiresAt.Sub(m.opts.Now()))
-	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host, m: m}, oauth.ReturnPath(v.Path), nil
+	m.cookies.Set(w, m.opts.Cookie, v.Token, v.ExpiresAt.Sub(m.opts.Now()))
+	return &Session{ControlSession: cs, token: v.Token, host: m.opts.Host, m: m}, signin.ReturnPath(v.Path), nil
 }
 
 // Handoff signs the browser in as handle, a person this host has just
@@ -195,19 +170,19 @@ func (m *Manager) Handoff(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if err != nil {
 		return err
 	}
-	m.redirect(w, r, returnTo, url.Values{oauth.ParamHandoff: {code}, "login": {handle}}, http.StatusSeeOther)
+	m.signIn.Start(w, r, m.opts.Host, signin.ReturnPath(returnTo), url.Values{signin.ParamHandoff: {code}, "login": {handle}}, http.StatusSeeOther)
 	return nil
 }
 
 // End signs the browser out: the sign-in behind its cookie ends on every
 // host, and the cookie is dropped.
 func (m *Manager) End(w http.ResponseWriter, r *http.Request) error {
-	if ck, err := r.Cookie(m.name("")); err == nil && ck.Value != "" {
-		if err := m.p.SignOut(r.Context(), m.opts.Host, ck.Value); err != nil {
+	if token := m.cookies.Get(r, m.opts.Cookie); token != "" {
+		if err := m.p.SignOut(r.Context(), m.opts.Host, token); err != nil {
 			return err
 		}
 	}
-	m.setCookie(w, "", "", -1)
+	m.cookies.Delete(w, m.opts.Cookie)
 	return nil
 }
 
@@ -235,16 +210,16 @@ func (m *Manager) SetFlash(w http.ResponseWriter, code string) {
 	if !flashCode(code) {
 		return
 	}
-	m.setCookie(w, "_flash", code, flashTTL)
+	m.cookies.Set(w, m.opts.Cookie+"_flash", code, flashTTL)
 }
 
 // Flash returns the note SetFlash left, and clears it.
 func (m *Manager) Flash(w http.ResponseWriter, r *http.Request) string {
-	ck, err := r.Cookie(m.name("_flash"))
+	ck, err := r.Cookie(m.cookies.Name(m.opts.Cookie + "_flash"))
 	if err != nil {
 		return ""
 	}
-	m.setCookie(w, "_flash", "", -1)
+	m.cookies.Delete(w, m.opts.Cookie+"_flash")
 	if !flashCode(ck.Value) {
 		return ""
 	}
@@ -262,45 +237,4 @@ func flashCode(s string) bool {
 		}
 	}
 	return true
-}
-
-// Navigation reports whether r loads a page into a browser tab, where a
-// redirect to sign in helps. Browsers that send no Fetch Metadata are
-// judged by their Accept header.
-func Navigation(r *http.Request) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
-		return mode == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
-	}
-	return strings.Contains(r.Header.Get("Accept"), "text/html")
-}
-
-// name returns a cookie's name: the base with suffix, under the __Host-
-// prefix unless cookies are insecure. Browsers accept a __Host- cookie only
-// when it is Secure, on path / and without Domain, so script in an artifact
-// on a sibling host cannot plant one.
-func (m *Manager) name(suffix string) string {
-	if m.opts.InsecureCookies {
-		return m.opts.Cookie + suffix
-	}
-	return "__Host-" + m.opts.Cookie + suffix
-}
-
-// setCookie sets a host-only cookie; ttl <= 0 deletes it.
-func (m *Manager) setCookie(w http.ResponseWriter, suffix, value string, ttl time.Duration) {
-	maxAge := int(ttl / time.Second)
-	if maxAge <= 0 {
-		maxAge = -1
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     m.name(suffix),
-		Value:    value,
-		Path:     "/", // required by the __Host- prefix
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   !m.opts.InsecureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
 }

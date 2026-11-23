@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/middleware"
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/theme"
 )
 
@@ -59,7 +59,7 @@ func NewFront(o FrontOptions) Front {
 	}
 	return Front{
 		Home:      page("home", assetPrefix, o.URL),
-		Connector: page("connector", oauth.PathAssets, o.MCPURL),
+		Connector: page("connector", signin.PathAssets, o.MCPURL),
 		API:       page("api", APIAssetPrefix, strings.TrimSuffix(strings.TrimSuffix(o.APIURL, "/"), "/v1")),
 	}
 }

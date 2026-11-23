@@ -409,7 +409,7 @@ func (s *Service) HandleFor(ctx context.Context, login string) string {
 // which no handle does. Nil when there is none.
 func (s *Service) byLogin(ctx context.Context, login string) (*User, error) {
 	login = normalizeEmail(login)
-	if login == "" || len(login) > maxLoginLen {
+	if login == "" || len(login) > MaxLoginLen {
 		return nil, nil
 	}
 	var (
@@ -427,31 +427,30 @@ func (s *Service) byLogin(ctx context.Context, login string) (*User, error) {
 	return u, err
 }
 
-// maxLoginLen is the longest email address (RFC 5321).
-const maxLoginLen = 254
+// MaxLoginLen is the longest name a person signs in with: the longest email
+// address (RFC 5321).
+const MaxLoginLen = 254
 
-// ChangePassword replaces handle's password, given the current one, and
-// ends their browser sessions except keep, the one the change was made in.
-// Keys and OAuth grants stay. ErrBadPassword for a wrong current password,
-// ErrWeakPassword.
-func (s *Service) ChangePassword(ctx context.Context, handle, current, next string, keep int64) (err error) {
-	ctx, span := instrument.StartChild(ctx, s.tracer, "user.change_password")
-	defer func() { endSpan(span, err) }()
-	if strings.Contains(handle, "@") {
-		return ErrBadPassword
+// AccountKey is what failed attempts at login's password are counted under:
+// the person login names, so that their handle and their email are one
+// account, else the name as typed, folded and bounded, so that an unknown
+// name earns its delays like a real one.
+func (s *Service) AccountKey(ctx context.Context, login string) string {
+	if handle := s.HandleFor(ctx, login); handle != "" {
+		return handle
 	}
-	// Not CheckPassword: changing a password is no sign-in, and the hash
-	// it would renew is about to be replaced.
-	u, _, err := s.verify(ctx, handle, current)
-	if err != nil {
-		return err
+	login = strings.ToLower(login)
+	if len(login) > MaxLoginLen {
+		login = login[:MaxLoginLen]
 	}
-	return s.replacePassword(ctx, u.Handle, next, keep)
+	return login
 }
 
-// ChangePasswordConfirmed is ChangePassword for a person the caller has
-// confirmed another way, with one of their passkeys, in place of the current
-// password. ErrNotFound, ErrDisabled, ErrWeakPassword, ErrLocalOff.
+// ChangePasswordConfirmed replaces handle's password, for a person the
+// caller has confirmed with their current password (ConfirmPassword) or one
+// of their passkeys, and ends their browser sessions except keep, the one
+// the change was made in. Keys and OAuth grants stay. ErrNotFound,
+// ErrDisabled, ErrWeakPassword, ErrLocalOff.
 func (s *Service) ChangePasswordConfirmed(ctx context.Context, handle, next string, keep int64) (err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "user.change_password")
 	defer func() { endSpan(span, err) }()

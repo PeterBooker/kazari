@@ -438,16 +438,22 @@ func TestChangePassword(t *testing.T) {
 	}})
 	f.invite(t, "ana", "ana@example.com")
 	const next = "a new long password"
-	if err := f.svc.ChangePassword(ctx, "ana", "not the password", next, 7); !errors.Is(err, user.ErrBadPassword) {
+	if err := f.svc.ConfirmPassword(ctx, "ana", "not the password"); !errors.Is(err, user.ErrBadPassword) {
 		t.Errorf("wrong current password: err = %v", err)
 	}
-	if err := f.svc.ChangePassword(ctx, "ana", goodPassword, "short", 7); !errors.Is(err, user.ErrWeakPassword) {
+	if err := f.svc.ConfirmPassword(ctx, "ana@example.com", goodPassword); !errors.Is(err, user.ErrBadPassword) {
+		t.Errorf("current password confirmed by email: err = %v", err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", "short", 7); !errors.Is(err, user.ErrWeakPassword) {
 		t.Errorf("weak new password: err = %v", err)
 	}
 	if len(kept) != 0 {
 		t.Fatalf("a refused change ended sessions: %v", kept)
 	}
-	if err := f.svc.ChangePassword(ctx, "ana", goodPassword, next, 7); err != nil {
+	if err := f.svc.ConfirmPassword(ctx, "ana", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", next, 7); err != nil {
 		t.Fatal(err)
 	}
 	if len(kept) != 1 || kept[0] != 7 {
@@ -875,13 +881,16 @@ func TestChangePasswordSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := f.store.PasswordHash(ctx, "ana")
-	if err := f.svc.ChangePassword(ctx, "ana", "not her password", "a new long password", 0); !errors.Is(err, user.ErrBadPassword) {
+	if err := f.svc.ConfirmPassword(ctx, "ana", "not her password"); !errors.Is(err, user.ErrBadPassword) {
 		t.Fatal(err)
 	}
 	if after, _ := f.store.PasswordHash(ctx, "ana"); after != before {
-		t.Error("a refused change rewrote the hash")
+		t.Error("a refused confirmation rewrote the hash")
 	}
-	if err := f.svc.ChangePassword(ctx, "ana", goodPassword, "a new long password", 0); err != nil {
+	if err := f.svc.ConfirmPassword(ctx, "ana", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ChangePasswordConfirmed(ctx, "ana", "a new long password", 0); err != nil {
 		t.Fatal(err)
 	}
 	if acc := f.account(t, "ana"); acc.PasswordLoginAt != nil || acc.LastActive() != nil {
@@ -920,5 +929,40 @@ func TestHandleFor(t *testing.T) {
 		if got := f.svc.HandleFor(ctx, login); got != want {
 			t.Errorf("HandleFor(%q) = %q, want %q", login, got, want)
 		}
+	}
+}
+
+func TestAccountKey(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.mustCreate(t, "ana", "ana@example.com", "")
+	long := strings.Repeat("x", user.MaxLoginLen+10)
+	for login, want := range map[string]string{
+		"ana":             "ana",
+		"Ana@Example.com": "ana",
+		"Nobody":          "nobody",
+		long:              long[:user.MaxLoginLen],
+	} {
+		if got := f.svc.AccountKey(ctx, login); got != want {
+			t.Errorf("AccountKey(%q) = %q, want %q", login, got, want)
+		}
+	}
+}
+
+func TestActiveUser(t *testing.T) {
+	ctx := context.Background()
+	f := accounts(t, user.Options{})
+	f.mustCreate(t, "ana", "ana@example.com", "")
+	if u, err := f.svc.ActiveUser(ctx, "ana"); err != nil || u.Handle != "ana" {
+		t.Errorf("ActiveUser(ana) = %v, %v; want ana", u, err)
+	}
+	if _, err := f.svc.ActiveUser(ctx, "nobody"); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("ActiveUser(nobody): err = %v, want ErrNotFound", err)
+	}
+	if _, err := f.svc.UpdateUser(ctx, "ana", user.UpdateUserRequest{Disabled: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.ActiveUser(ctx, "ana"); !errors.Is(err, user.ErrNotFound) {
+		t.Errorf("ActiveUser of a disabled person: err = %v, want ErrNotFound", err)
 	}
 }

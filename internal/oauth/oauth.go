@@ -2,14 +2,9 @@
 // 8414 and RFC 9728 metadata, dynamic registration (RFC 7591), client ID
 // metadata documents, PKCE (S256 only) and refresh-token rotation. People sign
 // in at an upstream IdentityProvider or, without one, with the password of a
-// built-in account or an API key; a grant approved with a key takes that
-// key's scopes, restriction and lifetime. The admin scope is never granted.
-//
-// It is also the browser sign-in host for every other host: a session cookie
-// on the MCP host, and per host a single-use code that the host redeems
-// in-process (Redeem) for a cookie only it receives. Those hosts are the
-// artifact hosts with gated pages and the control hosts, the admin host and
-// the apex (HostAdmin, HostAccount).
+// built-in account or an API key, through the browser sign-in host that
+// shares the MCP host (SignIn); a grant approved with a key takes that key's
+// scopes, restriction and lifetime. The admin scope is never granted.
 package oauth
 
 import (
@@ -24,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,10 +26,10 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/cookie"
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/instrument"
-	"github.com/PeterBooker/kazari/internal/passkey"
-	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -47,7 +41,6 @@ const (
 const (
 	ActionGrant  = "oauth.grant"
 	ActionRevoke = "oauth.revoke"
-	ActionSignIn = "oauth.signin"
 )
 
 // ReasonRefreshReplay is the reason of an ActionRevoke that the server made
@@ -120,56 +113,6 @@ type Token struct {
 	FamilyID   int64  // id of the first refresh token of the chain
 }
 
-// SignInRequest is a browser sign-in at the identity provider, started for
-// an artifact host. Its ID is the upstream state.
-type SignInRequest struct {
-	ID               string
-	Binding          string // hash of the browser's sign-in cookie
-	Nonce            string
-	UpstreamVerifier string
-	Host             string // artifact host label: <slug> or <slug>--v<N>
-	Path             string // where to return to on that host
-	NonceHash        string // S256 of the host's nonce cookie
-	ExpiresAt        time.Time
-}
-
-// Session is a person signed in in one browser, held in a cookie on the
-// MCP host. Only its hash is stored.
-type Session struct {
-	ID         int64
-	Hash       string
-	Browser    string // hash of the browser's sign-in cookie; "" links no sessions
-	UserHandle string
-	KeyPrefix  string // the API key that signed in; "" after an identity-provider sign-in
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-}
-
-// ViewCode carries a session to one artifact host. Only its hash is
-// stored; it is single use.
-type ViewCode struct {
-	Hash      string
-	SessionID int64
-	Host      string
-	Path      string
-	NonceHash string
-	ExpiresAt time.Time
-	UsedAt    *time.Time
-}
-
-// ViewSession is a session's cookie on one artifact host. Only its hash is
-// stored. UserHandle and KeyPrefix come from the session.
-type ViewSession struct {
-	ID         int64
-	Hash       string
-	SessionID  int64
-	Host       string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	UserHandle string
-	KeyPrefix  string
-}
-
 // Store is the persistence contract. Users are referenced by handle.
 type Store interface {
 	// UpsertClient inserts c or replaces its name, redirect URIs and fetch
@@ -228,108 +171,72 @@ type Store interface {
 	// of the person it belongs to. ErrNotFound for a
 	// family that never held a refresh token.
 	RevokeGrant(ctx context.Context, familyID int64, at time.Time) (handle string, err error)
-	// RevokeAllForUser also deletes the user's sessions.
+	// RevokeAllForUser also deletes the user's browser sessions.
 	RevokeAllForUser(ctx context.Context, handle string, at time.Time) error
-	// DeleteExpired returns the number of requests, codes, tokens, sign-ins
-	// and sessions removed.
+	// DeleteExpired returns the number of requests, codes and tokens
+	// removed.
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
-
-	// CreateSignIn stores a pending browser sign-in.
-	CreateSignIn(ctx context.Context, r *SignInRequest) error
-	// GetSignIn returns a sign-in by id, expired or not. ErrNotFound.
-	GetSignIn(ctx context.Context, id string) (*SignInRequest, error)
-	// DeleteSignIn removes a sign-in. ErrNotFound when it is already gone,
-	// so of two callbacks racing for one sign-in only one proceeds.
-	DeleteSignIn(ctx context.Context, id string) error
-
-	// CreateSession stores s and sets its ID. user.ErrNotFound for an
-	// unknown handle.
-	CreateSession(ctx context.Context, s *Session) error
-	// GetSession returns a session by hash, expired or not. ErrNotFound.
-	GetSession(ctx context.Context, hash string) (*Session, error)
-	// GetSessionByID returns a session by id, expired or not. ErrNotFound.
-	GetSessionByID(ctx context.Context, id int64) (*Session, error)
-	// DeleteSession removes a session and every session with the same
-	// non-empty Browser, with their codes and view sessions; a missing one
-	// is not an error.
-	DeleteSession(ctx context.Context, id int64) error
-	// DeleteUserSessions removes the user's sessions, with their codes and
-	// view sessions, and returns how many. It spares the session with id
-	// keep and those of the same browser; 0 spares none. The user's tokens
-	// stay.
-	DeleteUserSessions(ctx context.Context, handle string, keep int64) (int, error)
-	// CountSessions counts the user's sessions that have not expired at now.
-	CountSessions(ctx context.Context, handle string, now time.Time) (int, error)
-
-	// CreateViewCode stores a code for an existing session.
-	CreateViewCode(ctx context.Context, c *ViewCode) error
-	// ConsumeViewCode atomically marks the code used at at and returns it.
-	// ErrNotFound for an unknown code, ErrCodeUsed for a second use.
-	ConsumeViewCode(ctx context.Context, hash string, at time.Time) (*ViewCode, error)
-
-	// CreateViewSession stores v for an existing session and sets its ID.
-	CreateViewSession(ctx context.Context, v *ViewSession) error
-	// GetViewSession returns a view session by hash, expired or not, with
-	// its session's user and key prefix. ErrNotFound.
-	GetViewSession(ctx context.Context, hash string) (*ViewSession, error)
-	// DeleteViewSession removes one view session and leaves its session; a
-	// missing view session is not an error.
-	DeleteViewSession(ctx context.Context, hash string) error
 }
 
-// IdentityProvider sends a browser to sign in and turns the callback into
-// an Identity. One that also has a Ready method that returns an error
-// cannot sign anyone in yet, and the sign-in pages say so.
+// IdentityProvider is where people sign in for an MCP client when the
+// instance has one. signin.IdentityProvider is one.
 type IdentityProvider interface {
 	// AuthURL takes the S256 PKCE challenge.
 	AuthURL(state, nonce, codeChallenge string) string
-	// Exchange redeems the callback code and verifies the ID token.
-	Exchange(ctx context.Context, code, nonce, codeVerifier string) (auth.Identity, error)
 }
 
-// idpUnavailable reports, and answers, a sign-in the identity provider
-// cannot take yet, such as before it has been reached once.
-func (s *Service) idpUnavailable(w http.ResponseWriter, r *http.Request) bool {
-	p, ok := s.idp.(interface{ Ready() error })
-	if !ok {
-		return false
-	}
-	err := p.Ready()
-	if err == nil {
-		return false
-	}
-	s.log.WarnContext(r.Context(), "oauth: sign-in while the identity provider is unavailable", "err", err)
-	w.Header().Set("Retry-After", "30")
-	s.message(w, http.StatusServiceUnavailable, "Sign-in is temporarily unavailable",
-		"This instance cannot reach its identity provider yet. Please try again in a minute.", "")
-	return true
+// Users are the people grants are made to. user.Service implements it.
+type Users interface {
+	// ActiveUser returns user.ErrNotFound for a person who is unknown or
+	// disabled.
+	ActiveUser(ctx context.Context, handle string) (*user.User, error)
 }
 
-// Keys checks the API keys that grants and browser sessions are approved
-// with, at consent and on every later use. user.Service implements it.
+// Keys checks the API keys that grants are approved with, on every use of
+// the grant. user.Service implements it.
 type Keys interface {
-	auth.Authenticator
 	// KeyStatus returns user.ErrKeyNotFound for an unknown prefix.
 	KeyStatus(ctx context.Context, prefix string) (user.KeyStatus, error)
 }
 
-// Passwords signs people in to the accounts Kazari keeps itself.
-// user.Service implements it.
-type Passwords interface {
-	// CheckPassword returns the person whose handle or email login is, if
-	// the password is theirs, and user.ErrBadPassword for every refusal.
-	CheckPassword(ctx context.Context, login, password string) (*user.User, error)
+// SignIn is the browser sign-in host, which shares the MCP host and signs
+// people in for an MCP client's authorization. signin.Service implements
+// it.
+type SignIn interface {
+	// Mount adds the sign-in host's pages to the MCP host's mux; a sign-in
+	// for an authorization goes on through requests.
+	Mount(mux *http.ServeMux, requests signin.Requests)
+	// Passwords reports whether people sign in with the password of a
+	// built-in account.
+	Passwords() bool
+	// Session returns the browser's live session, nil when it has none.
+	Session(r *http.Request) (*signin.Session, error)
+	// ShowRequestForm writes the sign-in form for an authorization.
+	ShowRequestForm(w http.ResponseWriter, r *http.Request, f signin.RequestForm)
+	// Unavailable reports, and answers, a sign-in the identity provider
+	// cannot take yet.
+	Unavailable(w http.ResponseWriter, r *http.Request) bool
+	// ServeCallback finishes a sign-in for a host at the identity
+	// provider, whose state starts with signin.StatePrefix.
+	ServeCallback(w http.ResponseWriter, r *http.Request)
+	// Identify redeems the identity provider's callback and returns the
+	// person it signed in. When ok is false it has answered, with again as
+	// its advice; refused runs first when the person is not admitted.
+	Identify(w http.ResponseWriter, r *http.Request, nonce, verifier, again string, refused func()) (*user.User, bool)
+	// CheckKey authenticates an API key typed into a form, counted as a
+	// sign-in with a key.
+	CheckKey(ctx context.Context, key string) (auth.Principal, error)
 }
 
-// Passkeys signs people in to the accounts Kazari keeps itself with a
-// passkey. passkey.Service implements it.
-type Passkeys interface {
-	// SignIn begins a sign-in, for a page to carry.
-	SignIn() (passkey.Ceremony, error)
-	// Verify returns the person whose passkey answered the ceremony token
-	// names: passkey.ErrExpired for a token that is not live,
-	// passkey.ErrRejected for an answer that is not accepted.
-	Verify(ctx context.Context, token, response string) (*user.User, error)
+// Deps are the collaborators of the authorization server. Users is
+// required, and SignIn for Handler. Keys, IdP and Audit may be nil, but
+// without Keys grants approved with a key stop working.
+type Deps struct {
+	Users  Users
+	Keys   Keys
+	IdP    IdentityProvider
+	SignIn SignIn
+	Audit  audit.Recorder
 }
 
 // Options configures a Service.
@@ -364,39 +271,14 @@ type Options struct {
 	// InsecureCookies drops the Secure attribute and the __Host- prefix, for
 	// development over plain http.
 	InsecureCookies bool
-	// Passwords signs people in with a built-in account. Nil, or an
-	// identity provider, turns the password form off; the pages then ask
-	// for an API key.
-	Passwords Passwords
-	// Passkeys adds a passkey sign-in beside the password form. It is used
-	// only with Passwords.
-	Passkeys Passkeys
-	// RecoverURL is the page that sets a new password with a recovery code,
-	// which the password form links to; "" leaves the link out.
-	RecoverURL string
-	// ViewCallback returns the URL on an artifact host where a browser
-	// sign-in ends (https://demo.art.example.com/.kazari/callback), given
-	// the host's label, and whether the label names an artifact host. Nil
-	// turns browser sign-in off.
-	ViewCallback func(host string) (string, bool)
-	// ControlCallback is ViewCallback for the control hosts, HostAdmin and
-	// HostAccount: the URL their sign-in ends at, built from the
-	// configuration and never from a request.
-	ControlCallback func(host string) (string, bool)
-	// SessionTTL is how long a browser sign-in lasts (default 12h); every
-	// view session it opens ends with it. ViewCodeTTL is the lifetime of
-	// the code that carries it to an artifact host (default 1m).
-	SessionTTL, ViewCodeTTL time.Duration
 }
 
 const (
-	DefaultAccessTTL   = time.Hour
-	DefaultRefreshTTL  = 90 * 24 * time.Hour
-	DefaultRequestTTL  = 10 * time.Minute
-	DefaultCodeTTL     = 5 * time.Minute
-	DefaultSessionTTL  = 12 * time.Hour
-	DefaultViewCodeTTL = time.Minute
-	DefaultClientTTL   = 24 * time.Hour
+	DefaultAccessTTL  = time.Hour
+	DefaultRefreshTTL = 90 * 24 * time.Hour
+	DefaultRequestTTL = 10 * time.Minute
+	DefaultCodeTTL    = 5 * time.Minute
+	DefaultClientTTL  = 24 * time.Hour
 )
 
 // DefaultMaxUnusedClients with maxRedirectURIs of maxRedirectURILen bounds
@@ -407,46 +289,29 @@ const DefaultMaxUnusedClients = 10_000
 
 // Service is the authorization server.
 type Service struct {
-	store     Store
-	users     *user.Service
-	keys      Keys
-	passwords Passwords // nil with an identity provider
-	passkeys  Passkeys  // nil without passwords
-	idp       IdentityProvider
-	audit     audit.Recorder
-	opts      Options
-	origin    string // of the issuer
-	now       func() time.Time
-	log       *slog.Logger
-	client    *http.Client
-	pages     *pages
-	tracer    trace.Tracer
-	m         metrics
-
-	// Failed password sign-ins slow the next one down, per account and per
-	// client address.
-	accountDelay, ipDelay *ratelimit.Backoff
+	store   Store
+	users   Users
+	keys    Keys
+	idp     IdentityProvider
+	signIn  SignIn
+	audit   audit.Recorder
+	opts    Options
+	origin  string // of the issuer
+	now     func() time.Time
+	log     *slog.Logger
+	client  *http.Client
+	cookies cookie.Host
+	pages   *signin.Pages
+	tracer  trace.Tracer
+	m       metrics
 }
-
-// How failed password sign-ins slow the next: three wrong passwords for an
-// account, or ten from one address, which may be a whole office, cost
-// nothing; then the wait doubles from a second up to a minute. Nobody is
-// ever locked out.
-const (
-	accountFreeFailures = 3
-	ipFreeFailures      = 10
-	signInBaseDelay     = time.Second
-	signInMaxDelay      = time.Minute
-)
 
 var _ auth.Authenticator = (*Service)(nil)
 
-// New returns a Service. keys checks the consent page's API key; keys, idp
-// and rec may be nil, but without keys grants approved with a key stop
-// working.
-func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec audit.Recorder, opts Options) *Service {
-	if rec == nil {
-		rec = audit.Nop{}
+// New returns a Service.
+func New(store Store, d Deps, opts Options) *Service {
+	if d.Audit == nil {
+		d.Audit = audit.Nop{}
 	}
 	opts.Issuer = strings.TrimSuffix(opts.Issuer, "/")
 	if opts.AccessTTL <= 0 {
@@ -467,12 +332,6 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	if opts.MaxUnusedClients <= 0 {
 		opts.MaxUnusedClients = DefaultMaxUnusedClients
 	}
-	if opts.SessionTTL <= 0 {
-		opts.SessionTTL = DefaultSessionTTL
-	}
-	if opts.ViewCodeTTL <= 0 {
-		opts.ViewCodeTTL = DefaultViewCodeTTL
-	}
 	opts.Scopes = slices.DeleteFunc(slices.Clone(opts.Scopes), func(sc string) bool { return sc == auth.ScopeAdmin })
 	if len(opts.Scopes) == 0 {
 		opts.Scopes = slices.Clone(auth.MemberScopes)
@@ -490,23 +349,11 @@ func New(store Store, users *user.Service, keys Keys, idp IdentityProvider, rec 
 	if u, err := url.Parse(opts.Issuer); err == nil && u.Host != "" {
 		origin = strings.ToLower(u.Scheme + "://" + u.Host)
 	}
-	// Built-in accounts or an identity provider, never both.
-	passwords, passkeys := opts.Passwords, opts.Passkeys
-	if idp != nil {
-		passwords = nil
-	}
-	if passwords == nil {
-		passkeys = nil
-	}
-	backoff := func(free int, scope string) *ratelimit.Backoff {
-		return ratelimit.NewBackoff(ratelimit.BackoffOptions{Free: free, Base: signInBaseDelay, Max: signInMaxDelay,
-			Now: opts.Now, Scope: scope, Telemetry: opts.Telemetry})
-	}
 	return &Service{
-		store: store, users: users, keys: keys, passwords: passwords, passkeys: passkeys, idp: idp, audit: rec, opts: opts, origin: origin,
-		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, pages: newPages(origin),
+		store: store, users: d.Users, keys: d.Keys, idp: d.IdP, signIn: d.SignIn, audit: d.Audit, opts: opts, origin: origin,
+		now: opts.Now, log: opts.Logger, client: opts.HTTPClient, cookies: cookie.Host{Insecure: opts.InsecureCookies},
+		pages:  signin.NewPages(origin, templateFS, "templates/consent.html"),
 		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(opts.Telemetry.Meter(scope)),
-		accountDelay: backoff(accountFreeFailures, ratelimit.ScopeAccount), ipDelay: backoff(ipFreeFailures, ratelimit.ScopeIP),
 	}
 }
 
@@ -529,15 +376,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (auth.Principa
 	if t.Kind != KindAccess || t.RevokedAt != nil || !s.now().Before(t.ExpiresAt) {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
-	u, err := s.users.GetUser(ctx, t.UserHandle)
+	u, err := s.users.ActiveUser(ctx, t.UserHandle)
 	if errors.Is(err, user.ErrNotFound) {
 		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("oauth: authenticate: %w", err)
-	}
-	if u.DisabledAt != nil {
-		return auth.Principal{}, auth.ErrInvalidToken
 	}
 	key, err := s.approvingKey(ctx, t.KeyPrefix, t.UserHandle)
 	if err != nil {
@@ -578,7 +422,7 @@ type keyState struct {
 	slugs   []string   // its restriction, empty when it has none
 }
 
-// approvingKey reads the key a grant or session was approved with. Prefix ""
+// approvingKey reads the key a grant was approved with. Prefix ""
 // (an identity-provider sign-in) is live and unbounded; an unknown or
 // inactive key, or one that is not handle's, is not live.
 func (s *Service) approvingKey(ctx context.Context, prefix, handle string) (keyState, error) {
@@ -634,29 +478,7 @@ func (s *Service) RevokeAllForUser(ctx context.Context, handle string) error {
 	return nil
 }
 
-// EndSessions ends the user's browser sessions on every host and leaves
-// their tokens alone, so the applications they connected keep working. The
-// session with id keep, where a person changed their own password, stays;
-// 0 keeps none.
-func (s *Service) EndSessions(ctx context.Context, handle string, keep int64) (err error) {
-	ctx, span := instrument.StartChild(ctx, s.tracer, "oauth.end_sessions")
-	defer func() { instrument.End(span, err, "") }()
-	n, err := s.store.DeleteUserSessions(ctx, handle, keep)
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		s.record(ctx, actorFrom(ctx, handle), audit.SessionRevoke, handle, map[string]string{"user": handle, "sessions": strconv.Itoa(n)})
-	}
-	return nil
-}
-
-// CountSessions returns how many browser sessions the user has.
-func (s *Service) CountSessions(ctx context.Context, handle string) (int, error) {
-	return s.store.CountSessions(ctx, handle, s.now())
-}
-
-// Cleanup deletes expired requests, codes, tokens and sign-ins, and clients
+// Cleanup deletes expired requests, codes and tokens, and clients
 // that completed no grant within ClientTTL, returning the count.
 func (s *Service) Cleanup(ctx context.Context) (n int, err error) {
 	ctx, span := instrument.StartChild(ctx, s.tracer, "oauth.cleanup")

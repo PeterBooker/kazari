@@ -562,10 +562,7 @@ func (s *OAuthStore) DeleteExpired(ctx context.Context, now time.Time) (_ int, e
 	defer func() { end(err) }()
 	var total int64
 	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
-		// Codes and view sessions before their sessions, so a row that
-		// expired is counted rather than removed by the cascade.
-		for _, table := range []string{"oauth_request", "oauth_code", "oauth_token",
-			"signin_request", "signin_code", "view_session", "signin_session"} {
+		for _, table := range []string{"oauth_request", "oauth_code", "oauth_token"} {
 			res, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, toNanos(now))
 			if err != nil {
 				return err

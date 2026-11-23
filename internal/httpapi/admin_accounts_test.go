@@ -265,7 +265,7 @@ func TestAdminLinksWithLocalAccountsOff(t *testing.T) {
 	}
 }
 
-// fakeSessions stands in for oauth.Service.
+// fakeSessions stands in for signin.Service.
 type fakeSessions struct {
 	mu    sync.Mutex
 	count int
