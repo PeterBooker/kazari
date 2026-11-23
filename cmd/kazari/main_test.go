@@ -71,7 +71,7 @@ func TestMainExitsWithTheCommandsResult(t *testing.T) {
 				t.Setenv(name, value)
 			}
 			var wantOut, wantErr bytes.Buffer
-			wantCode := cli.Run(tt.args, strings.NewReader(""), &wantOut, &wantErr, clientEnv())
+			wantCode := cli.Run(t.Context(), tt.args, cli.Env{Stdout: &wantOut, Stderr: &wantErr, LookupEnv: clientEnv(), DefaultConfig: cli.DefaultConfigPath})
 			if wantCode != tt.code {
 				t.Fatalf("cli.Run(%q) = %d, want %d: the row no longer tests this exit code", tt.args, wantCode, tt.code)
 			}

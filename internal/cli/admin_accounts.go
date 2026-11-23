@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/dirlock"
 	"github.com/PeterBooker/kazari/internal/preflight"
@@ -209,7 +210,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	}
 	// Before the server is asked: a backup started for a directory that
 	// cannot take it copies the whole database for nothing.
-	if err := backupTarget(c.Dir); err != nil {
+	if err := emptyDir("admin backup", c.Dir, false, ""); err != nil {
 		return err
 	}
 	cl, err := r.adminClient(true)
@@ -218,7 +219,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	}
 	// The server hands the private key to the socket alone, so over a URL
 	// asking would only be refused.
-	certs := cl.local && !c.NoCerts
+	certs := cl.Local() && !c.NoCerts
 	body, err := cl.Backup(r.ctx, certs)
 	if err != nil {
 		return err
@@ -237,7 +238,7 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 	if err != nil {
 		return fmt.Errorf("admin backup: %w", err)
 	}
-	if !cl.local {
+	if !cl.Local() {
 		fmt.Fprintln(r.stderr, "certmagic/ is not included: the certificate's private key leaves the server only over the admin socket; "+
 			"an instance restored from this backup asks for a new certificate")
 	}
@@ -252,23 +253,21 @@ func (c *AdminBackupCmd) Run(r *runner) error {
 			Certificates bool   `json:"certificates"`
 		}{c.Dir, files, size, err == nil})
 	}
-	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, humanSize(size), c.Dir)
+	fmt.Fprintf(r.stdout, "wrote %d files, %s, to %s\n", files, artifact.FormatBytes(size), c.Dir)
 	return nil
 }
 
 // stream writes the archive to standard output, for a backup that leaves a
 // container through docker exec or goes straight to other storage.
 func (c *AdminBackupCmd) stream(r *runner) error {
-	if f, ok := r.stdout.(*os.File); ok {
-		if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-			return usagef("admin backup -: standard output is a terminal; redirect it to a file, such as > kazari-backup.tar")
-		}
+	if err := r.notTerminal("admin backup -", "kazari-backup.tar"); err != nil {
+		return err
 	}
 	cl, err := r.adminClient(true)
 	if err != nil {
 		return err
 	}
-	body, err := cl.Backup(r.ctx, cl.local && !c.NoCerts)
+	body, err := cl.Backup(r.ctx, cl.Local() && !c.NoCerts)
 	if err != nil {
 		return err
 	}
@@ -276,30 +275,8 @@ func (c *AdminBackupCmd) stream(r *runner) error {
 	if _, err := io.Copy(r.stdout, body); err != nil {
 		return fmt.Errorf("admin backup: the archive is incomplete: %w", err)
 	}
-	if !cl.local {
+	if !cl.Local() {
 		fmt.Fprintln(r.stderr, "certmagic/ is not included: the certificate's private key leaves the server only over the admin socket")
-	}
-	return nil
-}
-
-// backupTarget reports why dir cannot take a backup: it must be a directory
-// that is empty, or not exist yet.
-func backupTarget(dir string) error {
-	info, err := os.Stat(dir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
-		return fmt.Errorf("admin backup: %w", err)
-	case !info.IsDir():
-		return usagef("admin backup: %s is a file; name an empty directory or one that does not exist yet", dir)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("admin backup: %w", err)
-	}
-	if len(entries) > 0 {
-		return usagef("admin backup: %s is not empty; name an empty directory or one that does not exist yet", dir)
 	}
 	return nil
 }
@@ -370,7 +347,7 @@ func (c *AdminRestoreBackupCmd) Run(r *runner) error {
 			Bytes   int64  `json:"bytes"`
 		}{dataDir, sum.Files, sum.Bytes})
 	}
-	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, humanSize(sum.Bytes), dataDir)
+	fmt.Fprintf(r.stdout, "restored %d files, %s, into %s; start the server, then run kazari admin ready\n", sum.Files, artifact.FormatBytes(sum.Bytes), dataDir)
 	return nil
 }
 

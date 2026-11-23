@@ -10,8 +10,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
-	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 type discardSpans struct{}
@@ -47,7 +47,7 @@ func benchSite(b *testing.B, in *instance) {
 	b.Helper()
 	hc := client(in.app.Addrs().HTTP)
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
 		b.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func benchSite(b *testing.B, in *instance) {
 		b.Fatal(err)
 	}
 	page := "<!doctype html><title>Bench</title>" + strings.Repeat("x", 5<<10)
-	user := cli.NewClient("http://api.localhost", issued.Key, hc)
+	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: hc})
 	if _, err := user.CreateBundle(ctx, api.CreateManifest{Slug: "bench"}, bundle(b, map[string]string{"index.html": page})); err != nil {
 		b.Fatal(err)
 	}

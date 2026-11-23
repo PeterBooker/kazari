@@ -16,8 +16,8 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -48,7 +48,7 @@ func TestAdminSocket(t *testing.T) {
 	}
 
 	// No token at all over the socket.
-	local := cli.NewClient("http://kazari", "", socketClient(socket))
+	local := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(socket)})
 	if h, err := local.Health(ctx); err != nil || h.Status != "ok" {
 		t.Fatalf("health over socket: %+v, %v", h, err)
 	}
@@ -59,7 +59,7 @@ func TestAdminSocket(t *testing.T) {
 	if _, err := local.IssueKey(ctx, "ann", api.IssueKeyRequest{Label: "local"}); err != nil {
 		t.Fatalf("issue key over socket: %v", err)
 	}
-	audited, err := local.Audit(ctx, cli.AuditParams{})
+	audited, err := local.Audit(ctx, apiclient.AuditParams{})
 	var events []api.AuditEvent
 	if audited != nil {
 		events = audited.Events
@@ -69,8 +69,8 @@ func TestAdminSocket(t *testing.T) {
 	}
 
 	// The public admin host still wants a credential.
-	public := cli.NewClient("http://admin.localhost", "", client(in.app.Addrs().HTTP))
-	if _, err := public.ListUsers(ctx); !cli.IsCode(err, "unauthorized") {
+	public := apiclient.New("http://admin.localhost", "", apiclient.Options{HTTP: client(in.app.Addrs().HTTP)})
+	if _, err := public.ListUsers(ctx); !apiclient.IsCode(err, "unauthorized") {
 		t.Errorf("public admin host without a token: err = %v, want unauthorized", err)
 	}
 
@@ -82,7 +82,7 @@ func TestAdminSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	in2 := start(t, cfg)
-	if _, err := cli.NewClient("http://kazari", "", socketClient(in2.app.Addrs().Socket)).Health(ctx); err != nil {
+	if _, err := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(in2.app.Addrs().Socket)}).Health(ctx); err != nil {
 		t.Fatalf("health after replacing a stale socket file: %v", err)
 	}
 }

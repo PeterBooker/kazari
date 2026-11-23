@@ -9,8 +9,9 @@ import (
 
 func withoutEcho(_ io.Reader, read func() error) error { return read() }
 
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
+// IsTerminal reports whether stream is a character device.
+func IsTerminal(stream any) bool {
+	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}

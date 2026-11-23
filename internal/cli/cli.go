@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/config"
 )
@@ -123,20 +125,18 @@ type fileConfig struct {
 }
 
 type runner struct {
-	ctx       context.Context
-	args      []string
-	stdin     io.Reader
-	stdout    io.Writer
-	stderr    io.Writer
-	lookupEnv func(string) (string, bool)
-	// hc is built on first use, once --timeout is parsed.
-	hc  *http.Client
-	now func() time.Time
-	// sleep waits between retries; tests replace it.
-	sleep func(context.Context, time.Duration) error
-	// terminal reports whether stdin is a terminal a person types at.
-	terminal func() bool
-	g        *CLI
+	ctx           context.Context
+	args          []string
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	lookupEnv     func(string) (string, bool)
+	isTerminal    func(any) bool
+	transport     http.RoundTripper
+	now           func() time.Time
+	sleep         func(context.Context, time.Duration) error
+	defaultConfig string
+	g             *CLI
 	// apiURL is the user API the command used, for the hints on errors.
 	apiURL string
 }
@@ -157,71 +157,103 @@ func withHints(err error, hints ...string) error {
 	return &hintError{err: err, hints: hints}
 }
 
-// Run executes one command and returns the exit code: 0 on success, 1 when
-// the command or the server fails, 2 for usage and configuration errors.
-// args excludes the program name. lookupEnv resolves the KAZARI_* variables
-// of the client; the server reads the process environment itself.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) int {
-	return RunContext(context.Background(), args, stdin, stdout, stderr, lookupEnv)
+// DefaultConfigPath is where a server on this host keeps its configuration
+// when neither --config nor $KAZARI_CONFIG names one.
+const DefaultConfigPath = "/etc/kazari/kazari.yaml"
+
+// Env is what a command reads and writes besides its arguments. cmd/kazari
+// fills it from the process; a nil or empty field reaches nothing outside.
+type Env struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+	// LookupEnv resolves the client's variables: KAZARI_*, HOME and
+	// XDG_CONFIG_HOME. The server reads the process environment itself.
+	LookupEnv func(string) (string, bool)
+	// IsTerminal reports whether Stdin or Stdout is a terminal a person
+	// uses; nil means neither is.
+	IsTerminal func(stream any) bool
+	// Transport sends the requests to a URL; nil dials the network. The
+	// admin socket is always dialled.
+	Transport http.RoundTripper
+	// Now is time.Now when nil.
+	Now func() time.Time
+	// Sleep waits before a retry; nil waits on a timer.
+	Sleep func(context.Context, time.Duration) error
+	// DefaultConfig is the server configuration read when it exists and
+	// neither --config nor $KAZARI_CONFIG names one, normally
+	// DefaultConfigPath; "" reads none.
+	DefaultConfig string
 }
 
-// RunContext is Run under ctx, whose end stops serve.
-func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) int {
-	r := newRunner(ctx, args, stdin, stdout, stderr, lookupEnv)
+// Run executes one command and returns the exit code: 0 on success, 1 when
+// the command or the server fails, 2 for usage and configuration errors.
+// args excludes the program name. The end of ctx stops the command.
+func Run(ctx context.Context, args []string, env Env) int {
+	r := &runner{
+		ctx:           ctx,
+		args:          args,
+		stdin:         cmp.Or[io.Reader](env.Stdin, strings.NewReader("")),
+		stdout:        cmp.Or[io.Writer](env.Stdout, io.Discard),
+		stderr:        cmp.Or[io.Writer](env.Stderr, io.Discard),
+		lookupEnv:     env.LookupEnv,
+		isTerminal:    env.IsTerminal,
+		transport:     env.Transport,
+		now:           env.Now,
+		sleep:         env.Sleep,
+		defaultConfig: env.DefaultConfig,
+		g:             &CLI{},
+	}
+	if r.lookupEnv == nil {
+		r.lookupEnv = func(string) (string, bool) { return "", false }
+	}
+	if r.isTerminal == nil {
+		r.isTerminal = func(any) bool { return false }
+	}
+	if r.now == nil {
+		r.now = time.Now
+	}
+	if r.sleep == nil {
+		r.sleep = apiclient.SleepContext
+	}
 	return r.exit(r.run(args))
 }
 
-func newRunner(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, lookupEnv func(string) (string, bool)) *runner {
-	return &runner{
-		ctx:       ctx,
-		args:      args,
-		stdin:     stdin,
-		stdout:    stdout,
-		stderr:    stderr,
-		lookupEnv: lookupEnv,
-		now:       time.Now,
-		sleep:     sleepContext,
-		terminal:  func() bool { return isTerminal(stdin) },
-		g:         &CLI{},
-	}
-}
+// terminal reports whether stdin is a terminal a person types at.
+func (r *runner) terminal() bool { return r.isTerminal(r.stdin) }
 
-func sleepContext(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
+// transportFor gives up on a server that accepts no connection within 10s
+// or sends no response header within 60s. A socket path dials the admin
+// socket instead of the network.
+func (r *runner) transportFor(socket string) http.RoundTripper {
+	if socket == "" && r.transport != nil {
+		return r.transport
 	}
-}
-
-// httpClient gives up on a server that accepts no connection within 10s or
-// sends no response header within 60s; --timeout bounds the whole request,
-// upload included.
-func (r *runner) httpClient() *http.Client {
-	if r.hc == nil {
-		r.hc = &http.Client{
-			Timeout: r.g.Timeout,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Second,
-				ForceAttemptHTTP2:     true,
-				MaxIdleConns:          10,
-				IdleConnTimeout:       90 * time.Second,
-			},
+	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	t := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           d.DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	if socket != "" {
+		t.Proxy = nil
+		t.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, "unix", socket)
 		}
 	}
-	return r.hc
+	return t
 }
 
-func (r *runner) newClient(base, token string) *Client {
-	c := NewClient(base, token, r.httpClient())
-	c.sleep = r.sleep
-	return c
+// newClient builds every client the commands use; --timeout bounds the
+// whole request, upload included.
+func (r *runner) newClient(base, token, socket string, opts apiclient.Options) *apiclient.Client {
+	opts.HTTP = &http.Client{Timeout: r.g.Timeout, Transport: r.transportFor(socket)}
+	opts.Sleep, opts.Now = r.sleep, r.now
+	return apiclient.New(base, token, opts)
 }
 
 func (r *runner) run(args []string) (err error) {
@@ -290,7 +322,7 @@ func focusedHelp(options kong.HelpOptions, ctx *kong.Context) error {
 
 func (r *runner) exit(err error) int {
 	var ue *usageError
-	var he *HTTPError
+	var he *apiclient.HTTPError
 	var pe *kong.ParseError
 	switch {
 	case err == nil:
@@ -329,7 +361,7 @@ func (r *runner) exit(err error) int {
 	}
 }
 
-func (r *runner) printHints(err error, he *HTTPError) {
+func (r *runner) printHints(err error, he *apiclient.HTTPError) {
 	var hints []string
 	if hint, ok := errors.AsType[*hintError](err); ok {
 		hints = hint.hints
@@ -353,9 +385,6 @@ func unknownCommand(pe *kong.ParseError) bool {
 }
 
 func (r *runner) env(name string) string {
-	if r.lookupEnv == nil {
-		return ""
-	}
 	v, _ := r.lookupEnv(name)
 	return v
 }
@@ -548,7 +577,7 @@ func adminFromUserURL(raw string) string {
 	return u.String()
 }
 
-func (r *runner) userClient() (*Client, error) {
+func (r *runner) userClient() (*apiclient.Client, error) {
 	s, err := r.settings()
 	if err != nil {
 		return nil, err
@@ -563,29 +592,27 @@ func (r *runner) userClient() (*Client, error) {
 		return nil, err
 	}
 	r.apiURL = s.URL
-	return r.newClient(s.URL, s.Token), nil
+	return r.newClient(s.URL, s.Token, "", apiclient.Options{}), nil
 }
 
 // adminClient prefers an explicit socket, then an explicit admin URL (with
 // a token unless the command needs none), then a socket found on this host.
-func (r *runner) adminClient(needToken bool) (*Client, error) {
+func (r *runner) adminClient(needToken bool) (*apiclient.Client, error) {
 	s, err := r.settings()
 	if err != nil {
 		return nil, err
 	}
 	if s.AdminSocket != "" {
-		return socketClient(s.AdminSocket), nil
+		return r.socketClient(s.AdminSocket), nil
 	}
 	if s.AdminURL != "" && (s.AdminToken != "" || !needToken) {
 		if err := r.checkScheme(s.AdminURL, s.AdminToken); err != nil {
 			return nil, err
 		}
-		c := r.newClient(s.AdminURL, s.AdminToken)
-		c.host = "admin"
-		return c, nil
+		return r.newClient(s.AdminURL, s.AdminToken, "", apiclient.Options{Host: "admin"}), nil
 	}
 	if socket := r.discoverSocket(); socket != "" {
-		return socketClient(socket), nil
+		return r.socketClient(socket), nil
 	}
 	if s.AdminURL == "" {
 		return nil, usagef("no admin API: run this on the server's host (as its user, as root, or with docker exec) to use the admin socket, " +
@@ -601,14 +628,9 @@ func (r *runner) adminClient(needToken bool) (*Client, error) {
 func (r *runner) serverConfig() (config.Config, error) {
 	path := r.env("KAZARI_CONFIG")
 	if path == "" {
-		if _, err := os.Stat(defaultConfigPath); err == nil {
-			path = defaultConfigPath
-		}
+		path = r.existingDefaultConfig()
 	}
 	lookup := r.lookupEnv
-	if lookup == nil {
-		lookup = func(string) (string, bool) { return "", false }
-	}
 	if path != "" {
 		if dotenv, err := config.LoadEnvFile(filepath.Join(filepath.Dir(path), config.EnvFileName)); err == nil {
 			env := lookup
@@ -646,16 +668,19 @@ func (r *runner) discoverSocket() string {
 
 // socketClient talks to the admin API over the Unix socket at path, which
 // needs no token.
-func socketClient(path string) *Client {
-	hc := &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", path)
-		},
-	}}
-	c := NewClient("http://kazari", "", hc)
-	c.local = true
-	return c
+func (r *runner) socketClient(path string) *apiclient.Client {
+	return r.newClient("http://kazari", "", path, apiclient.Options{Host: "admin", Local: true})
+}
+
+// existingDefaultConfig is the default server configuration if it exists.
+func (r *runner) existingDefaultConfig() string {
+	if r.defaultConfig == "" {
+		return ""
+	}
+	if _, err := os.Stat(r.defaultConfig); err != nil {
+		return ""
+	}
+	return r.defaultConfig
 }
 
 func (r *runner) configHint() string {

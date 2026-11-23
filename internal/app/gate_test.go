@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/audit"
-	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 // browser is a cookie-keeping client that sends a top-level navigation's
@@ -78,7 +78,7 @@ func TestGatedEndToEnd(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +86,10 @@ func TestGatedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(addr)})
 	for _, v := range []string{"v1", "v2"} {
 		_, err := user.Update(ctx, "team", api.UpdateArtifactRequest{Files: []api.FileInput{{Path: "index.html", Content: "team " + v}}})
-		if cli.IsCode(err, api.CodeNotFound) {
+		if apiclient.IsCode(err, api.CodeNotFound) {
 			_, err = user.Create(ctx, api.CreateArtifactRequest{Slug: "team", Visibility: "members",
 				Files: []api.FileInput{{Path: "index.html", Content: "team " + v}}})
 		}
@@ -244,7 +244,7 @@ func TestGatedEndToEnd(t *testing.T) {
 	// Public pages are untouched by all of this, and no artifact may ship
 	// files under the reserved directory.
 	if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: "open",
-		Files: []api.FileInput{{Path: ".kazari/share", Content: "x"}}}); !cli.IsCode(err, api.CodeInvalidPath) {
+		Files: []api.FileInput{{Path: ".kazari/share", Content: "x"}}}); !apiclient.IsCode(err, api.CodeInvalidPath) {
 		t.Fatalf("a file under .kazari/ was accepted: %v", err)
 	}
 }
@@ -256,8 +256,8 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
-	member := func(handle string) *cli.Client {
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
+	member := func(handle string) *apiclient.Client {
 		t.Helper()
 		if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: handle}); err != nil {
 			t.Fatal(err)
@@ -266,7 +266,7 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return cli.NewClient("http://api.localhost", issued.Key, client(addr))
+		return apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(addr)})
 	}
 	owner, leaver := member("owner"), member("leaver")
 	if _, err := owner.Create(ctx, api.CreateArtifactRequest{Slug: "team", Visibility: "members",
@@ -315,7 +315,7 @@ func TestDisableRevokesShareLinks(t *testing.T) {
 			t.Errorf("link by %s: active = %v, want %v", l.CreatedBy, l.Active, want)
 		}
 	}
-	events, err := admin.Audit(ctx, cli.AuditParams{Slug: "team"})
+	events, err := admin.Audit(ctx, apiclient.AuditParams{Slug: "team"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestArtifactScriptCannotEndSignIn(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestArtifactScriptCannotEndSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(addr)})
 	for _, slug := range []string{"team", "notes"} {
 		if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: slug, Visibility: "members",
 			Files: []api.FileInput{{Path: "index.html", Content: slug}}}); err != nil {

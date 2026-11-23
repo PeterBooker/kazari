@@ -19,10 +19,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/backup"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -94,7 +94,7 @@ func (b *browser) welcomed(done response) {
 // newAdmin invites an admin over the admin API and sets their password.
 func newAdmin(t *testing.T, addr, handle string) {
 	t.Helper()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	inv, err := admin.Invite(context.Background(), api.InviteRequest{Handle: handle, Role: "admin"})
 	if err != nil {
 		t.Fatal(err)
@@ -174,8 +174,8 @@ func TestSetupToDashboard(t *testing.T) {
 	wantStatus(t, b.send(http.MethodPost, "http://admin.localhost/v1/jobs/gc/run", url.Values{}, origin("http://admin.localhost")),
 		http.StatusUnauthorized, "a change on the admin API with the dashboard's cookie")
 
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
-	events, err := admin.Audit(context.Background(), cli.AuditParams{Actions: []string{audit.DashboardSignIn}})
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
+	events, err := admin.Audit(context.Background(), apiclient.AuditParams{Actions: []string{audit.DashboardSignIn}})
 	if err != nil || len(events.Events) != 1 || events.Events[0].Actor != "peter" {
 		t.Errorf("dashboard sign-in audit = %+v, %v", events, err)
 	}
@@ -246,7 +246,7 @@ func TestDashboardAtAdminURL(t *testing.T) {
 	addr := in.app.Addrs().HTTP
 
 	wantStatus(t, get(t, client(addr), "http://admin.localhost/"), http.StatusNotFound, "the admin host on the public listener")
-	local := cli.NewClient("http://kazari", "", socketClient(in.app.Addrs().Socket))
+	local := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(in.app.Addrs().Socket)})
 	inv, err := local.Invite(context.Background(), api.InviteRequest{Handle: "peter", Role: "admin"})
 	if err != nil {
 		t.Fatal(err)
@@ -356,7 +356,7 @@ func TestAccountOnApex(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	inv, err := admin.Invite(ctx, api.InviteRequest{Handle: "ana", Email: "ana@example.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -384,7 +384,7 @@ func TestAccountOnApex(t *testing.T) {
 	if key == "" {
 		t.Fatalf("the new key is not on the page: %s", truncate(issued.body))
 	}
-	me, err := cli.NewClient("http://api.localhost", key, client(addr)).Me(ctx)
+	me, err := apiclient.New("http://api.localhost", key, apiclient.Options{HTTP: client(addr)}).Me(ctx)
 	if err != nil || me.Handle != "ana" {
 		t.Fatalf("the key from the account page: %+v, %v", me, err)
 	}
@@ -402,7 +402,7 @@ func TestBackupRestores(t *testing.T) {
 	in := start(t, cfg)
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func TestBackupRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := cli.NewClient("http://api.localhost", issued.Key, client(addr))
+	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(addr)})
 	pages := map[string]string{"one": "<h1>one</h1>", "two": "<h1>two</h1>"}
 	for slug, body := range pages {
 		if _, err := user.Create(ctx, api.CreateArtifactRequest{Slug: slug, Files: []api.FileInput{{Path: "index.html", Content: body}}}); err != nil {
@@ -418,7 +418,7 @@ func TestBackupRestores(t *testing.T) {
 		}
 	}
 
-	local := cli.NewClient("http://kazari", "", socketClient(in.app.Addrs().Socket))
+	local := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(in.app.Addrs().Socket)})
 	body, err := local.Backup(ctx, true)
 	if err != nil {
 		t.Fatal(err)
@@ -435,10 +435,10 @@ func TestBackupRestores(t *testing.T) {
 		}
 	}
 	// Off the socket the certificates never leave the host.
-	if _, err := admin.Backup(ctx, true); !cli.IsCode(err, api.CodeForbidden) {
+	if _, err := admin.Backup(ctx, true); !apiclient.IsCode(err, api.CodeForbidden) {
 		t.Errorf("a backup with certificates over the network: err = %v, want forbidden", err)
 	}
-	events, err := admin.Audit(ctx, cli.AuditParams{Actions: []string{audit.BackupCreate}})
+	events, err := admin.Audit(ctx, apiclient.AuditParams{Actions: []string{audit.BackupCreate}})
 	if err != nil || len(events.Events) != 1 {
 		t.Errorf("backup audit = %+v, %v", events, err)
 	}
@@ -457,7 +457,7 @@ func TestBackupRestores(t *testing.T) {
 			t.Errorf("%s from the restored instance: status %d: %q", slug, got.status, truncate(got.body))
 		}
 	}
-	if me, err := cli.NewClient("http://api.localhost", issued.Key, client(in2.app.Addrs().HTTP)).Me(ctx); err != nil || me.Handle != "peter" {
+	if me, err := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: client(in2.app.Addrs().HTTP)}).Me(ctx); err != nil || me.Handle != "peter" {
 		t.Errorf("the key on the restored instance: %+v, %v", me, err)
 	}
 }
@@ -481,7 +481,7 @@ func TestUpdateCheckJob(t *testing.T) {
 
 	in := startWith(t, testConfig(t), app.Options{UpdateURL: releases.URL, Version: "0.7.0"})
 	addr := in.app.Addrs().HTTP
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 	ctx := context.Background()
 	newAdmin(t, addr, "peter")
 	b := dashboard(t, addr, "http://admin.localhost", "peter")
@@ -531,14 +531,14 @@ func TestUpdateCheckOff(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Admin.UpdateCheck = false
 	in := startWith(t, cfg, app.Options{UpdateURL: releases.URL, Version: "0.7.0"})
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(in.app.Addrs().HTTP))
-	if err := admin.RunJob(context.Background(), "update-check"); !cli.IsCode(err, api.CodeNotFound) {
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(in.app.Addrs().HTTP)})
+	if err := admin.RunJob(context.Background(), "update-check"); !apiclient.IsCode(err, api.CodeNotFound) {
 		t.Errorf("running the update check with it off: err = %v, want not_found", err)
 	}
 	// A build without a version has nothing to compare.
 	in = startWith(t, testConfig(t), app.Options{UpdateURL: releases.URL, Version: "dev"})
-	admin = cli.NewClient("http://admin.localhost", adminToken, client(in.app.Addrs().HTTP))
-	if err := admin.RunJob(context.Background(), "update-check"); !cli.IsCode(err, api.CodeNotFound) {
+	admin = apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(in.app.Addrs().HTTP)})
+	if err := admin.RunJob(context.Background(), "update-check"); !apiclient.IsCode(err, api.CodeNotFound) {
 		t.Errorf("running the update check on an unstamped build: err = %v, want not_found", err)
 	}
 }
@@ -547,7 +547,7 @@ func TestReadyAndHealth(t *testing.T) {
 	in := start(t, testConfig(t))
 	addr := in.app.Addrs().HTTP
 	wantStatus(t, get(t, client(addr), "http://admin.localhost/v1/ready"), http.StatusUnauthorized, "readiness without a credential")
-	ready, err := cli.NewClient("http://admin.localhost", adminToken, client(addr)).Ready(context.Background(), true)
+	ready, err := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)}).Ready(context.Background(), true)
 	if err != nil || len(ready.Checks) == 0 {
 		t.Fatalf("Ready = %+v, %v", ready, err)
 	}
@@ -569,7 +569,7 @@ func TestAccountAndDashboardMetrics(t *testing.T) {
 	in := startWith(t, testConfig(t), app.Options{UpdateURL: releases.URL, Version: "0.7.0"})
 	addr := in.app.Addrs().HTTP
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, client(addr))
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: client(addr)})
 
 	newAdmin(t, addr, "peter")
 	b := dashboard(t, addr, "http://admin.localhost", "peter")
@@ -580,7 +580,7 @@ func TestAccountAndDashboardMetrics(t *testing.T) {
 	if err := admin.RunJob(ctx, "update-check"); err != nil {
 		t.Fatal(err)
 	}
-	body, err := cli.NewClient("http://kazari", "", socketClient(in.app.Addrs().Socket)).Backup(ctx, false)
+	body, err := apiclient.New("http://kazari", "", apiclient.Options{HTTP: socketClient(in.app.Addrs().Socket)}).Backup(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}

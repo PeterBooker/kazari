@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/config"
 )
 
 func (r *runner) printJSON(v any) error {
@@ -94,51 +95,17 @@ func dash(s string) string {
 	return s
 }
 
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit && exp < 5; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
 func fmtQuota(used, quota int64) string {
 	if quota <= 0 {
-		return humanSize(used) + " used (no quota)"
+		return artifact.FormatBytes(used) + " used (no quota)"
 	}
-	return fmt.Sprintf("%s of %s used", humanSize(used), humanSize(quota))
+	return fmt.Sprintf("%s of %s used", artifact.FormatBytes(used), artifact.FormatBytes(quota))
 }
 
+// parseSize reads a size as the configuration writes one, such as 500MiB.
 func parseSize(s string) (int64, error) {
-	t := strings.TrimSpace(s)
-	units := []struct {
-		suffix string
-		mult   int64
-	}{
-		{"kib", 1 << 10}, {"mib", 1 << 20}, {"gib", 1 << 30}, {"tib", 1 << 40},
-		{"kb", 1e3}, {"mb", 1e6}, {"gb", 1e9}, {"tb", 1e12},
-		{"k", 1 << 10}, {"m", 1 << 20}, {"g", 1 << 30}, {"t", 1 << 40},
-		{"b", 1},
-	}
-	mult := int64(1)
-	lower := strings.ToLower(t)
-	for _, u := range units {
-		if strings.HasSuffix(lower, u.suffix) {
-			mult = u.mult
-			t = strings.TrimSpace(t[:len(t)-len(u.suffix)])
-			break
-		}
-	}
-	f, err := strconv.ParseFloat(t, 64)
-	if err != nil || f < 0 {
-		return 0, fmt.Errorf("invalid size %q", s)
-	}
-	return int64(f * float64(mult)), nil
+	b, err := config.ParseBytes(s)
+	return int64(b), err
 }
 
 func shortHash(h string) string {

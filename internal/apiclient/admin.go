@@ -1,4 +1,4 @@
-package cli
+package apiclient
 
 import (
 	"context"
@@ -20,29 +20,17 @@ func (c *Client) ListUsers(ctx context.Context) ([]api.User, error) {
 
 // CreateUser creates a user.
 func (c *Client) CreateUser(ctx context.Context, req api.CreateUserRequest) (*api.User, error) {
-	var out api.User
-	if err := c.doJSON(ctx, http.MethodPost, "/users", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.User](ctx, c, http.MethodPost, "/users", nil, nil, req)
 }
 
 // UpdateUser changes a user's email, role, quota or disabled state.
 func (c *Client) UpdateUser(ctx context.Context, handle string, req api.UpdateUserRequest) (*api.User, error) {
-	var out api.User
-	if err := c.doJSON(ctx, http.MethodPatch, "/users/"+seg(handle), nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.User](ctx, c, http.MethodPatch, "/users/"+seg(handle), nil, nil, req)
 }
 
 // GetUser returns a user with their identities and usage.
 func (c *Client) GetUser(ctx context.Context, handle string) (*api.User, error) {
-	var out api.User
-	if err := c.doJSON(ctx, http.MethodGet, "/users/"+seg(handle), nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.User](ctx, c, http.MethodGet, "/users/"+seg(handle), nil, nil, nil)
 }
 
 // LinkIdentity links an identity provider's (issuer, subject) pair to a
@@ -59,41 +47,24 @@ func (c *Client) UnlinkIdentity(ctx context.Context, handle, issuer, subject str
 
 // TransferAll gives every artifact handle owns to owner.
 func (c *Client) TransferAll(ctx context.Context, handle, owner string) (*api.TransferredArtifacts, error) {
-	var out api.TransferredArtifacts
-	err := c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/transfer", nil, nil, api.TransferRequest{Owner: owner}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.TransferredArtifacts](ctx, c, http.MethodPost, "/users/"+seg(handle)+"/transfer", nil, nil, api.TransferRequest{Owner: owner})
 }
 
 // Invite creates a user and the link that lets them set a password. The
 // link's address is in the result exactly once.
 func (c *Client) Invite(ctx context.Context, req api.InviteRequest) (*api.Invited, error) {
-	var out api.Invited
-	if err := c.doJSON(ctx, http.MethodPost, "/invites", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Invited](ctx, c, http.MethodPost, "/invites", nil, nil, req)
 }
 
 // IssueLink makes a new invite or reset link for a user, ending the one
 // before it.
 func (c *Client) IssueLink(ctx context.Context, handle string, req api.LinkRequest) (*api.CreatedLink, error) {
-	var out api.CreatedLink
-	if err := c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/links", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.CreatedLink](ctx, c, http.MethodPost, "/users/"+seg(handle)+"/links", nil, nil, req)
 }
 
 // SetupLink makes the link that creates the first admin.
 func (c *Client) SetupLink(ctx context.Context) (*api.CreatedLink, error) {
-	var out api.CreatedLink
-	if err := c.doJSON(ctx, http.MethodPost, "/setup-link", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.CreatedLink](ctx, c, http.MethodPost, "/setup-link", nil, nil, nil)
 }
 
 // ListLinks lists the links that have not been used, revoked or expired.
@@ -133,11 +104,7 @@ func (c *Client) Ready(ctx context.Context, fresh bool) (*api.Ready, error) {
 	if fresh {
 		q = url.Values{"fresh": {"true"}}
 	}
-	var out api.Ready
-	if err := c.doJSON(ctx, http.MethodGet, "/ready", q, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Ready](ctx, c, http.MethodGet, "/ready", q, nil, nil)
 }
 
 // ListKeys lists a user's API keys.
@@ -147,11 +114,7 @@ func (c *Client) ListKeys(ctx context.Context, handle string) ([]api.APIKey, err
 
 // IssueKey issues a key for a user. The secret is in the result exactly once.
 func (c *Client) IssueKey(ctx context.Context, handle string, req api.IssueKeyRequest) (*api.IssuedKey, error) {
-	var out api.IssuedKey
-	if err := c.doJSON(ctx, http.MethodPost, "/users/"+seg(handle)+"/keys", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.IssuedKey](ctx, c, http.MethodPost, "/users/"+seg(handle)+"/keys", nil, nil, req)
 }
 
 // RevokeKey revokes the key with prefix.
@@ -162,12 +125,8 @@ func (c *Client) RevokeKey(ctx context.Context, handle, prefix string) error {
 // RotateKey replaces a user's key; the old one works until overlap has
 // passed ("" is the server's default).
 func (c *Client) RotateKey(ctx context.Context, handle, prefix, overlap string) (*api.IssuedKey, error) {
-	var out api.IssuedKey
 	path := "/users/" + seg(handle) + "/keys/" + seg(prefix) + "/rotate"
-	if err := c.doJSON(ctx, http.MethodPost, path, nil, nil, api.RotateKeyRequest{Overlap: overlap}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.IssuedKey](ctx, c, http.MethodPost, path, nil, nil, api.RotateKeyRequest{Overlap: overlap})
 }
 
 // ListGrants lists a user's OAuth grants.
@@ -182,49 +141,36 @@ func (c *Client) RevokeGrant(ctx context.Context, id int64) error {
 
 // AdminListArtifacts lists every artifact of any owner.
 func (c *Client) AdminListArtifacts(ctx context.Context, p ListParams) (*api.ArtifactList, error) {
-	var out api.ArtifactList
-	if err := c.doJSON(ctx, http.MethodGet, "/artifacts", p.values(), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ArtifactList](ctx, c, http.MethodGet, "/artifacts", p.values(), nil, nil)
 }
 
 // Transfer gives the artifact to another owner.
 func (c *Client) Transfer(ctx context.Context, slug, owner string) (*api.Artifact, error) {
-	var out api.Artifact
-	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/transfer", nil, nil, api.TransferRequest{Owner: owner}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Artifact](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/transfer", nil, nil, api.TransferRequest{Owner: owner})
 }
 
 // Hide unpublishes the artifact in one call (abuse response).
 func (c *Client) Hide(ctx context.Context, slug string) (*api.Artifact, error) {
-	var out api.Artifact
-	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/hide", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Artifact](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/hide", nil, nil, nil)
 }
 
 // Settings returns the effective server configuration, secrets redacted.
 func (c *Client) Settings(ctx context.Context) (map[string]any, error) {
-	var out map[string]any
-	if err := c.doJSON(ctx, http.MethodGet, "/settings", nil, nil, nil, &out); err != nil {
+	out, err := call[map[string]any](ctx, c, http.MethodGet, "/settings", nil, nil, nil)
+	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return *out, nil
 }
 
 // SettingSources names where each setting not at its default came from,
 // such as "KAZARI_LISTEN_HTTP in the environment".
 func (c *Client) SettingSources(ctx context.Context) (map[string]string, error) {
-	var out map[string]string
-	if err := c.doJSON(ctx, http.MethodGet, "/settings/sources", nil, nil, nil, &out); err != nil {
+	out, err := call[map[string]string](ctx, c, http.MethodGet, "/settings/sources", nil, nil, nil)
+	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return *out, nil
 }
 
 // Jobs returns the scheduler status.
@@ -240,20 +186,12 @@ func (c *Client) RunJob(ctx context.Context, name string) error {
 // ViewSummary returns the instance's page views over the last days days,
 // today included.
 func (c *Client) ViewSummary(ctx context.Context, days int) (*api.ViewSummary, error) {
-	var out api.ViewSummary
-	if err := c.doJSON(ctx, http.MethodGet, "/views", viewQuery(days), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ViewSummary](ctx, c, http.MethodGet, "/views", viewQuery(days), nil, nil)
 }
 
 // ArtifactViews returns one artifact's page views over the last days days.
 func (c *Client) ArtifactViews(ctx context.Context, slug string, days int) (*api.ArtifactViews, error) {
-	var out api.ArtifactViews
-	if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug)+"/views", viewQuery(days), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ArtifactViews](ctx, c, http.MethodGet, "/artifacts/"+seg(slug)+"/views", viewQuery(days), nil, nil)
 }
 
 func viewQuery(days int) url.Values {
@@ -301,18 +239,10 @@ func (p AuditParams) values() url.Values {
 
 // Audit returns one page of the audit log, newest first.
 func (c *Client) Audit(ctx context.Context, p AuditParams) (*api.AuditList, error) {
-	var out api.AuditList
-	if err := c.doJSON(ctx, http.MethodGet, "/audit", p.values(), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.AuditList](ctx, c, http.MethodGet, "/audit", p.values(), nil, nil)
 }
 
 // Health reports liveness and the server version.
 func (c *Client) Health(ctx context.Context) (*api.Health, error) {
-	var out api.Health
-	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Health](ctx, c, http.MethodGet, "/health", nil, nil, nil)
 }

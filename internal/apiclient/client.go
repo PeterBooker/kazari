@@ -1,9 +1,10 @@
-// Package cli is the kazari command-line client: the subcommands behind Run
-// and an HTTP client for the user and admin APIs.
-package cli
+// Package apiclient is a client of Kazari's user and admin APIs, which the
+// command line is built on.
+package apiclient
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,28 +40,66 @@ type Client struct {
 	token     string
 	hc        *http.Client
 	userAgent string
-	// local marks a client on the admin Unix socket, which reaches a server
-	// on this host and nothing else.
-	local bool
-	// host is the first label of the host this client is meant for, api or
-	// admin, which an error suggests when the URL names another.
-	host  string
-	sleep func(context.Context, time.Duration) error
+	host      string
+	local     bool
+	sleep     func(context.Context, time.Duration) error
+	now       func() time.Time
 }
 
-// NewClient returns a client for the host root baseURL, without /v1. An empty
-// token sends no Authorization; a nil hc means http.DefaultClient.
-func NewClient(baseURL, token string, hc *http.Client) *Client {
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	return &Client{
+// Options configure a Client; the zero value is a client of the user API
+// over http.DefaultClient.
+type Options struct {
+	// HTTP sends the requests; nil means http.DefaultClient.
+	HTTP *http.Client
+	// Host is the first label of the host the client is meant for, api (the
+	// default) or admin, which an error suggests when the URL names another.
+	Host string
+	// Local marks a client on the admin Unix socket, which reaches a server
+	// on this host and nothing else.
+	Local bool
+	// Sleep waits before a retry; nil waits on a timer.
+	Sleep func(context.Context, time.Duration) error
+	// Now reads a Retry-After date; nil means time.Now.
+	Now func() time.Time
+}
+
+// New returns a client for the host root baseURL, without /v1. An empty
+// token sends no Authorization.
+func New(baseURL, token string, opts Options) *Client {
+	c := &Client{
 		base:      strings.TrimRight(baseURL, "/"),
 		token:     token,
-		hc:        hc,
+		hc:        opts.HTTP,
 		userAgent: "kazari-cli/" + buildinfo.Get().Version,
-		host:      "api",
-		sleep:     sleepContext,
+		host:      cmp.Or(opts.Host, "api"),
+		local:     opts.Local,
+		sleep:     opts.Sleep,
+		now:       opts.Now,
+	}
+	if c.hc == nil {
+		c.hc = http.DefaultClient
+	}
+	if c.sleep == nil {
+		c.sleep = SleepContext
+	}
+	if c.now == nil {
+		c.now = time.Now
+	}
+	return c
+}
+
+// Local reports whether the client is on the admin Unix socket.
+func (c *Client) Local() bool { return c.local }
+
+// SleepContext waits for d or until ctx ends.
+func SleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -79,8 +118,8 @@ func (e *HTTPError) Unwrap() error { return &e.Err }
 
 // IsCode reports whether err is an HTTPError carrying code.
 func IsCode(err error, code string) bool {
-	var he *HTTPError
-	return errors.As(err, &he) && he.Err.Code == code
+	he, ok := errors.AsType[*HTTPError](err)
+	return ok && he.Err.Code == code
 }
 
 // path is already escaped and relative to /v1.
@@ -138,7 +177,7 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 		}
 		busy := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable
 		if busy && attempt < maxRetries && r.retryable() {
-			wait := retryAfter(resp.Header.Get("Retry-After"))
+			wait := retryAfter(resp.Header.Get("Retry-After"), c.now())
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
 			resp.Body.Close()
 			if err := c.sleep(ctx, wait); err != nil {
@@ -152,13 +191,13 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 }
 
 // retryAfter reads Retry-After in seconds or as a date.
-func retryAfter(v string) time.Duration {
+func retryAfter(v string, now time.Time) time.Duration {
 	v = strings.TrimSpace(v)
 	d := defaultBackoff
 	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 		d = time.Duration(n) * time.Second
 	} else if t, err := http.ParseTime(v); err == nil {
-		d = time.Until(t)
+		d = t.Sub(now)
 	}
 	return min(max(d, 0), maxRetryWait)
 }
@@ -178,6 +217,23 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		return fmt.Errorf("decode %s %s response: %w", r.method, r.path, err)
 	}
 	return nil
+}
+
+// call sends in as JSON, unless it is nil, and decodes the response.
+func call[T any](ctx context.Context, c *Client, method, path string, query url.Values, header http.Header, in any) (*T, error) {
+	var out T
+	if err := c.doJSON(ctx, method, path, query, header, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func send[T any](ctx context.Context, c *Client, r request) (*T, error) {
+	var out T
+	if err := c.do(ctx, r, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, header http.Header, in, out any) error {
@@ -362,59 +418,36 @@ func (p ListParams) values() url.Values {
 
 // Create publishes a new artifact from a JSON body.
 func (c *Client) Create(ctx context.Context, req api.CreateArtifactRequest) (*api.PublishResult, error) {
-	var out api.PublishResult
-	if err := c.doJSON(ctx, http.MethodPost, "/artifacts", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.PublishResult](ctx, c, http.MethodPost, "/artifacts", nil, nil, req)
 }
 
 // CreateBundle publishes a new artifact from a streamed tar.gz bundle.
 func (c *Client) CreateBundle(ctx context.Context, manifest api.CreateManifest, bundle io.Reader) (*api.PublishResult, error) {
 	body, ct := multipartBody(manifest, bundle)
-	var out api.PublishResult
-	err := c.do(ctx, request{method: http.MethodPost, path: "/artifacts", body: body, contentType: ct}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return send[api.PublishResult](ctx, c, request{method: http.MethodPost, path: "/artifacts", body: body, contentType: ct})
 }
 
 // Update adds a version and/or changes fields from a JSON body.
 func (c *Client) Update(ctx context.Context, slug string, req api.UpdateArtifactRequest) (*api.PublishResult, error) {
-	var out api.PublishResult
-	err := c.doJSON(ctx, http.MethodPut, "/artifacts/"+seg(slug), nil, ifMatch(req.ExpectedVersion), req, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.PublishResult](ctx, c, http.MethodPut, "/artifacts/"+seg(slug), nil, ifMatch(req.ExpectedVersion), req)
 }
 
 // UpdateBundle adds a version from a streamed tar.gz bundle. A positive
 // manifest.ExpectedVersion is also sent as If-Match.
 func (c *Client) UpdateBundle(ctx context.Context, slug string, manifest api.UpdateArtifactRequest, bundle io.Reader) (*api.PublishResult, error) {
 	body, ct := multipartBody(manifest, bundle)
-	var out api.PublishResult
-	err := c.do(ctx, request{
+	return send[api.PublishResult](ctx, c, request{
 		method:      http.MethodPut,
 		path:        "/artifacts/" + seg(slug),
 		body:        body,
 		contentType: ct,
 		header:      ifMatch(manifest.ExpectedVersion),
-	}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	})
 }
 
 // Patch changes fields only: name, description, metadata, visibility.
 func (c *Client) Patch(ctx context.Context, slug string, req api.UpdateArtifactRequest) (*api.PublishResult, error) {
-	var out api.PublishResult
-	if err := c.doJSON(ctx, http.MethodPatch, "/artifacts/"+seg(slug), nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.PublishResult](ctx, c, http.MethodPatch, "/artifacts/"+seg(slug), nil, nil, req)
 }
 
 // Get returns the artifact and its versions; files includes each version's
@@ -424,11 +457,7 @@ func (c *Client) Get(ctx context.Context, slug string, files bool) (*api.Artifac
 	if files {
 		q = url.Values{"files": {"true"}}
 	}
-	var out api.ArtifactDetail
-	if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug), q, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ArtifactDetail](ctx, c, http.MethodGet, "/artifacts/"+seg(slug), q, nil, nil)
 }
 
 // LatestVersion asks VersionFiles for the latest version.
@@ -442,11 +471,7 @@ func (c *Client) VersionFiles(ctx context.Context, slug string, version int) (*a
 		if before > 0 {
 			q.Set("files_before", strconv.Itoa(before))
 		}
-		var out api.ArtifactDetail
-		if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug), q, nil, nil, &out); err != nil {
-			return nil, err
-		}
-		return &out, nil
+		return call[api.ArtifactDetail](ctx, c, http.MethodGet, "/artifacts/"+seg(slug), q, nil, nil)
 	}
 	before := 0
 	if version > 0 {
@@ -480,84 +505,45 @@ func (c *Client) VersionFiles(ctx context.Context, slug string, version int) (*a
 
 // List returns one page of the artifacts the caller can see.
 func (c *Client) List(ctx context.Context, p ListParams) (*api.ArtifactList, error) {
-	var out api.ArtifactList
-	if err := c.doJSON(ctx, http.MethodGet, "/artifacts", p.values(), nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ArtifactList](ctx, c, http.MethodGet, "/artifacts", p.values(), nil, nil)
 }
 
 // Publish moves the published pointer to version (rollback).
 func (c *Client) Publish(ctx context.Context, slug string, version int) (*api.PublishResult, error) {
-	var out api.PublishResult
-	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/publish", nil, nil, api.PublishRequest{Version: version}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.PublishResult](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/publish", nil, nil, api.PublishRequest{Version: version})
 }
 
 // DeleteVersion deletes one version that is neither published nor the latest.
 func (c *Client) DeleteVersion(ctx context.Context, slug string, version int) (*api.DeletedVersions, error) {
-	var out api.DeletedVersions
-	err := c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/versions/"+strconv.Itoa(version), nil, nil, nil, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.DeletedVersions](ctx, c, http.MethodDelete, "/artifacts/"+seg(slug)+"/versions/"+strconv.Itoa(version), nil, nil, nil)
 }
 
 // PruneVersions deletes every version but the keep newest, the published one
 // and the staged ones newer than it; with dryRun it only lists them.
 func (c *Client) PruneVersions(ctx context.Context, slug string, keep int, dryRun bool) (*api.DeletedVersions, error) {
-	var out api.DeletedVersions
-	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/versions/prune", nil, nil,
-		api.PruneRequest{Keep: keep, DryRun: dryRun}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.DeletedVersions](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/versions/prune", nil, nil, api.PruneRequest{Keep: keep, DryRun: dryRun})
 }
 
 // MarkStale marks the artifact stale; grace is a Go duration, "" for the
 // server default.
 func (c *Client) MarkStale(ctx context.Context, slug, grace string) (*api.StaleResult, error) {
-	var out api.StaleResult
-	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/stale", nil, nil, api.StaleRequest{Grace: grace}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.StaleResult](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/stale", nil, nil, api.StaleRequest{Grace: grace})
 }
 
 // UnmarkStale clears the stale mark.
 func (c *Client) UnmarkStale(ctx context.Context, slug string) (*api.PublishResult, error) {
-	var out api.PublishResult
-	if err := c.doJSON(ctx, http.MethodDelete, "/artifacts/"+seg(slug)+"/stale", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.PublishResult](ctx, c, http.MethodDelete, "/artifacts/"+seg(slug)+"/stale", nil, nil, nil)
 }
 
 // CreateShareLink creates a share link expiring after expiresIn, such as 72h
 // or 7d ("" for a week). The result's URL carries the token.
 func (c *Client) CreateShareLink(ctx context.Context, slug, label, expiresIn, password string) (*api.CreatedShareLink, error) {
-	var out api.CreatedShareLink
-	err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/share-links", nil, nil,
-		api.ShareLinkRequest{Label: label, ExpiresIn: expiresIn, Password: password}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.CreatedShareLink](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/share-links", nil, nil, api.ShareLinkRequest{Label: label, ExpiresIn: expiresIn, Password: password})
 }
 
 // ListShareLinks lists an artifact's share links, newest first.
 func (c *Client) ListShareLinks(ctx context.Context, slug string) (*api.ShareLinkList, error) {
-	var out api.ShareLinkList
-	if err := c.doJSON(ctx, http.MethodGet, "/artifacts/"+seg(slug)+"/share-links", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.ShareLinkList](ctx, c, http.MethodGet, "/artifacts/"+seg(slug)+"/share-links", nil, nil, nil)
 }
 
 // RevokeShareLink revokes the share link with prefix.
@@ -623,11 +609,7 @@ func (c *Client) Bundle(ctx context.Context, slug string, version int) (io.ReadC
 // Edit applies edits to one text file of the latest version and publishes
 // it; a positive ExpectedVersion fails with version_conflict if stale.
 func (c *Client) Edit(ctx context.Context, slug string, req api.EditRequest) (*api.EditResult, error) {
-	var out api.EditResult
-	if err := c.doJSON(ctx, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, ifMatch(req.ExpectedVersion), req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.EditResult](ctx, c, http.MethodPost, "/artifacts/"+seg(slug)+"/edit", nil, ifMatch(req.ExpectedVersion), req)
 }
 
 // Skill returns the instance's Agent Skill as SKILL.md text.
@@ -646,11 +628,7 @@ func (c *Client) Skill(ctx context.Context) (string, error) {
 
 // Me returns the caller's identity and scopes.
 func (c *Client) Me(ctx context.Context) (*api.Me, error) {
-	var out api.Me
-	if err := c.doJSON(ctx, http.MethodGet, "/me", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.Me](ctx, c, http.MethodGet, "/me", nil, nil, nil)
 }
 
 // MyKeys lists the caller's own API keys (never the secrets).
@@ -661,11 +639,7 @@ func (c *Client) MyKeys(ctx context.Context) ([]api.APIKey, error) {
 // IssueMyKey issues a key for the caller, bounded by the key the client
 // holds. The secret is in the result exactly once.
 func (c *Client) IssueMyKey(ctx context.Context, req api.IssueKeyRequest) (*api.IssuedKey, error) {
-	var out api.IssuedKey
-	if err := c.doJSON(ctx, http.MethodPost, "/me/keys", nil, nil, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return call[api.IssuedKey](ctx, c, http.MethodPost, "/me/keys", nil, nil, req)
 }
 
 // RevokeMyKey revokes one of the caller's keys and the keys issued with it.
@@ -676,44 +650,5 @@ func (c *Client) RevokeMyKey(ctx context.Context, prefix string) error {
 // RotateMyKey replaces one of the caller's keys; the old one works until
 // overlap has passed ("" is the server's default).
 func (c *Client) RotateMyKey(ctx context.Context, prefix, overlap string) (*api.IssuedKey, error) {
-	var out api.IssuedKey
-	err := c.doJSON(ctx, http.MethodPost, "/me/keys/"+seg(prefix)+"/rotate", nil, nil, api.RotateKeyRequest{Overlap: overlap}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// BeginUpload starts a chunked upload.
-func (c *Client) BeginUpload(ctx context.Context) (*api.Upload, error) {
-	var out api.Upload
-	if err := c.doJSON(ctx, http.MethodPost, "/uploads", nil, nil, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// UploadChunk appends r to path at offset. contentType sets the file's type
-// on the first chunk; "" sends application/octet-stream.
-func (c *Client) UploadChunk(ctx context.Context, id, path string, offset int64, r io.Reader, contentType string) (*api.ChunkResult, error) {
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	var out api.ChunkResult
-	err := c.do(ctx, request{
-		method:      http.MethodPatch,
-		path:        "/uploads/" + seg(id) + "/files/" + filePath(path),
-		query:       url.Values{"offset": {strconv.FormatInt(offset, 10)}},
-		body:        r,
-		contentType: contentType,
-	}, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// AbortUpload discards a chunked upload.
-func (c *Client) AbortUpload(ctx context.Context, id string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/uploads/"+seg(id), nil, nil, nil, nil)
+	return call[api.IssuedKey](ctx, c, http.MethodPost, "/me/keys/"+seg(prefix)+"/rotate", nil, nil, api.RotateKeyRequest{Overlap: overlap})
 }

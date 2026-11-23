@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -68,10 +70,10 @@ func (c *AdminUsersListCmd) Run(r *runner) error {
 	for _, u := range users {
 		quota := "-"
 		if u.QuotaBytes > 0 {
-			quota = humanSize(u.QuotaBytes)
+			quota = artifact.FormatBytes(u.QuotaBytes)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", u.Handle, dash(oneLine(u.Email)), u.Role, userState(&u),
-			humanSize(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
+			artifact.FormatBytes(u.UsedBytes), quota, fmtTimePtr(u.LastActiveAt), fmtTime(u.CreatedAt))
 	}
 	return tw.Flush()
 }
@@ -471,7 +473,7 @@ func (c *AdminArtifactsListCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	l, err := r.fetchList(&c.listFlags, func(p ListParams) (*api.ArtifactList, error) {
+	l, err := r.fetchList(&c.listFlags, func(p apiclient.ListParams) (*api.ArtifactList, error) {
 		p.Owner = c.Owner
 		return cl.AdminListArtifacts(r.ctx, p)
 	})
@@ -541,7 +543,7 @@ func (c *AdminSettingsCmd) Run(r *runner) error {
 	}
 	// A server older than the sources route answers 404: the values alone.
 	sources, err := cl.SettingSources(r.ctx)
-	var he *HTTPError
+	var he *apiclient.HTTPError
 	if errors.As(err, &he) && he.Status == http.StatusNotFound {
 		err = nil
 	}
@@ -701,7 +703,7 @@ func (c *AdminAuditCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	l, err := cl.Audit(r.ctx, AuditParams{Since: since, Until: until, Slug: c.Slug, Actor: c.Actor, Subject: c.Subject,
+	l, err := cl.Audit(r.ctx, apiclient.AuditParams{Since: since, Until: until, Slug: c.Slug, Actor: c.Actor, Subject: c.Subject,
 		Actions: c.Action, Cursor: c.Cursor, Limit: c.Limit})
 	if err != nil {
 		return err

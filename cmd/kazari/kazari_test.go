@@ -69,7 +69,7 @@ func writeFile(t *testing.T, path, content string) string {
 func runClient(t *testing.T, args ...string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	if code := cli.Run(args, strings.NewReader(""), &stdout, &stderr, clientEnv()); code != 0 {
+	if code := cli.Run(t.Context(), args, cli.Env{Stdout: &stdout, Stderr: &stderr, LookupEnv: clientEnv()}); code != 0 {
 		t.Logf("kazari %s exited %d: %s", strings.Join(args, " "), code, stderr.String())
 	}
 }

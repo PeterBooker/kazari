@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"archive/tar"
@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 // startLocal runs kazari serve --local on a free port with its data in a
@@ -29,7 +31,7 @@ func startLocal(t *testing.T) (string, map[string]string) {
 	var stdout, stderr bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
-		done <- RunContext(ctx, []string{"serve", "--local"}, strings.NewReader(""), &stdout, &stderr, envMap(env))
+		done <- cli.Run(ctx, []string{"serve", "--local"}, cli.Env{Stdout: &stdout, Stderr: &stderr, LookupEnv: envMap(env)})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -113,9 +115,10 @@ func TestServeConfigErrors(t *testing.T) {
 		t.Errorf("missing config file: %+v", r)
 	}
 	t.Chdir(t.TempDir())
-	r = runCLI(t, map[string]string{"HOME": t.TempDir()}, "check")
+	absent := filepath.Join(t.TempDir(), "kazari.yaml")
+	r = runEnv(t, cli.Env{LookupEnv: envMap(map[string]string{"HOME": t.TempDir()}), DefaultConfig: absent}, "check")
 	if r.code != 2 || !strings.Contains(r.stderr, "base_domain: required") ||
-		!strings.Contains(r.stderr, "no configuration file: none was named with --config or $KAZARI_CONFIG, and /etc/kazari/kazari.yaml does not exist") ||
+		!strings.Contains(r.stderr, "no configuration file: none was named with --config or $KAZARI_CONFIG, and "+absent+" does not exist") ||
 		!strings.Contains(r.stderr, "run kazari check --local") {
 		t.Errorf("unconfigured: %+v", r)
 	}
@@ -220,13 +223,13 @@ func TestJournald(t *testing.T) {
 	st := fi.Sys().(*syscall.Stat_t)
 	stream := fmt.Sprintf("%d:%d", st.Dev, st.Ino)
 
-	if !journald(stream, f) {
+	if !cli.Journald(stream, f) {
 		t.Error("stderr is the stream JOURNAL_STREAM names, but journald = false")
 	}
-	if journald(fmt.Sprintf("%d:%d", st.Dev, st.Ino+1), f) {
+	if cli.Journald(fmt.Sprintf("%d:%d", st.Dev, st.Ino+1), f) {
 		t.Error("journald = true for another inode, as after a redirect")
 	}
-	if journald("", f) || journald(stream, &bytes.Buffer{}) {
+	if cli.Journald("", f) || cli.Journald(stream, &bytes.Buffer{}) {
 		t.Error("journald = true without JOURNAL_STREAM or without a file")
 	}
 }

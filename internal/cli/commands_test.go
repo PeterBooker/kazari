@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/cli"
 )
 
 func TestMain(m *testing.M) {
@@ -60,13 +62,26 @@ func runCLIWith(t *testing.T, env map[string]string, stdin io.Reader, terminal f
 	if _, ok := env["HOME"]; !ok {
 		env["HOME"] = t.TempDir()
 	}
-	var stdout, stderr bytes.Buffer
-	r := newRunner(t.Context(), args, stdin, &stdout, &stderr, envMap(env))
-	r.sleep = func(context.Context, time.Duration) error { return nil }
+	e := cli.Env{Stdin: stdin, LookupEnv: envMap(env)}
 	if terminal != nil {
-		r.terminal = terminal
+		e.IsTerminal = func(stream any) bool { return stream == stdin && terminal() }
 	}
-	code := r.exit(r.run(args))
+	return runEnv(t, e, args...)
+}
+
+// runEnv runs with e, whose output, clock and sleep it fills in: the clock
+// reads t0 and a retry records no wait.
+func runEnv(t *testing.T, e cli.Env, args ...string) result {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	e.Stdout, e.Stderr = &stdout, &stderr
+	if e.Now == nil {
+		e.Now = func() time.Time { return t0 }
+	}
+	if e.Sleep == nil {
+		e.Sleep = func(context.Context, time.Duration) error { return nil }
+	}
+	code := cli.Run(t.Context(), args, e)
 	return result{code, stdout.String(), stderr.String()}
 }
 
@@ -117,6 +132,55 @@ var demo = api.Artifact{
 	PublishedVersion: 2, LatestVersion: 3, SizeBytes: 1536, CreatedAt: t0, UpdatedAt: t0.Add(time.Hour),
 }
 
+// recorder answers every request without a network, with an empty JSON
+// list for /v1/users and an empty object otherwise, and keeps the address
+// and key of each.
+type recorder struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (rec *recorder) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec.mu.Lock()
+	rec.seen = append(rec.seen, r.URL.Scheme+"://"+r.URL.Host+r.URL.Path+" "+strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	rec.mu.Unlock()
+	body := "{}"
+	if r.URL.Path == "/v1/users" {
+		body = "[]"
+	}
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+// endpoints are where me and admin users list send their keys.
+type endpoints struct {
+	URL, Token, AdminURL, AdminToken string
+}
+
+func observe(t *testing.T, env map[string]string, flags []string) (endpoints, []string) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	var got endpoints
+	var errs []string
+	for _, cmd := range [][]string{{"me"}, {"admin", "users", "list"}} {
+		rec := &recorder{}
+		r := runEnv(t, cli.Env{LookupEnv: envMap(env), Transport: rec}, append(slices.Clone(flags), cmd...)...)
+		if r.code != 0 {
+			errs = append(errs, r.stderr)
+		}
+		for _, s := range rec.seen {
+			where, key, _ := strings.Cut(s, " ")
+			if base, ok := strings.CutSuffix(where, "/v1/me"); ok {
+				got.URL, got.Token = base, key
+			}
+			if base, ok := strings.CutSuffix(where, "/v1/users"); ok {
+				got.AdminURL, got.AdminToken = base, key
+			}
+		}
+	}
+	return got, errs
+}
+
 func TestSettingsPrecedence(t *testing.T) {
 	writeConfig := func(t *testing.T, dir, content string) {
 		t.Helper()
@@ -136,41 +200,42 @@ admin_token: file-admin
 		name    string
 		config  string
 		env     map[string]string
-		flags   CLI
-		want    settings
+		flags   []string
+		want    endpoints
 		wantErr string
 	}{
 		{
 			name:   "file only",
 			config: file,
-			want:   settings{URL: "https://api.file.test", Token: "file-token", AdminURL: "https://admin.file.test", AdminToken: "file-admin"},
+			want:   endpoints{URL: "https://api.file.test", Token: "file-token", AdminURL: "https://admin.file.test", AdminToken: "file-admin"},
 		},
 		{
 			name:   "env beats file",
 			config: file,
 			env:    map[string]string{"KAZARI_URL": "https://api.env.test", "KAZARI_TOKEN": "env-token", "KAZARI_ADMIN_TOKEN": "env-admin"},
-			want:   settings{URL: "https://api.env.test", Token: "env-token", AdminURL: "https://admin.file.test", AdminToken: "env-admin"},
+			want:   endpoints{URL: "https://api.env.test", Token: "env-token", AdminURL: "https://admin.file.test", AdminToken: "env-admin"},
 		},
 		{
 			name:   "flag beats env",
 			config: file,
 			env:    map[string]string{"KAZARI_URL": "https://api.env.test", "KAZARI_TOKEN": "env-token"},
-			flags:  CLI{URL: "https://api.flag.test", AdminURL: "https://admin.flag.test"},
-			want:   settings{URL: "https://api.flag.test", Token: "env-token", AdminURL: "https://admin.flag.test", AdminToken: "file-admin"},
+			flags:  []string{"--url", "https://api.flag.test", "--admin-url", "https://admin.flag.test"},
+			want:   endpoints{URL: "https://api.flag.test", Token: "env-token", AdminURL: "https://admin.flag.test", AdminToken: "file-admin"},
 		},
 		{
 			name:  "admin defaults from user settings",
-			flags: CLI{URL: "https://api.art.test:8443", Token: "t"},
-			want:  settings{URL: "https://api.art.test:8443", Token: "t", AdminURL: "https://admin.art.test:8443", AdminToken: "t"},
+			flags: []string{"--url", "https://api.art.test:8443", "--token", "t"},
+			want:  endpoints{URL: "https://api.art.test:8443", Token: "t", AdminURL: "https://admin.art.test:8443", AdminToken: "t"},
 		},
 		{
-			name:  "no admin url for a non-api host",
-			flags: CLI{URL: "http://localhost:8080", Token: "t"},
-			want:  settings{URL: "http://localhost:8080", Token: "t", AdminToken: "t"},
+			name:    "no admin url for a non-api host",
+			flags:   []string{"--url", "http://localhost:8080", "--token", "t"},
+			want:    endpoints{URL: "http://localhost:8080", Token: "t"},
+			wantErr: "no admin API",
 		},
 		{
 			name:    "explicit config must exist",
-			flags:   CLI{ClientConfig: "/nonexistent/kazari.yaml"},
+			flags:   []string{"--client-config", "/nonexistent/kazari.yaml"},
 			wantErr: "config /nonexistent/kazari.yaml",
 		},
 		{
@@ -189,9 +254,9 @@ admin_token: file-admin
 			wantErr: "cannot unmarshal",
 		},
 		{
-			name:   "comments only",
-			config: "# url: https://api.file.test\n",
-			want:   settings{},
+			name:    "comments only",
+			config:  "# url: https://api.file.test\n",
+			wantErr: "no API URL",
 		},
 	}
 	for _, tt := range tests {
@@ -202,19 +267,15 @@ admin_token: file-admin
 			}
 			env := map[string]string{"XDG_CONFIG_HOME": xdg}
 			maps.Copy(env, tt.env)
-			r := &runner{lookupEnv: envMap(env), g: &tt.flags}
-			got, err := r.settings()
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("err = %v, want %q", err, tt.wantErr)
-				}
-				return
+			got, errs := observe(t, env, tt.flags)
+			if tt.wantErr != "" && !slices.ContainsFunc(errs, func(e string) bool { return strings.Contains(e, tt.wantErr) }) {
+				t.Errorf("errors %q, want one with %q", errs, tt.wantErr)
 			}
-			if err != nil {
-				t.Fatal(err)
+			if tt.wantErr == "" && len(errs) > 0 {
+				t.Errorf("errors %q, want none", errs)
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Errorf("settings (-want +got):\n%s", diff)
+				t.Errorf("endpoints (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -226,13 +287,12 @@ func TestConfigFromHome(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("url: u\ntoken: home-token\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("url: https://api.art.test\ntoken: home-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := &runner{lookupEnv: envMap(map[string]string{"HOME": home}), g: &CLI{}}
-	s, err := r.settings()
-	if err != nil || s.Token != "home-token" {
-		t.Errorf("settings = %+v, %v", s, err)
+	got, _ := observe(t, map[string]string{"HOME": home}, nil)
+	if got.Token != "home-token" {
+		t.Errorf("me sent key %q, want home-token from %s", got.Token, dir)
 	}
 }
 
@@ -267,9 +327,9 @@ func TestRunUsageErrors(t *testing.T) {
 		{"publish name that is no slug", []string{"publish", writeTree(t, map[string]string{"_/index.html": "x"}) + "/_"}, 2, `kazari: publish: "_" does not make a slug; give --slug`},
 		{"publish base without update", []string{"publish", dir, "--slug", "x", "--base", "2"}, 2, "--base needs --update"},
 		{"rm hard without a terminal", []string{"rm", "demo", "--hard"}, 2, "add --yes"},
-		{"publish bad visibility", []string{"publish", dir, "--slug", "x", "--visibility", "secret"}, 2, "--visibility must be public, unlisted or members"},
+		{"publish bad visibility", []string{"publish", dir, "--slug", "x", "--visibility", "secret"}, 2, `--visibility must be one of "public","unlisted","members","" but got "secret"`},
 		{"bad meta", []string{"publish", dir, "--slug", "x", "--meta", "novalue"}, 2, `expected "<key>=<value>"`},
-		{"visibility value", []string{"visibility", "demo", "hidden"}, 2, "want public, unlisted, members or unpublished"},
+		{"visibility value", []string{"visibility", "demo", "hidden"}, 2, `<visibility> must be one of "public","unlisted","members","unpublished" but got "hidden"`},
 		{"rollback version", []string{"rollback", "demo", "two"}, 2, "version must be a positive integer"},
 		{"stale grace", []string{"stale", "demo", "--grace", "soon"}, 2, "stale: --grace"},
 		{"update nothing", []string{"update", "demo"}, 2, "update: nothing to update"},
@@ -462,13 +522,13 @@ created:     2026-10-01T14:00:00+02:00
 updated:     2026-10-01T15:00:00+02:00
 stale at:    2026-10-03T14:00:00+02:00
 
-VERSION  LABEL  CREATED BY  CREATED                    SIZE     URL
-3        draft  peter       2026-10-01T16:00:00+02:00  2.0 KiB  https://demo--v3.art.test
-2 *      -      ann         2026-10-01T14:00:00+02:00  100 B    https://demo--v2.art.test
+VERSION  LABEL  CREATED BY  CREATED                    SIZE   URL
+3        draft  peter       2026-10-01T16:00:00+02:00  2 KiB  https://demo--v3.art.test
+2 *      -      ann         2026-10-01T14:00:00+02:00  100 B  https://demo--v2.art.test
 
 version 3 files:
-PATH        SIZE     TYPE       HASH
-index.html  2.0 KiB  text/html  sha256:0123456789ab
+PATH        SIZE   TYPE       HASH
+index.html  2 KiB  text/html  sha256:0123456789ab
 
 version 2 files:
 PATH  SIZE  TYPE  HASH
@@ -727,7 +787,7 @@ func TestRunSimpleCommands(t *testing.T) {
 		{[]string{"restore", "bin"}, "restored bin: https://bin.art.test\n", `{"restore":true}`},
 		{[]string{"rollback", "demo", "1"}, "demo now serves version 1: https://demo.art.test\n", `{"version":1}`},
 		{[]string{"files", "cat", "demo", "css/site.css", "--version", "2"}, "body{color:red}", "version=2"},
-		{[]string{"me"}, "handle:   peter\nadmin:    false\nscopes:   read, write\nsource:   api_key\nstorage:  1.5 KiB of 100.0 MiB used\n", ""},
+		{[]string{"me"}, "handle:   peter\nadmin:    false\nscopes:   read, write\nsource:   api_key\nstorage:  1.5 KiB of 100 MiB used\n", ""},
 		{[]string{"keys"}, "PREFIX  LABEL   SCOPES      SLUGS  ISSUED BY  CREATED                    LAST USED                  EXPIRES  REVOKED\n" +
 			"abc123  laptop  read,write  -      -          2026-10-01T14:00:00+02:00  2026-10-01T14:01:00+02:00  -        -\n", ""},
 		{[]string{"--json", "rm", "demo"}, "{\n  \"ok\": true\n}\n", ""},
@@ -774,7 +834,6 @@ func TestRunVersion(t *testing.T) {
 
 func TestRunAdmin(t *testing.T) {
 	disabled := t0
-	now := time.Now()
 	var body, query string
 	record := func(v any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -822,10 +881,10 @@ func TestRunAdmin(t *testing.T) {
 		wantBody   string
 		wantQuery  string
 	}{
-		{args: []string{"users", "list"}, wantOut: "HANDLE  EMAIL       ROLE   STATE     USED     QUOTA    LAST ACTIVE  CREATED\n" +
-			"ann     ann@x.test  admin  disabled  2.0 KiB  1.0 GiB  -            2026-10-01T14:00:00+02:00\n"},
+		{args: []string{"users", "list"}, wantOut: "HANDLE  EMAIL       ROLE   STATE     USED   QUOTA  LAST ACTIVE  CREATED\n" +
+			"ann     ann@x.test  admin  disabled  2 KiB  1 GiB  -            2026-10-01T14:00:00+02:00\n"},
 		{args: []string{"users", "create", "bob", "--quota", "500MiB", "--role", "member"},
-			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500.0 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
+			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
 			wantBody: `{"handle":"bob","role":"member","quota_bytes":524288000}`},
 		{args: []string{"users", "update", "bob", "--enable", "--role", "admin", "--quota", "0"},
 			wantOut:  "handle:   bob\nemail:    -\nrole:     admin\nstorage:  0 B used (no quota)\ncreated:  2026-10-01T14:00:00+02:00\n",
@@ -859,7 +918,7 @@ func TestRunAdmin(t *testing.T) {
 			"https://idp.test  sub-1    bob@x.test  2026-10-01T14:00:00+02:00\n" +
 			"https://idp.test  sub-2    -           -\n"},
 		{args: []string{"users", "create", "bob", "--name", "Bob B", "--email", "bob@x.test"},
-			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500.0 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
+			wantOut:  "handle:   bob\nemail:    -\nrole:     member\nstorage:  0 B of 500 MiB used\ncreated:  2026-10-01T14:00:00+02:00\n",
 			wantBody: `{"handle":"bob","email":"bob@x.test","display_name":"Bob B"}`},
 		{args: []string{"users", "update", "bob", "--name", "Robert"},
 			wantOut:  "handle:   bob\nemail:    -\nrole:     admin\nstorage:  0 B used (no quota)\ncreated:  2026-10-01T14:00:00+02:00\n",
@@ -924,14 +983,14 @@ func TestRunAdmin(t *testing.T) {
 	}
 	q, _ := url.ParseQuery(query)
 	since, err := time.Parse(time.RFC3339, q.Get("since"))
-	if err != nil || since.Sub(now.Add(-24*time.Hour)).Abs() > time.Minute {
+	if err != nil || !since.Equal(t0.Add(-24*time.Hour)) {
 		t.Errorf("since query = %q (%v)", query, err)
 	}
 	if r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "audit", "--since", "3d"); r.code != 0 {
 		t.Errorf("admin audit --since 3d: %+v", r)
 	} else {
 		q, _ = url.ParseQuery(query)
-		if since, err := time.Parse(time.RFC3339, q.Get("since")); err != nil || since.Sub(now.Add(-72*time.Hour)).Abs() > time.Minute {
+		if since, err := time.Parse(time.RFC3339, q.Get("since")); err != nil || !since.Equal(t0.Add(-72*time.Hour)) {
 			t.Errorf("admin audit --since 3d: since query = %q (%v), want three days ago", query, err)
 		}
 	}

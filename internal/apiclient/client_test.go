@@ -1,16 +1,19 @@
-package cli
+package apiclient_test
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 )
 
 type captured struct {
@@ -77,19 +81,18 @@ func TestClientEndpoints(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		call    func(ctx context.Context, c *Client) (any, error)
+		call    func(ctx context.Context, c *apiclient.Client) (any, error)
 		reply   string
 		method  string
 		path    string
 		query   url.Values
 		reqBody string
-		rawBody string // compared verbatim instead of reqBody
 		header  map[string]string
 		want    any
 	}{
 		{
 			name: "create",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.Create(ctx, api.CreateArtifactRequest{Slug: "demo", Files: []api.FileInput{{Path: "index.html", Content: "hi"}}})
 			},
 			reply:   mustJSON(t, pub),
@@ -101,7 +104,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "update json with expected version",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.Update(ctx, "demo", api.UpdateArtifactRequest{Name: new("New"), ExpectedVersion: 1})
 			},
 			reply:   mustJSON(t, pub),
@@ -113,7 +116,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "patch",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.Patch(ctx, "demo", api.UpdateArtifactRequest{Metadata: map[string]*string{"a": new("1"), "b": nil}})
 			},
 			reply:   mustJSON(t, pub),
@@ -124,7 +127,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "get with files",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Get(ctx, "demo", true) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Get(ctx, "demo", true) },
 			reply:  mustJSON(t, api.ArtifactDetail{Artifact: art}),
 			method: "GET",
 			path:   "/v1/artifacts/demo",
@@ -133,8 +136,8 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "list params",
-			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.List(ctx, ListParams{Mine: "created", Metadata: map[string]string{"team": "web"}, Stale: "only", Deleted: "include", Cursor: "c1", Limit: 5})
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.List(ctx, apiclient.ListParams{Mine: "created", Metadata: map[string]string{"team": "web"}, Stale: "only", Deleted: "include", Cursor: "c1", Limit: 5})
 			},
 			reply:  `{"items":[` + mustJSON(t, art) + `],"next_cursor":"c2"}`,
 			method: "GET",
@@ -145,7 +148,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:    "publish version",
-			call:    func(ctx context.Context, c *Client) (any, error) { return c.Publish(ctx, "demo", 1) },
+			call:    func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Publish(ctx, "demo", 1) },
 			reply:   mustJSON(t, pub),
 			method:  "POST",
 			path:    "/v1/artifacts/demo/publish",
@@ -154,7 +157,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:    "mark stale",
-			call:    func(ctx context.Context, c *Client) (any, error) { return c.MarkStale(ctx, "demo", "24h") },
+			call:    func(ctx context.Context, c *apiclient.Client) (any, error) { return c.MarkStale(ctx, "demo", "24h") },
 			reply:   mustJSON(t, api.StaleResult{StaleAt: t0, ExpiresAt: t0.Add(24 * time.Hour), Artifact: art}),
 			method:  "POST",
 			path:    "/v1/artifacts/demo/stale",
@@ -163,15 +166,17 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "unmark stale",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.UnmarkStale(ctx, "demo") },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.UnmarkStale(ctx, "demo") },
 			reply:  mustJSON(t, pub),
 			method: "DELETE",
 			path:   "/v1/artifacts/demo/stale",
 			want:   &pub,
 		},
 		{
-			name:    "set visibility",
-			call:    func(ctx context.Context, c *Client) (any, error) { return c.SetVisibility(ctx, "demo", "unlisted") },
+			name: "set visibility",
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.SetVisibility(ctx, "demo", "unlisted")
+			},
 			reply:   mustJSON(t, pub),
 			method:  "PATCH",
 			path:    "/v1/artifacts/demo",
@@ -180,7 +185,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "hard delete",
-			call:   func(ctx context.Context, c *Client) (any, error) { return nil, c.Delete(ctx, "demo", true) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return nil, c.Delete(ctx, "demo", true) },
 			reply:  `{"ok":true}`,
 			method: "DELETE",
 			path:   "/v1/artifacts/demo",
@@ -188,7 +193,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "me",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Me(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Me(ctx) },
 			reply:  `{"handle":"peter","scopes":["read"],"quota_bytes":10}`,
 			method: "GET",
 			path:   "/v1/me",
@@ -196,7 +201,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "my keys bare array",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.MyKeys(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.MyKeys(ctx) },
 			reply:  mustJSON(t, keys),
 			method: "GET",
 			path:   "/v1/me/keys",
@@ -204,43 +209,15 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "my keys enveloped",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.MyKeys(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.MyKeys(ctx) },
 			reply:  `{"keys":` + mustJSON(t, keys) + `}`,
 			method: "GET",
 			path:   "/v1/me/keys",
 			want:   keys,
 		},
 		{
-			name:   "begin upload",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.BeginUpload(ctx) },
-			reply:  `{"upload_id":"u1","max_chunk_bytes":100}`,
-			method: "POST",
-			path:   "/v1/uploads",
-			want:   &api.Upload{UploadID: "u1", MaxChunkBytes: 100},
-		},
-		{
-			name: "upload chunk",
-			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.UploadChunk(ctx, "u1", "css/site main.css", 10, strings.NewReader("body{}"), "text/css")
-			},
-			reply:   `{"path":"css/site main.css","bytes_received":16}`,
-			method:  "PATCH",
-			path:    "/v1/uploads/u1/files/css/site%20main.css",
-			query:   url.Values{"offset": {"10"}},
-			rawBody: "body{}",
-			header:  map[string]string{"Content-Type": "text/css"},
-			want:    &api.ChunkResult{Path: "css/site main.css", BytesReceived: 16},
-		},
-		{
-			name:   "abort upload",
-			call:   func(ctx context.Context, c *Client) (any, error) { return nil, c.AbortUpload(ctx, "u1") },
-			reply:  `{"ok":true}`,
-			method: "DELETE",
-			path:   "/v1/uploads/u1",
-		},
-		{
 			name:   "list users",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.ListUsers(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.ListUsers(ctx) },
 			reply:  `{"items":[{"handle":"ann","role":"admin","quota_bytes":0,"created_at":"2026-10-01T12:00:00Z"}]}`,
 			method: "GET",
 			path:   "/v1/users",
@@ -248,7 +225,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "create user",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.CreateUser(ctx, api.CreateUserRequest{Handle: "ann", QuotaBytes: new(int64(1024))})
 			},
 			reply:   `{"handle":"ann","role":"member","quota_bytes":1024,"created_at":"2026-10-01T12:00:00Z"}`,
@@ -259,7 +236,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "update user",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.UpdateUser(ctx, "ann", api.UpdateUserRequest{Disabled: new(true)})
 			},
 			reply:   `{"handle":"ann","role":"member","quota_bytes":0,"created_at":"2026-10-01T12:00:00Z"}`,
@@ -270,7 +247,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "list keys",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.ListKeys(ctx, "ann") },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.ListKeys(ctx, "ann") },
 			reply:  mustJSON(t, keys),
 			method: "GET",
 			path:   "/v1/users/ann/keys",
@@ -278,7 +255,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "issue key",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return c.IssueKey(ctx, "ann", api.IssueKeyRequest{Label: "ci", Scopes: []string{"read"}, ExpiresIn: "720h"})
 			},
 			reply:   `{"key":"kzk_abc_secret","api_key":` + mustJSON(t, keys[0]) + `}`,
@@ -288,16 +265,18 @@ func TestClientEndpoints(t *testing.T) {
 			want:    &api.IssuedKey{Key: "kzk_abc_secret", APIKey: keys[0]},
 		},
 		{
-			name:   "revoke key",
-			call:   func(ctx context.Context, c *Client) (any, error) { return nil, c.RevokeKey(ctx, "ann", "abc") },
+			name: "revoke key",
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return nil, c.RevokeKey(ctx, "ann", "abc")
+			},
 			reply:  `{"ok":true}`,
 			method: "DELETE",
 			path:   "/v1/users/ann/keys/abc",
 		},
 		{
 			name: "admin list artifacts",
-			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.AdminListArtifacts(ctx, ListParams{Limit: 2})
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.AdminListArtifacts(ctx, apiclient.ListParams{Limit: 2})
 			},
 			reply:  `{"items":[]}`,
 			method: "GET",
@@ -307,7 +286,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:    "transfer",
-			call:    func(ctx context.Context, c *Client) (any, error) { return c.Transfer(ctx, "demo", "ann") },
+			call:    func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Transfer(ctx, "demo", "ann") },
 			reply:   mustJSON(t, art),
 			method:  "POST",
 			path:    "/v1/artifacts/demo/transfer",
@@ -316,7 +295,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "hide",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Hide(ctx, "demo") },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Hide(ctx, "demo") },
 			reply:  mustJSON(t, art),
 			method: "POST",
 			path:   "/v1/artifacts/demo/hide",
@@ -324,7 +303,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "settings",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Settings(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Settings(ctx) },
 			reply:  `{"server":{"base_domain":"art.test"}}`,
 			method: "GET",
 			path:   "/v1/settings",
@@ -332,7 +311,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "jobs",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Jobs(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Jobs(ctx) },
 			reply:  `[{"name":"gc","every":"1h0m0s","running":false}]`,
 			method: "GET",
 			path:   "/v1/jobs",
@@ -340,15 +319,15 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "run job",
-			call:   func(ctx context.Context, c *Client) (any, error) { return nil, c.RunJob(ctx, "gc") },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return nil, c.RunJob(ctx, "gc") },
 			reply:  `{"ok":true}`,
 			method: "POST",
 			path:   "/v1/jobs/gc/run",
 		},
 		{
 			name: "audit",
-			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.Audit(ctx, AuditParams{Since: "2026-10-01T00:00:00Z", Until: "2026-10-02T00:00:00Z", Slug: "demo",
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.Audit(ctx, apiclient.AuditParams{Since: "2026-10-01T00:00:00Z", Until: "2026-10-02T00:00:00Z", Slug: "demo",
 					Actor: "ann", Actions: []string{"artifact.", "key.issue"}, Cursor: "c1", Limit: 10})
 			},
 			reply:  `{"events":[{"at":"2026-10-01T12:00:00Z","actor":"ann","action":"create","slug":"demo"}],"next_cursor":"c2"}`,
@@ -359,8 +338,10 @@ func TestClientEndpoints(t *testing.T) {
 			want: &api.AuditList{Events: []api.AuditEvent{{At: t0, Actor: "ann", Action: "create", Slug: "demo"}}, NextCursor: "c2"},
 		},
 		{
-			name:   "audit unfiltered",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Audit(ctx, AuditParams{}) },
+			name: "audit unfiltered",
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.Audit(ctx, apiclient.AuditParams{})
+			},
 			reply:  `{"events":[]}`,
 			method: "GET",
 			path:   "/v1/audit",
@@ -368,7 +349,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:    "transfer all",
-			call:    func(ctx context.Context, c *Client) (any, error) { return c.TransferAll(ctx, "ann", "bob") },
+			call:    func(ctx context.Context, c *apiclient.Client) (any, error) { return c.TransferAll(ctx, "ann", "bob") },
 			reply:   `{"transferred":["demo"]}`,
 			method:  "POST",
 			path:    "/v1/users/ann/transfer",
@@ -377,7 +358,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "link identity",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return nil, c.LinkIdentity(ctx, "ann", api.LinkIdentityRequest{Issuer: "https://idp.test", Subject: "sub-1", Email: "ann@x.test"})
 			},
 			method:  "POST",
@@ -386,7 +367,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "unlink identity",
-			call: func(ctx context.Context, c *Client) (any, error) {
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
 				return nil, c.UnlinkIdentity(ctx, "ann", "https://idp.test", "sub-1")
 			},
 			method:  "POST",
@@ -395,8 +376,8 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name: "list filtered",
-			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.List(ctx, ListParams{Search: "q3 report", Visibility: "members"})
+			call: func(ctx context.Context, c *apiclient.Client) (any, error) {
+				return c.List(ctx, apiclient.ListParams{Search: "q3 report", Visibility: "members"})
 			},
 			reply:  `{"items":[]}`,
 			method: "GET",
@@ -406,7 +387,7 @@ func TestClientEndpoints(t *testing.T) {
 		},
 		{
 			name:   "health",
-			call:   func(ctx context.Context, c *Client) (any, error) { return c.Health(ctx) },
+			call:   func(ctx context.Context, c *apiclient.Client) (any, error) { return c.Health(ctx) },
 			reply:  `{"status":"ok","version":"1.0"}`,
 			method: "GET",
 			path:   "/v1/health",
@@ -416,7 +397,7 @@ func TestClientEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, got := fakeServer(t, http.StatusOK, tt.reply)
-			c := NewClient(srv.URL+"/", "tok", srv.Client())
+			c := apiclient.New(srv.URL+"/", "tok", apiclient.Options{HTTP: srv.Client()})
 			res, err := tt.call(t.Context(), c)
 			if err != nil {
 				t.Fatalf("call: %v", err)
@@ -431,13 +412,7 @@ func TestClientEndpoints(t *testing.T) {
 			if diff := cmp.Diff(wantQuery, got.query); diff != "" {
 				t.Errorf("query (-want +got):\n%s", diff)
 			}
-			if tt.rawBody != "" {
-				if string(got.body) != tt.rawBody {
-					t.Errorf("request body = %q, want %q", got.body, tt.rawBody)
-				}
-			} else {
-				jsonEqual(t, got.body, tt.reqBody)
-			}
+			jsonEqual(t, got.body, tt.reqBody)
 			if h := got.header.Get("Authorization"); h != "Bearer tok" {
 				t.Errorf("Authorization = %q", h)
 			}
@@ -464,7 +439,7 @@ func TestClientEndpoints(t *testing.T) {
 
 func TestClientNoTokenNoAuthorization(t *testing.T) {
 	srv, got := fakeServer(t, http.StatusOK, `{"status":"ok"}`)
-	if _, err := NewClient(srv.URL, "", nil).Health(t.Context()); err != nil {
+	if _, err := apiclient.New(srv.URL, "", apiclient.Options{}).Health(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if h, ok := got.header["Authorization"]; ok {
@@ -477,30 +452,29 @@ func TestClientErrors(t *testing.T) {
 		name   string
 		status int
 		body   string
-		want   HTTPError
+		want   apiclient.HTTPError
 	}{
 		{"api error", 409, `{"error":{"code":"slug_taken","message":"slug demo is taken"}}`,
-			HTTPError{Status: 409, Err: api.Error{Code: "slug_taken", Message: "slug demo is taken"}}},
+			apiclient.HTTPError{Status: 409, Err: api.Error{Code: "slug_taken", Message: "slug demo is taken"}}},
 		{"offset mismatch", 409, `{"error":{"code":"upload_offset_mismatch","message":"bad offset","current":12}}`,
-			HTTPError{Status: 409, Err: api.Error{Code: "upload_offset_mismatch", Message: "bad offset", Current: new(int64(12))}}},
-		{"plain text", 502, "  bad gateway\n", HTTPError{Status: 502, Err: api.Error{Code: "http_502", Message: "HTTP 502 Bad Gateway from {url}: bad gateway"}}},
-		{"empty", 503, "", HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "HTTP 503 Service Unavailable from {url}"}}},
-		{"json without code", 400, `{"oops":1}`, HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `HTTP 400 Bad Request from {url}: {"oops":1}`}}},
-		{"html page", 500, "<!doctype html><title>oops</title>\n<p>broken</p>", HTTPError{Status: 500, Err: api.Error{Code: "http_500",
+			apiclient.HTTPError{Status: 409, Err: api.Error{Code: "upload_offset_mismatch", Message: "bad offset", Current: new(int64(12))}}},
+		{"plain text", 502, "  bad gateway\n", apiclient.HTTPError{Status: 502, Err: api.Error{Code: "http_502", Message: "HTTP 502 Bad Gateway from {url}: bad gateway"}}},
+		{"empty", 503, "", apiclient.HTTPError{Status: 503, Err: api.Error{Code: "http_503", Message: "HTTP 503 Service Unavailable from {url}"}}},
+		{"json without code", 400, `{"oops":1}`, apiclient.HTTPError{Status: 400, Err: api.Error{Code: "http_400", Message: `HTTP 400 Bad Request from {url}: {"oops":1}`}}},
+		{"html page", 500, "<!doctype html><title>oops</title>\n<p>broken</p>", apiclient.HTTPError{Status: 500, Err: api.Error{Code: "http_500",
 			Message: "{url} answered HTTP 500 Internal Server Error, which is not the Kazari API; it is usually https://api.<base>"}}},
-		{"no such route", 404, "404 page not found\n", HTTPError{Status: 404, Err: api.Error{Code: "http_404",
+		{"no such route", 404, "404 page not found\n", apiclient.HTTPError{Status: 404, Err: api.Error{Code: "http_404",
 			Message: "{url} answered HTTP 404 Not Found, which is not the Kazari API; it is usually https://api.<base>"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, _ := fakeServer(t, tt.status, tt.body)
 			tt.want.Err.Message = strings.NewReplacer("{url}", srv.URL, "{host}", strings.TrimPrefix(srv.URL, "http://")).Replace(tt.want.Err.Message)
-			c := NewClient(srv.URL, "tok", nil)
-			c.sleep = func(context.Context, time.Duration) error { return nil }
+			c := apiclient.New(srv.URL, "tok", apiclient.Options{Sleep: func(context.Context, time.Duration) error { return nil }})
 			_, err := c.Get(t.Context(), "demo", false)
-			var he *HTTPError
+			var he *apiclient.HTTPError
 			if !errors.As(err, &he) {
-				t.Fatalf("err = %v (%T), want *HTTPError", err, err)
+				t.Fatalf("err = %v (%T), want *apiclient.HTTPError", err, err)
 			}
 			if diff := cmp.Diff(tt.want, *he); diff != "" {
 				t.Errorf("error (-want +got):\n%s", diff)
@@ -509,8 +483,8 @@ func TestClientErrors(t *testing.T) {
 			if !errors.As(err, &ae) || ae.Code != tt.want.Err.Code {
 				t.Errorf("errors.As api.Error = %v", ae)
 			}
-			if !IsCode(err, tt.want.Err.Code) {
-				t.Errorf("IsCode(%q) = false", tt.want.Err.Code)
+			if !apiclient.IsCode(err, tt.want.Err.Code) {
+				t.Errorf("apiclient.IsCode(%q) = false", tt.want.Err.Code)
 			}
 		})
 	}
@@ -525,7 +499,7 @@ func TestReadFile(t *testing.T) {
 		w.Write([]byte{0x89, 'P', 'N', 'G'})
 	}))
 	defer srv.Close()
-	body, ct, err := NewClient(srv.URL, "tok", nil).ReadFile(t.Context(), "demo", "img/a b.png", 3, false)
+	body, ct, err := apiclient.New(srv.URL, "tok", apiclient.Options{}).ReadFile(t.Context(), "demo", "img/a b.png", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,18 +583,17 @@ func readTarGz(t *testing.T, r io.Reader) map[string]string {
 }
 
 func TestCreateAndUpdateBundle(t *testing.T) {
-	dir := writeTree(t, map[string]string{"index.html": "<h1>hi</h1>", "css/a.css": "a{}"})
+	files := map[string]string{"index.html": "<h1>hi</h1>", "css/a.css": "a{}"}
 	var got bundleRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = decodeBundleRequest(t, r)
 		io.WriteString(w, `{"url":"https://demo.art.test","version":1}`)
 	}))
 	defer srv.Close()
-	c := NewClient(srv.URL, "tok", nil)
+	c := apiclient.New(srv.URL, "tok", apiclient.Options{})
 
-	bundle := TarGzReader(dir)
+	bundle := tarGz(t, files)
 	res, err := c.CreateBundle(t.Context(), api.CreateManifest{Slug: "demo", Label: "first"}, bundle)
-	bundle.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,10 +614,9 @@ func TestCreateAndUpdateBundle(t *testing.T) {
 		t.Errorf("If-Match on create: %q", got.header.Get("If-Match"))
 	}
 
-	bundle = TarGzReader(dir)
+	bundle = tarGz(t, files)
 	_, err = c.UpdateBundle(t.Context(), "demo", api.UpdateArtifactRequest{ExpectedVersion: 4,
 		Files: []api.FileInput{{Path: "old.html", Delete: true}}}, bundle)
-	bundle.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,9 +635,9 @@ func TestCreateBundleEarlyError(t *testing.T) {
 		io.WriteString(w, `{"error":{"code":"too_large","message":"bundle over 1 MiB"}}`)
 	}))
 	defer srv.Close()
-	_, err := NewClient(srv.URL, "tok", nil).CreateBundle(t.Context(), api.CreateManifest{Slug: "demo"},
+	_, err := apiclient.New(srv.URL, "tok", apiclient.Options{}).CreateBundle(t.Context(), api.CreateManifest{Slug: "demo"},
 		io.LimitReader(zeroReader{}, 1<<20))
-	if !IsCode(err, api.CodeTooLarge) {
+	if !apiclient.IsCode(err, api.CodeTooLarge) {
 		t.Fatalf("err = %v, want too_large", err)
 	}
 }
@@ -675,4 +647,26 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
+}
+
+func tarGz(t *testing.T, files map[string]string) io.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Size: int64(len(files[name])), Mode: 0o644}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(tw, files[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf
 }

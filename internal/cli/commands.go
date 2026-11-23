@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
+	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/config"
 )
 
@@ -24,7 +26,7 @@ type ImportCmd struct {
 	Name        *string           `help:"Display name (default: the page title)." placeholder:"NAME"`
 	Description *string           `help:"Description (default: the page's meta description)." placeholder:"TEXT"`
 	Label       string            `help:"Version label." placeholder:"LABEL"`
-	Visibility  string            `help:"public, unlisted or members (default: the instance's)." placeholder:"VISIBILITY"`
+	Visibility  string            `help:"public, unlisted or members (default: the instance's)." enum:"public,unlisted,members," default:"" placeholder:"VISIBILITY"`
 	Meta        map[string]string `help:"Metadata key=value (repeatable)." mapsep:"none" placeholder:"KEY=VALUE"`
 	KeepScripts bool              `name:"keep-scripts" help:"Keep the page's scripts and event handlers."`
 }
@@ -32,11 +34,6 @@ type ImportCmd struct {
 func (c *ImportCmd) Run(r *runner) error {
 	if c.Slug == "" {
 		return usagef("import: --slug is required")
-	}
-	switch c.Visibility {
-	case "", "public", "unlisted", "members":
-	default:
-		return usagef("import: --visibility must be public, unlisted or members")
 	}
 	cl, err := r.userClient()
 	if err != nil {
@@ -100,7 +97,7 @@ func (c *GetCmd) Run(r *runner) error {
 			num += " staged"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", num, dash(oneLine(v.Label)), dash(v.CreatedBy),
-			fmtTime(v.CreatedAt), humanSize(v.SizeBytes), v.URL)
+			fmtTime(v.CreatedAt), artifact.FormatBytes(v.SizeBytes), v.URL)
 	}
 	tw.Flush()
 	if !c.Files {
@@ -115,7 +112,7 @@ func (c *GetCmd) Run(r *runner) error {
 		tw := newTable(r.stdout)
 		fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
 		for _, f := range v.Files {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, humanSize(f.Size), f.ContentType, shortHash(f.Hash))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
 		}
 		tw.Flush()
 	}
@@ -137,7 +134,7 @@ func (r *runner) printArtifact(a *api.Artifact) {
 	kv("visibility", a.Visibility)
 	kv("state", artifactState(a))
 	kv("version", fmt.Sprintf("%d published, %d latest", a.PublishedVersion, a.LatestVersion))
-	kv("size", humanSize(a.SizeBytes))
+	kv("size", artifact.FormatBytes(a.SizeBytes))
 	kv("metadata", fmtMap(a.Metadata))
 	kv("created", fmtTime(a.CreatedAt))
 	kv("updated", fmtTime(a.UpdatedAt))
@@ -172,12 +169,12 @@ type listFlags struct {
 	All        bool              `help:"Follow cursors and print every page."`
 }
 
-func (f *listFlags) params() ListParams {
-	return ListParams{Mine: f.Mine, Metadata: nilIfEmpty(f.Meta), Stale: f.Stale, Deleted: f.Deleted,
+func (f *listFlags) params() apiclient.ListParams {
+	return apiclient.ListParams{Mine: f.Mine, Metadata: nilIfEmpty(f.Meta), Stale: f.Stale, Deleted: f.Deleted,
 		Search: f.Search, Visibility: f.Visibility, Cursor: f.Cursor, Limit: f.Limit}
 }
 
-func (r *runner) fetchList(f *listFlags, list func(ListParams) (*api.ArtifactList, error)) (*api.ArtifactList, error) {
+func (r *runner) fetchList(f *listFlags, list func(apiclient.ListParams) (*api.ArtifactList, error)) (*api.ArtifactList, error) {
 	p := f.params()
 	out, err := list(p)
 	if err != nil || !f.All {
@@ -206,7 +203,7 @@ func (c *ListCmd) Run(r *runner) error {
 	if err != nil {
 		return err
 	}
-	l, err := r.fetchList(&c.listFlags, func(p ListParams) (*api.ArtifactList, error) { return cl.List(r.ctx, p) })
+	l, err := r.fetchList(&c.listFlags, func(p apiclient.ListParams) (*api.ArtifactList, error) { return cl.List(r.ctx, p) })
 	if err != nil {
 		return err
 	}
@@ -231,7 +228,7 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 			ver += "/" + strconv.Itoa(a.LatestVersion)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Slug, ver, a.Visibility, artifactState(&a),
-			humanSize(a.SizeBytes), fmtTime(a.UpdatedAt), oneLine(a.Name))
+			artifact.FormatBytes(a.SizeBytes), fmtTime(a.UpdatedAt), oneLine(a.Name))
 	}
 	tw.Flush()
 	if l.NextCursor != "" {
@@ -242,11 +239,11 @@ func (r *runner) printList(l *api.ArtifactList, owner bool) error {
 
 // nearSlug adds the closest slug the caller can see to not_found, when
 // one is close enough to be a typo.
-func (r *runner) nearSlug(err error, cl *Client, slug string) error {
-	if !IsCode(err, api.CodeNotFound) {
+func (r *runner) nearSlug(err error, cl *apiclient.Client, slug string) error {
+	if !apiclient.IsCode(err, api.CodeNotFound) {
 		return err
 	}
-	l, lerr := cl.List(r.ctx, ListParams{Mine: "any", Deleted: "include", Limit: 200})
+	l, lerr := cl.List(r.ctx, apiclient.ListParams{Mine: "any", Deleted: "include", Limit: 200})
 	if lerr != nil {
 		return err
 	}
@@ -380,15 +377,10 @@ func (c *UnstaleCmd) Run(r *runner) error {
 // VisibilityCmd sets an artifact's visibility.
 type VisibilityCmd struct {
 	Slug       string `arg:"" help:"Artifact slug."`
-	Visibility string `arg:"" help:"public, unlisted, members or unpublished."`
+	Visibility string `arg:"" help:"public, unlisted, members or unpublished." enum:"public,unlisted,members,unpublished"`
 }
 
 func (c *VisibilityCmd) Run(r *runner) error {
-	switch c.Visibility {
-	case "public", "unlisted", "members", "unpublished":
-	default:
-		return usagef("visibility: want public, unlisted, members or unpublished, got %q", c.Visibility)
-	}
 	cl, err := r.userClient()
 	if err != nil {
 		return err
@@ -810,7 +802,7 @@ func (c *FilesLsCmd) Run(r *runner) error {
 	tw := newTable(r.stdout)
 	fmt.Fprintln(tw, "PATH\tSIZE\tTYPE\tHASH")
 	for _, f := range v.Files {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, humanSize(f.Size), f.ContentType, shortHash(f.Hash))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Path, artifact.FormatBytes(f.Size), f.ContentType, shortHash(f.Hash))
 	}
 	return tw.Flush()
 }

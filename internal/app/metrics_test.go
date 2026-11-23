@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/api"
-	"github.com/PeterBooker/kazari/internal/cli"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 )
 
 var updateMetrics = flag.Bool("update-metrics", false, "rewrite testdata/metrics*.txt from a scrape")
@@ -36,7 +36,7 @@ func TestMetricNames(t *testing.T) {
 	do(t, hc, http.MethodGet, "http://admin.localhost/v1/nothing", adminToken, "")
 	key := issueKey(t, hc)
 	mcpCall(t, hc, key, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_artifacts","arguments":{}}}`)
-	user := cli.NewClient("http://api.localhost", key, hc)
+	user := apiclient.New("http://api.localhost", key, apiclient.Options{HTTP: hc})
 	if _, err := user.CreateBundle(context.Background(), api.CreateManifest{Slug: "demo"}, bundle(t, map[string]string{"index.html": indexHTML})); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestMetricNames(t *testing.T) {
 	}
 	// The readiness checks run once at start, in the background: wait for
 	// that run, so its gauges are in the scrape every time.
-	if _, err := cli.NewClient("http://admin.localhost", adminToken, hc).Ready(context.Background(), false); err != nil {
+	if _, err := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc}).Ready(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,7 +88,7 @@ func TestMetricNames(t *testing.T) {
 // issueKey creates a member and returns an API key for them.
 func issueKey(t *testing.T, hc *http.Client) string {
 	t.Helper()
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(context.Background(), api.CreateUserRequest{Handle: "metrics"}); err != nil {
 		t.Fatal(err)
 	}

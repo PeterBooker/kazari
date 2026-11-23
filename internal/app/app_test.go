@@ -1,7 +1,9 @@
 package app_test
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -9,11 +11,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,8 +27,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/app"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -206,14 +210,21 @@ func truncate(s string) string {
 
 func bundle(t testing.TB, files map[string]string) *bytes.Buffer {
 	t.Helper()
-	dir := t.TempDir()
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Size: int64(len(files[name])), Mode: 0o644}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(tw, files[name]); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var buf bytes.Buffer
-	if err := cli.TarGz(dir, &buf); err != nil {
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return &buf
@@ -246,7 +257,7 @@ func TestEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	const day = 24 * time.Hour
 
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter", Email: "peter@example.com"}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -255,7 +266,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("issue key: %v", err)
 	}
 	key := issued.Key
-	user := cli.NewClient("http://api.localhost", key, hc)
+	user := apiclient.New("http://api.localhost", key, apiclient.Options{HTTP: hc})
 
 	files := map[string]string{"index.html": indexHTML, "style.css": styleCSS}
 	res, err := user.CreateBundle(ctx, api.CreateManifest{Slug: "demo", Name: "Demo", Description: "e2e demo"}, bundle(t, files))
@@ -366,7 +377,7 @@ func TestEndToEnd(t *testing.T) {
 	in.clock.Advance(15 * day)
 	sweep()
 	wantStatus(t, get(t, hc, "http://demo.localhost/"), http.StatusNotFound, "soft-deleted")
-	list, err := admin.AdminListArtifacts(ctx, cli.ListParams{Deleted: "include"})
+	list, err := admin.AdminListArtifacts(ctx, apiclient.ListParams{Deleted: "include"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +538,7 @@ func TestWriteBudgetShared(t *testing.T) {
 	in := start(t, cfg)
 	hc := client(in.app.Addrs().HTTP)
 	ctx := context.Background()
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter"}); err != nil {
 		t.Fatal(err)
 	}

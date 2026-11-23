@@ -82,6 +82,7 @@ var layers = map[string]layer{
 	"internal/user":      domain,
 	"internal/views":     domain,
 
+	"internal/apiclient":  platform,
 	"internal/blob":       platform,
 	"internal/certs":      platform,
 	"internal/middleware": platform,
@@ -120,11 +121,11 @@ var restricted = []struct {
 	// Packages take Options from internal/app; these two show and check a
 	// whole configuration.
 	{path: "internal/config", only: []string{"cmd/kazari", "internal/app", "internal/cli", "internal/dashboard", "internal/preflight"}},
-	// The wire types are for what answers a client and for the CLI; a
-	// domain package names an error code with internal/errcode. The rate
-	// limiter answers a client itself, and intake reads the files a request
-	// carries.
-	{path: "internal/api", only: []string{"internal/account", "internal/app", "internal/cli", "internal/httpapi",
+	// The wire types are for what answers a client and for the CLI and its
+	// API client; a domain package names an error code with internal/errcode.
+	// The rate limiter answers a client itself, and intake reads the files a
+	// request carries.
+	{path: "internal/api", only: []string{"internal/account", "internal/apiclient", "internal/app", "internal/cli", "internal/httpapi",
 		"internal/intake", "internal/mcpserver", "internal/present", "internal/ratelimit"}},
 	{path: "database/sql", only: []string{"internal/sqlite"}},
 	{path: "github.com/ncruces/go-sqlite3", only: []string{"internal/sqlite"}},
