@@ -1,15 +1,20 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 # Digest-pinned; the maintenance skill updates them.
-FROM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
+# The build stage runs on the builder's platform and cross-compiles, so another target needs no emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 go build -trimpath \
+# The source is bind-mounted rather than copied into a layer, and the module and build caches
+# outlive the build, so a rebuild compiles only what changed.
+RUN --mount=type=bind,target=. \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X github.com/PeterBooker/kazari/internal/buildinfo.version=${VERSION} -X github.com/PeterBooker/kazari/internal/buildinfo.commit=${COMMIT} -X github.com/PeterBooker/kazari/internal/buildinfo.date=${DATE}" \
     -o /out/kazari ./cmd/kazari
 RUN mkdir /out/data
