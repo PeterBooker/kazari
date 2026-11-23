@@ -65,7 +65,7 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store, mkUser := open(t)
-			tt.fn(t, &harness{store: store, mkUser: mkUser, ctx: context.Background()})
+			tt.fn(t, &harness{store: store, mkUser: mkUser, ctx: t.Context()})
 		})
 	}
 }
@@ -1232,10 +1232,8 @@ func testFiles(t *testing.T, h *harness) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]artifact.File{}
-	for _, f := range files {
-		want[f.Path] = f
-	}
+	want := slices.Clone(files)
+	slices.SortFunc(want, func(a, b artifact.File) int { return strings.Compare(a.Path, b.Path) })
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Files (-want +got):\n%s", diff)
 	}

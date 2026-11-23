@@ -860,18 +860,14 @@ func (s *ArtifactStore) ResolveVersion(ctx context.Context, slug string, number 
 	return p, nil
 }
 
-func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ map[string]artifact.File, err error) {
+func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ []artifact.File, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.Files")
 	defer func() { end(err) }()
 	files, err := s.files(ctx, versionID)
 	if err != nil {
 		return nil, artifactErr("files", err)
 	}
-	m := make(map[string]artifact.File, len(files))
-	for _, f := range files {
-		m[f.Path] = f
-	}
-	return m, nil
+	return files, nil
 }
 
 func (s *ArtifactStore) FileOrigin(ctx context.Context, versionID int64, path string) (_ *artifact.FileOrigin, err error) {

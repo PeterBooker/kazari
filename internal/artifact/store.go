@@ -78,7 +78,8 @@ type Store interface {
 	// artifact has no version for.
 	ResolveVersion(ctx context.Context, slug string, number int) (*Published, error)
 
-	Files(ctx context.Context, versionID int64) (map[string]File, error)
+	// Files returns the version's files sorted by path.
+	Files(ctx context.Context, versionID int64) ([]File, error)
 
 	// FileOrigin looks up the version's file at path and its UploadedBy.
 	// ErrNotFound when the version has no such file.

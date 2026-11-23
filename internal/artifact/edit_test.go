@@ -146,7 +146,7 @@ func (c *countingStore) RecordBlob(ctx context.Context, hash string, size int64,
 	return c.ArtifactStore.RecordBlob(ctx, hash, size, at)
 }
 
-func (c *countingStore) Files(ctx context.Context, versionID int64) (map[string]artifact.File, error) {
+func (c *countingStore) Files(ctx context.Context, versionID int64) ([]artifact.File, error) {
 	c.count("Files")
 	return c.ArtifactStore.Files(ctx, versionID)
 }
