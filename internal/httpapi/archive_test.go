@@ -41,9 +41,17 @@ func zipBytes(t *testing.T, files map[string]string) []byte {
 // server, since the response carries the instance's public address.
 func (e *env) beginArchive(t *testing.T, archive []byte) (api.Upload, string) {
 	t.Helper()
+	return e.beginArchiveAt(t, archive, "")
+}
+
+// beginArchiveAt is beginArchive for one file staged at path, or for an
+// archive when path is empty.
+func (e *env) beginArchiveAt(t *testing.T, archive []byte, path string) (api.Upload, string) {
+	t.Helper()
 	var up api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice,
-		api.BeginUploadRequest{ArchiveSHA256: sha(string(archive)), ArchiveBytes: int64(len(archive))}, http.StatusCreated, &up)
+		api.BeginUploadRequest{ArchiveSHA256: sha(string(archive)), ArchiveBytes: int64(len(archive)), ArchivePath: path},
+		http.StatusCreated, &up)
 	prefix := apiBase + "/uploads/" + up.UploadID + "/archive?token="
 	if !strings.HasPrefix(up.ArchiveURL, prefix) || len(up.ArchiveURL) != len(prefix)+43 {
 		t.Fatalf("archive_url = %q, want %s<43 characters>", up.ArchiveURL, prefix)
@@ -107,6 +115,52 @@ func TestArchiveUploadTarGz(t *testing.T) {
 	if got := e.read(e.alice, "tarred", "index.html", 0); got != "<h1>tar</h1>" {
 		t.Errorf("index.html = %q", got)
 	}
+}
+
+// One file needs no archive: the upload is begun with its path, and the body
+// is staged there as it is, even when it looks like an archive.
+func TestArchiveUploadOneFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+		path string
+	}{
+		{"a page", []byte("<h1>one</h1>"), "index.html"},
+		{"a zip kept whole", zipBytes(t, map[string]string{"a.txt": "a"}), "files/kept.zip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+			up, put := e.beginArchiveAt(t, tc.body, tc.path)
+			var res api.ArchiveResult
+			// A path in the query is not the sender's to choose.
+			e.expect(e.put(put+"&path=other.html", tc.body), http.StatusOK, &res)
+			if res.Files != 1 || res.Bytes != int64(len(tc.body)) {
+				t.Fatalf("archive result = %+v, want one file of %d bytes", res, len(tc.body))
+			}
+			e.call(http.MethodPost, e.u("/v1/artifacts"), e.alice, api.CreateArtifactRequest{Slug: "one-file", UploadID: up.UploadID},
+				http.StatusCreated, nil)
+			if got := e.read(e.alice, "one-file", tc.path, 0); got != string(tc.body) {
+				t.Errorf("%s = %q, want the body as sent", tc.path, got)
+			}
+		})
+	}
+
+	t.Run("a bad path", func(t *testing.T) {
+		e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+		body := []byte("<h1>one</h1>")
+		e.apiErr(e.jsonReq(http.MethodPost, e.u("/v1/uploads"), e.alice,
+			api.BeginUploadRequest{ArchiveSHA256: sha(string(body)), ArchiveBytes: int64(len(body)), ArchivePath: "../escape.html"}),
+			http.StatusUnprocessableEntity, api.CodeInvalidPath)
+	})
+	t.Run("a plain file without a path", func(t *testing.T) {
+		e := newEnv(t, config{user: httpapi.UserOptions{APIBaseURL: apiBase}})
+		body := []byte("<h1>one</h1>")
+		_, put := e.beginArchive(t, body)
+		plain := e.apiErr(e.put(put, body), http.StatusUnprocessableEntity, api.CodeInvalidArgument)
+		if !strings.Contains(plain.Message, "archive_path") {
+			t.Errorf("a plain file without a path: %q, want the message to name archive_path", plain.Message)
+		}
+	})
 }
 
 func TestArchiveUploadAttemptsExhausted(t *testing.T) {

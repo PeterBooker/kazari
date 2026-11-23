@@ -348,6 +348,32 @@ func TestServerHelpLeavesOutClientFlags(t *testing.T) {
 	}
 }
 
+func TestRestoreBackupHelpLeavesOutClientFlags(t *testing.T) {
+	r := runCLI(t, nil, "admin", "restore-backup", "--help")
+	if r.code != 0 || !strings.Contains(r.stdout, "--json") {
+		t.Fatalf("admin restore-backup --help: %+v, want --json", r)
+	}
+	for _, flag := range []string{"--url=", "--token=", "--admin-url", "--admin-token", "--admin-socket", "--client-config", "--timeout", "--allow-http"} {
+		if strings.Contains(r.stdout, flag) {
+			t.Errorf("admin restore-backup --help shows %s, which it does not read:\n%s", flag, r.stdout)
+		}
+	}
+}
+
+func TestAdminHelpLeavesOutUserFlags(t *testing.T) {
+	for _, args := range [][]string{{"admin", "--help"}, {"admin", "users", "list", "--help"}} {
+		r := runCLI(t, nil, args...)
+		if r.code != 0 || !strings.Contains(r.stdout, "--admin-token=TOKEN") || !strings.Contains(r.stdout, "--json") {
+			t.Fatalf("%v: %+v, want the admin flags", args, r)
+		}
+		for _, flag := range []string{"--url=", "--token="} {
+			if strings.Contains(r.stdout, flag) {
+				t.Errorf("%v shows the user API flag %s:\n%s", args, flag, r.stdout)
+			}
+		}
+	}
+}
+
 func TestRunHTTPError(t *testing.T) {
 	notFound := replyWith(404, api.ErrorResponse{Error: api.Error{Code: "not_found", Message: "no artifact demo"}})
 	_, srv := newFakeAPI(t, map[string]http.HandlerFunc{
@@ -900,6 +926,14 @@ func TestRunAdmin(t *testing.T) {
 	since, err := time.Parse(time.RFC3339, q.Get("since"))
 	if err != nil || since.Sub(now.Add(-24*time.Hour)).Abs() > time.Minute {
 		t.Errorf("since query = %q (%v)", query, err)
+	}
+	if r = runCLI(t, nil, "--admin-url", srv.URL, "--admin-token", "adm", "admin", "audit", "--since", "3d"); r.code != 0 {
+		t.Errorf("admin audit --since 3d: %+v", r)
+	} else {
+		q, _ = url.ParseQuery(query)
+		if since, err := time.Parse(time.RFC3339, q.Get("since")); err != nil || since.Sub(now.Add(-72*time.Hour)).Abs() > time.Minute {
+			t.Errorf("admin audit --since 3d: since query = %q (%v), want three days ago", query, err)
+		}
 	}
 
 	// The issued key is printed once and the admin token never.

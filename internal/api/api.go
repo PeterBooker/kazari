@@ -358,6 +358,8 @@ type OK struct {
 type BeginUploadRequest struct {
 	ArchiveSHA256 string `json:"archive_sha256,omitempty"`
 	ArchiveBytes  int64  `json:"archive_bytes,omitempty"`
+	// ArchivePath sends one file instead of an archive, staged at this path.
+	ArchivePath string `json:"archive_path,omitempty"`
 }
 
 // Upload describes an upload. ArchiveURL is set when the upload was begun

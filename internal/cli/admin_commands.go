@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/config"
 )
 
 // AdminCmd groups the admin API commands. On the server's host they use the
@@ -663,8 +664,8 @@ func (c *AdminJobsRunCmd) Run(r *runner) error {
 
 // AdminAuditCmd reads the audit log.
 type AdminAuditCmd struct {
-	Since   string   `help:"Only events from this RFC 3339 time on, or from this Go duration ago (such as 24h)." placeholder:"WHEN"`
-	Until   string   `help:"Only events before this RFC 3339 time, or before this Go duration ago." placeholder:"WHEN"`
+	Since   string   `help:"Only events from this RFC 3339 time on, or from this long ago (such as 24h, 3d or 2w)." placeholder:"WHEN"`
+	Until   string   `help:"Only events before this RFC 3339 time, or before this long ago." placeholder:"WHEN"`
 	Slug    string   `help:"Only events for this artifact." placeholder:"SLUG"`
 	Actor   string   `help:"Only events by this handle, or by admin or scheduler." placeholder:"HANDLE"`
 	Subject string   `help:"Only events about the account of this handle, whoever acted." placeholder:"HANDLE"`
@@ -681,10 +682,10 @@ func (r *runner) when(flag, v string) (string, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t.Format(time.RFC3339), nil
 	}
-	if d, err := time.ParseDuration(v); err == nil {
-		return r.now().Add(-d).UTC().Format(time.RFC3339), nil
+	if d, err := config.ParseDuration(v); err == nil {
+		return r.now().Add(-time.Duration(d)).UTC().Format(time.RFC3339), nil
 	}
-	return "", usagef("admin audit: %s: want an RFC 3339 time or a duration, got %q", flag, v)
+	return "", usagef("admin audit: %s: want an RFC 3339 time or a duration such as 24h or 3d, got %q", flag, v)
 }
 
 func (c *AdminAuditCmd) Run(r *runner) error {

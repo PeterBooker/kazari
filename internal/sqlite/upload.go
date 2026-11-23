@@ -52,9 +52,9 @@ func (s *UploadStore) Create(ctx context.Context, u *upload.Upload, maxOpen int)
 		}
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO upload (id, owner_id, bytes, created_at, expires_at,
-			   archive_token_hash, archive_sha256, archive_bytes)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			u.ID, ownerID, u.Bytes, toNanos(u.CreatedAt), toNanos(u.ExpiresAt), a.TokenHash, a.SHA256, a.Bytes)
+			   archive_token_hash, archive_sha256, archive_bytes, archive_path)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			u.ID, ownerID, u.Bytes, toNanos(u.CreatedAt), toNanos(u.ExpiresAt), a.TokenHash, a.SHA256, a.Bytes, a.Path)
 		return err
 	})
 	if artifact.CodeOf(err) != "" {
@@ -270,7 +270,7 @@ func (s *UploadStore) CountOpen(ctx context.Context, owner string) (_ int, err e
 }
 
 const uploadColumns = `u.id, usr.handle, u.bytes, u.created_at, u.expires_at,
-	u.archive_token_hash, u.archive_sha256, u.archive_bytes, u.archive_attempts, u.archive_received_at`
+	u.archive_token_hash, u.archive_sha256, u.archive_bytes, u.archive_path, u.archive_attempts, u.archive_received_at`
 
 func scanUpload(scan func(dest ...any) error) (*upload.Upload, error) {
 	var (
@@ -280,7 +280,7 @@ func scanUpload(scan func(dest ...any) error) (*upload.Upload, error) {
 		received           sql.NullInt64
 	)
 	if err := scan(&u.ID, &u.Owner, &u.Bytes, &created, &expiresAt,
-		&a.TokenHash, &a.SHA256, &a.Bytes, &a.Attempts, &received); err != nil {
+		&a.TokenHash, &a.SHA256, &a.Bytes, &a.Path, &a.Attempts, &received); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromNanos(created)

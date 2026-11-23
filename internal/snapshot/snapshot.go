@@ -165,8 +165,8 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	w.format(doc)
 	if w.room < 0 {
 		w.close()
-		return nil, artifact.Errorf(artifact.ErrTooLarge, "copying %s would add more than %d bytes of absolute links and indentation; "+
-			"save the page from a browser and publish the files", rawURL, textLimit)
+		return nil, artifact.Errorf(artifact.ErrTooLarge, "copying %s would add more than %s of absolute links and indentation; "+
+			"save the page from a browser and publish the files", rawURL, artifact.FormatBytes(textLimit))
 	}
 	var buf bytes.Buffer
 	if err := html.Render(limitWriter{&buf, t.opts.MaxFileBytes}, doc); err != nil {

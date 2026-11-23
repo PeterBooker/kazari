@@ -807,7 +807,7 @@ The URL opens that one upload, accepts only a body with the digest and size the 
 
 #### Begin an archive upload: `POST /uploads`
 
-The body names the archive the URL will accept, a zip or a gzip-compressed tar:
+The body names the archive the URL will accept, a zip or a gzip-compressed tar, or [one file](#send-the-archive-put-uploadsidarchive):
 
 ```json
 { "archive_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "archive_bytes": 1048576 }
@@ -838,6 +838,14 @@ Kazari reads the body only once the token has opened an upload, caps it at `arch
 ```
 
 Regular files are staged under their paths in the archive, with a leading `./` removed, and follow the [path rules](#file-paths) of a bundle; directories, links and other entries are skipped. Archive the contents of the site's directory rather than the directory itself, so that `index.html` sits at the root.
+
+To send one file without an archive, begin the upload with the file's own digest and size and with `archive_path`, the path it takes in the artifact. The body is then staged at that path as it is, even a zip. To stage `logo.png` as `assets/logo.png`, begin with:
+
+```json
+{ "archive_sha256": "9f2c...", "archive_bytes": 20480, "archive_path": "assets/logo.png" }
+```
+
+Then send the file to the `archive_url` of the response, as for an archive. The path follows the [path rules](#file-paths), checked when the upload begins. A file over `limits.max_file_bytes` is staged, and refused when it is published.
 
 A body that does not match is `422 upload_digest_mismatch`, and the message counts the attempts left: after three, the upload is removed. A body that matches but cannot be staged, for example a zip with a path that escapes or with entries whose compressed sizes add up to more than the archive, as overlapping entries can, is `422` with the archive's error, and the upload is removed too, because the same bytes would fail the same way. Once an archive is received the token is spent, and it answers `404 upload_not_found` like an unknown one.
 

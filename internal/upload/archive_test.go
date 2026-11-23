@@ -26,7 +26,7 @@ func digest(s string) string {
 
 func (e *env) beginArchive(t *testing.T, owner, body string) (*upload.Upload, string) {
 	t.Helper()
-	u, token, err := e.svc.BeginArchive(context.Background(), owner, digest(body), int64(len(body)))
+	u, token, err := e.svc.BeginArchive(context.Background(), owner, digest(body), int64(len(body)), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestBeginArchive(t *testing.T) {
 	if err != nil || got.ID != u.ID {
 		t.Fatalf("Archive = %+v, %v", got, err)
 	}
-	if _, _, err := e.svc.BeginArchive(ctx, "alice", strings.ToUpper(digest("x")), 1); err != nil {
+	if _, _, err := e.svc.BeginArchive(ctx, "alice", strings.ToUpper(digest("x")), 1, ""); err != nil {
 		t.Errorf("upper-case digest: %v", err)
 	}
 	for _, tt := range []struct {
@@ -75,7 +75,7 @@ func TestBeginArchive(t *testing.T) {
 		{"negative size", digest("x"), -1, artifact.ErrInvalidArgument},
 		{"over the total", digest("x"), 1<<20 + 1, artifact.ErrTooLarge},
 	} {
-		if _, _, err := e.svc.BeginArchive(ctx, "alice", tt.sum, tt.size); !errors.Is(err, tt.want) {
+		if _, _, err := e.svc.BeginArchive(ctx, "alice", tt.sum, tt.size, ""); !errors.Is(err, tt.want) {
 			t.Errorf("%s: err = %v, want %v", tt.name, err, tt.want)
 		}
 	}
@@ -274,5 +274,25 @@ func TestReceiveArchiveOnce(t *testing.T) {
 	defer cleanup(true)
 	if diff := cmp.Diff(map[string]string{"index.html": "x"}, readFiles(t, files)); diff != "" {
 		t.Errorf("Files (-want +got):\n%s", diff)
+	}
+}
+
+func TestBeginArchivePath(t *testing.T) {
+	e := newEnv(t, upload.Options{})
+	ctx := t.Context()
+	u, _, err := e.svc.BeginArchive(ctx, "alice", digest("x"), 1, "assets/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Archive.Path != "assets/logo.png" {
+		t.Errorf("BeginArchive(assets/logo.png) path = %q", u.Archive.Path)
+	}
+	got, err := e.svc.Get(ctx, "alice", u.ID)
+	if err != nil || got.Archive == nil || got.Archive.Path != "assets/logo.png" {
+		t.Errorf("the stored upload = %+v, %v; want the path kept", got, err)
+	}
+	_, _, err = e.svc.BeginArchive(ctx, "alice", digest("x"), 1, "../escape.png")
+	if !errors.Is(err, artifact.ErrInvalidPath) {
+		t.Errorf("BeginArchive(../escape.png) err = %v, want invalid_path", err)
 	}
 }

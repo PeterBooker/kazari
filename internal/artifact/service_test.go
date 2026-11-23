@@ -342,6 +342,9 @@ func TestSizeLimits(t *testing.T) {
 	}
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "big", Files: files("noext", ten+"z")})
 	wantErr(t, "sniffed file over limit", err, artifact.ErrTooLarge)
+	if want := `file "noext" is 11 B, over the 10 B file limit`; !strings.Contains(err.Error(), want) {
+		t.Errorf("inline file over limit: err = %v, want it to say %q", err, want)
+	}
 
 	_, _, err = e.svc.Create(e.ctx, alice, artifact.CreateRequest{
 		Slug: "wide", Files: files("a.txt", ten, "b.txt", ten, "c.txt", ten),
@@ -2193,5 +2196,42 @@ func TestAuditRecordsCredential(t *testing.T) {
 		t.Errorf("last event = %+v, want the sweep's", sys)
 	} else if _, ok := sys.Details["credential"]; ok {
 		t.Errorf("scheduler event has a credential: %v", sys.Details)
+	}
+}
+
+// A change to an artifact in the bin says how to restore it, to those who
+// may see it there, and nothing to anyone else.
+func TestChangeInTheBinSaysRestore(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	e.create(t, alice, "demo")
+	if err := e.svc.Delete(e.ctx, alice, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	change := artifact.UpdateRequest{Slug: "demo", Files: files("index.html", "v2")}
+	_, _, err := e.svc.Update(e.ctx, alice, change)
+	if !errors.Is(err, artifact.ErrNotFound) || !strings.Contains(err.Error(), "kazari restore demo") {
+		t.Errorf("owner's Update in the bin: err = %v, want not_found naming kazari restore demo", err)
+	}
+	_, _, err = e.svc.Update(e.ctx, bob, change)
+	if !errors.Is(err, artifact.ErrNotFound) || strings.Contains(err.Error(), "bin") {
+		t.Errorf("stranger's Update in the bin: err = %v, want a bare not_found", err)
+	}
+}
+
+// Under the owner policy, someone involved in an artifact sees it in the bin
+// but cannot restore it, so they are not told to.
+func TestChangeInTheBinNamesRestoreToWriters(t *testing.T) {
+	e := newEnv(t, artifact.Options{WritePolicy: artifact.WriteOwner})
+	alice := e.user(t, "alice")
+	e.user(t, "bob")
+	e.create(t, alice, "demo")
+	e.transfer(t, "bob")
+	if err := e.svc.Delete(e.ctx, artifact.Actor{Handle: "bob"}, "demo", false); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: files("index.html", "v2")})
+	if !errors.Is(err, artifact.ErrNotFound) || strings.Contains(err.Error(), "restore") {
+		t.Errorf("Update by the involved alice, who cannot write: err = %v, want a bare not_found", err)
 	}
 }

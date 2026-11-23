@@ -761,7 +761,7 @@ The admin flags take these values:
 - `--slugs`: a comma-separated list of [slug patterns](api.md#restricted-credentials) that restricts the key to some artifacts, such as `'weekly-*'`. By default, a key is not restricted.
 - `--expires`: a lifetime such as `720h` or `90d`. By default, a key never expires, or gets `auth.tokens.max_key_ttl` when that is set.
 - `--overlap`: how long a rotated key keeps working, such as `24h` (the default), `7d` (the most) or `0`.
-- `--since` and `--until`: an RFC 3339 time, or a Go duration meaning "that long ago", such as `24h`. `--until` leaves out events at or after its time.
+- `--since` and `--until`: an RFC 3339 time, or a duration meaning "that long ago", such as `24h`, `3d` or `2w`. `--until` leaves out events at or after its time.
 - `--action`: an exact action such as `key.issue`, or a prefix ending in a dot such as `artifact.`. Repeat it to match several.
 
 For example, to create a user with a 1 GiB quota, issue a CI key valid for 90 days, run the sweep job, then read the last day's audit entries for one artifact:
