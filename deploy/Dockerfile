@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/kazari ./cmd/kazari
 RUN mkdir /out/data
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 COPY --from=build /out/kazari /usr/local/bin/kazari
 # Owned by nonroot (65532): a new named volume copies it, so the server can write.
 COPY --from=build --chown=65532:65532 /out/data /var/lib/kazari

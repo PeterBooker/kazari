@@ -4,7 +4,7 @@ FROM --platform=$BUILDPLATFORM busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4
 RUN mkdir /data
 
 # No RUN in this stage: the release builds every platform on one runner, without emulation.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 # goreleaser puts each platform's binary under its name in the build context.
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/kazari /usr/local/bin/kazari

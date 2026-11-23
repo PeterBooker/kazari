@@ -73,7 +73,7 @@ The facts a deployment needs are:
 | ------------- | ----------------------------------------------------------------------- |
 | Platforms     | `linux/amd64` and `linux/arm64`, under one tag                          |
 | Tags          | each release version, such as `0.8.0`, and `latest` for the newest      |
-| Base          | distroless `static-debian12`, with no shell and no package manager      |
+| Base          | distroless `static-debian13`, with no shell and no package manager      |
 | User          | `nonroot`, UID 65532                                                    |
 | Entrypoint    | `kazari`, with `serve` as the default command                           |
 | Configuration | `/etc/kazari/kazari.yaml` when mounted, else the `KAZARI_*` environment |
