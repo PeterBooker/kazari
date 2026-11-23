@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -48,7 +49,7 @@ func decodeBundleRequest(t *testing.T, r *http.Request) bundleRequest {
 	}
 	for {
 		p, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -95,7 +96,7 @@ func listTarGz(t *testing.T, b []byte) []tarEntry {
 	var out []tarEntry
 	for {
 		h, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return out
 		}
 		if err != nil {

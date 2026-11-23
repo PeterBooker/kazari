@@ -102,11 +102,13 @@ func TestRunDeployFileChangedAfterPlanning(t *testing.T) {
 		change func(t *testing.T, dir string)
 	}{
 		{"rewritten in place", func(t *testing.T, dir string) {
+			t.Helper()
 			if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>y</h1>"), 0o600); err != nil {
 				t.Error(err)
 			}
 		}},
 		{"replaced by a link to a dotfile", func(t *testing.T, dir string) {
+			t.Helper()
 			if err := os.Remove(filepath.Join(dir, "index.html")); err != nil {
 				t.Error(err)
 			}

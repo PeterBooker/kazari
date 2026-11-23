@@ -69,11 +69,7 @@ func (c *PullCmd) Run(r *runner) error {
 			NotDeployed []string `json:"not_deployed,omitempty"`
 		}{c.Slug, version, dir, len(pulled), size, left})
 	}
-	noun := "files"
-	if len(pulled) == 1 {
-		noun = "file"
-	}
-	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %d %s, %s\n", version, c.Slug, dir, len(pulled), noun, artifact.FormatBytes(size))
+	fmt.Fprintf(r.stdout, "pulled version %d of %s to %s: %s, %s\n", version, c.Slug, dir, count(len(pulled), "file"), artifact.FormatBytes(size))
 	return nil
 }
 

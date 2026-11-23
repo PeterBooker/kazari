@@ -211,11 +211,7 @@ func (c *AdminUsersTransferCmd) Run(r *runner, cl adminAPI) error {
 			fmt.Fprintf(w, "%s owns no artifacts\n", c.Handle)
 			return nil
 		}
-		noun := "artifacts"
-		if len(out.Transferred) == 1 {
-			noun = "artifact"
-		}
-		fmt.Fprintf(w, "%d %s of %s now belong to %s\n", len(out.Transferred), noun, c.Handle, c.Owner)
+		fmt.Fprintf(w, "%s of %s now belong to %s\n", count(len(out.Transferred), "artifact"), c.Handle, c.Owner)
 		for _, slug := range out.Transferred {
 			fmt.Fprintln(w, slug)
 		}
