@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 func TestValidateSlugPattern(t *testing.T) {
@@ -163,7 +164,7 @@ var slugOps = []struct {
 	}},
 	{"Edit", false, func(e *env, actor artifact.Actor, slug string) error {
 		_, _, _, err := e.svc.Edit(e.ctx, actor, artifact.EditRequest{Slug: slug, Path: "index.html",
-			Edits: []artifact.Edit{{OldText: "<h1>", NewText: "<h2>"}}})
+			Edits: []textedit.Edit{{OldText: "<h1>", NewText: "<h2>"}}})
 		return err
 	}},
 	{"Publish", false, func(e *env, actor artifact.Actor, slug string) error {

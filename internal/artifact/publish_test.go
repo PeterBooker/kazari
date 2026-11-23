@@ -8,6 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 func TestUpdateAfterRollback(t *testing.T) {
@@ -94,8 +95,8 @@ func TestUpdateWithEdits(t *testing.T) {
 	e.create(t, alice, "demo", "index.html", page, "style.css", "body { color: red; }", "logo.png", "\x89PNG\x00")
 
 	_, v, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", ExpectedVersion: 1, Files: []artifact.FileInput{
-		{Path: "index.html", Edits: []artifact.Edit{{OldText: "Q3", NewText: "Q4"}}},
-		{Path: "/style.css", Edits: []artifact.Edit{{OldText: "red", NewText: "blue"}}},
+		{Path: "index.html", Edits: []textedit.Edit{{OldText: "Q3", NewText: "Q4"}}},
+		{Path: "/style.css", Edits: []textedit.Edit{{OldText: "red", NewText: "blue"}}},
 		{Path: "about.html", Content: strings.NewReader("<p>about</p>")},
 	}})
 	if err != nil {
@@ -113,7 +114,7 @@ func TestUpdateWithEdits(t *testing.T) {
 	var paths []string
 	for _, fe := range v.Edited {
 		paths = append(paths, fe.Path)
-		if len(fe.Outcomes) != 1 || fe.Outcomes[0].Match != artifact.MatchExact {
+		if len(fe.Outcomes) != 1 || fe.Outcomes[0].Match != textedit.MatchExact {
 			t.Errorf("outcomes of %s = %+v", fe.Path, fe.Outcomes)
 		}
 	}
@@ -126,11 +127,11 @@ func TestUpdateWithEdits(t *testing.T) {
 		in   artifact.FileInput
 		want *artifact.Error
 	}{
-		{"missing file", artifact.FileInput{Path: "nope.html", Edits: []artifact.Edit{{OldText: "a", NewText: "b"}}}, artifact.ErrFileNotFound},
-		{"binary file", artifact.FileInput{Path: "logo.png", Edits: []artifact.Edit{{OldText: "PNG", NewText: "GIF"}}}, artifact.ErrInvalidArgument},
-		{"text not found", artifact.FileInput{Path: "index.html", Edits: []artifact.Edit{{OldText: "Q3", NewText: "Q1"}}}, artifact.ErrEditNotFound},
+		{"missing file", artifact.FileInput{Path: "nope.html", Edits: []textedit.Edit{{OldText: "a", NewText: "b"}}}, artifact.ErrFileNotFound},
+		{"binary file", artifact.FileInput{Path: "logo.png", Edits: []textedit.Edit{{OldText: "PNG", NewText: "GIF"}}}, artifact.ErrInvalidArgument},
+		{"text not found", artifact.FileInput{Path: "index.html", Edits: []textedit.Edit{{OldText: "Q3", NewText: "Q1"}}}, textedit.ErrNotFound},
 		{"edits and content", artifact.FileInput{Path: "index.html", Content: strings.NewReader("x"),
-			Edits: []artifact.Edit{{OldText: "Q4", NewText: "Q1"}}}, artifact.ErrInvalidArgument},
+			Edits: []textedit.Edit{{OldText: "Q4", NewText: "Q1"}}}, artifact.ErrInvalidArgument},
 	}
 	for _, c := range cases {
 		_, _, err := e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: []artifact.FileInput{c.in}})
@@ -139,7 +140,7 @@ func TestUpdateWithEdits(t *testing.T) {
 		}
 	}
 	if _, _, err := e.svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "fresh", Files: []artifact.FileInput{
-		{Path: "index.html", Edits: []artifact.Edit{{OldText: "a", NewText: "b"}}}}}); !errors.Is(err, artifact.ErrInvalidArgument) {
+		{Path: "index.html", Edits: []textedit.Edit{{OldText: "a", NewText: "b"}}}}}); !errors.Is(err, artifact.ErrInvalidArgument) {
 		t.Errorf("Create with edits: err = %v, want invalid_argument", err)
 	}
 }
@@ -151,17 +152,17 @@ func TestEditConflictSaysWhetherEditsApply(t *testing.T) {
 	alice := e.user(t, "alice")
 	e.create(t, alice, "demo", "index.html", page)
 	if _, _, _, err := e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html",
-		Edits: []artifact.Edit{{OldText: "Revenue grew.", NewText: "Revenue doubled."}}}); err != nil {
+		Edits: []textedit.Edit{{OldText: "Revenue grew.", NewText: "Revenue doubled."}}}); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
 		name  string
-		edits []artifact.Edit
+		edits []textedit.Edit
 		want  string
 	}{
-		{"still applies", []artifact.Edit{{OldText: "Costs fell.", NewText: "Costs held."}},
+		{"still applies", []textedit.Edit{{OldText: "Costs fell.", NewText: "Costs held."}},
 			"latest version is 2, expected 1; every edit still applies to version 2 as sent: resend the same edits with expected_version 2"},
-		{"no longer applies", []artifact.Edit{{OldText: "Revenue grew.", NewText: "Revenue fell."}},
+		{"no longer applies", []textedit.Edit{{OldText: "Revenue grew.", NewText: "Revenue fell."}},
 			"latest version is 2, expected 1; the edits no longer apply as sent to version 2: read index.html again and redo them"},
 	}
 	for _, c := range cases {
@@ -223,7 +224,7 @@ func TestStagedVersion(t *testing.T) {
 			v.Number, v.Staged, got, "v2")
 	}
 	_, v, _, err = e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html", Stage: true,
-		Edits: []artifact.Edit{{OldText: "v2", NewText: "v4"}}})
+		Edits: []textedit.Edit{{OldText: "v2", NewText: "v4"}}})
 	if err != nil {
 		t.Fatalf("staged Edit without base_version: %v", err)
 	}
@@ -234,7 +235,7 @@ func TestStagedVersion(t *testing.T) {
 	_, _, err = e.svc.Update(e.ctx, alice, artifact.UpdateRequest{Slug: "demo", Files: files("b.txt", "b")})
 	wantErr(t, "publishing Update over a staged version without base_version", err, artifact.ErrPublishedNotLatest)
 	_, _, _, err = e.svc.Edit(e.ctx, alice, artifact.EditRequest{Slug: "demo", Path: "index.html",
-		Edits: []artifact.Edit{{OldText: "v4", NewText: "v5"}}})
+		Edits: []textedit.Edit{{OldText: "v4", NewText: "v5"}}})
 	wantErr(t, "publishing Edit over a staged version without base_version", err, artifact.ErrPublishedNotLatest)
 
 	a, err = e.svc.Publish(e.ctx, alice, "demo", 4)

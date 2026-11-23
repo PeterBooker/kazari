@@ -17,6 +17,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/preflight"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/scheduler"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -178,7 +179,7 @@ func TestConversions(t *testing.T) {
 		},
 		{
 			name: "Edit",
-			got: links.Edit(a, &artifact.Version{Number: 3, Staged: true, Warnings: []string{"w"}}, "index.html", []artifact.EditOutcome{
+			got: links.Edit(a, &artifact.Version{Number: 3, Staged: true, Warnings: []string{"w"}}, "index.html", []textedit.Outcome{
 				{Match: "exact", Replacements: 1, StartLine: 4, EndLine: 6, Excerpt: "<h1>Hi</h1>", ExcerptOf: 2}}),
 			want: api.EditResult{URL: "https://demo.art.test/", Version: 3, VersionURL: "https://demo--v3.art.test/", Staged: true,
 				Path: "index.html", Warnings: []string{"w"}, Artifact: wantArtifact,

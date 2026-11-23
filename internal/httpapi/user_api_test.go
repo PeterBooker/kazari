@@ -19,6 +19,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/httpapi"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -763,7 +764,7 @@ func TestEdit(t *testing.T) {
 		Label: "rename",
 		Edits: []api.Edit{{OldText: "<h1>demo", NewText: "<h1>Demo"}},
 	}, http.StatusOK, &res, "If-Match", `"1"`)
-	if res.Version != 2 || res.Path != "index.html" || len(res.Edits) != 1 || res.Edits[0].Match != artifact.MatchExact ||
+	if res.Version != 2 || res.Path != "index.html" || len(res.Edits) != 1 || res.Edits[0].Match != textedit.MatchExact ||
 		res.Edits[0].StartLine != 1 || !strings.Contains(res.Edits[0].Excerpt, "|<h1>Demo</h1>") {
 		t.Fatalf("edit = %+v", res)
 	}
@@ -774,15 +775,15 @@ func TestEdit(t *testing.T) {
 	resp := e.send(req{method: http.MethodGet, url: e.u("/v1/artifacts/demo/files/index.html?anchors=true"), token: e.alice})
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" ||
-		string(body) != artifact.AnchorLines("<h1>Demo</h1>") || resp.Header.Get("Content-Security-Policy") == "" {
+		string(body) != textedit.AnchorLines("<h1>Demo</h1>") || resp.Header.Get("Content-Security-Policy") == "" {
 		t.Errorf("anchored read = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
 
-	anchor := artifact.Anchor(1, "<h1>Demo</h1>")
+	anchor := textedit.Anchor(1, "<h1>Demo</h1>")
 	e.call(http.MethodPost, e.u("/v1/artifacts/demo/edit"), e.alice, api.EditRequest{
 		Path: "index.html", ExpectedVersion: 2, Edits: []api.Edit{{Start: anchor, NewText: "<h1>Anchored</h1>"}},
 	}, http.StatusOK, &res)
-	if res.Version != 3 || res.Edits[0].Match != artifact.MatchAnchor {
+	if res.Version != 3 || res.Edits[0].Match != textedit.MatchAnchor {
 		t.Errorf("anchor edit = %+v", res)
 	}
 

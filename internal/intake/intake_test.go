@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/fetch"
 	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/sqlite"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 )
 
@@ -135,7 +136,7 @@ func read(t *testing.T, files []artifact.FileInput) []string {
 
 func TestFilesRefuses(t *testing.T) {
 	e := newEnv(t)
-	edit := []artifact.Edit{{OldText: "a", NewText: "b"}}
+	edit := []textedit.Edit{{OldText: "a", NewText: "b"}}
 	cases := []struct {
 		name   string
 		file   intake.File

@@ -14,6 +14,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/fetch"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 )
 
@@ -65,7 +66,7 @@ type File struct {
 	Encoding    string
 	ContentType string
 	URL         string
-	Edits       []artifact.Edit
+	Edits       []textedit.Edit
 	Delete      bool
 }
 

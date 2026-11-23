@@ -5,6 +5,8 @@ package artifact
 import (
 	"io"
 	"time"
+
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // Visibility controls who may open an artifact and who sees it listed.
@@ -93,7 +95,7 @@ type Version struct {
 // FileEdits reports the edits an update applied to one file.
 type FileEdits struct {
 	Path     string
-	Outcomes []EditOutcome
+	Outcomes []textedit.Outcome
 }
 
 // File is one entry of a version.
@@ -116,7 +118,7 @@ type FileInput struct {
 	Content     io.Reader // nil with Delete=true removes the path on update
 	ContentType string    // optional; derived from the extension, then sniffed
 	Delete      bool
-	Edits       []Edit
+	Edits       []textedit.Edit
 }
 
 // Actor is who is calling the service.

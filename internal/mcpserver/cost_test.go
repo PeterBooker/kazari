@@ -10,8 +10,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 func TestWriteResultsAreSummaries(t *testing.T) {
@@ -59,8 +59,8 @@ func TestEditFileInsert(t *testing.T) {
 	lines := strings.Split(editPage, "\n")
 	out, _ := ok[mcpserver.EditFileResult](t, cs, "edit_file", map[string]any{"slug": "demo", "path": "index.html", "expected_version": 1,
 		"edits": []map[string]any{
-			{"after": artifact.Anchor(3, lines[2]), "new_text": "    <p>Intro.</p>"},
-			{"before": artifact.Anchor(5, lines[4]), "new_text": "    <p>End.</p>"},
+			{"after": textedit.Anchor(3, lines[2]), "new_text": "    <p>Intro.</p>"},
+			{"before": textedit.Anchor(5, lines[4]), "new_text": "    <p>End.</p>"},
 		}})
 	if out.Version != 2 || out.LatestVersion != 2 || out.Edits[0].StartLine != 4 || out.Edits[1].StartLine != 6 ||
 		out.Edits[1].ExcerptOf != 1 {

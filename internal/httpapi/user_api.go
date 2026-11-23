@@ -20,6 +20,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/textedit"
 	"github.com/PeterBooker/kazari/internal/upload"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -600,9 +601,9 @@ func (h *userAPI) editFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 	if err != nil {
 		return err
 	}
-	edits := make([]artifact.Edit, len(req.Edits))
+	edits := make([]textedit.Edit, len(req.Edits))
 	for i, e := range req.Edits {
-		edits[i] = artifact.Edit(e)
+		edits[i] = textedit.Edit(e)
 	}
 	a, v, outs, err := h.d.Artifacts.Edit(r.Context(), present.Actor(p), artifact.EditRequest{
 		Slug:            r.PathValue("slug"),
@@ -800,7 +801,7 @@ func (h *userAPI) readFile(w http.ResponseWriter, r *http.Request, p auth.Princi
 // size of the file, and from the blob because a client that stops reading
 // keeps the handler running: the file must not be in memory for that long.
 func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.ReadSeeker) error {
-	text, err := artifact.AnchorableText(rc)
+	text, err := textedit.AnchorableText(rc)
 	if err != nil {
 		return err
 	}
@@ -814,7 +815,7 @@ func writeAnchored(w http.ResponseWriter, f artifact.File, rc io.ReadSeeker) err
 	hdr.Set("Content-Type", "text/plain; charset=utf-8")
 	setUntrustedHeaders(hdr)
 	// Any other failed write is the client going away.
-	if err := artifact.StreamAnchored(w, rc); errors.Is(err, artifact.ErrFileRead) {
+	if err := textedit.StreamAnchored(w, rc); errors.Is(err, textedit.ErrFileRead) {
 		// The status has gone out; ending normally would pass off part of the
 		// file as all of it.
 		panic(http.ErrAbortHandler)

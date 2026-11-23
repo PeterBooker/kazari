@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/PeterBooker/kazari/internal/instrument"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/artifact"
@@ -114,14 +115,15 @@ func (s *Service) published(ctx context.Context, kind string, v *Version, err er
 }
 
 // edited counts each applied edit by kind and match.
-func (s *Service) edited(ctx context.Context, out []EditOutcome) {
+func (s *Service) edited(ctx context.Context, out []textedit.Outcome) {
 	for _, o := range out {
 		kind := "text"
-		if o.Match == MatchAnchor {
+		if o.Match == textedit.MatchAnchor {
 			kind = "anchor"
 		}
-		s.m.edits.Add(ctx, 1, metric.WithAttributes(editKindKey.String(kind),
-			editMatchKey.String(instrument.OneOf(o.Match, MatchExact, MatchTrailingWhitespace, MatchIndentation, MatchAnchor))))
+		match := instrument.OneOf(o.Match,
+			textedit.MatchExact, textedit.MatchTrailingWhitespace, textedit.MatchIndentation, textedit.MatchAnchor)
+		s.m.edits.Add(ctx, 1, metric.WithAttributes(editKindKey.String(kind), editMatchKey.String(match)))
 	}
 }
 
@@ -132,7 +134,7 @@ func (s *Service) countOutcome(ctx context.Context, c metric.Int64Counter, err e
 	c.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
-func editAttrs(span trace.Span, out []EditOutcome) {
+func editAttrs(span trace.Span, out []textedit.Outcome) {
 	if len(out) > 0 && span.IsRecording() {
 		matches := make([]string, len(out))
 		for i, o := range out {

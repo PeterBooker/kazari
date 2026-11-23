@@ -22,6 +22,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/intake"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
 // FileInput is an inline file of create_artifact. Content is a pointer so an
@@ -861,10 +862,10 @@ func (b *builder) files(ctx context.Context, p auth.Principal, uploadID string, 
 	return b.intake.Files(ctx, intake.Call{Owner: p.Handle, UploadID: uploadID, Files: files})
 }
 
-func edits(in []EditInput) []artifact.Edit {
-	out := make([]artifact.Edit, len(in))
+func edits(in []EditInput) []textedit.Edit {
+	out := make([]textedit.Edit, len(in))
 	for i, e := range in {
-		out[i] = artifact.Edit(e)
+		out[i] = textedit.Edit(e)
 	}
 	return out
 }
