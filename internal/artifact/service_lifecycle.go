@@ -671,36 +671,45 @@ func (s *Service) CollectGarbage(ctx context.Context) (n int, err error) {
 	}
 }
 
-// collectBatch holds blobMu from the query to the last delete, so no
-// publish can reuse a blob it selected. A failing batch ends the run, so a
-// persistent error cannot loop forever.
+// collectBatch deletes the files of one batch, then their rows in one
+// transaction. A failing batch ends the run, so a persistent error cannot
+// loop forever.
 func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool, error) {
+	hashes, deleted, err := s.deleteUnreferenced(ctx, before)
+	if len(deleted) == 0 {
+		return 0, len(hashes) == gcBatch, err
+	}
+	// After the lock: a publish since then found each file gone and wrote
+	// it again, and DeleteBlobs keeps the row it recorded or references.
+	n, rerr := s.index.DeleteBlobs(ctx, deleted, before)
+	if rerr != nil {
+		rerr = fmt.Errorf("artifact: gc blob rows: %w", rerr)
+	}
+	return n, len(hashes) == gcBatch, errors.Join(err, rerr)
+}
+
+// deleteUnreferenced holds blobMu from the query to the last file deleted:
+// a publish's Put of content still stored writes nothing, so a file deleted
+// after it would leave its version without one. It returns the hashes
+// selected and those whose files are gone.
+func (s *Service) deleteUnreferenced(ctx context.Context, before time.Time) (hashes, deleted []string, err error) {
 	s.blobMu.Lock()
 	defer s.blobMu.Unlock()
-	hashes, err := s.index.UnreferencedBlobs(ctx, before, gcBatch)
+	hashes, err = s.index.UnreferencedBlobs(ctx, before, gcBatch)
 	if err != nil {
-		return 0, false, err
+		return nil, nil, err
 	}
-	var (
-		n        int
-		firstErr error
-	)
+	deleted = make([]string, 0, len(hashes))
 	for _, h := range hashes {
-		if err := s.blobs.Delete(ctx, h); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("artifact: gc blob %s: %w", h, err)
+		if derr := s.blobs.Delete(ctx, h); derr != nil {
+			if err == nil {
+				err = fmt.Errorf("artifact: gc blob %s: %w", h, derr)
 			}
 			continue
 		}
-		if err := s.index.DeleteBlob(ctx, h); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("artifact: gc blob row %s: %w", h, err)
-			}
-			continue
-		}
-		n++
+		deleted = append(deleted, h)
 	}
-	return n, len(hashes) == gcBatch, firstErr
+	return hashes, deleted, err
 }
 
 // Usage sums every version of the handle's artifacts, for quota reporting.

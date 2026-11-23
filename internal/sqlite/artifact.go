@@ -1054,6 +1054,28 @@ func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error)
 	return artifactErr("delete blob", err)
 }
 
+func (s *ArtifactStore) DeleteBlobs(ctx context.Context, hashes []string, before time.Time) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlobs")
+	defer func() { end(err) }()
+	if len(hashes) == 0 {
+		return 0, nil
+	}
+	list, err := json.Marshal(hashes)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM blob WHERE hash IN (SELECT value FROM json_each(?))
+		   AND created_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = blob.hash)`,
+		string(list), toNanos(before))
+	if err != nil {
+		return 0, artifactErr("delete blobs", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), artifactErr("delete blobs", err)
+}
+
 // artifactStatus applies the lifecycle's precedence, so each artifact has
 // exactly one status.
 const artifactStatus = `CASE

@@ -141,6 +141,11 @@ type BlobIndex interface {
 
 	DeleteBlob(ctx context.Context, hash string) error
 
+	// DeleteBlobs deletes, in one transaction, the rows of those hashes
+	// that no version references and whose created_at is still before the
+	// given time, and returns how many.
+	DeleteBlobs(ctx context.Context, hashes []string, before time.Time) (int, error)
+
 	// BlobTotals counts the stored blobs and sums their sizes.
 	BlobTotals(ctx context.Context) (Totals, error)
 }

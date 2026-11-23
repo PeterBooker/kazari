@@ -87,6 +87,59 @@ func TestCollectGarbageSparesBlobOfPublishInProgress(t *testing.T) {
 	}
 }
 
+// rowsHook runs before the collector deletes a batch's rows.
+type rowsHook struct {
+	*sqlite.ArtifactStore
+	before func()
+}
+
+func (r *rowsHook) DeleteBlobs(ctx context.Context, hashes []string, before time.Time) (int, error) {
+	r.before()
+	return r.ArtifactStore.DeleteBlobs(ctx, hashes, before)
+}
+
+// The collector lets publishes in before it deletes a batch's rows, and a
+// publish of collected content then keeps its blob, file and row.
+func TestCollectGarbageRowsAfterLock(t *testing.T) {
+	e := newEnv(t, artifact.Options{})
+	alice := e.user(t, "alice")
+	const content = "<h1>collected, then published again</h1>"
+	e.create(t, alice, "old-page", "index.html", content)
+	if err := e.svc.Delete(e.ctx, alice, "old-page", true); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(2 * time.Hour)
+
+	hook := &rowsHook{ArtifactStore: e.store}
+	svc := artifact.New(e.store, hook, e.blobs, artifact.NoQuotas{}, e.rec, artifact.Options{Now: e.clock.Now})
+	hook.before = func() {
+		if artifact.GCWaiting(svc) {
+			t.Error("DeleteBlobs runs under the write side of blobMu")
+			return
+		}
+		if _, _, err := svc.Create(e.ctx, alice, artifact.CreateRequest{Slug: "new-page", Files: files("index.html", content)}); err != nil {
+			t.Errorf("Create between the files and the rows: %v", err)
+		}
+	}
+	n, err := svc.CollectGarbage(e.ctx)
+	if err != nil || n != 0 {
+		t.Fatalf("CollectGarbage = %d, %v; want 0 rows deleted, the blob is referenced again", n, err)
+	}
+	if body := e.read(t, alice, "new-page", "index.html", 0); body != content {
+		t.Fatalf("new-page index.html = %q", body)
+	}
+	if referenced, err := e.store.BlobReferenced(e.ctx, sha(content)); err != nil || !referenced {
+		t.Fatalf("BlobReferenced = %v, %v; want true", referenced, err)
+	}
+	totals, err := e.store.BlobTotals(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Count != 1 {
+		t.Errorf("BlobTotals.Count = %d, want 1: the row of the published blob", totals.Count)
+	}
+}
+
 func TestFailedPublishSparesBlobOfPublishInProgress(t *testing.T) {
 	e := newEnv(t, artifact.Options{MaxFileBytes: 100})
 	alice, bob := e.user(t, "alice"), e.user(t, "bob")

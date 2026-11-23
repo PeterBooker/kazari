@@ -13,8 +13,44 @@ import (
 func RunBlobIndex(t *testing.T, open func(t *testing.T) Stores) {
 	suite{
 		{"Blobs", testBlobs},
+		{"DeleteBlobs", testDeleteBlobs},
 		{"BlobTotals", testBlobTotals},
 	}.run(t, open)
+}
+
+func testDeleteBlobs(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	old, recent, kept, used := hashOf("old"), hashOf("recent"), hashOf("kept"), hashOf("used")
+	for hash, created := range map[string]time.Duration{old: 0, recent: 2 * time.Hour, kept: 0} {
+		if err := h.blobs.RecordBlob(h.ctx, hash, 5, at(created)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.create(t, newArtifact("demo", "alice", at(0)), file("used.txt", "used"))
+
+	n, err := h.blobs.DeleteBlobs(h.ctx, []string{old, recent, used, hashOf("unknown")}, at(time.Hour))
+	if err != nil {
+		t.Fatalf("DeleteBlobs: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteBlobs = %d, want 1: the old row only, not the recent, the referenced or the unknown one", n)
+	}
+	got, err := h.blobs.UnreferencedBlobs(h.ctx, at(3*time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	want := []string{kept, recent}
+	slices.Sort(want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("UnreferencedBlobs after DeleteBlobs (-want +got):\n%s", diff)
+	}
+	if referenced, err := h.blobs.BlobReferenced(h.ctx, used); err != nil || !referenced {
+		t.Errorf("BlobReferenced(used) after DeleteBlobs = %v, %v; want true", referenced, err)
+	}
+	if n, err := h.blobs.DeleteBlobs(h.ctx, nil, at(time.Hour)); err != nil || n != 0 {
+		t.Errorf("DeleteBlobs(nil) = %d, %v; want 0, nil", n, err)
+	}
 }
 
 func testBlobs(t *testing.T, h *harness) {
