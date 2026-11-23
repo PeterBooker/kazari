@@ -93,6 +93,39 @@ func TestValidateAddition(t *testing.T) {
 	}
 }
 
+func TestValidateAdditionRefusesEveryHost(t *testing.T) {
+	tests := []struct {
+		name string
+		src  []string
+		ok   bool
+	}{
+		{"wildcard", []string{"*", "*:*", "*:443", "*/path", "//*", "*/a://b.test"}, false},
+		{"network scheme", []string{"http:", "HTTPS:", "ws:", "wss:"}, false},
+		{"wildcard host with scheme", []string{"https://*", "HTTPS://*", "wss://*", "http://*:*", "https://*:443", "https://*/x.js", "ftp://*", "*://*"}, false},
+		{"wildcard host after a bare scheme", []string{"https:*", "https:*:443", "wss:/*"}, false},
+		{"wildcard without a domain", []string{"*.", "https://*.", "https://*..", "https://*.*", "https://**", "https://a*"}, false},
+		{"no host", []string{"https://", ":443", "."}, false},
+		{"named host", []string{"https://cdn.example.com", "cdn.example.com", "example.com:443", "https://example.com:*", "example.com:*", "https://cdn.example.com/lib/"}, true},
+		{"subdomain wildcard", []string{"https://*.example.com", "*.example.com", "wss://*.example.com:*", "https://*.example.com."}, true},
+		{"other scheme", []string{"data:", "blob:", "mediastream:"}, true},
+		{"keyword", []string{"'self'", "'unsafe-eval'", "'nonce-abc'", "'sha256-abc='"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, s := range tt.src {
+				add := "img-src " + s
+				if err := csp.ValidateAddition(add); (err == nil) != tt.ok {
+					t.Errorf("ValidateAddition(%q) = %v, want ok %v", add, err, tt.ok)
+				}
+				merged := csp.Merge("img-src https://base.test", add)
+				if added := merged != "img-src https://base.test"; added != tt.ok {
+					t.Errorf("Merge(img-src https://base.test, %q) = %q, want the source added %v", add, merged, tt.ok)
+				}
+			}
+		})
+	}
+}
+
 func TestAllows(t *testing.T) {
 	src := []string{"'self'", "data:", "https://fonts.googleapis.com", "*.jsdelivr.net"}
 	tests := []struct {

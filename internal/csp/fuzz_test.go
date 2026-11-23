@@ -2,6 +2,7 @@ package csp_test
 
 import (
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -75,6 +76,50 @@ func FuzzMerge(f *testing.F) {
 			if name == "frame-ancestors" || name == "base-uri" || name == "form-action" || name == "sandbox" {
 				if diff := cmp.Diff(src, after[name]); diff != "" {
 					t.Errorf("Merge(%q, %q) changed %s (-want +got):\n%s", policy, add, name, diff)
+				}
+			}
+		}
+	})
+}
+
+// hostSource is the host-source of CSP3, which ValidateAddition must not
+// accept with "*" as the host.
+var hostSource = regexp.MustCompile(`^(?:[a-z][a-z0-9+.-]*://)?(\*|(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.?)(?::(?:[0-9]+|\*))?(?:/.*)?$`)
+
+func matchesEveryHost(src string) bool {
+	src = strings.ToLower(src)
+	switch src {
+	case "http:", "https:", "ws:", "wss:":
+		return true
+	}
+	m := hostSource.FindStringSubmatch(src)
+	return m != nil && m[1] == "*"
+}
+
+func FuzzValidateAddition(f *testing.F) {
+	f.Add("default-src 'self'; img-src 'self'", "img-src https://cdn.test *.example.com data:")
+	f.Add("img-src 'self'", "img-src https://* wss://*:443 *:* https:")
+	f.Add("", "SCRIPT-SRC HTTPS://*/X.JS; frame-src //* https:*")
+	f.Fuzz(func(t *testing.T, policy, add string) {
+		if csp.ValidateAddition(add) == nil {
+			for name, src := range csp.Parse(add) {
+				for _, s := range src {
+					if matchesEveryHost(s) {
+						t.Errorf("ValidateAddition(%q) accepted %s %s, which matches every host", add, name, s)
+					}
+				}
+			}
+		}
+		merged := csp.Merge(policy, add)
+		before, after := csp.Parse(policy), csp.Parse(merged)
+		for name, src := range after {
+			had, ok := before[name]
+			if !ok {
+				had = before["default-src"]
+			}
+			for _, s := range src {
+				if !slices.Contains(had, s) && matchesEveryHost(s) {
+					t.Errorf("Merge(%q, %q) added %s %s, which matches every host", policy, add, name, s)
 				}
 			}
 		}

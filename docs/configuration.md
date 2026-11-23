@@ -332,7 +332,7 @@ default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.c
 
 An artifact adds origins to the instance policy with its `kazari.csp` metadata, for a library or an embed the default does not allow. The value lists fetch directives and the sources to add, such as `frame-src https://www.youtube.com; style-src https://cdn.example.com`.
 
-Each source is added to that directive. A directive the instance policy does not list starts from its `default-src` sources. The other directives, among them `frame-ancestors`, `base-uri` and `form-action`, stay as `csp` sets them. A source must name an origin: `*` and a bare scheme such as `https:` are refused.
+Each source is added to that directive. A directive the instance policy does not list starts from its `default-src` sources. The other directives, among them `frame-ancestors`, `base-uri` and `form-action`, stay as `csp` sets them. A source must name an origin: one that matches every host, such as `*`, a bare scheme such as `https:`, or a host of `*` such as `https://*`, is refused. A subdomain wildcard such as `https://*.example.com` is fine.
 
 To keep every artifact on the instance policy, set `allow_csp_override: false`. A publish that sets `kazari.csp` is then refused with `invalid_metadata`, rather than accepted and ignored.
 
