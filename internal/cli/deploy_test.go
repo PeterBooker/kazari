@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -195,6 +197,42 @@ func TestRunUpdateUnchanged(t *testing.T) {
 	r := runCLI(t, nil, "--url", srv.URL, "--token", "t", "update", "demo", dir)
 	if want := "1 file, 1 B\nno changes: version 4 is already this content\n"; r.code != 0 || r.stderr != want {
 		t.Errorf("update with the same files: %+v, want stderr %q", r, want)
+	}
+}
+
+// Ctrl-C at a prompt ends the command, which would otherwise wait for a
+// line, and leaves the terminal as it was.
+func TestPromptInterrupted(t *testing.T) {
+	for _, args := range [][]string{
+		{"rm", "demo", "--hard"},
+		{"--url", "http://127.0.0.1:1", "--token", "t", "share", "create", "demo", "--password"},
+		{"login", "--url", "http://127.0.0.1:1"},
+	} {
+		t.Run(args[len(args)-1], func(t *testing.T) {
+			stdin, typing := io.Pipe()
+			t.Cleanup(func() { typing.Close() })
+			var stderr lockedBuffer
+			ctx, interrupt := context.WithCancel(t.Context())
+			done := make(chan int, 1)
+			go func() {
+				done <- cli.Run(ctx, args, cli.Env{Stdin: stdin, Stderr: &stderr,
+					LookupEnv:  envMap(map[string]string{"HOME": t.TempDir()}),
+					IsTerminal: func(stream any) bool { return stream == stdin }})
+			}()
+			deadline := time.Now().Add(10 * time.Second)
+			for !strings.Contains(stderr.String(), ": ") && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			interrupt()
+			select {
+			case code := <-done:
+				if code != exitError || !strings.Contains(stderr.String(), "interrupted") {
+					t.Errorf("kazari %s interrupted at its prompt: exit %d, stderr %q", strings.Join(args, " "), code, stderr.String())
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("kazari %s still waits for a line after the interrupt", strings.Join(args, " "))
+			}
+		})
 	}
 }
 

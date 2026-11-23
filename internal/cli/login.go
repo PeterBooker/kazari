@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -78,8 +77,8 @@ func (c *LoginCmd) Run(r *runner) error {
 func (r *runner) readKey(apiURL string) (string, error) {
 	var line string
 	read := func() error {
-		s, err := bufio.NewReader(r.stdin).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		s, err := r.readLine(bufio.NewReader(r.stdin))
+		if err != nil {
 			return fmt.Errorf("login: read the key: %w", err)
 		}
 		line = strings.TrimSpace(s)

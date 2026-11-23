@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -217,6 +218,42 @@ func Run(ctx context.Context, args []string, env Env) int {
 		r.sleep = apiclient.SleepContext
 	}
 	return r.exit(r.run(args))
+}
+
+// errInterrupted ends a read of stdin that a signal cut short.
+var errInterrupted = errors.New("interrupted")
+
+// interruptibly returns what read returns, or errInterrupted as soon as ctx
+// ends: a read of a terminal returns only when a line is typed, and a
+// prompt with the echo off must restore the terminal on Ctrl-C.
+func interruptibly[T any](ctx context.Context, read func() (T, error)) (T, error) {
+	type result struct {
+		v   T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := read()
+		done <- result{v, err}
+	}()
+	select {
+	case res := <-done:
+		return res.v, res.err
+	case <-ctx.Done():
+		var zero T
+		return zero, errInterrupted
+	}
+}
+
+// readLine reads a line of stdin, or what is left before its end.
+func (r *runner) readLine(in *bufio.Reader) (string, error) {
+	return interruptibly(r.ctx, func() (string, error) {
+		s, err := in.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		return s, err
+	})
 }
 
 // terminal reports whether stdin is a terminal a person types at.

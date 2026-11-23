@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -318,8 +317,8 @@ func (r *runner) confirmPurge(slug string) error {
 		return usagef("rm: --hard purges %s and every version for good; add --yes to do it without a terminal to confirm on", slug)
 	}
 	fmt.Fprintf(r.stderr, "This purges %s and every version for good. Type the slug to confirm: ", slug)
-	line, err := bufio.NewReader(r.stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	line, err := r.readLine(bufio.NewReader(r.stdin))
+	if err != nil {
 		return fmt.Errorf("rm: read the confirmation: %w", err)
 	}
 	if strings.TrimSpace(line) != slug {
@@ -453,8 +452,8 @@ func (c *ShareCreateCmd) Run(r *runner) error {
 func (r *runner) readLinkPassword() (string, error) {
 	in := bufio.NewReader(r.stdin)
 	line := func() (string, error) {
-		s, err := in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		s, err := r.readLine(in)
+		if err != nil {
 			return "", fmt.Errorf("share create: read the password: %w", err)
 		}
 		return strings.TrimRight(s, "\r\n"), nil
@@ -754,7 +753,7 @@ func (r *runner) readEdits(name string) ([]api.Edit, error) {
 		err  error
 	)
 	if name == "-" {
-		data, err = io.ReadAll(r.stdin)
+		data, err = interruptibly(r.ctx, func() ([]byte, error) { return io.ReadAll(r.stdin) })
 	} else {
 		data, err = os.ReadFile(name)
 	}

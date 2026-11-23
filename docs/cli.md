@@ -58,7 +58,9 @@ Each setting comes from the first of these that is set: the flag, the environmen
 
 The client takes a URL as people write it. A URL without a scheme means `https://`, or `http://` for `localhost`, a `*.localhost` name or a loopback address. A trailing `/` or `/v1` is dropped, since the client adds `/v1` itself.
 
-By default, a request has no overall time limit, so a large upload can take as long as it needs, but the server must accept the connection within 10 seconds and start answering within 60. `--timeout` bounds the whole request.
+By default, a request has no overall time limit, so a large upload can take as long as it needs, but the server must accept the connection within 10 seconds and start answering within 60. `--timeout` bounds the whole request, over the admin socket too.
+
+Ctrl-C, or `SIGTERM`, stops a command at its request or prompt, and it says what it left behind, such as the files a `pull` had written; a prompt that hides the typing shows it again. A second Ctrl-C ends the command at once.
 
 The client sends a key over plain `http://` only to this machine. For another host it stops with an error that names `--allow-http`, which lets the request through.
 
