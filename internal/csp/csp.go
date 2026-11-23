@@ -104,8 +104,9 @@ var fetchDirectives = map[string]bool{
 }
 
 // ValidateAddition checks an artifact's additions to the instance policy:
-// fetch directives only, each naming sources to add. A wildcard or a bare
-// scheme would allow every origin, and 'none' cannot be added to a list.
+// fetch directives only, each naming sources to add. A source that matches
+// every host, such as *, https: or https://*, would allow every origin, and
+// 'none' cannot be added to a list.
 func ValidateAddition(add string) error {
 	for d := range strings.SplitSeq(add, ";") {
 		f := strings.Fields(d)
@@ -128,12 +129,37 @@ func ValidateAddition(add string) error {
 	return nil
 }
 
+var networkSchemes = map[string]bool{"http": true, "https": true, "ws": true, "wss": true}
+
+// addable reads a source both host first, as Chromium does, and scheme
+// first, as Firefox does for a scheme not followed by "//", and refuses it if
+// either reading matches every host.
 func addable(s string) bool {
-	switch strings.ToLower(s) {
-	case "*", "'none'", "http:", "https:", "ws:", "wss:":
+	s = strings.ToLower(s)
+	if strings.HasPrefix(s, "'") {
+		return s != "'none'"
+	}
+	if everyHost(hostPart(s)) {
 		return false
 	}
+	scheme, rest, ok := strings.Cut(s, ":")
+	if ok && (networkSchemes[scheme] || strings.HasPrefix(rest, "//")) {
+		return !everyHost(hostPart(rest))
+	}
 	return true
+}
+
+func hostPart(s string) string {
+	s = strings.TrimLeft(s, "/")
+	if i := strings.IndexAny(s, ":/"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func everyHost(host string) bool {
+	host = strings.TrimPrefix(host, "*.")
+	return strings.Contains(host, "*") || strings.Trim(host, ".") == ""
 }
 
 // Merge returns policy with an artifact's additions: each source is appended
