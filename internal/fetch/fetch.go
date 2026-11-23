@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 const (
@@ -298,7 +299,7 @@ func failed(u string, err error) error {
 }
 
 func tooLarge(u string, limit int64) error {
-	return artifact.Errorf(artifact.ErrFetchFailed, "%s is larger than %s", u, artifact.FormatBytes(limit))
+	return artifact.Errorf(artifact.ErrFetchFailed, "%s is larger than %s", u, bytesize.Format(limit))
 }
 
 // Transport dials public addresses only. The check runs on the resolved

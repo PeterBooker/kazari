@@ -16,6 +16,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/textedit"
 )
@@ -110,7 +111,7 @@ func (t texts) skillText(o Options) string {
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
 			"upload is consumed only when that call succeeds: after an error, correct the call and send it again with the same "+
 			"`upload_id`. `discard_upload` drops an upload you no longer need.",
-			size(o.InlineGuidanceBytes), size(o.MaxTotalBytes)),
+			bytesize.Exact(o.InlineGuidanceBytes), bytesize.Exact(o.MaxTotalBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
 			"inline, `anchors: true` for anchor edits, `start_line` and `end_line` for only the lines you need of any text " +
 			"file, small " +
@@ -174,7 +175,7 @@ func (t texts) skillText(o Options) string {
 		"- A text file above the inline read limit (%s) comes back as a download URL. Read it in windows with "+
 		"`start_line` and `end_line` instead: the lines carry the same anchors, the result states `total_lines`, and "+
 		"the note says where to continue when the window was cut short.\n\n", textedit.MaxEdits, textedit.ExcerptContext,
-		textedit.ExcerptFullLines, size(o.MaxInlineReadBytes))
+		textedit.ExcerptFullLines, bytesize.Exact(o.MaxInlineReadBytes))
 
 	b.WriteString("## Authoring conventions\n\n")
 	fmt.Fprintf(&b, "- Build a self-contained `index.html`; it is served at %s. Extra files (CSS, JavaScript, images) are "+
@@ -360,7 +361,7 @@ func (t texts) nextSteps(o Options) map[string]string {
 		api.CodeGone: "The artifact was purged and cannot be restored. Publish the content again under a new slug; the old " +
 			"one stays blocked for a while.",
 		api.CodeTooLarge: fmt.Sprintf("The limits are in the create_artifact description and cannot be raised by the call. "+
-			"Content above %s that is within them goes through begin_upload and upload_chunk.", size(o.InlineGuidanceBytes)),
+			"Content above %s that is within them goes through begin_upload and upload_chunk.", bytesize.Exact(o.InlineGuidanceBytes)),
 		api.CodeTooManyFiles:   "Bundle fewer files, for example by inlining small CSS and JavaScript into the HTML.",
 		api.CodeQuotaExceeded:  "The owner's storage quota is full, and every version counts in full. Tell the user: deleting old artifacts, old versions (metadata kazari.keep_versions on a page edited often), or a larger quota from an admin frees space.",
 		api.CodeUploadNotFound: "The upload expired, was discarded or was published by an earlier create_artifact or update_artifact call. Start again with begin_upload.",

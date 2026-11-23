@@ -17,6 +17,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/errcode"
 )
 
@@ -174,7 +175,7 @@ type editor struct {
 
 func (ed *editor) checkSize(size int64) error {
 	if ed.max > 0 && size > ed.max {
-		return errcode.Errorf(ErrTooLarge, "the edits would make %s %s, over the %s file limit", ed.name, formatBytes(size), formatBytes(ed.max))
+		return errcode.Errorf(ErrTooLarge, "the edits would make %s %s, over the %s file limit", ed.name, bytesize.Format(size), bytesize.Format(ed.max))
 	}
 	return nil
 }
@@ -1301,21 +1302,4 @@ func linesAt(text string, offs []int) []int {
 		out[i] = line
 	}
 	return out
-}
-
-// formatBytes writes n in the largest binary unit that keeps it whole or to
-// one decimal place: 25 MiB, 1.5 GiB, 512 B.
-func formatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	v, exp := float64(n), 0
-	for v >= unit && exp < 5 {
-		v /= unit
-		exp++
-	}
-	s := strconv.FormatFloat(v, 'f', 1, 64)
-	s = strings.TrimSuffix(s, ".0")
-	return s + " " + string("KMGTPE"[exp-1]) + "iB"
 }

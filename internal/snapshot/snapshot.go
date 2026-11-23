@@ -19,6 +19,7 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/fetch"
@@ -167,7 +168,7 @@ func (t *Taker) Take(ctx context.Context, rawURL string, keepScripts bool) (*art
 	if w.room < 0 {
 		w.close()
 		return nil, artifact.Errorf(artifact.ErrTooLarge, "copying %s would add more than %s of absolute links and indentation; "+
-			"save the page from a browser and publish the files", rawURL, artifact.FormatBytes(textLimit))
+			"save the page from a browser and publish the files", rawURL, bytesize.Format(textLimit))
 	}
 	var buf bytes.Buffer
 	if err := html.Render(limitWriter{&buf, t.opts.MaxFileBytes}, doc); err != nil {

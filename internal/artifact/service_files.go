@@ -72,7 +72,7 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 	}
 	versionLeft := s.opts.MaxVersionBytes - carried
 	if versionLeft < 0 {
-		return nil, 0, Errorf(ErrTooLarge, "the version is over the %s version limit", FormatBytes(s.opts.MaxVersionBytes))
+		return nil, 0, Errorf(ErrTooLarge, "the version is over the %s version limit", bytesize.Format(s.opts.MaxVersionBytes))
 	}
 	if quotaLeft != nil {
 		*quotaLeft -= carried + int64(count)*FileChargeBytes
@@ -105,13 +105,13 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 // starts now.
 func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64, put *[]string) (File, error) {
 	if n, ok := knownSize(in.Content); ok && n > s.opts.MaxFileBytes {
-		return File{}, Errorf(ErrTooLarge, "file %q is %s, over the %s file limit", p, FormatBytes(n), FormatBytes(s.opts.MaxFileBytes))
+		return File{}, Errorf(ErrTooLarge, "file %q is %s, over the %s file limit", p, bytesize.Format(n), bytesize.Format(s.opts.MaxFileBytes))
 	}
 	fileLeft := s.opts.MaxFileBytes
 	var r io.Reader = &limitReader{r: in.Content, left: &fileLeft,
-		err: Errorf(ErrTooLarge, "file %q is over the %s file limit", p, FormatBytes(s.opts.MaxFileBytes))}
+		err: Errorf(ErrTooLarge, "file %q is over the %s file limit", p, bytesize.Format(s.opts.MaxFileBytes))}
 	r = &limitReader{r: r, left: versionLeft,
-		err: Errorf(ErrTooLarge, "the version is over the %s version limit", FormatBytes(s.opts.MaxVersionBytes))}
+		err: Errorf(ErrTooLarge, "the version is over the %s version limit", bytesize.Format(s.opts.MaxVersionBytes))}
 	if quotaLeft != nil {
 		r = &limitReader{r: r, left: quotaLeft,
 			err: Errorf(ErrQuotaExceeded, "the new version would exceed the owner's quota")}
@@ -210,6 +210,3 @@ func knownSize(r io.Reader) (int64, bool) {
 	}
 	return 0, false
 }
-
-// FormatBytes is bytesize.Format, the form of every size in an error.
-func FormatBytes(n int64) string { return bytesize.Format(n) }

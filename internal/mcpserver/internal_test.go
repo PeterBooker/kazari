@@ -80,14 +80,6 @@ func TestDescribeCSP(t *testing.T) {
 	}
 }
 
-func TestSize(t *testing.T) {
-	for n, want := range map[int64]string{2 << 20: "2 MiB", 256 << 10: "256 KiB", 1500: "1500 bytes", 1 << 30: "1 GiB"} {
-		if got := size(n); got != want {
-			t.Errorf("size(%d) = %q, want %q", n, got, want)
-		}
-	}
-}
-
 // checkText refuses base64 sent as text for a binary file, and nothing else.
 func TestCheckText(t *testing.T) {
 	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg=="

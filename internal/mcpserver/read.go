@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/textedit"
 )
@@ -136,7 +137,7 @@ func (b *builder) readFile(ctx context.Context, actor artifact.Actor, in ReadFil
 		}
 		msg := fmt.Sprintf("%s is %d bytes (%s, sha256 %s), too large to return inline. Download it from %s "+
 			"with the API key as a bearer token.", f.Path, f.Size, f.ContentType, f.Hash, out.URL)
-		out.blocks = []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)), &mcp.TextContent{Text: msg}}
+		out.blocks = []mcp.Content{head(f.Path, bytesize.Format(f.Size)), &mcp.TextContent{Text: msg}}
 	case err != nil:
 		return ReadFileResult{}, err
 	case fc.text:
@@ -149,7 +150,7 @@ func (b *builder) readFile(ctx context.Context, actor artifact.Actor, in ReadFil
 		out.blocks = []mcp.Content{head(f.Path, lineCount(fc.data)), &mcp.TextContent{Text: body}}
 	default:
 		out.Encoding = "base64"
-		out.blocks = []mcp.Content{head(f.Path, artifact.FormatBytes(f.Size)+" "+f.ContentType),
+		out.blocks = []mcp.Content{head(f.Path, bytesize.Format(f.Size)+" "+f.ContentType),
 			&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
 				URI:      fileURI(in.Slug, f.Path),
 				MIMEType: f.ContentType,
@@ -241,7 +242,7 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 		Title: "Artifact file",
 		Description: fmt.Sprintf("One file of an artifact's published version, with its own content type: text inline, "+
 			"other files as a base64 blob, up to %s; larger files are an error (use read_file for a download URL).",
-			size(b.o.MaxInlineReadBytes)),
+			bytesize.Exact(b.o.MaxInlineReadBytes)),
 		URITemplate: fileTemplate,
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (res *mcp.ReadResourceResult, err error) {
 		uri := req.Params.URI
@@ -257,7 +258,7 @@ func (b *builder) addResources(s *mcp.Server, p auth.Principal) {
 		if errors.Is(err, errTooLargeToInline) {
 			return nil, &toolError{e: api.Error{Code: api.CodeTooLarge, Message: fmt.Sprintf(
 				"%s is %s, more than the %s resource limit; use read_file for a download URL",
-				fc.file.Path, size(fc.file.Size), size(b.o.MaxInlineReadBytes))}, cause: err}
+				fc.file.Path, bytesize.Exact(fc.file.Size), bytesize.Exact(b.o.MaxInlineReadBytes))}, cause: err}
 		}
 		if err != nil {
 			return nil, b.resourceError(ctx, uri, err)
@@ -342,7 +343,7 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	}
 	if f.Size > b.o.MaxFileBytes {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
-			"%s is %d bytes, more than the %s file limit", f.Path, f.Size, size(b.o.MaxFileBytes))
+			"%s is %d bytes, more than the %s file limit", f.Path, f.Size, bytesize.Exact(b.o.MaxFileBytes))
 	}
 	w := lineWindow{start: start, end: end, limit: b.o.MaxInlineReadBytes, anchors: in.Anchors}
 	valid, n, err := w.scan(io.LimitReader(rc, b.o.MaxFileBytes+1))
@@ -351,7 +352,7 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	}
 	if n > b.o.MaxFileBytes {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
-			"%s is larger than the %s file limit", f.Path, size(b.o.MaxFileBytes))
+			"%s is larger than the %s file limit", f.Path, bytesize.Exact(b.o.MaxFileBytes))
 	}
 	if !valid {
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrInvalidArgument, "%s is not UTF-8 text", f.Path)
@@ -363,7 +364,7 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	}
 	if w.last == 0 { // line start exists, so it did not fit
 		return ReadFileResult{}, "", artifact.Errorf(artifact.ErrTooLarge,
-			"line %d of %s is %d bytes, more than the %s inline limit", start, f.Path, w.tooLong, size(b.o.MaxInlineReadBytes))
+			"line %d of %s is %d bytes, more than the %s inline limit", start, f.Path, w.tooLong, bytesize.Exact(b.o.MaxInlineReadBytes))
 	}
 	if end == 0 || end > total {
 		end = total
@@ -374,7 +375,7 @@ func (b *builder) readWindow(ctx context.Context, actor artifact.Actor, in ReadF
 	note := ""
 	if last < end {
 		note = fmt.Sprintf("The window was cut at the %s inline limit: continue from start_line %d.",
-			size(b.o.MaxInlineReadBytes), last+1)
+			bytesize.Exact(b.o.MaxInlineReadBytes), last+1)
 	}
 	return out, note, nil
 }

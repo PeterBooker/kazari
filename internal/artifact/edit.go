@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/textedit"
 )
 
@@ -142,7 +143,7 @@ func (s *Service) fileText(ctx context.Context, f File) (string, error) {
 		return "", fmt.Errorf("artifact: read %s: %w", f.Path, err)
 	}
 	if int64(len(data)) > s.opts.MaxFileBytes {
-		return "", Errorf(ErrTooLarge, "%q is over the %s file limit", f.Path, FormatBytes(s.opts.MaxFileBytes))
+		return "", Errorf(ErrTooLarge, "%q is over the %s file limit", f.Path, bytesize.Format(s.opts.MaxFileBytes))
 	}
 	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return "", Errorf(ErrInvalidArgument, "%q is not a UTF-8 text file, so it cannot be edited; replace the whole file with update_artifact instead", f.Path)

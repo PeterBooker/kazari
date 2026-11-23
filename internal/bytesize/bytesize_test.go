@@ -20,3 +20,18 @@ func TestFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestExact(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 bytes"}, {1023, "1023 bytes"}, {1500, "1500 bytes"}, {1024, "1 KiB"}, {256 << 10, "256 KiB"}, {1536 << 10, "1536 KiB"},
+		{2 << 20, "2 MiB"}, {1 << 30, "1 GiB"}, {3 << 40, "3072 GiB"}, {-1 << 20, "-1048576 bytes"},
+	}
+	for _, tt := range tests {
+		if got := bytesize.Exact(tt.n); got != tt.want {
+			t.Errorf("Exact(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}

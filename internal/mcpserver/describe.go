@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/csp"
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/textedit"
@@ -50,7 +51,7 @@ func newTexts(links present.Links, o Options) texts {
 		artifact.SlugMinLen, artifact.SlugMaxLen, reserved, t.pageURL)
 
 	t.limits = fmt.Sprintf("Limits: each file at most %s, each version at most %s in total, at most %d files per version.",
-		size(o.MaxFileBytes), size(o.MaxVersionBytes), o.MaxFiles)
+		bytesize.Exact(o.MaxFileBytes), bytesize.Exact(o.MaxVersionBytes), o.MaxFiles)
 
 	t.text = fmt.Sprintf("Text fields: name at most %d bytes and label at most %d bytes, each on one line; description "+
 		"at most %d bytes (line breaks allowed); none may contain other control characters.",
@@ -86,7 +87,7 @@ func newTexts(links present.Links, o Options) texts {
 		"already on disk goes through begin_upload and archive_url whatever its size; without a shell, content above %s "+
 		"goes through begin_upload and upload_chunk. Then pass upload_id here; inline files[] in the same call win on a "+
 		"path clash. Only a call that succeeds consumes the upload: after an error, fix the call and resend it with the "+
-		"same upload_id.", size(o.InlineGuidanceBytes))
+		"same upload_id.", bytesize.Exact(o.InlineGuidanceBytes))
 	if o.Fetch {
 		t.inline += " " + urlFile
 	}
@@ -97,7 +98,7 @@ func newTexts(links present.Links, o Options) texts {
 		"be at most %s. 3) curl --fail-with-body -T site.zip '<archive_url>': the URL needs no credential, accepts only "+
 		"a body with that digest, and is spent by the first one that matches; after %d bodies that do not, the upload "+
 		"is removed. 4) create_artifact or update_artifact with upload_id. If curl cannot reach the host, the sandbox's "+
-		"network policy blocks it: tell the user, and fall back to upload_chunk.", size(o.MaxTotalBytes), upload.MaxArchiveAttempts)
+		"network policy blocks it: tell the user, and fall back to upload_chunk.", bytesize.Exact(o.MaxTotalBytes), upload.MaxArchiveAttempts)
 
 	t.chunks = fmt.Sprintf("Offset rule: the first chunk of each path has offset 0; every next chunk's offset is the "+
 		"bytes_received returned by the previous chunk of that path. Each chunk is at most %s after base64 decoding "+
@@ -105,7 +106,7 @@ func newTexts(links present.Links, o Options) texts {
 		"files and \"utf8\" for text. If a call failed or you are unsure it arrived, resend the same chunk at the same "+
 		"offset: a repeat of the last chunk is acknowledged without being written twice. On upload_offset_mismatch "+
 		"the error says current=<n>: resume that path from offset n.",
-		size(o.MaxChunkBytes), size(o.MaxTotalBytes))
+		bytesize.Exact(o.MaxChunkBytes), bytesize.Exact(o.MaxTotalBytes))
 
 	copyLine := ""
 	if o.Fetch {
@@ -133,7 +134,7 @@ func newTexts(links present.Links, o Options) texts {
 		"the user the url from the result.\n"+
 		"Errors end with the next step to take; follow it. The full guide (workflow, authoring conventions with this "+
 		"instance's limits and CSP, edit modes, errors) is the skill %s, also returned by get_guide.",
-		t.pageURL, t.versionURL, copyLine, size(o.InlineGuidanceBytes), skillURI)
+		t.pageURL, t.versionURL, copyLine, bytesize.Exact(o.InlineGuidanceBytes), skillURI)
 
 	t.tools = t.toolDescriptions(o)
 	t.next = t.nextSteps(o)
@@ -248,7 +249,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 		"begin_upload": strings.Join([]string{
 			fmt.Sprintf("Start an upload, for files already on disk (any size) and content too large to inline (any "+
 				"file, or all files together, above %s). Returns upload_id, expires_at, max_chunk_bytes and "+
-				"max_total_bytes, and with archive_sha256 and archive_bytes also archive_url.", size(o.InlineGuidanceBytes)),
+				"max_total_bytes, and with archive_sha256 and archive_bytes also archive_url.", bytesize.Exact(o.InlineGuidanceBytes)),
 			t.archive,
 			"Without a shell: 1) begin_upload. 2) upload_chunk for each file, following its offset rule. 3) " +
 				"create_artifact or update_artifact with upload_id (plus any small inline files or delete entries).",
@@ -286,7 +287,7 @@ func (t texts) toolDescriptions(o Options) map[string]string {
 			"is. A window holds as many whole lines as fit %s and says where to continue when it was cut short. The "+
 			"structured result carries path, content_type, size, hash (sha256), encoding (utf8, base64 or url), "+
 			"version, latest_version, the window's lines and total_lines, and for text the content.",
-			size(o.MaxInlineReadBytes), size(MaxInlineBlobBytes), dl, size(o.MaxFileBytes), size(o.MaxInlineReadBytes)),
+			bytesize.Exact(o.MaxInlineReadBytes), bytesize.Exact(MaxInlineBlobBytes), dl, bytesize.Exact(o.MaxFileBytes), bytesize.Exact(o.MaxInlineReadBytes)),
 
 		"list_artifacts": "List artifacts visible to you: every public and members artifact plus unlisted ones you " +
 			"created or updated. Filters: mine = \"created\", \"updated\" or \"any\" (relative to you); metadata = key/value pairs " +
@@ -360,7 +361,7 @@ func (t texts) promptText(o Options, topic string) string {
 	fmt.Fprintf(&b, "- Pick a short, descriptive slug from the topic, e.g. \"q3-roadmap\". %s If create_artifact fails "+
 		"with slug_taken, choose another slug.\n", t.slugRules)
 	fmt.Fprintf(&b, "- %s If any file, or all files together, exceed %s, use begin_upload and upload_chunk, then call "+
-		"create_artifact with upload_id.\n", t.limits, size(o.InlineGuidanceBytes))
+		"create_artifact with upload_id.\n", t.limits, bytesize.Exact(o.InlineGuidanceBytes))
 	fmt.Fprintf(&b, "- For client-side routing set metadata %s = \"true\".\n", artifact.MetaSPA)
 	b.WriteString("- When the page is published, report the url from the result back to the user.\n")
 	return b.String()
@@ -375,18 +376,6 @@ func hostURL(links present.Links, base, sub string) string {
 		return "https://" + sub + "." + base + "/"
 	}
 	return "https://" + sub + ".<base>/"
-}
-
-func size(n int64) string {
-	switch {
-	case n >= 1<<30 && n%(1<<30) == 0:
-		return fmt.Sprintf("%d GiB", n>>30)
-	case n >= 1<<20 && n%(1<<20) == 0:
-		return fmt.Sprintf("%d MiB", n>>20)
-	case n >= 1<<10 && n%(1<<10) == 0:
-		return fmt.Sprintf("%d KiB", n>>10)
-	}
-	return fmt.Sprintf("%d bytes", n)
 }
 
 // cspDirectives are explained in this order; optional ones only when the policy names them.
