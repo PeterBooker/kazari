@@ -339,7 +339,7 @@ const artifactFiles = `SELECT path, blob_hash, size, content_type, uploaded_by F
 	WHERE version_id = ? ORDER BY path`
 
 func (s *ArtifactStore) files(ctx context.Context, versionID int64) ([]artifact.File, error) {
-	rows, err := s.db.stmt.files.QueryContext(ctx, versionID)
+	rows, err := s.db.QueryContext(ctx, artifactFiles, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -870,6 +870,23 @@ func (s *ArtifactStore) Files(ctx context.Context, versionID int64) (_ []artifac
 		return nil, artifactErr("files", err)
 	}
 	return files, nil
+}
+
+const artifactFile = `SELECT path, blob_hash, size, content_type, uploaded_by FROM version_file
+	WHERE version_id = ? AND path = ?`
+
+func (s *ArtifactStore) File(ctx context.Context, versionID int64, path string) (_ *artifact.File, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.File")
+	defer func() { end(err) }()
+	var f artifact.File
+	err = s.db.stmt.file.QueryRowContext(ctx, versionID, path).Scan(&f.Path, &f.Hash, &f.Size, &f.ContentType, &f.UploadedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, artifact.ErrNotFound
+	}
+	if err != nil {
+		return nil, artifactErr("file", err)
+	}
+	return &f, nil
 }
 
 const artifactFileOrigin = `

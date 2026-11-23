@@ -72,6 +72,7 @@ func Run(t *testing.T, open func(t *testing.T) Stores) {
 		{"ListSlugs", testListSlugs},
 		{"Resolve", testResolve},
 		{"Files", testFiles},
+		{"File", testFile},
 		{"FileOrigin", testFileOrigin},
 		{"Usage", testUsage},
 		{"LifecycleQueries", testLifecycleQueries},
@@ -1256,6 +1257,71 @@ func testFiles(t *testing.T, h *harness) {
 	if len(empty) != 0 {
 		t.Fatalf("Files of unknown version = %v", empty)
 	}
+}
+
+func testFile(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	h.mkUser("bob")
+	a := newArtifact("demo", "alice", at(0))
+	css := file("css/site.css", "body{}")
+	css.ContentType = "text/css"
+	v1 := h.create(t, a, file("index.html", "<p>"), css)
+	v2 := newVersion("bob", at(time.Hour), file("index.html", "<p>two"))
+	if err := h.addVersion(a, v2, 0); err != nil {
+		t.Fatal(err)
+	}
+	h.create(t, newArtifact("other", "alice", at(0)), file("other.html", "other"))
+
+	for _, tt := range []struct {
+		name    string
+		version int64
+		path    string
+		want    artifact.File
+	}{
+		{"first", v1.ID, "index.html", uploadedBy("alice", file("index.html", "<p>"))[0]},
+		{"nested", v1.ID, "css/site.css", uploadedBy("alice", css)[0]},
+		{"later version", v2.ID, "index.html", uploadedBy("bob", file("index.html", "<p>two"))[0]},
+	} {
+		got, err := h.store.File(h.ctx, tt.version, tt.path)
+		if err != nil {
+			t.Errorf("File(%s, %q): %v", tt.name, tt.path, err)
+			continue
+		}
+		if diff := cmp.Diff(tt.want, *got); diff != "" {
+			t.Errorf("File(%s, %q) (-want +got):\n%s", tt.name, tt.path, diff)
+		}
+	}
+
+	for _, tt := range []struct {
+		name    string
+		version int64
+		path    string
+	}{
+		{"missing", v1.ID, "missing.html"},
+		{"other case", v1.ID, "INDEX.html"},
+		{"directory", v1.ID, "css"},
+		{"directory slash", v1.ID, "css/"},
+		{"pattern", v1.ID, "%"},
+		{"not in this version", v2.ID, "css/site.css"},
+		{"another artifact's", v1.ID, "other.html"},
+		{"unknown version", v2.ID + 1000, "index.html"},
+	} {
+		got, err := h.store.File(h.ctx, tt.version, tt.path)
+		if !errors.Is(err, artifact.ErrNotFound) {
+			t.Errorf("File(%s, %q) = %+v, %v; want %v", tt.name, tt.path, got, err, artifact.ErrNotFound)
+		}
+	}
+
+	if _, err := h.store.DeleteVersions(h.ctx, "demo", choose(1)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.store.File(h.ctx, v1.ID, "index.html")
+	wantErr(t, "file of a deleted version", err, artifact.ErrNotFound)
+	if err := h.store.Purge(h.ctx, "demo", at(2*time.Hour), nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.store.File(h.ctx, v2.ID, "index.html")
+	wantErr(t, "file of a purged artifact", err, artifact.ErrNotFound)
 }
 
 func testFileOrigin(t *testing.T, h *harness) {

@@ -82,6 +82,10 @@ type Store interface {
 	// Files returns the version's files sorted by path.
 	Files(ctx context.Context, versionID int64) ([]File, error)
 
+	// File returns the version's file at path, matched exactly, or
+	// ErrNotFound.
+	File(ctx context.Context, versionID int64, path string) (*File, error)
+
 	// FileOrigin looks up the version's file at path and its UploadedBy.
 	// ErrNotFound when the version has no such file.
 	FileOrigin(ctx context.Context, versionID int64, path string) (*FileOrigin, error)

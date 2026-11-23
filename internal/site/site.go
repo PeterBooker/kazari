@@ -37,7 +37,8 @@ import (
 type Resolver interface {
 	ResolvePublished(ctx context.Context, slug string) (*artifact.Published, error)
 	ResolveVersion(ctx context.Context, slug string, n int) (*artifact.Published, error)
-	Files(ctx context.Context, versionID int64) (map[string]artifact.File, error)
+	// File returns the version's file at path, and false when it has none.
+	File(ctx context.Context, versionID int64, path string) (artifact.File, bool, error)
 	// WorkerControlled reports whether whoever uploaded the version's file
 	// at path may still change the artifact.
 	WorkerControlled(ctx context.Context, versionID int64, path string) (bool, error)
@@ -284,13 +285,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	middleware.SetRoute(r.Context(), fileRoute)
-	files, err := h.resolver.Files(r.Context(), p.VersionID)
-	if err != nil {
-		h.internalError(w, r, fmt.Errorf("load files of %s version %d: %w", slug, p.VersionNumber, err))
-		return
-	}
-
-	h.serveVersion(w, r, p, access, version != 0, files)
+	h.serveVersion(w, r, p, access, version != 0)
 }
 
 func (h *handler) resolve(ctx context.Context, slug string, version int) (*artifact.Published, error) {
@@ -300,7 +295,7 @@ func (h *handler) resolve(ctx context.Context, slug string, version int) (*artif
 	return h.resolver.ResolveVersion(ctx, slug, version)
 }
 
-func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifact.Published, access views.Access, pinned bool, files map[string]artifact.File) {
+func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifact.Published, access views.Access, pinned bool) {
 	clean, dir, ok := cleanPath(r.URL.Path)
 	if !ok {
 		h.writeError(w, r, http.StatusNotFound)
@@ -311,7 +306,11 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 		name = path.Join(clean, indexFile)
 	}
 
-	f, found := files[name]
+	f, found, err := h.file(r, p, name)
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
 	if isWorkerScript(r) {
 		// Ahead of the redirect, the SPA route and 404.html below, none of
 		// which is a script.
@@ -337,7 +336,12 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 	// Redirect so relative links in the directory's index.html resolve
 	// against it.
 	if !dir {
-		if _, ok := files[clean+"/"+indexFile]; ok {
+		_, found, err := h.file(r, p, clean+"/"+indexFile)
+		if err != nil {
+			h.internalError(w, r, err)
+			return
+		}
+		if found {
 			h.redirectDir(w, r, p, pinned, clean)
 			return
 		}
@@ -345,17 +349,35 @@ func (h *handler) serveVersion(w http.ResponseWriter, r *http.Request, p *artifa
 
 	// SPA routes have no extension; assets that miss still 404.
 	if p.SPA && path.Ext(clean) == "" {
-		if f, ok := files[indexFile]; ok {
+		f, found, err := h.file(r, p, indexFile)
+		if err != nil {
+			h.internalError(w, r, err)
+			return
+		}
+		if found {
 			h.serveFile(w, r, p, access, pinned, f)
 			return
 		}
 	}
 
-	if f, ok := files["404.html"]; ok {
+	f, found, err = h.file(r, p, "404.html")
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	if found {
 		h.serveNotFoundFile(w, r, p, f)
 		return
 	}
 	h.writeError(w, r, http.StatusNotFound)
+}
+
+func (h *handler) file(r *http.Request, p *artifact.Published, name string) (artifact.File, bool, error) {
+	f, found, err := h.resolver.File(r.Context(), p.VersionID, name)
+	if err != nil {
+		return artifact.File{}, false, fmt.Errorf("load %s/%s of version %d: %w", p.Slug, name, p.VersionNumber, err)
+	}
+	return f, found, nil
 }
 
 // cleanPath returns the path without its leading slash ("" for the root)

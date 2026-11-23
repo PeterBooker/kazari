@@ -135,12 +135,13 @@ func (f *fakeResolver) ResolveVersion(_ context.Context, slug string, n int) (*a
 	return &cp, nil
 }
 
-func (f *fakeResolver) Files(_ context.Context, versionID int64) (map[string]artifact.File, error) {
+func (f *fakeResolver) File(_ context.Context, versionID int64, path string) (artifact.File, bool, error) {
 	m, ok := f.files[versionID]
 	if !ok {
-		return nil, errors.New("no such version id")
+		return artifact.File{}, false, errors.New("no such version id")
 	}
-	return m, nil
+	file, ok := m[path]
+	return file, ok, nil
 }
 
 func (f *fakeResolver) WorkerControlled(_ context.Context, _ int64, path string) (bool, error) {

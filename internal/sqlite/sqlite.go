@@ -41,7 +41,7 @@ type DB struct {
 type statements struct {
 	resolvePublished *sql.Stmt
 	resolveVersion   *sql.Stmt
-	files            *sql.Stmt
+	file             *sql.Stmt
 	fileOrigin       *sql.Stmt
 }
 
@@ -52,7 +52,7 @@ func (s *statements) prepare(ctx context.Context, db *sql.DB) error {
 	}{
 		{&s.resolvePublished, artifactResolvePublished},
 		{&s.resolveVersion, artifactResolveVersion},
-		{&s.files, artifactFiles},
+		{&s.file, artifactFile},
 		{&s.fileOrigin, artifactFileOrigin},
 	} {
 		stmt, err := db.PrepareContext(ctx, q.query)
@@ -66,7 +66,7 @@ func (s *statements) prepare(ctx context.Context, db *sql.DB) error {
 
 func (s *statements) close() error {
 	var errs []error
-	for _, stmt := range []*sql.Stmt{s.resolvePublished, s.resolveVersion, s.files, s.fileOrigin} {
+	for _, stmt := range []*sql.Stmt{s.resolvePublished, s.resolveVersion, s.file, s.fileOrigin} {
 		if stmt != nil {
 			errs = append(errs, stmt.Close())
 		}
