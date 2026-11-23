@@ -10,9 +10,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/api"
+	"github.com/PeterBooker/kazari/internal/apiclient"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/blob"
-	"github.com/PeterBooker/kazari/internal/cli"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 )
@@ -36,7 +36,8 @@ func seedArtifacts(t *testing.T, cfg config.Config, slugs ...string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := artifact.New(sqlite.NewArtifactStore(db), blobs, nil, artifact.Options{
+	store := sqlite.NewArtifactStore(db)
+	svc := artifact.New(store, store, blobs, artifact.NoQuotas{}, nil, artifact.Options{
 		MaxVersionBytes: int64(cfg.Limits.MaxVersionBytes), MaxFileBytes: int64(cfg.Limits.MaxFileBytes), MaxFiles: cfg.Limits.MaxFiles,
 		DefaultVisibility: artifact.Public, Now: func() time.Time { return created },
 	})
@@ -57,7 +58,7 @@ func TestHostLabelsAlwaysReserved(t *testing.T) {
 	hc := client(in.app.Addrs().HTTP)
 	ctx := context.Background()
 
-	admin := cli.NewClient("http://admin.localhost", adminToken, hc)
+	admin := apiclient.New("http://admin.localhost", adminToken, apiclient.Options{HTTP: hc})
 	if _, err := admin.CreateUser(ctx, api.CreateUserRequest{Handle: "peter", Email: "peter@example.com"}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestHostLabelsAlwaysReserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue key: %v", err)
 	}
-	user := cli.NewClient("http://api.localhost", issued.Key, hc)
+	user := apiclient.New("http://api.localhost", issued.Key, apiclient.Options{HTTP: hc})
 
 	settings, err := admin.Settings(ctx)
 	if err != nil {
@@ -79,7 +80,7 @@ func TestHostLabelsAlwaysReserved(t *testing.T) {
 	for _, slug := range []string{"admin", "api", "mcp", "foo"} {
 		files := map[string]string{"index.html": indexHTML}
 		_, err := user.CreateBundle(ctx, api.CreateManifest{Slug: slug}, bundle(t, files))
-		if !cli.IsCode(err, "invalid_slug") {
+		if !apiclient.IsCode(err, "invalid_slug") {
 			t.Errorf("CreateBundle(%q) = %v, want invalid_slug", slug, err)
 		}
 	}
