@@ -3,6 +3,8 @@ package site
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
@@ -92,7 +95,7 @@ func TestCompressedFiles(t *testing.T) {
 		{name: "small file", path: "/small.html", header: gz, body: "<p>small</p>"},
 		{name: "png", path: "/photo.png", header: gz, body: bigPNG, ctype: "image/png"},
 		{name: "woff2", path: "/font.woff2", header: gz, body: bigPNG, ctype: "font/woff2"},
-		{name: "if-match", path: "/", header: http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {"*"}}, body: bigHTML, vary: true},
+		{name: "if-match on the stored bytes", path: "/", header: http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {`"` + fx.hash("compressed", 1, "index.html") + `"`}}, body: bigHTML, vary: true},
 		{name: "pinned", host: "compressed--v1.art.test", path: "/", header: gz, body: bigHTML, gzip: true, vary: true,
 			cache: "public, max-age=31536000, immutable"},
 		{name: "gated", host: "compressed-team.art.test", path: "/", header: gz, body: bigHTML, gzip: true, vary: true,
@@ -165,7 +168,7 @@ func TestCompressedConditionalRequests(t *testing.T) {
 		{"identity etag asking for gzip", http.Header{"Accept-Encoding": {"gzip"}, "If-None-Match": {identity}}, http.StatusOK, "gzip", gzipped},
 		{"gzip etag without gzip", http.Header{"If-None-Match": {gzipped}}, http.StatusOK, "", identity},
 		{"identity etag without gzip", http.Header{"If-None-Match": {identity}}, http.StatusNotModified, "", identity},
-		{"etag with a quote inside a list", http.Header{"Accept-Encoding": {"gzip"}, "If-None-Match": {`"a,` + hash + `-gzip"`}}, http.StatusOK, "gzip", gzipped},
+		{"comma inside a quoted etag", http.Header{"Accept-Encoding": {"gzip"}, "If-None-Match": {`"a,` + hash + `-gzip"`}}, http.StatusOK, "gzip", gzipped},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -304,5 +307,136 @@ func TestCompressedStable(t *testing.T) {
 		if !bytes.Equal(rec.Body.Bytes(), first) {
 			t.Errorf("GET /app.js #%d: compressed body differs from the first", i+1)
 		}
+	}
+}
+
+func TestCompressedIfMatch(t *testing.T) {
+	fx := newFixture(t)
+	fx.addCompressed(t)
+	h := fx.handler(Options{})
+	hash := fx.hash("compressed", 1, "index.html")
+	identity, gzipped := `"`+hash+`"`, `"`+hash+`-gzip"`
+
+	tests := []struct {
+		name     string
+		header   http.Header
+		status   int
+		encoding string
+	}{
+		{"gzip etag", http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {gzipped}}, http.StatusOK, "gzip"},
+		{"star", http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {"*"}}, http.StatusOK, "gzip"},
+		{"identity etag asking for gzip", http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {identity}}, http.StatusOK, ""},
+		{"weak gzip etag", http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {"W/" + gzipped}}, http.StatusPreconditionFailed, ""},
+		{"gzip etag without gzip", http.Header{"If-Match": {gzipped}}, http.StatusPreconditionFailed, ""},
+		{"other etag", http.Header{"Accept-Encoding": {"gzip"}, "If-Match": {`"other"`}}, http.StatusPreconditionFailed, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(t, h, http.MethodGet, "compressed.art.test", "/", tt.header)
+			if rec.Code != tt.status {
+				t.Fatalf("GET with %v: status %d, want %d", tt.header, rec.Code, tt.status)
+			}
+			checkHeaders(t, rec, map[string]string{"Content-Encoding": tt.encoding, "Vary": "Accept-Encoding"})
+		})
+	}
+	checkClosed(t, fx)
+}
+
+func TestCompressedHeadConditionalAndNotFound(t *testing.T) {
+	fx := newFixture(t)
+	fx.addCompressed(t)
+	h := fx.handler(Options{})
+	gzipped := `"` + fx.hash("compressed", 1, "index.html") + `-gzip"`
+
+	rec := do(t, h, http.MethodHead, "compressed.art.test", "/", http.Header{"Accept-Encoding": {"gzip"}, "If-None-Match": {gzipped}})
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+		t.Errorf("HEAD with the gzip etag: status %d, %d bytes, want 304 and no body", rec.Code, rec.Body.Len())
+	}
+	rec = do(t, h, http.MethodHead, "compressed.art.test", "/missing.html", http.Header{"Accept-Encoding": {"gzip"}})
+	if rec.Code != http.StatusNotFound || rec.Body.Len() != 0 {
+		t.Errorf("HEAD /missing.html: status %d, %d bytes, want 404 and no body", rec.Code, rec.Body.Len())
+	}
+	checkHeaders(t, rec, map[string]string{"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+	checkClosed(t, fx)
+}
+
+func TestCompressedSizeLimit(t *testing.T) {
+	fx := newFixture(t)
+	huge := strings.Repeat("a", MaxCompressSize+1)
+	fx.add(t, "huge", 42, 1, nil, []testFile{{"index.html", "text/html", huge}})
+	h := fx.handler(Options{})
+
+	rec := do(t, h, http.MethodGet, "huge.art.test", "/", http.Header{"Accept-Encoding": {"gzip"}})
+	if rec.Code != http.StatusOK || rec.Body.Len() != len(huge) {
+		t.Fatalf("GET a file over the limit: status %d, %d bytes, want 200 with the stored %d", rec.Code, rec.Body.Len(), len(huge))
+	}
+	checkHeaders(t, rec, map[string]string{"Content-Encoding": "", "Vary": ""})
+	checkClosed(t, fx)
+}
+
+// failingBlobs opens readers that fail once they have given after bytes.
+type failingBlobs struct {
+	blob.Store
+	after int
+}
+
+func (b failingBlobs) Open(ctx context.Context, hash string) (io.ReadSeekCloser, error) {
+	rc, err := b.Store.Open(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	return &failingReader{ReadSeekCloser: rc, left: b.after}, nil
+}
+
+type failingReader struct {
+	io.ReadSeekCloser
+	left int
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.left <= 0 {
+		return 0, errors.New("disk read failed")
+	}
+	if len(p) > r.left {
+		p = p[:r.left]
+	}
+	n, err := r.ReadSeekCloser.Read(p)
+	r.left -= n
+	return n, err
+}
+
+// A read that fails after the status has gone out must not reach the
+// client, or a cache of a pinned version, as a whole page.
+func TestCompressedReadFailureCutsTheResponse(t *testing.T) {
+	for _, path := range []string{"/", "/missing.html"} {
+		t.Run(path, func(t *testing.T) {
+			fx := newFixture(t)
+			fx.addCompressed(t)
+			srv := httptest.NewServer(NewHandler(fx.res, failingBlobs{Store: fx.blobs, after: 600}, Options{BaseDomain: "art.test"}))
+			t.Cleanup(srv.Close)
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Host = "compressed--v1.art.test"
+			req.Header.Set("Accept-Encoding", "gzip")
+			resp, err := srv.Client().Transport.RoundTrip(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return
+			}
+			if zr, err := gzip.NewReader(bytes.NewReader(b)); err == nil {
+				if _, err := io.ReadAll(zr); err != nil {
+					t.Errorf("GET %s with a failing read: status %d and a body that reads as whole but holds a cut gzip stream (%v)", path, resp.StatusCode, err)
+					return
+				}
+			}
+			t.Errorf("GET %s with a failing read: status %d, %d bytes read without error, want the response cut", path, resp.StatusCode, len(b))
+		})
 	}
 }

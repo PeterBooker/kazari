@@ -353,9 +353,11 @@ Share links last 7 days unless asked otherwise, or `share_link_max_ttl` if that 
 
 #### Compression
 
-Kazari compresses text files itself, so pages load faster without a proxy that does it. There is no key to set: a file of 1 KiB or more is sent gzip-compressed to every client whose `Accept-Encoding` allows gzip. HTML, CSS, JavaScript, JSON, XML, SVG, WebAssembly and TrueType and OpenType fonts qualify; images, WOFF fonts, archives and media are compressed already and are sent as stored.
+Kazari compresses text files itself, so pages load faster without a proxy that does it. There is no key to set: a file from 1 KiB to 4 MiB is sent gzip-compressed to every client whose `Accept-Encoding` allows gzip. Text of every kind (HTML, CSS, plain text, CSV), JavaScript, JSON, XML, SVG, WebAssembly and TrueType and OpenType fonts qualify. Images, WOFF fonts, archives and media are compressed already and are sent as stored, and so is a larger file, which would cost tens of milliseconds of CPU on every request.
 
-The compressed answer has its own `ETag`, the stored file's hash with `-gzip` appended, and every answer for such a file carries `Vary: Accept-Encoding`, so a cache in front keeps the two forms apart. A request with a `Range` header gets the stored bytes, as do `If-Range` and `If-Match` requests. A proxy in front that compresses leaves these answers as they are.
+The compressed answer has its own `ETag`, the stored file's hash with `-gzip` appended, and every answer for such a file carries `Vary: Accept-Encoding`, so a cache in front keeps the two forms apart. A request with a `Range` or `If-Range` header gets the stored bytes, and so does an `If-Match` that names the stored file's `ETag`.
+
+A proxy in front leaves the compressed answers as they are. One that compresses on its own, such as Caddy's `encode`, still compresses the rest: files under 1 KiB or over 4 MiB, and range requests.
 
 ### `fetch`
 

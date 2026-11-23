@@ -96,6 +96,9 @@ func FuzzNoneMatch(f *testing.F) {
 		if !site.NoneMatch([]string{v, etag}, etag) {
 			t.Errorf("NoneMatch(%q, %s) on a second line = false, want true", v, etag)
 		}
+		if site.Match([]string{v}, etag) && !got {
+			t.Errorf("Match(%q, %s) = true but NoneMatch = false; a strong match is also a weak one", v, etag)
+		}
 		if site.NoneMatch(nil, etag) {
 			t.Errorf("NoneMatch(nil, %s) = true, want false", etag)
 		}

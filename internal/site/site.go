@@ -406,7 +406,7 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, p *artifact.
 		// On identity answers too, so a shared cache of a pinned version
 		// keeps the two representations apart.
 		hdr.Add("Vary", "Accept-Encoding")
-		if wantsGzip(r) {
+		if wantsGzip(r, gzipETag(f.Hash)) {
 			h.serveGzip(w, r, p, f, rc)
 			return
 		}
@@ -425,9 +425,18 @@ func (h *handler) serveGzip(w http.ResponseWriter, r *http.Request, p *artifact.
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	if err := writeGzip(w, r, http.StatusOK, rc); err != nil && !errors.Is(err, context.Canceled) {
-		h.log.WarnContext(r.Context(), "site: send gzip", "slug", p.Slug, "path", f.Path, "err", err)
+	if err := writeGzip(w, r, http.StatusOK, rc); err != nil {
+		h.abortGzip(r, p, f.Path, err)
 	}
+}
+
+// abortGzip ends a gzip response whose status has gone out, which
+// writeGzip explains.
+func (h *handler) abortGzip(r *http.Request, p *artifact.Published, path string, err error) {
+	if !errors.Is(err, context.Canceled) {
+		h.log.WarnContext(r.Context(), "site: send gzip", "slug", p.Slug, "path", path, "err", err)
+	}
+	panic(http.ErrAbortHandler)
 }
 
 // html reports whether ct is an HTML page, the one kind of file a view is.
@@ -450,8 +459,8 @@ func (h *handler) serveNotFoundFile(w http.ResponseWriter, r *http.Request, p *a
 	if compressible(f.ContentType, f.Size) {
 		w.Header().Add("Vary", "Accept-Encoding")
 		if acceptsGzip(r.Header.Values("Accept-Encoding")) {
-			if err := writeGzip(w, r, http.StatusNotFound, rc); err != nil && !errors.Is(err, context.Canceled) {
-				h.log.WarnContext(r.Context(), "site: copy 404.html", "slug", p.Slug, "err", err)
+			if err := writeGzip(w, r, http.StatusNotFound, rc); err != nil {
+				h.abortGzip(r, p, f.Path, err)
 			}
 			return
 		}

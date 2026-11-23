@@ -13,15 +13,20 @@ import (
 // saves.
 const minCompressSize = 1024
 
+// maxCompressSize bounds the work one request can ask of the server: at
+// gzipLevel a larger file costs tens of milliseconds of CPU every time.
+const maxCompressSize = 4 << 20
+
 // gzipLevel is near the default ratio at a fraction of the cost of the best.
 const gzipLevel = 5
 
 var gzipWriters sync.Pool
 
-// compressible reports whether f is sent gzip-encoded to clients that accept
-// it. Formats that are compressed already gain nothing.
+// compressible reports whether a file of this type and size is sent
+// gzip-encoded to clients that accept it. Formats that are compressed
+// already gain nothing.
 func compressible(contentType string, size int64) bool {
-	if size < minCompressSize {
+	if size < minCompressSize || size > maxCompressSize {
 		return false
 	}
 	base, _, _ := strings.Cut(contentType, ";")
@@ -97,13 +102,19 @@ func weight(params string) (float64, bool) {
 	return q, true
 }
 
-// wantsGzip reports whether r is answered with the gzip representation.
-// Range requests and the preconditions that name a representation stay with
-// http.ServeContent on the stored bytes.
-func wantsGzip(r *http.Request) bool {
+// wantsGzip reports whether r is answered with the gzip representation,
+// whose ETag is etag. Range requests stay with http.ServeContent on the
+// stored bytes, and so does an If-Match that does not name etag, so a
+// client holding the stored bytes' ETag is answered as before.
+func wantsGzip(r *http.Request, etag string) bool {
 	h := r.Header
-	return h.Get("Range") == "" && h.Get("If-Range") == "" && h.Get("If-Match") == "" &&
-		acceptsGzip(h.Values("Accept-Encoding"))
+	if h.Get("Range") != "" || h.Get("If-Range") != "" {
+		return false
+	}
+	if im := h.Values("If-Match"); len(im) > 0 && !match(im, etag) {
+		return false
+	}
+	return acceptsGzip(h.Values("Accept-Encoding"))
 }
 
 // gzipETag is the strong validator of a file's gzip representation, which
@@ -115,6 +126,18 @@ func gzipETag(hash string) string {
 // noneMatch reports whether an If-None-Match field value matches etag under
 // the weak comparison: "*", or any listed tag with the same opaque value.
 func noneMatch(values []string, etag string) bool {
+	return eachTag(values, func(tag string, _ bool) bool { return tag == etag })
+}
+
+// match reports whether an If-Match field value matches etag under the
+// strong comparison, which a weak tag never passes.
+func match(values []string, etag string) bool {
+	return eachTag(values, func(tag string, weak bool) bool { return !weak && tag == etag })
+}
+
+// eachTag reports whether the field values hold "*" or a tag for which
+// matches is true.
+func eachTag(values []string, matches func(tag string, weak bool) bool) bool {
 	for _, v := range values {
 		for {
 			v = strings.TrimLeft(v, " \t,")
@@ -124,6 +147,7 @@ func noneMatch(values []string, etag string) bool {
 			if v[0] == '*' {
 				return true
 			}
+			weak := strings.HasPrefix(v, "W/")
 			v = strings.TrimPrefix(v, "W/")
 			if v == "" || v[0] != '"' {
 				break
@@ -132,7 +156,7 @@ func noneMatch(values []string, etag string) bool {
 			if end < 0 {
 				break
 			}
-			if v[:end+2] == etag {
+			if matches(v[:end+2], weak) {
 				return true
 			}
 			v = v[end+2:]
@@ -142,7 +166,9 @@ func noneMatch(values []string, etag string) bool {
 }
 
 // writeGzip sends rc gzip-encoded with status. The caller has set every
-// other header.
+// other header. An error after the status has gone out ends the response
+// with http.ErrAbortHandler: returning would end the body cleanly, and a
+// client or a cache of a pinned version would keep a cut page as a whole one.
 func writeGzip(w http.ResponseWriter, r *http.Request, status int, rc io.Reader) error {
 	hdr := w.Header()
 	hdr.Set("Content-Encoding", "gzip")
@@ -158,7 +184,10 @@ func writeGzip(w http.ResponseWriter, r *http.Request, status int, rc io.Reader)
 	} else {
 		gz.Reset(w)
 	}
-	defer gzipWriters.Put(gz)
+	defer func() {
+		gz.Reset(io.Discard)
+		gzipWriters.Put(gz)
+	}()
 	if _, err := io.Copy(gz, rc); err != nil {
 		return err
 	}
