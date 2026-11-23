@@ -31,8 +31,19 @@ const DefaultCSP = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"frame-ancestors 'none'"
 
+// The labels of the hosts Kazari answers on under base_domain, besides the
+// apex.
+const (
+	APIHost   = "api"
+	MCPHost   = "mcp"
+	AdminHost = "admin"
+)
+
+// HostLabels returns APIHost, MCPHost and AdminHost.
+func HostLabels() []string { return []string{APIHost, MCPHost, AdminHost} }
+
 var defaultReservedSlugs = []string{
-	"api", "mcp", "admin", "www", "mail", "ns1", "ns2", "autoconfig", "autodiscover", "localhost",
+	APIHost, MCPHost, AdminHost, "www", "mail", "ns1", "ns2", "autoconfig", "autodiscover", "localhost",
 }
 
 // Config is the effective configuration. The yaml tags also name the KAZARI_*
@@ -830,7 +841,7 @@ func (c Config) AdminURL() string {
 	if c.Admin.Listen != "" {
 		return ""
 	}
-	return strings.TrimSuffix(c.ExternalURL("admin"), "/")
+	return strings.TrimSuffix(c.ExternalURL(AdminHost), "/")
 }
 
 // DashboardEnabled reports whether the dashboard is served: admin.dashboard

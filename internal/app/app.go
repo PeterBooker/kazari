@@ -156,6 +156,7 @@ func New(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("app: invalid config:\n%w", err)
 	}
+	cfg.Serve.ReservedSlugs = reservedSlugs(cfg.Serve.ReservedSlugs)
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -352,7 +353,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		Now:             now,
 	})
 
-	mcpURL := cfg.ExternalURL("mcp")
+	mcpURL := cfg.ExternalURL(config.MCPHost)
 	var idp oauth.IdentityProvider
 	if o := cfg.Auth.OIDC; o != nil {
 		p, err := oidc.NewLazy(oidc.Config{
@@ -545,7 +546,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}, 0)
 	a.ready = ready
 
-	apiBase := cfg.ExternalURL("api") + "v1"
+	apiBase := cfg.ExternalURL(config.APIHost) + "v1"
 	mcpOpts := mcpserver.Options{
 		BaseDomain:          cfg.BaseDomain,
 		ResourceMetadataURL: mcpURL + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
@@ -813,6 +814,19 @@ func controlCallback(cfg config.Config) func(host string) (string, bool) {
 		}
 		return "", false
 	}
+}
+
+// reservedSlugs adds the labels of the hosts Kazari answers on to the
+// configured list: a list that replaces the default must not make them
+// creatable, nor serve their version hosts as artifacts.
+func reservedSlugs(configured []string) []string {
+	out := slices.Clone(configured)
+	for _, l := range config.HostLabels() {
+		if !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // dashboardURL is the dashboard's address, or "" when it is not served.

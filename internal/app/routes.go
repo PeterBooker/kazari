@@ -21,9 +21,9 @@ type hosts struct {
 
 func (a *App) routes(h hosts) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle(a.cfg.Host("api")+"/", h.api)
-	mux.Handle(a.cfg.Host("mcp")+"/", h.mcp)
-	mux.Handle(a.cfg.Host("admin")+"/", h.admin)
+	mux.Handle(a.cfg.Host(config.APIHost)+"/", h.api)
+	mux.Handle(a.cfg.Host(config.MCPHost)+"/", h.mcp)
+	mux.Handle(a.cfg.Host(config.AdminHost)+"/", h.admin)
 	// The account pages share the apex's host and nothing else: they are a
 	// surface of their own, traced and counted as control plane.
 	mux.Handle(a.cfg.Host("")+"/account", h.account)

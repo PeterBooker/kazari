@@ -19,6 +19,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/buildinfo"
 	"github.com/PeterBooker/kazari/internal/certs"
+	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/present"
@@ -71,9 +72,9 @@ func (a *App) Run(ctx context.Context) (err error) {
 	)
 	a.log.Info("serving",
 		"pages", a.cfg.ExternalURL("<slug>"),
-		"api", a.cfg.ExternalURL("api"),
-		"mcp", a.cfg.ExternalURL("mcp"),
-		"admin", a.cfg.ExternalURL("admin"),
+		"api", a.cfg.ExternalURL(config.APIHost),
+		"mcp", a.cfg.ExternalURL(config.MCPHost),
+		"admin", a.cfg.ExternalURL(config.AdminHost),
 		"dashboard", a.cfg.DashboardEnabled(),
 	)
 	switch {
@@ -199,7 +200,7 @@ func (a *App) firstRunHint(ctx context.Context) {
 		a.log.WarnContext(ctx, "no users yet, and nobody can sign in at the identity provider: auth.oidc names no admin_emails, and allowed_domains with auto_provision creates nobody",
 			"next", "list your address under auth.oidc.admin_emails and restart, or create a user and link the identity with kazari admin identities link")
 	}
-	how := "set KAZARI_AUTH_ADMIN_TOKEN and run it with KAZARI_ADMIN_URL=" + strings.TrimSuffix(a.cfg.ExternalURL("admin"), "/")
+	how := "set KAZARI_AUTH_ADMIN_TOKEN and run it with KAZARI_ADMIN_URL=" + strings.TrimSuffix(a.cfg.ExternalURL(config.AdminHost), "/")
 	if socket := a.Addrs().Socket; socket != "" {
 		how = "run it on this host (as the service user or root, or with docker exec), which uses the admin socket " + socket
 	}
