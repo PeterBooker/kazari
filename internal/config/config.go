@@ -20,7 +20,41 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
+
+// serve.compression_cache as a percentage is at most MaxCompressionShare,
+// in hundredths of a percent, and resolves to at most MaxCompressionCache,
+// or to FallbackCompressionCache when the memory the process may use is
+// not known.
+const (
+	MaxCompressionShare      = 50 * 100
+	MaxCompressionCache      = GiB
+	FallbackCompressionCache = 64 * MiB
+)
+
+// CompressionCacheBytes resolves serve.compression_cache against the
+// memory the process may use, limit bytes from source (0 when unknown),
+// and says how.
+func (s Serve) CompressionCacheBytes(limit int64, source string) (n int64, basis string) {
+	m := s.CompressionCache
+	switch {
+	case m.Share <= 0 && m.Size == 0:
+		return 0, "off"
+	case m.Share <= 0:
+		return int64(m.Size), "serve.compression_cache"
+	case limit <= 0:
+		return int64(FallbackCompressionCache), "the memory limit is unknown"
+	}
+	n = m.Of(limit)
+	basis = fmt.Sprintf("%s of %s %s", m, bytesize.Format(limit), source)
+	if n > int64(MaxCompressionCache) {
+		n = int64(MaxCompressionCache)
+		basis += ", capped at " + bytesize.Format(n)
+	}
+	return n, basis
+}
 
 // DefaultCSP is the default serve.csp.
 const DefaultCSP = "default-src 'self'; " +
@@ -137,6 +171,9 @@ type Serve struct {
 	ReservedSlugs     []string `yaml:"reserved_slugs"`
 	DefaultVisibility string   `yaml:"default_visibility"`
 	ShareLinkMaxTTL   Duration `yaml:"share_link_max_ttl"`
+	// CompressionCache is the memory kept for compressed files, a size or
+	// a share of the memory the process may use; 0 turns compression off.
+	CompressionCache Memory `yaml:"compression_cache"`
 }
 
 // Fetch bounds the URLs the server fetches for members: files named by url
@@ -287,6 +324,7 @@ func Default() Config {
 			ReservedSlugs:     slices.Clone(defaultReservedSlugs),
 			DefaultVisibility: "public",
 			ShareLinkMaxTTL:   Duration(90 * day),
+			CompressionCache:  Memory{Share: 5 * 100},
 		},
 		Fetch: Fetch{
 			Enabled: true,

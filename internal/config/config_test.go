@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"gopkg.in/yaml.v3"
 )
 
 func valid() Config {
@@ -481,6 +482,7 @@ func TestEnvOverrides(t *testing.T) {
 		"KAZARI_LIMITS_MAX_VERSION_BYTES": "1GiB",
 		"KAZARI_LIFECYCLE_DEFAULT_GRACE":  "7d",
 		"KAZARI_SERVE_RESERVED_SLUGS":     "api, mcp ,admin",
+		"KAZARI_SERVE_COMPRESSION_CACHE":  "2.5%",
 		"KAZARI_TLS_DNS_API_TOKEN":        "dns",
 		"KAZARI_AUTH_ADMIN_TOKEN":         testAdminToken,
 		"KAZARI_AUTH_OIDC_ISSUER":         "https://accounts.google.com",
@@ -510,6 +512,7 @@ func TestEnvOverrides(t *testing.T) {
 		{"limits.max_version_bytes", c.Limits.MaxVersionBytes, GiB},
 		{"lifecycle.default_grace", c.Lifecycle.DefaultGrace, Duration(7 * 24 * time.Hour)},
 		{"serve.reserved_slugs", c.Serve.ReservedSlugs, []string{"api", "mcp", "admin"}},
+		{"serve.compression_cache", c.Serve.CompressionCache, Memory{Share: 250}},
 		{"tls.dns.api_token", c.TLS.DNS.APIToken, "dns"},
 		{"auth.admin_token", c.Auth.AdminToken, testAdminToken},
 		{"external_port", c.ExternalPort, 8080},
@@ -550,6 +553,8 @@ func TestEnvBadValues(t *testing.T) {
 		{"KAZARI_LIMITS_MAX_FILES", "many"},
 		{"KAZARI_LIMITS_MAX_FILE_BYTES", "5 parsecs"},
 		{"KAZARI_LIFECYCLE_RETENTION", "soon"},
+		{"KAZARI_SERVE_COMPRESSION_CACHE", "lots"},
+		{"KAZARI_SERVE_COMPRESSION_CACHE", "-5%"},
 		{"KAZARI_AUTH_OIDC_AUTO_PROVISION", "yes please"},
 	}
 	for _, tt := range tests {
@@ -625,6 +630,75 @@ func TestParseBytes(t *testing.T) {
 		if got, err := ParseBytes(in); err == nil {
 			t.Errorf("ParseBytes(%q) = %d, want error", in, got)
 		}
+	}
+}
+
+func TestParseMemory(t *testing.T) {
+	tests := []struct {
+		in   string
+		want Memory
+		text string
+	}{
+		{"0", Memory{}, "0B"},
+		{"64MiB", Memory{Size: 64 * MiB}, "64MiB"},
+		{"52428800", Memory{Size: 50 * MiB}, "50MiB"},
+		{"5%", Memory{Share: 500}, "5%"},
+		{" 5 % ", Memory{Share: 500}, "5%"},
+		{"2.5%", Memory{Share: 250}, "2.5%"},
+		{"0.25%", Memory{Share: 25}, "0.25%"},
+		{"12.50%", Memory{Share: 1250}, "12.5%"},
+		{"100%", Memory{Share: 10000}, "100%"},
+	}
+	for _, tt := range tests {
+		got, err := ParseMemory(tt.in)
+		if err != nil || got != tt.want || got.String() != tt.text {
+			t.Errorf("ParseMemory(%q) = %+v (%q), %v; want %+v (%q)", tt.in, got, got.String(), err, tt.want, tt.text)
+		}
+	}
+	for _, in := range []string{"", "%", "0%", "0.0%", "-5%", "+5%", "5.%", ".5%", "5.125%", "101%", "1000%", "5%%", "5 percent",
+		"1e1%", "NaN%", "5MiB%", "-1MiB", "lots"} {
+		if got, err := ParseMemory(in); err == nil {
+			t.Errorf("ParseMemory(%q) = %+v, want error", in, got)
+		}
+	}
+}
+
+func TestLoadCompressionCache(t *testing.T) {
+	for in, want := range map[string]Memory{"8%": {Share: 800}, "128MiB": {Size: 128 * MiB}, "0": {}} {
+		c := Default()
+		if err := yaml.Unmarshal([]byte("compression_cache: "+in), &c.Serve); err != nil {
+			t.Errorf("yaml compression_cache: %s: %v", in, err)
+			continue
+		}
+		if c.Serve.CompressionCache != want {
+			t.Errorf("yaml compression_cache: %s = %+v, want %+v", in, c.Serve.CompressionCache, want)
+		}
+	}
+}
+
+func TestCompressionCacheBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		set    Memory
+		limit  int64
+		source string
+		want   int64
+		basis  string
+	}{
+		{"default in a container", Memory{Share: 500}, int64(GiB), "cgroup limit", int64(GiB) / 20, "5% of 1 GiB cgroup limit"},
+		{"capped on a large host", Memory{Share: 500}, 64 * int64(GiB), "physical memory", int64(GiB), "5% of 64 GiB physical memory, capped at 1 GiB"},
+		{"unknown memory", Memory{Share: 500}, 0, "", int64(64 * MiB), "the memory limit is unknown"},
+		{"size", Memory{Size: 200 * MiB}, int64(GiB), "cgroup limit", int64(200 * MiB), "serve.compression_cache"},
+		{"size over the cap", Memory{Size: 2 * GiB}, 64 * int64(GiB), "physical memory", int64(2 * GiB), "serve.compression_cache"},
+		{"off", Memory{}, int64(GiB), "cgroup limit", 0, "off"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, basis := Serve{CompressionCache: tt.set}.CompressionCacheBytes(tt.limit, tt.source)
+			if n != tt.want || basis != tt.basis {
+				t.Errorf("CompressionCacheBytes(%v, %d, %q) = %d, %q; want %d, %q", tt.set, tt.limit, tt.source, n, basis, tt.want, tt.basis)
+			}
+		})
 	}
 }
 
@@ -753,6 +827,10 @@ func TestValidateErrors(t *testing.T) {
 		{"reserved slug case", func(c *Config) { c.Serve.ReservedSlugs = []string{"API"} }, "serve.reserved_slugs:"},
 		{"default visibility", func(c *Config) { c.Serve.DefaultVisibility = "private" }, "serve.default_visibility: must be one of public, unlisted, members"},
 		{"share link lifetime", func(c *Config) { c.Serve.ShareLinkMaxTTL = 0 }, "serve.share_link_max_ttl: must be greater than 0"},
+		{"compression cache over half", func(c *Config) { c.Serve.CompressionCache = Memory{Share: 5001} },
+			"serve.compression_cache: must be a size, 0 to turn compression off, or a percentage above 0% and at most 50%"},
+		{"compression cache negative", func(c *Config) { c.Serve.CompressionCache = Memory{Size: -1} },
+			"serve.compression_cache: must be a size"},
 		{"analytics retention", func(c *Config) { c.Analytics.Retention = Duration(23 * time.Hour) }, "analytics.retention: must be at least 24h"},
 		{"write policy", func(c *Config) { c.Auth.WritePolicy = "anyone" }, "auth.write_policy: must be one of shared, owner"},
 		{"access ttl", func(c *Config) { c.Auth.Tokens.AccessTTL = 0 }, "auth.tokens.access_ttl: must be greater than 0"},

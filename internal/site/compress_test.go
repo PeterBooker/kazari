@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,7 +66,7 @@ func TestCompressedFiles(t *testing.T) {
 	fx := newFixture(t)
 	fx.addCompressed(t)
 	h := fx.handler(Options{DefaultCSP: testCSP, Gate: &fakeGate{allow: true}})
-	gz := http.Header{"Accept-Encoding": {"gzip, deflate, br"}}
+	gz := http.Header{"Accept-Encoding": {"gzip, deflate"}}
 
 	tests := []struct {
 		name   string
@@ -84,14 +85,14 @@ func TestCompressedFiles(t *testing.T) {
 		{name: "svg", path: "/logo.svg", header: gz, body: bigSVG, gzip: true, vary: true, ctype: "image/svg+xml"},
 		{name: "json", path: "/data.json", header: gz, body: bigJSON, gzip: true, vary: true, ctype: "application/json; charset=utf-8"},
 		{name: "no accept-encoding", path: "/", body: bigHTML, vary: true, ctype: "text/html; charset=utf-8"},
-		{name: "gzip refused", path: "/", header: http.Header{"Accept-Encoding": {"gzip;q=0, br"}}, body: bigHTML, vary: true},
-		{name: "gzip refused over star", path: "/", header: http.Header{"Accept-Encoding": {"*, gzip;q=0"}}, body: bigHTML, vary: true},
-		{name: "star", path: "/", header: http.Header{"Accept-Encoding": {"*"}}, body: bigHTML, gzip: true, vary: true},
+		{name: "gzip refused", path: "/", header: http.Header{"Accept-Encoding": {"gzip;q=0, deflate"}}, body: bigHTML, vary: true},
+		{name: "gzip refused over star", path: "/", header: http.Header{"Accept-Encoding": {"*, gzip;q=0, br;q=0, zstd;q=0"}}, body: bigHTML, vary: true},
+		{name: "star", path: "/", header: http.Header{"Accept-Encoding": {"*, br;q=0, zstd;q=0"}}, body: bigHTML, gzip: true, vary: true},
 		{name: "star refused", path: "/", header: http.Header{"Accept-Encoding": {"*;q=0"}}, body: bigHTML, vary: true},
 		{name: "x-gzip", path: "/", header: http.Header{"Accept-Encoding": {"x-gzip"}}, body: bigHTML, gzip: true, vary: true},
 		{name: "upper case with weight", path: "/", header: http.Header{"Accept-Encoding": {"GZIP;Q=0.5"}}, body: bigHTML, gzip: true, vary: true},
 		{name: "second field line", path: "/", header: http.Header{"Accept-Encoding": {"br", "gzip"}}, body: bigHTML, gzip: true, vary: true},
-		{name: "other codings only", path: "/", header: http.Header{"Accept-Encoding": {"br, zstd"}}, body: bigHTML, vary: true},
+		{name: "other codings only", path: "/", header: http.Header{"Accept-Encoding": {"deflate, compress"}}, body: bigHTML, vary: true},
 		{name: "small file", path: "/small.html", header: gz, body: "<p>small</p>"},
 		{name: "png", path: "/photo.png", header: gz, body: bigPNG, ctype: "image/png"},
 		{name: "woff2", path: "/font.woff2", header: gz, body: bigPNG, ctype: "font/woff2"},
@@ -123,7 +124,7 @@ func TestCompressedFiles(t *testing.T) {
 			if tt.gzip {
 				want["Content-Encoding"] = "gzip"
 				want["ETag"] = `"` + hash + `-gzip"`
-				want["Content-Length"] = ""
+				want["Content-Length"] = strconv.Itoa(rec.Body.Len())
 				body = gunzip(t, rec.Body.Bytes())
 			}
 			if tt.vary {
@@ -186,31 +187,46 @@ func TestCompressedConditionalRequests(t *testing.T) {
 	checkClosed(t, fx)
 }
 
-func TestCompressedRangeIsIdentity(t *testing.T) {
+func TestCompressedRange(t *testing.T) {
 	fx := newFixture(t)
 	fx.addCompressed(t)
 	h := fx.handler(Options{})
 	hash := fx.hash("compressed", 1, "index.html")
+	identity, gzipped := `"`+hash+`"`, `"`+hash+`-gzip"`
+	whole := do(t, h, http.MethodGet, "compressed.art.test", "/", http.Header{"Accept-Encoding": {"gzip"}}).Body.String()
 
-	for _, header := range []http.Header{
-		{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}},
-		{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}, "If-Range": {`"` + hash + `"`}},
-	} {
-		rec := do(t, h, http.MethodGet, "compressed.art.test", "/", header)
-		if rec.Code != http.StatusPartialContent {
-			t.Fatalf("GET with %v: status %d, want 206", header, rec.Code)
-		}
-		checkHeaders(t, rec, map[string]string{"Content-Encoding": "", "ETag": `"` + hash + `"`, "Vary": "Accept-Encoding"})
-		if got, want := rec.Body.String(), bigHTML[:15]; got != want {
-			t.Errorf("GET with %v: body %q, want %q", header, got, want)
-		}
+	tests := []struct {
+		name     string
+		header   http.Header
+		status   int
+		encoding string
+		etag     string
+		body     string
+	}{
+		{"range of the gzip bytes", http.Header{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}},
+			http.StatusPartialContent, "gzip", gzipped, whole[:15]},
+		{"if-range on the gzip etag", http.Header{"Accept-Encoding": {"gzip"}, "Range": {"bytes=5-9"}, "If-Range": {gzipped}},
+			http.StatusPartialContent, "gzip", gzipped, whole[5:10]},
+		// A client holding part of the stored bytes goes on with them.
+		{"if-range on the stored etag", http.Header{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}, "If-Range": {identity}},
+			http.StatusPartialContent, "", identity, bigHTML[:15]},
+		{"if-range on another etag", http.Header{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}, "If-Range": {`"other"`}},
+			http.StatusOK, "", identity, bigHTML},
+		{"range without gzip", http.Header{"Range": {"bytes=0-14"}},
+			http.StatusPartialContent, "", identity, bigHTML[:15]},
 	}
-	// If-Range with the gzip ETag no longer names what a range is cut from,
-	// so the whole file comes back.
-	rec := do(t, h, http.MethodGet, "compressed.art.test", "/",
-		http.Header{"Accept-Encoding": {"gzip"}, "Range": {"bytes=0-14"}, "If-Range": {`"` + hash + `-gzip"`}})
-	if rec.Code != http.StatusOK || rec.Body.String() != bigHTML {
-		t.Errorf("GET with a gzip If-Range: status %d, %d bytes, want 200 with the stored %d", rec.Code, rec.Body.Len(), len(bigHTML))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(t, h, http.MethodGet, "compressed.art.test", "/", tt.header)
+			if rec.Code != tt.status {
+				t.Fatalf("GET with %v: status %d, want %d", tt.header, rec.Code, tt.status)
+			}
+			checkHeaders(t, rec, map[string]string{"Content-Encoding": tt.encoding, "ETag": tt.etag, "Vary": "Accept-Encoding",
+				"Content-Length": strconv.Itoa(len(tt.body))})
+			if got := rec.Body.String(); got != tt.body {
+				t.Errorf("GET with %v: body %q, want %q", tt.header, got, tt.body)
+			}
+		})
 	}
 	checkClosed(t, fx)
 }
@@ -223,7 +239,8 @@ func TestCompressedHead(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HEAD: status %d, want 200", rec.Code)
 	}
-	checkHeaders(t, rec, map[string]string{"Content-Encoding": "gzip", "Content-Length": "", "Vary": "Accept-Encoding",
+	size := do(t, h, http.MethodGet, "compressed.art.test", "/", http.Header{"Accept-Encoding": {"gzip"}}).Body.Len()
+	checkHeaders(t, rec, map[string]string{"Content-Encoding": "gzip", "Content-Length": strconv.Itoa(size), "Vary": "Accept-Encoding",
 		"Content-Type": "text/html; charset=utf-8"})
 	if rec.Body.Len() != 0 {
 		t.Errorf("HEAD: body of %d bytes, want none", rec.Body.Len())
@@ -240,8 +257,8 @@ func TestCompressedNotFoundPage(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /missing.html: status %d, want 404", rec.Code)
 	}
-	checkHeaders(t, rec, map[string]string{"Content-Encoding": "gzip", "Content-Length": "", "Vary": "Accept-Encoding",
-		"X-Robots-Tag": "noindex"})
+	checkHeaders(t, rec, map[string]string{"Content-Encoding": "gzip", "Content-Length": strconv.Itoa(rec.Body.Len()),
+		"Vary": "Accept-Encoding", "X-Robots-Tag": "noindex"})
 	if got := gunzip(t, rec.Body.Bytes()); got != big404 {
 		t.Errorf("GET /missing.html: body of %d bytes, want the stored 404.html of %d", len(got), len(big404))
 	}

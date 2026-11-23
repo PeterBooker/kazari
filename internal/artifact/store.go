@@ -128,9 +128,10 @@ type Store interface {
 // BlobIndex records the blobs the store holds and which of them a version
 // still uses, for the garbage collector. Checked by storetest.RunBlobIndex.
 type BlobIndex interface {
-	// RecordBlob upserts, refreshing created_at so a re-put blob survives the
-	// garbage collector's grace window.
-	RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error
+	// RecordBlobs upserts the blobs in one transaction, refreshing
+	// created_at so a re-put blob survives the garbage collector's grace
+	// window.
+	RecordBlobs(ctx context.Context, blobs []StoredBlob, at time.Time) error
 
 	// UnreferencedBlobs returns up to limit hashes that no file references
 	// and whose created_at is before the given time.
@@ -140,6 +141,11 @@ type BlobIndex interface {
 	BlobReferenced(ctx context.Context, hash string) (bool, error)
 
 	DeleteBlob(ctx context.Context, hash string) error
+
+	// DeleteBlobs deletes, in one transaction, the rows of those hashes
+	// that no version references and whose created_at is still before the
+	// given time, and returns how many.
+	DeleteBlobs(ctx context.Context, hashes []string, before time.Time) (int, error)
 
 	// BlobTotals counts the stored blobs and sums their sizes.
 	BlobTotals(ctx context.Context) (Totals, error)
@@ -205,6 +211,12 @@ type OwnerUsage struct {
 	Handle    string
 	Artifacts int64
 	Bytes     int64
+}
+
+// StoredBlob is a blob in the blob store, as RecordBlobs records it.
+type StoredBlob struct {
+	Hash string
+	Size int64
 }
 
 // Totals is a count and a size in bytes.

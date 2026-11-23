@@ -1625,11 +1625,11 @@ type failingStore struct {
 	recordErr, commitErr error
 }
 
-func (s *failingStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error {
+func (s *failingStore) RecordBlobs(ctx context.Context, blobs []artifact.StoredBlob, at time.Time) error {
 	if s.recordErr != nil {
 		return s.recordErr
 	}
-	return s.ArtifactStore.RecordBlob(ctx, hash, size, at)
+	return s.ArtifactStore.RecordBlobs(ctx, blobs, at)
 }
 
 func (s *failingStore) Create(ctx context.Context, a *artifact.Artifact, v *artifact.Version, quota int64) error {
@@ -1805,7 +1805,7 @@ func TestCollectGarbage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.RecordBlob(e.ctx, hash, size, e.clock.Now()); err != nil {
+	if err := e.store.RecordBlobs(e.ctx, []artifact.StoredBlob{{Hash: hash, Size: size}}, e.clock.Now()); err != nil {
 		t.Fatal(err)
 	}
 	e.create(t, alice, "shared-live", "s.txt", "shared content")

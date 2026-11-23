@@ -87,6 +87,12 @@ serve:
   # a share link); members is the safer default for an internal instance.
   default_visibility: public
   share_link_max_ttl: 90d            # longest a share link may stay valid
+  # Memory for text files kept compressed, from 1 KiB to 4 MiB each, the least
+  # recently sent pushed out first: a size (64MiB), or a share of the memory the
+  # server may use (its cgroup limit, Go's limit or the machine's memory,
+  # whichever is lowest), from above 0% to 50% and at most 1GiB; 0 sends every
+  # file as stored. The start log shows what it comes to.
+  compression_cache: 5%
 
 # URLs the server fetches for members: a file named by url in a create or
 # update, and the page an import_page call copies. Public addresses only.

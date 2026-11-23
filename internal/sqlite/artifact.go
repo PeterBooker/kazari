@@ -998,13 +998,34 @@ func (s *ArtifactStore) DeleteTombstone(ctx context.Context, slug string) (err e
 	return artifactErr("delete tombstone", err)
 }
 
-// RecordBlob only moves created_at forward.
-func (s *ArtifactStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) (err error) {
-	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlob")
+// RecordBlobs only moves created_at forward.
+func (s *ArtifactStore) RecordBlobs(ctx context.Context, blobs []artifact.StoredBlob, at time.Time) (err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.RecordBlobs")
 	defer func() { end(err) }()
-	_, err = s.db.ExecContext(ctx, artifactUpsertBlob, hash, size, toNanos(at))
-	return artifactErr("record blob", err)
+	if len(blobs) == 0 {
+		return nil
+	}
+	err = inTx(ctx, s.db, func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, artifactUpsertBlob)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, b := range blobs {
+			if _, err := stmt.ExecContext(ctx, b.Hash, b.Size, toNanos(at)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return artifactErr("record blobs", err)
 }
+
+// unreferencedBlobs takes the cutoff and the limit; blob_created serves it.
+const unreferencedBlobs = `SELECT b.hash FROM blob b
+	WHERE b.created_at < ?
+	  AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = b.hash)
+	ORDER BY b.created_at, b.hash LIMIT ?`
 
 func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time, limit int) (_ []string, err error) {
 	ctx, end := s.db.op(ctx, "ArtifactStore.UnreferencedBlobs")
@@ -1012,11 +1033,7 @@ func (s *ArtifactStore) UnreferencedBlobs(ctx context.Context, before time.Time,
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT b.hash FROM blob b
-		 WHERE b.created_at < ?
-		   AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = b.hash)
-		 ORDER BY b.created_at, b.hash LIMIT ?`, toNanos(before), limit)
+	rows, err := s.db.QueryContext(ctx, unreferencedBlobs, toNanos(before), limit)
 	if err != nil {
 		return nil, artifactErr("unreferenced blobs", err)
 	}
@@ -1052,6 +1069,28 @@ func (s *ArtifactStore) DeleteBlob(ctx context.Context, hash string) (err error)
 	defer func() { end(err) }()
 	_, err = s.db.ExecContext(ctx, `DELETE FROM blob WHERE hash = ?`, hash)
 	return artifactErr("delete blob", err)
+}
+
+func (s *ArtifactStore) DeleteBlobs(ctx context.Context, hashes []string, before time.Time) (_ int, err error) {
+	ctx, end := s.db.op(ctx, "ArtifactStore.DeleteBlobs")
+	defer func() { end(err) }()
+	if len(hashes) == 0 {
+		return 0, nil
+	}
+	list, err := json.Marshal(hashes)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM blob WHERE hash IN (SELECT value FROM json_each(?))
+		   AND created_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM version_file f WHERE f.blob_hash = blob.hash)`,
+		string(list), toNanos(before))
+	if err != nil {
+		return 0, artifactErr("delete blobs", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), artifactErr("delete blobs", err)
 }
 
 // artifactStatus applies the lifecycle's precedence, so each artifact has

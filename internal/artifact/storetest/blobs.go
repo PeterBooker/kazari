@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
 // RunBlobIndex checks the artifact.BlobIndex of a fresh set of stores per
@@ -13,15 +15,51 @@ import (
 func RunBlobIndex(t *testing.T, open func(t *testing.T) Stores) {
 	suite{
 		{"Blobs", testBlobs},
+		{"DeleteBlobs", testDeleteBlobs},
 		{"BlobTotals", testBlobTotals},
 	}.run(t, open)
+}
+
+func testDeleteBlobs(t *testing.T, h *harness) {
+	h.mkUser("alice")
+	old, recent, kept, used := hashOf("old"), hashOf("recent"), hashOf("kept"), hashOf("used")
+	for hash, created := range map[string]time.Duration{old: 0, recent: 2 * time.Hour, kept: 0} {
+		if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: hash, Size: 5}}, at(created)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.create(t, newArtifact("demo", "alice", at(0)), file("used.txt", "used"))
+
+	n, err := h.blobs.DeleteBlobs(h.ctx, []string{old, recent, used, hashOf("unknown")}, at(time.Hour))
+	if err != nil {
+		t.Fatalf("DeleteBlobs: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteBlobs = %d, want 1: the old row only, not the recent, the referenced or the unknown one", n)
+	}
+	got, err := h.blobs.UnreferencedBlobs(h.ctx, at(3*time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	want := []string{kept, recent}
+	slices.Sort(want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("UnreferencedBlobs after DeleteBlobs (-want +got):\n%s", diff)
+	}
+	if referenced, err := h.blobs.BlobReferenced(h.ctx, used); err != nil || !referenced {
+		t.Errorf("BlobReferenced(used) after DeleteBlobs = %v, %v; want true", referenced, err)
+	}
+	if n, err := h.blobs.DeleteBlobs(h.ctx, nil, at(time.Hour)); err != nil || n != 0 {
+		t.Errorf("DeleteBlobs(nil) = %d, %v; want 0, nil", n, err)
+	}
 }
 
 func testBlobs(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	free1, free2, used := hashOf("free1"), hashOf("free2"), hashOf("used")
 	for _, hash := range []string{free2, free1} {
-		if err := h.blobs.RecordBlob(h.ctx, hash, 5, at(0)); err != nil {
+		if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: hash, Size: 5}}, at(0)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,13 +86,13 @@ func testBlobs(t *testing.T, h *harness) {
 		t.Fatalf("UnreferencedBlobs limit 1 returned %d", len(got))
 	}
 
-	if err := h.blobs.RecordBlob(h.ctx, free1, 5, at(2*time.Hour)); err != nil {
+	if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: free1, Size: 5}}, at(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff([]string{free2}, unref(at(time.Hour), 10)); diff != "" {
 		t.Fatalf("after re-record (-want +got):\n%s", diff)
 	}
-	if err := h.blobs.RecordBlob(h.ctx, free1, 5, at(0)); err != nil {
+	if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: free1, Size: 5}}, at(0)); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff([]string{free2}, unref(at(time.Hour), 10)); diff != "" {
@@ -90,17 +128,20 @@ func testBlobs(t *testing.T, h *harness) {
 }
 
 func testBlobTotals(t *testing.T, h *harness) {
-	if err := h.blobs.RecordBlob(h.ctx, hashOf("a"), 10, at(0)); err != nil {
+	if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: hashOf("a"), Size: 10}, {Hash: hashOf("b"), Size: 32}}, at(0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.blobs.RecordBlob(h.ctx, hashOf("b"), 32, at(0)); err != nil {
+	if err := h.blobs.RecordBlobs(h.ctx, []artifact.StoredBlob{{Hash: hashOf("b"), Size: 32}}, at(0)); err != nil {
 		t.Fatal(err)
+	}
+	if err := h.blobs.RecordBlobs(h.ctx, nil, at(0)); err != nil {
+		t.Fatalf("RecordBlobs(nil): %v", err)
 	}
 	blobs, err := h.blobs.BlobTotals(h.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blobs.Count < 2 || blobs.Bytes < 42 {
-		t.Errorf("BlobTotals = %+v, want at least the two recorded blobs", blobs)
+	if blobs.Count != 2 || blobs.Bytes != 42 {
+		t.Errorf("BlobTotals = %+v, want the two recorded blobs, each once", blobs)
 	}
 }

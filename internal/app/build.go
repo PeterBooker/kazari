@@ -14,6 +14,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/backup"
 	"github.com/PeterBooker/kazari/internal/blob"
 	"github.com/PeterBooker/kazari/internal/buildinfo"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/config"
 	"github.com/PeterBooker/kazari/internal/dashboard"
 	"github.com/PeterBooker/kazari/internal/fetch"
@@ -21,6 +22,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/httpapi"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/mcpserver"
+	"github.com/PeterBooker/kazari/internal/memlimit"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/oidc"
@@ -96,6 +98,8 @@ type parts struct {
 	links    present.Links
 
 	updates updates // nil with admin.update_check off
+
+	compressionCache int64
 }
 
 // The optional parts are held as interfaces, so that one which is absent
@@ -127,6 +131,10 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	a.obs = middleware.NewObserver(p.tel, cfg.Listen.ProxyMode)
 	p.updates = a.updateChecker(p, opts)
+	limit, _ := memlimit.Detect(opts.Memory)
+	var basis string
+	p.compressionCache, basis = cfg.Serve.CompressionCacheBytes(limit.Bytes, limit.Source)
+	log.InfoContext(ctx, "compression cache "+bytesize.Format(p.compressionCache)+" ("+basis+")")
 	a.sched = scheduler.New(scheduler.Options{Logger: log, Now: now, Telemetry: p.tel}, a.jobs(p, opts)...)
 	a.ready = preflight.NewChecker(cfg, preflight.ReadyOptions{
 		HTTPClient: opts.OIDCClient,
@@ -500,6 +508,8 @@ func (a *App) surfaces(p *parts) hosts {
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
 		Views:            a.views,
+		CompressionCache: p.compressionCache,
+		Telemetry:        tel,
 		Gate: gate.New(p.signins, p.shares, gate.Options{
 			SignInURL:       u.signIn,
 			SignOutURL:      u.signOut,

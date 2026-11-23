@@ -249,6 +249,9 @@ func (fx *fixture) handler(opts Options) http.Handler {
 		opts.BaseDomain = testBase
 	}
 	opts.Logger = slog.New(slog.NewTextHandler(fx.logs, nil))
+	if opts.CompressionCache == 0 {
+		opts.CompressionCache = DefaultCompressionCache
+	}
 	return NewHandler(fx.res, fx.blobs, opts)
 }
 

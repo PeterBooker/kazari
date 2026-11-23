@@ -141,9 +141,9 @@ func (c *countingStore) Update(ctx context.Context, slug, by string, fn func(a *
 	return c.ArtifactStore.Update(ctx, slug, by, fn)
 }
 
-func (c *countingStore) RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error {
-	c.count("RecordBlob")
-	return c.ArtifactStore.RecordBlob(ctx, hash, size, at)
+func (c *countingStore) RecordBlobs(ctx context.Context, blobs []artifact.StoredBlob, at time.Time) error {
+	c.count("RecordBlobs")
+	return c.ArtifactStore.RecordBlobs(ctx, blobs, at)
 }
 
 func (c *countingStore) Files(ctx context.Context, versionID int64) ([]artifact.File, error) {
@@ -163,7 +163,7 @@ func TestEditStoreCalls(t *testing.T) {
 	}
 	// One read each of the row, the actor and the base before the
 	// transaction, the base again under the blob hold, the reload after.
-	want := map[string]int{"Get": 2, "Involved": 1, "GetVersion": 2, "AddVersion": 1, "RecordBlob": 1}
+	want := map[string]int{"Get": 2, "Involved": 1, "GetVersion": 2, "AddVersion": 1, "RecordBlobs": 1}
 	if diff := cmp.Diff(want, cs.calls); diff != "" {
 		t.Errorf("store calls of one Edit (-want +got):\n%s", diff)
 	}

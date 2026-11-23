@@ -81,15 +81,28 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 		}
 	}
 
+	unrecorded := make([]StoredBlob, 0, min(len(adds), recordBatch))
 	for _, ad := range adds {
 		f, err := s.putFile(ctx, ad.path, ad.in, &versionLeft, quotaLeft, put)
 		if err != nil {
+			// So that a blob the failed publish cannot drop is collected.
+			_ = s.index.RecordBlobs(context.WithoutCancel(ctx), unrecorded, s.now())
 			return nil, 0, err
 		}
 		if b, ok := base[f.Path]; ok && b.Hash == f.Hash {
 			f.UploadedBy = b.UploadedBy
 		}
 		result[f.Path] = f
+		unrecorded = append(unrecorded, StoredBlob{Hash: f.Hash, Size: f.Size})
+		if len(unrecorded) == recordBatch {
+			if err := s.index.RecordBlobs(ctx, unrecorded, s.now()); err != nil {
+				return nil, 0, err
+			}
+			unrecorded = unrecorded[:0]
+		}
+	}
+	if err := s.index.RecordBlobs(ctx, unrecorded, s.now()); err != nil {
+		return nil, 0, err
 	}
 
 	files := slices.Collect(maps.Values(result))
@@ -101,8 +114,13 @@ func (s *Service) buildFiles(ctx context.Context, base map[string]File, inputs [
 	return files, total, nil
 }
 
-// putFile records the blob row so the garbage collector's grace window
-// starts now.
+// recordBatch is how many blobs a publish stores before it records their
+// rows. The hold on blobMu keeps the collector off them until the version
+// commits, so the rows only matter after a crash: they let the collector
+// find what an interrupted publish stored, and a crash can leave at most
+// this many files that no row leads to.
+const recordBatch = 100
+
 func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLeft, quotaLeft *int64, put *[]string) (File, error) {
 	if n, ok := knownSize(in.Content); ok && n > s.opts.MaxFileBytes {
 		return File{}, Errorf(ErrTooLarge, "file %q is %s, over the %s file limit", p, bytesize.Format(n), bytesize.Format(s.opts.MaxFileBytes))
@@ -136,9 +154,6 @@ func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLe
 		return File{}, domainErr(err)
 	}
 	*put = append(*put, hash)
-	if err := s.index.RecordBlob(ctx, hash, size, s.now()); err != nil {
-		return File{}, err
-	}
 	return File{Path: p, Hash: hash, Size: size, ContentType: ct}, nil
 }
 

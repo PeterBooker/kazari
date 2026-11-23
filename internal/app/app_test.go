@@ -105,6 +105,9 @@ func startWith(t testing.TB, cfg config.Config, opts app.Options) *instance {
 	if opts.Argon2 == (user.Argon2{}) {
 		opts.Argon2 = cheapArgon2
 	}
+	if opts.Memory.Root == nil {
+		opts.Memory = fakeMemory(nil)
+	}
 	a, err := app.New(ctx, cfg, opts)
 	if err != nil {
 		cancel()

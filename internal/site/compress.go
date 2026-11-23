@@ -1,29 +1,21 @@
 package site
 
 import (
-	"compress/gzip"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-// minCompressSize leaves out files whose gzip framing would outweigh what it
-// saves.
+// minCompressSize leaves out files whose framing would outweigh what an
+// encoding saves.
 const minCompressSize = 1024
 
-// maxCompressSize bounds the work one request can ask of the server: at
-// gzipLevel a larger file costs tens of milliseconds of CPU every time.
+// maxCompressSize bounds the work of one compression and the memory of one
+// cached entry: a larger file would take tens of milliseconds to encode.
 const maxCompressSize = 4 << 20
 
-// gzipLevel is near the default ratio at a fraction of the cost of the best.
-const gzipLevel = 5
-
-var gzipWriters sync.Pool
-
 // compressible reports whether a file of this type and size is sent
-// gzip-encoded to clients that accept it. Formats that are compressed
+// encoded to clients that accept an encoding. Formats that are compressed
 // already gain nothing.
 func compressible(contentType string, size int64) bool {
 	if size < minCompressSize || size > maxCompressSize {
@@ -45,33 +37,76 @@ func compressible(contentType string, size int64) bool {
 	return false
 }
 
-// acceptsGzip reports whether the Accept-Encoding field values give gzip, or
-// its alias x-gzip, a non-zero weight, directly or through "*". An absent
-// field gets an uncompressed answer, which every client can read.
-func acceptsGzip(values []string) bool {
-	gzipQ, starQ := -1.0, -1.0
+// knownCodings are the content codings an Accept-Encoding field is read
+// for, whichever of them the site sends.
+var knownCodings = [...]string{"br", "zstd", "gzip"}
+
+// acceptance holds the weights an Accept-Encoding field gives: one per known
+// coding, identity's and that of "*", each -1 when the field does not name it.
+type acceptance struct {
+	q        [len(knownCodings)]float64
+	identity float64
+	star     float64
+}
+
+// parseAcceptEncoding reads Accept-Encoding field values. A coding named
+// more than once takes its highest weight, x-gzip is gzip, and an item with
+// an unreadable weight is ignored.
+func parseAcceptEncoding(values []string) acceptance {
+	a := acceptance{identity: -1, star: -1}
+	for i := range a.q {
+		a.q[i] = -1
+	}
 	for _, v := range values {
 		for item := range strings.SplitSeq(v, ",") {
-			coding, params, _ := strings.Cut(item, ";")
-			coding = strings.ToLower(strings.TrimSpace(coding))
-			if coding != "gzip" && coding != "x-gzip" && coding != "*" {
-				continue
+			token, params, _ := strings.Cut(item, ";")
+			token = strings.ToLower(strings.TrimSpace(token))
+			var slot *float64
+			switch token {
+			case "*":
+				slot = &a.star
+			case "identity":
+				slot = &a.identity
+			case "x-gzip":
+				slot = &a.q[codingIndex("gzip")]
+			default:
+				i := codingIndex(token)
+				if i < 0 {
+					continue
+				}
+				slot = &a.q[i]
 			}
-			q, ok := weight(params)
-			if !ok {
-				continue
-			}
-			if coding == "*" {
-				starQ = max(starQ, q)
-			} else {
-				gzipQ = max(gzipQ, q)
+			if q, ok := weight(params); ok {
+				*slot = max(*slot, q)
 			}
 		}
 	}
-	if gzipQ >= 0 {
-		return gzipQ > 0
+	return a
+}
+
+func codingIndex(name string) int {
+	for i, c := range knownCodings {
+		if c == name {
+			return i
+		}
 	}
-	return starQ > 0
+	return -1
+}
+
+// of is the weight a gives the coding name: its own, else that of "*", else
+// 0, as RFC 9110 section 12.5.3 reads a field. An absent field therefore
+// gets the stored bytes, which every client can read.
+func (a acceptance) of(name string) float64 {
+	i := codingIndex(name)
+	switch {
+	case i < 0:
+		return 0
+	case a.q[i] >= 0:
+		return a.q[i]
+	case a.star >= 0:
+		return a.star
+	}
+	return 0
 }
 
 // weight reads the q parameter of an Accept-Encoding item, 1 when absent.
@@ -102,25 +137,50 @@ func weight(params string) (float64, bool) {
 	return q, true
 }
 
-// wantsGzip reports whether r is answered with the gzip representation,
-// whose ETag is etag. Range requests stay with http.ServeContent on the
-// stored bytes, and so does an If-Match that does not name etag, so a
-// client holding the stored bytes' ETag is answered as before.
-func wantsGzip(r *http.Request, etag string) bool {
-	h := r.Header
-	if h.Get("Range") != "" || h.Get("If-Range") != "" {
-		return false
+// choose picks the coding a file of this hash is sent in, nil for the
+// stored bytes. An If-Range or If-Match pins the encoded representation it
+// names, so a client holding part of one goes on with it; one that names
+// none of them gets the stored bytes, as a client holding their ETag
+// expects. Otherwise, among the codings of the highest weight, one cached
+// already comes first, then the order of codings. An identity weighted
+// above them all keeps the stored bytes.
+func choose(h http.Header, acc acceptance, hash string, cached func(*coding) bool) (c *coding, pinned bool) {
+	ir, im := h.Get("If-Range"), h.Values("If-Match")
+	if ir != "" || len(im) > 0 {
+		for _, c := range codings {
+			etag := codingETag(hash, c)
+			if acc.of(c.name) > 0 && (ir == "" || ir == etag) && (len(im) == 0 || match(im, etag)) {
+				return c, true
+			}
+		}
+		return nil, false
 	}
-	if im := h.Values("If-Match"); len(im) > 0 && !match(im, etag) {
-		return false
+	best := 0.0
+	for _, c := range codings {
+		best = max(best, acc.of(c.name))
 	}
-	return acceptsGzip(h.Values("Accept-Encoding"))
+	if best == 0 || acc.identity > best {
+		return nil, false
+	}
+	var first *coding
+	for _, c := range codings {
+		if acc.of(c.name) != best {
+			continue
+		}
+		if cached(c) {
+			return c, false
+		}
+		if first == nil {
+			first = c
+		}
+	}
+	return first, false
 }
 
-// gzipETag is the strong validator of a file's gzip representation, which
-// differs from the stored bytes that the bare hash names.
-func gzipETag(hash string) string {
-	return `"` + hash + `-gzip"`
+// codingETag is the strong validator of a file's representation in c,
+// which differs from the stored bytes that the bare hash names.
+func codingETag(hash string, c *coding) string {
+	return `"` + hash + "-" + c.name + `"`
 }
 
 // noneMatch reports whether an If-None-Match field value matches etag under
@@ -163,33 +223,4 @@ func eachTag(values []string, matches func(tag string, weak bool) bool) bool {
 		}
 	}
 	return false
-}
-
-// writeGzip sends rc gzip-encoded with status. The caller has set every
-// other header. An error after the status has gone out ends the response
-// with http.ErrAbortHandler: returning would end the body cleanly, and a
-// client or a cache of a pinned version would keep a cut page as a whole one.
-func writeGzip(w http.ResponseWriter, r *http.Request, status int, rc io.Reader) error {
-	hdr := w.Header()
-	hdr.Set("Content-Encoding", "gzip")
-	hdr.Del("Content-Length")
-	w.WriteHeader(status)
-	if r.Method == http.MethodHead {
-		return nil
-	}
-	gz, _ := gzipWriters.Get().(*gzip.Writer)
-	if gz == nil {
-		// The level is a valid constant, so this cannot fail.
-		gz, _ = gzip.NewWriterLevel(w, gzipLevel)
-	} else {
-		gz.Reset(w)
-	}
-	defer func() {
-		gz.Reset(io.Discard)
-		gzipWriters.Put(gz)
-	}()
-	if _, err := io.Copy(gz, rc); err != nil {
-		return err
-	}
-	return gz.Close()
 }

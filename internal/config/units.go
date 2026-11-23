@@ -80,6 +80,80 @@ func (b *Bytes) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// Memory is an amount of memory: a size, written as Bytes is, or a share
+// of the memory the process may use, written as a percentage with at most
+// two decimals ("5%", "2.5%"), which the server resolves at start.
+type Memory struct {
+	Size Bytes
+	// Share is in hundredths of a percent. Above 0, it is the amount and
+	// Size is unused.
+	Share int
+}
+
+// ParseMemory parses a size such as "64MiB" or a percentage such as "5%".
+func ParseMemory(s string) (Memory, error) {
+	t := strings.TrimSpace(s)
+	num, ok := strings.CutSuffix(t, "%")
+	if !ok {
+		b, err := ParseBytes(s)
+		if err != nil {
+			return Memory{}, err
+		}
+		return Memory{Size: b}, nil
+	}
+	whole, frac, _ := strings.Cut(strings.TrimSpace(num), ".")
+	if !isDigits(whole) || len(whole) > 3 || strings.Contains(num, ".") && (!isDigits(frac) || len(frac) > 2) {
+		return Memory{}, fmt.Errorf("invalid percentage %q: want a number with at most two decimals, such as 5%% or 2.5%%", s)
+	}
+	w, _ := strconv.Atoi(whole)
+	f := 0
+	if frac != "" {
+		f, _ = strconv.Atoi(frac)
+		if len(frac) == 1 {
+			f *= 10
+		}
+	}
+	share := w*100 + f
+	if share == 0 || share > 100*100 {
+		return Memory{}, fmt.Errorf("invalid percentage %q: want more than 0%% and at most 100%%; 0 without %% turns it off", s)
+	}
+	return Memory{Share: share}, nil
+}
+
+// String writes a share as a percentage ("5%", "2.5%") and a size as Bytes
+// does.
+func (m Memory) String() string {
+	if m.Share <= 0 {
+		return m.Size.String()
+	}
+	s := strconv.Itoa(m.Share / 100)
+	if f := m.Share % 100; f != 0 {
+		s += strings.TrimRight(fmt.Sprintf(".%02d", f), "0")
+	}
+	return s + "%"
+}
+
+// Of returns the amount for a process that may use limit bytes.
+func (m Memory) Of(limit int64) int64 {
+	if m.Share <= 0 {
+		return int64(m.Size)
+	}
+	return int64(float64(limit) * float64(m.Share) / (100 * 100))
+}
+
+// MarshalText implements encoding.TextMarshaler using String.
+func (m Memory) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler using ParseMemory.
+func (m *Memory) UnmarshalText(text []byte) error {
+	v, err := ParseMemory(string(text))
+	if err != nil {
+		return err
+	}
+	*m = v
+	return nil
+}
+
 const (
 	second = time.Second
 	minute = time.Minute
