@@ -559,6 +559,9 @@ func TestCustomInstancePages(t *testing.T) {
 	if rec := do(t, h, http.MethodGet, "nobody.art.test", "/", nil); rec.Code != 404 || rec.Body.String() != "my 404" {
 		t.Errorf("not found: got %d %q", rec.Code, rec.Body)
 	}
+	if rec := do(t, h, http.MethodGet, "nobody.art.test", gate.SharePath+"?token=x", nil); rec.Code != 404 || rec.Body.String() != "my 404" {
+		t.Errorf("share link to nothing: got %d %q", rec.Code, rec.Body)
+	}
 	if rec := do(t, h, http.MethodGet, "purged.art.test", "/", nil); rec.Code != 410 || rec.Body.String() != "my 410" {
 		t.Errorf("gone: got %d %q", rec.Code, rec.Body)
 	}

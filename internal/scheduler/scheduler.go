@@ -208,12 +208,10 @@ func (s *Scheduler) run(ctx context.Context, st *jobState) error {
 	// otherwise.
 	ctx, span := s.tracer.Start(instrument.WithSurface(ctx, instrument.SurfaceScheduler), st.spanName,
 		trace.WithAttributes(instrument.JobName.String(st.job.Name)))
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	start := s.now()
 	began := time.Now()
-	err := safeRun(runCtx, st.job)
+	err := safeRun(ctx, st.job)
 	instrument.End(span, err, "")
 	attrs := st.okAttrs
 	if err != nil {
