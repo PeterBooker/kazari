@@ -55,10 +55,8 @@ var (
 type Options struct {
 	// CSP is the instance policy; a resource stays remote only when the
 	// policy names its host.
-	CSP           string
-	MaxFileBytes  int64
-	MaxTotalBytes int64
-	MaxFiles      int
+	CSP string
+	artifact.Limits
 }
 
 // Taker takes snapshots with one fetch client.
@@ -71,15 +69,7 @@ type Taker struct {
 
 // New returns a Taker; zero limits take the artifact service's defaults.
 func New(client *fetch.Client, opts Options) *Taker {
-	if opts.MaxFileBytes <= 0 {
-		opts.MaxFileBytes = artifact.DefaultMaxFileBytes
-	}
-	if opts.MaxTotalBytes <= 0 {
-		opts.MaxTotalBytes = artifact.DefaultMaxVersionBytes
-	}
-	if opts.MaxFiles <= 0 {
-		opts.MaxFiles = artifact.DefaultMaxFiles
-	}
+	opts.Limits = opts.Limits.WithDefaults()
 	return &Taker{client: client, opts: opts, policy: csp.Parse(opts.CSP), slots: make(chan struct{}, maxConcurrent)}
 }
 
@@ -271,7 +261,7 @@ func (w *walker) localize(base *url.URL, ref, kind string, depth int) (string, b
 	case w.report.Fetched+1 >= w.t.opts.MaxFiles:
 		return w.skip(abs, "file limit reached")
 	}
-	limit := min(w.t.opts.MaxFileBytes, w.t.opts.MaxTotalBytes-w.total)
+	limit := min(w.t.opts.MaxFileBytes, w.t.opts.MaxVersionBytes-w.total)
 	if kind == "style" {
 		limit = min(limit, maxTextBytes)
 	}

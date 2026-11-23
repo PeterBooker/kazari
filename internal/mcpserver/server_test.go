@@ -518,7 +518,7 @@ func TestChunkedPublish(t *testing.T) {
 	r.Read(data)
 
 	up, res := ok[api.Upload](t, cs, "begin_upload", map[string]any{})
-	if up.UploadID == "" || up.MaxChunkBytes != 1<<20 || up.MaxTotalBytes != upload.DefaultMaxTotalBytes {
+	if up.UploadID == "" || up.MaxChunkBytes != 1<<20 || up.MaxTotalBytes != artifact.DefaultMaxVersionBytes {
 		t.Fatalf("begin_upload = %+v", up)
 	}
 	if !strings.Contains(firstLine(res), up.UploadID) {
@@ -799,7 +799,7 @@ func TestBeginUploadArchive(t *testing.T) {
 			t.Errorf("%s: %q", name, msg)
 		}
 	}
-	msg := fails(t, cs, "begin_upload", map[string]any{"archive_sha256": digest, "archive_bytes": upload.DefaultMaxTotalBytes + 1})
+	msg := fails(t, cs, "begin_upload", map[string]any{"archive_sha256": digest, "archive_bytes": artifact.DefaultMaxVersionBytes + 1})
 	if !strings.HasPrefix(msg, "too_large: ") {
 		t.Errorf("over the limit: %q", msg)
 	}

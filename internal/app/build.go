@@ -76,6 +76,7 @@ type parts struct {
 	tel      instrument.Providers
 	fetchObs *fetch.Observer
 	urls     urls
+	limits   artifact.Limits
 
 	blobs    *blob.FS
 	audit    *sqlite.AuditStore
@@ -151,7 +152,12 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 	cfg, log := a.cfg, a.log
 	tel := a.tel.Providers()
-	p := &parts{now: now, tel: tel, fetchObs: fetch.NewObserver(tel), urls: newURLs(cfg)}
+	p := &parts{now: now, tel: tel, fetchObs: fetch.NewObserver(tel), urls: newURLs(cfg), limits: artifact.Limits{
+		MaxVersionBytes: int64(cfg.Limits.MaxVersionBytes),
+		MaxFileBytes:    int64(cfg.Limits.MaxFileBytes),
+		MaxFiles:        cfg.Limits.MaxFiles,
+		MaxChunkBytes:   int64(cfg.Limits.MaxChunkBytes),
+	}}
 
 	var err error
 	p.blobs, err = blob.NewFS(cfg.BlobDir(), blob.Options{Telemetry: tel})
@@ -190,9 +196,7 @@ func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 	a.users = p.users
 
 	artOpts := artifact.Options{
-		MaxVersionBytes:   int64(cfg.Limits.MaxVersionBytes),
-		MaxFileBytes:      int64(cfg.Limits.MaxFileBytes),
-		MaxFiles:          cfg.Limits.MaxFiles,
+		Limits:            p.limits,
 		MaxMetadataPairs:  cfg.Limits.MetadataMaxPairs,
 		ReservedSlugs:     cfg.Serve.ReservedSlugs,
 		DefaultGrace:      cfg.Lifecycle.DefaultGrace.Std(),
@@ -217,10 +221,8 @@ func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 			Observer:  p.fetchObs,
 		})
 		artOpts.Pages = snapshot.New(p.fetcher, snapshot.Options{
-			CSP:           cfg.Serve.CSP,
-			MaxFileBytes:  int64(cfg.Limits.MaxFileBytes),
-			MaxTotalBytes: int64(cfg.Limits.MaxVersionBytes),
-			MaxFiles:      cfg.Limits.MaxFiles,
+			CSP:    cfg.Serve.CSP,
+			Limits: p.limits,
 		})
 	}
 	artStore := sqlite.NewArtifactStore(a.db)
@@ -230,9 +232,7 @@ func (a *App) domain(now func() time.Time, opts Options) (*parts, error) {
 	p.uploads = upload.New(sqlite.NewUploadStore(a.db), upload.Options{
 		Telemetry:       tel,
 		Dir:             cfg.UploadDir(),
-		MaxChunkBytes:   int64(cfg.Limits.MaxChunkBytes),
-		MaxTotalBytes:   int64(cfg.Limits.MaxVersionBytes),
-		MaxFiles:        cfg.Limits.MaxFiles,
+		Limits:          p.limits,
 		TTL:             cfg.Limits.UploadTTL.Std(),
 		MaxOpenPerOwner: cfg.Limits.MaxOpenUploads,
 		Now:             now,
@@ -458,11 +458,7 @@ func (a *App) surfaces(p *parts) hosts {
 		ResourceMetadataURL: u.mcp + strings.TrimPrefix(oauth.PathResourceMeta, "/"),
 		AllowedOrigins:      []string{u.mcpOrigin},
 		InlineGuidanceBytes: int64(cfg.Limits.InlineGuidanceBytes),
-		MaxVersionBytes:     int64(cfg.Limits.MaxVersionBytes),
-		MaxFileBytes:        int64(cfg.Limits.MaxFileBytes),
-		MaxFiles:            cfg.Limits.MaxFiles,
-		MaxChunkBytes:       int64(cfg.Limits.MaxChunkBytes),
-		MaxTotalBytes:       int64(cfg.Limits.MaxVersionBytes),
+		Limits:              p.limits,
 		CSP:                 cfg.Serve.CSP,
 		AllowCSPOverride:    cfg.Serve.AllowCSPOverride,
 		ReservedSlugs:       cfg.Serve.ReservedSlugs,
@@ -478,16 +474,13 @@ func (a *App) surfaces(p *parts) hosts {
 		Artifacts: p.arts, Uploads: p.uploads, Users: p.users, Auth: p.authn, Links: p.links, Logger: log, Writes: writes, Fetch: p.fetcher,
 		ShareLinks: p.shares,
 	}, httpapi.UserOptions{
-		MaxBodyBytes:    int64(cfg.Limits.MaxVersionBytes) + 1<<20,
-		MaxVersionBytes: int64(cfg.Limits.MaxVersionBytes),
-		MaxChunkBytes:   int64(cfg.Limits.MaxChunkBytes),
-		MaxFileBytes:    int64(cfg.Limits.MaxFileBytes),
-		MaxTotalBytes:   int64(cfg.Limits.MaxVersionBytes),
-		Now:             now,
-		TempDir:         tempDir(cfg),
-		APIBaseURL:      u.api,
-		Skill:           mcpserver.Skill(p.links, mcpOpts),
-		Telemetry:       tel,
+		MaxBodyBytes: p.limits.MaxVersionBytes + 1<<20,
+		Limits:       p.limits,
+		Now:          now,
+		TempDir:      tempDir(cfg),
+		APIBaseURL:   u.api,
+		Skill:        mcpserver.Skill(p.links, mcpOpts),
+		Telemetry:    tel,
 	})
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: p.arts, Uploads: p.uploads, Auth: p.authn, Links: p.links, Logger: log, Writes: writes, Fetch: p.fetcher,

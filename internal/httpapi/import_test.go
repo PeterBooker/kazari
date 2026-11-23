@@ -76,13 +76,12 @@ func TestFilesFromURL(t *testing.T) {
 	}
 }
 
-// Files named by url are capped together at the version size, not at the
-// size of an upload.
+// Files named by url are capped together at the version size.
 func TestFilesFromURLCap(t *testing.T) {
 	srv := pageServer(t)
 	files := []api.FileInput{{Path: "data.json", URL: srv.URL + "/data.json"}}
 
-	e := newEnv(t, config{user: httpapi.UserOptions{MaxTotalBytes: 4}})
+	e := newEnv(t, config{})
 	e.expect(e.postJSON(e.alice, api.CreateArtifactRequest{Slug: "fits", Files: files}), http.StatusCreated, nil)
 
 	e = newEnv(t, config{user: httpapi.UserOptions{MaxVersionBytes: 4}})

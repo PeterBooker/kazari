@@ -218,7 +218,7 @@ func TestBeginUploadArchiveErrors(t *testing.T) {
 		{"digest alone", api.BeginUploadRequest{ArchiveSHA256: sha("x")}, http.StatusUnprocessableEntity, api.CodeInvalidArgument},
 		{"size alone", api.BeginUploadRequest{ArchiveBytes: 1}, http.StatusUnprocessableEntity, api.CodeInvalidArgument},
 		{"not a digest", api.BeginUploadRequest{ArchiveSHA256: "abc", ArchiveBytes: 1}, http.StatusUnprocessableEntity, api.CodeInvalidArgument},
-		{"over the limit", api.BeginUploadRequest{ArchiveSHA256: sha("x"), ArchiveBytes: upload.DefaultMaxTotalBytes + 1},
+		{"over the limit", api.BeginUploadRequest{ArchiveSHA256: sha("x"), ArchiveBytes: artifact.DefaultMaxVersionBytes + 1},
 			http.StatusRequestEntityTooLarge, api.CodeTooLarge},
 	} {
 		resp := e.send(req{method: http.MethodPost, url: e.u("/v1/uploads"), token: e.alice,

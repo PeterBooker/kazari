@@ -27,13 +27,10 @@ type Deps struct {
 	Logger *slog.Logger
 }
 
-// Options are the limits of one call. Zero fields take the defaults noted.
+// Options are the limits of one call: MaxFileBytes caps one file named by
+// url, MaxVersionBytes the files one call names by url, together.
 type Options struct {
-	// MaxFileBytes caps one file named by url. Default: artifact.DefaultMaxFileBytes.
-	MaxFileBytes int64
-	// MaxVersionBytes caps the files one call names by url, together.
-	// Default: artifact.DefaultMaxVersionBytes.
-	MaxVersionBytes int64
+	artifact.Limits
 }
 
 // Intake converts the files of a call.
@@ -45,12 +42,7 @@ type Intake struct {
 
 // New returns an Intake.
 func New(d Deps, o Options) *Intake {
-	if o.MaxFileBytes <= 0 {
-		o.MaxFileBytes = artifact.DefaultMaxFileBytes
-	}
-	if o.MaxVersionBytes <= 0 {
-		o.MaxVersionBytes = artifact.DefaultMaxVersionBytes
-	}
+	o.Limits = o.Limits.WithDefaults()
 	log := d.Logger
 	if log == nil {
 		log = slog.Default()

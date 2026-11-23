@@ -489,7 +489,7 @@ func TestChunkedUpload(t *testing.T) {
 	e := newEnv(t, config{upload: upload.Options{MaxChunkBytes: 16}})
 	var up api.Upload
 	e.call(http.MethodPost, e.u("/v1/uploads"), e.alice, nil, http.StatusCreated, &up)
-	if up.UploadID == "" || up.MaxChunkBytes != 16 || up.MaxTotalBytes != upload.DefaultMaxTotalBytes || !up.ExpiresAt.After(t0) {
+	if up.UploadID == "" || up.MaxChunkBytes != 16 || up.MaxTotalBytes != artifact.DefaultMaxVersionBytes || !up.ExpiresAt.After(t0) {
 		t.Fatalf("upload = %+v", up)
 	}
 	chunk := func(path, offset, body, ct string) *http.Response {

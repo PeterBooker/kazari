@@ -111,7 +111,7 @@ func (t texts) skillText(o Options) string {
 			"%s. Inline `files` in the publishing call are merged with the staged ones and win on a path clash, and the "+
 			"upload is consumed only when that call succeeds: after an error, correct the call and send it again with the same "+
 			"`upload_id`. `discard_upload` drops an upload you no longer need.",
-			bytesize.Exact(o.InlineGuidanceBytes), bytesize.Exact(o.MaxTotalBytes)),
+			bytesize.Exact(o.InlineGuidanceBytes), bytesize.Exact(o.MaxVersionBytes)),
 		"**Inspect:** `get_artifact` (`include_files` lists each version's paths and hashes, newest first, in pages), `read_file` (text " +
 			"inline, `anchors: true` for anchor edits, `start_line` and `end_line` for only the lines you need of any text " +
 			"file, small " +

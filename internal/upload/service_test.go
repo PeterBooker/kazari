@@ -250,7 +250,7 @@ func TestAppendChunk(t *testing.T) {
 		},
 		{
 			name: "total cap across files",
-			opts: upload.Options{MaxTotalBytes: 10},
+			opts: upload.Options{MaxVersionBytes: 10},
 			steps: []step{
 				{path: "a.txt", offset: 0, data: "123456", want: upload.StagedFile{Path: "a.txt", Bytes: 6}},
 				{path: "b.txt", offset: 0, data: "12345", wantErr: artifact.ErrTooLarge},

@@ -115,7 +115,7 @@ func FuzzTake(f *testing.F) {
 	dir := f.TempDir()
 
 	f.Fuzz(func(t *testing.T, page, css string, keepScripts bool) {
-		opts := snapshot.Options{CSP: policy, MaxFileBytes: 64 << 10, MaxTotalBytes: 1 << 20, MaxFiles: 8}
+		opts := snapshot.Options{CSP: policy, MaxFileBytes: 64 << 10, MaxVersionBytes: 1 << 20, MaxFiles: 8}
 		taker := snapshot.New(fetch.New(fetch.Options{Transport: web{page, css}, Dir: dir}), opts)
 		snap, err := taker.Take(t.Context(), "http://page.test/", keepScripts)
 		if err != nil {

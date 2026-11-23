@@ -154,7 +154,7 @@ func TestTakeLimits(t *testing.T) {
 		"/a.png":   {"image/png", "aaaa"},
 		"/b.png":   {"image/png", "bbbb"},
 	})
-	snap, err := taker(t, snapshot.Options{MaxFileBytes: 200, MaxTotalBytes: 1000, MaxFiles: 2}).Take(context.Background(), srv.URL, false)
+	snap, err := taker(t, snapshot.Options{MaxFileBytes: 200, MaxVersionBytes: 1000, MaxFiles: 2}).Take(context.Background(), srv.URL, false)
 	if err != nil {
 		t.Fatal(err)
 	}
