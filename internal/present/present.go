@@ -15,6 +15,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/gate"
 	"github.com/PeterBooker/kazari/internal/preflight"
@@ -498,7 +499,7 @@ func Error(err error) (int, api.Error) {
 		return statusFor(code), api.Error{Code: code, Message: msg}
 	}
 	if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: "request body exceeds " + artifact.FormatBytes(mbe.Limit)}
+		return http.StatusRequestEntityTooLarge, api.Error{Code: api.CodeTooLarge, Message: "request body exceeds " + bytesize.Format(mbe.Limit)}
 	}
 	return http.StatusInternalServerError, api.Error{Code: api.CodeInternal, Message: "internal error"}
 }

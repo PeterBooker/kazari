@@ -22,3 +22,18 @@ func Format(n int64) string {
 	s = strings.TrimSuffix(s, ".0")
 	return s + " " + string("KMGTPE"[exp-1]) + "iB"
 }
+
+// Exact writes n in the largest binary unit that divides it, else in bytes:
+// 2 MiB, 1536 KiB, 1500 bytes. A limit reads as it is configured, never
+// rounded.
+func Exact(n int64) string {
+	for _, u := range []struct {
+		shift uint
+		name  string
+	}{{30, "GiB"}, {20, "MiB"}, {10, "KiB"}} {
+		if n >= 1<<u.shift && n%(1<<u.shift) == 0 {
+			return strconv.FormatInt(n>>u.shift, 10) + " " + u.name
+		}
+	}
+	return strconv.FormatInt(n, 10) + " bytes"
+}

@@ -95,7 +95,6 @@ var layers = map[string]layer{
 	"internal/api":        leaf,
 	"internal/audit":      leaf,
 	"internal/buildinfo":  leaf,
-	"internal/bytesize":   leaf,
 	"internal/config":     leaf,
 	"internal/cookie":     leaf,
 	"internal/csp":        leaf,
@@ -106,7 +105,8 @@ var layers = map[string]layer{
 	"internal/textedit":   leaf,
 	"internal/theme":      leaf,
 
-	"internal/errcode": base,
+	"internal/bytesize": base,
+	"internal/errcode":  base,
 
 	"internal/artifact/storetest":        support,
 	"internal/blob/blobtest":             support,

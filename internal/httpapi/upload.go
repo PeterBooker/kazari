@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/bytesize"
 )
 
 const manifestLimit = 64 << 10
@@ -41,7 +42,7 @@ func readManifest(mr *multipart.Reader, v any) error {
 		return bodyErr("reading the manifest", err)
 	}
 	if len(raw) > manifestLimit {
-		return artifact.Errorf(artifact.ErrTooLarge, "the manifest exceeds %s", artifact.FormatBytes(manifestLimit))
+		return artifact.Errorf(artifact.ErrTooLarge, "the manifest exceeds %s", bytesize.Format(manifestLimit))
 	}
 	return decodeStrict(bytes.NewReader(raw), v, false)
 }
@@ -166,7 +167,7 @@ func readTarBundle(r io.Reader, dir string, limit int64) (*bundle, error) {
 	}
 	b := &bundle{f: f}
 	capped := &capReader{r: r, left: limit,
-		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle is over %s uncompressed", artifact.FormatBytes(limit))}
+		err: artifact.Errorf(artifact.ErrTooLarge, "the bundle is over %s uncompressed", bytesize.Format(limit))}
 	if err := b.fill(tar.NewReader(capped), limit, capped.err); err != nil {
 		return nil, errors.Join(err, b.Close())
 	}
