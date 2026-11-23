@@ -14,11 +14,11 @@ import (
 
 // actionConstants reads the audit actions out of the source: every string
 // constant of internal/audit/audit.go, and the Action constants of
-// internal/oauth/oauth.go.
+// internal/oauth/oauth.go and internal/signin/signin.go.
 func actionConstants(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for file, prefix := range map[string]string{"../audit/audit.go": "", "../oauth/oauth.go": "Action"} {
+	for file, prefix := range map[string]string{"../audit/audit.go": "", "../oauth/oauth.go": "Action", "../signin/signin.go": "Action"} {
 		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		if err != nil {
 			t.Fatal(err)

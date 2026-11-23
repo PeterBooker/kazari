@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -301,19 +301,19 @@ func TestUserStoreSetup(t *testing.T) {
 	}
 }
 
-func TestOAuthStoreUserSessions(t *testing.T) {
+func TestSignInStoreUserSessions(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, t.TempDir()+"/kazari.db", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	users, s := NewUserStore(db), NewOAuthStore(db)
+	users, s := NewUserStore(db), NewSignInStore(db)
 	userMustCreate(t, users, "ana", "", user.RoleMember)
 	userMustCreate(t, users, "ben", "", user.RoleMember)
 	session := func(handle, hash, browser string, expires time.Time) int64 {
 		t.Helper()
-		sess := &oauth.Session{Hash: hash, Browser: browser, UserHandle: handle, CreatedAt: userT0, ExpiresAt: expires}
+		sess := &signin.Session{Hash: hash, Browser: browser, UserHandle: handle, CreatedAt: userT0, ExpiresAt: expires}
 		if err := s.CreateSession(ctx, sess); err != nil {
 			t.Fatal(err)
 		}

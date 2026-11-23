@@ -26,6 +26,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey"
 	"github.com/PeterBooker/kazari/internal/present"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -77,6 +78,7 @@ type env struct {
 	clock  *clock
 	users  *user.Service
 	oauth  *oauth.Service
+	signin *signin.Service
 	audit  *sqlite.AuditStore
 	arts   *artifact.Service
 	shares *artifact.ShareLinks
@@ -104,7 +106,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 		// As internal/app wires it.
 		OnDisable: func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 		EndSessions: func(ctx context.Context, handle string, keep int64) error {
-			return e.oauth.EndSessions(ctx, handle, keep)
+			return e.signin.EndSessions(ctx, handle, keep)
 		},
 		RevokeGrants:  func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 		LocalAccounts: !eo.noLocal,
@@ -128,7 +130,7 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	})
 	e.shares = artifact.NewShareLinks(store, e.arts)
 	var (
-		passwords oauth.Passwords
+		passwords signin.Passwords
 		keys      *passkey.Service
 	)
 	if !eo.noLocal {
@@ -139,20 +141,27 @@ func newEnv(t *testing.T, eo envOptions) *env {
 			t.Fatal(err)
 		}
 	}
-	e.oauth = oauth.New(sqlite.NewOAuthStore(db), e.users, e.users, nil, e.audit, oauth.Options{
+	signInDeps := signin.Deps{
+		Users: e.users, Keys: e.users, Passwords: passwords, Audit: e.audit,
+		ControlCallback: func(host string) (string, bool) {
+			return apexURL + account.CallbackPath, host == signin.HostAccount
+		},
+	}
+	if keys != nil {
+		signInDeps.Passkeys = keys
+	}
+	e.signin = signin.New(sqlite.NewSignInStore(db), signInDeps, signin.Options{
+		Origin: mcpURL, Now: e.clock.Now, InsecureCookies: true,
+	})
+	e.oauth = oauth.New(sqlite.NewOAuthStore(db), oauth.Deps{Users: e.users, Keys: e.users, SignIn: e.signin, Audit: e.audit}, oauth.Options{
 		Issuer:          mcpURL,
 		Resource:        mcpURL + "/",
 		Now:             e.clock.Now,
 		InsecureCookies: true,
-		Passwords:       passwords,
-		Passkeys:        oauthPasskeys(keys),
-		ControlCallback: func(host string) (string, bool) {
-			return apexURL + account.CallbackPath, host == oauth.HostAccount
-		},
 	})
 	opts := account.Options{
 		URL:             apexURL,
-		SignInURL:       mcpURL + oauth.PathSignIn,
+		SignInURL:       mcpURL + signin.PathSignIn,
 		AdminURL:        adminURL,
 		MCPURL:          mcpURL + "/",
 		APIURL:          "https://api.art.test/v1",
@@ -166,12 +175,12 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	if eo.noAdmin {
 		opts.AdminURL = ""
 	}
-	var grants account.Grants = e.oauth
+	var grants account.Grants = grantsAndSessions{e.oauth, e.signin}
 	if eo.grants != nil {
 		grants = eo.grants(grants)
 	}
 	deps := account.Deps{
-		Sessions: e.oauth, Users: e.users, Grants: grants, Artifacts: e.arts, ShareLinks: e.shares, Audit: e.audit,
+		Sessions: e.signin, Users: e.users, Grants: grants, Artifacts: e.arts, ShareLinks: e.shares, Audit: e.audit,
 		Links: present.Links{URL: func(sub string) string {
 			if sub == "" {
 				return "https://art.test/"
@@ -191,12 +200,15 @@ func newEnv(t *testing.T, eo envOptions) *env {
 	return e
 }
 
-// oauthPasskeys keeps a nil *passkey.Service out of the interface.
-func oauthPasskeys(k *passkey.Service) oauth.Passkeys {
-	if k == nil {
-		return nil
-	}
-	return k
+// grantsAndSessions are the apps of oauth.Service and the sessions of
+// signin.Service, as internal/app hands them to the account pages.
+type grantsAndSessions struct {
+	*oauth.Service
+	sessions *signin.Service
+}
+
+func (g grantsAndSessions) EndSessions(ctx context.Context, handle string, keep int64) error {
+	return g.sessions.EndSessions(ctx, handle, keep)
 }
 
 var asAdmin = auth.ContextWithPrincipal(context.Background(), auth.Principal{Handle: "admin", Admin: true})
@@ -328,7 +340,7 @@ func (b *browser) signIn(login, secret string) {
 	b.e.t.Helper()
 	t := b.e.t
 	resp, _ := b.get("/account/")
-	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.mcp.URL+oauth.PathSignIn+"?") {
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.mcp.URL+signin.PathSignIn+"?") {
 		t.Fatalf("account page without a session: status %d to %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	signIn, err := url.Parse(resp.Header.Get("Location"))
@@ -336,7 +348,7 @@ func (b *browser) signIn(login, secret string) {
 		t.Fatal(err)
 	}
 	q := signIn.Query()
-	if q.Get("host") != oauth.HostAccount || q.Get("path") != "/account/" {
+	if q.Get("host") != signin.HostAccount || q.Get("path") != "/account/" {
 		t.Fatalf("sign-in query = %v", q)
 	}
 	form := url.Values{"host": {q.Get("host")}, "path": {q.Get("path")}, "nonce": {q.Get("nonce")}}
@@ -346,7 +358,7 @@ func (b *browser) signIn(login, secret string) {
 		form.Set("login", login)
 		form.Set("password", secret)
 	}
-	resp, body := b.postFrom(b.e.mcp.URL, b.e.mcp.URL+oauth.PathSignIn, form)
+	resp, body := b.postFrom(b.e.mcp.URL, b.e.mcp.URL+signin.PathSignIn, form)
 	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.apex.URL+account.CallbackPath+"?code=") {
 		t.Fatalf("sign-in: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
@@ -362,8 +374,8 @@ func (b *browser) welcomed(resp *http.Response) {
 	b.e.t.Helper()
 	t := b.e.t
 	loc := resp.Header.Get("Location")
-	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, b.e.mcp.URL+oauth.PathSignIn+"?") ||
-		!strings.Contains(loc, oauth.ParamHandoff+"=") {
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, b.e.mcp.URL+signin.PathSignIn+"?") ||
+		!strings.Contains(loc, signin.ParamHandoff+"=") {
 		t.Fatalf("the link's form: status %d to %q, want the sign-in host with a handoff", resp.StatusCode, loc)
 	}
 	resp, body := b.getURL(loc)

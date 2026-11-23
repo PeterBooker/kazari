@@ -23,6 +23,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/dashboard"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -107,7 +108,7 @@ func (e *env) peopleConnectApp(handle, clientName string) string {
 			requestID = c.Value
 		}
 	}
-	form(oauth.PathSignIn, url.Values{"request_id": {requestID}, "login": {handle}, "password": {password}}, http.StatusSeeOther)
+	form(signin.PathSignIn, url.Values{"request_id": {requestID}, "login": {handle}, "password": {password}}, http.StatusSeeOther)
 	resp, _ := form(oauth.PathConsent, url.Values{"request_id": {requestID}, "action": {"approve"}}, http.StatusFound)
 	loc, _ := url.Parse(resp.Header.Get("Location"))
 	_, body = form("/oauth/token", url.Values{"grant_type": {"authorization_code"}, "client_id": {client.ID},
@@ -667,7 +668,7 @@ func TestPersonSessions(t *testing.T) {
 	if r = b.submit("/people/ana/sessions/end", nil); !strings.Contains(r.body, "Their browser sessions have ended.") || !strings.Contains(r.body, "0 open in browsers") {
 		t.Errorf("after signing ana out: %s", r.body)
 	}
-	if n, _ := e.oauth.CountSessions(ctx, "ana"); n != 0 {
+	if n, _ := e.signin.CountSessions(ctx, "ana"); n != 0 {
 		t.Errorf("ana has %d sessions", n)
 	}
 	if ev := e.events(audit.SessionRevoke); len(ev) != 1 || ev[0].Actor != "boss" || ev[0].Details["user"] != "ana" {
@@ -678,7 +679,7 @@ func TestPersonSessions(t *testing.T) {
 	if r = b.submit("/people/boss/sessions/end", nil); !strings.Contains(r.body, "Your other browser sessions have ended. This one stays.") {
 		t.Errorf("after signing oneself out: %s", r.body)
 	}
-	if n, _ := e.oauth.CountSessions(ctx, "boss"); n != 1 {
+	if n, _ := e.signin.CountSessions(ctx, "boss"); n != 1 {
 		t.Errorf("boss has %d sessions, want the one the change was made in", n)
 	}
 	if r := other.navigate("/people"); r.StatusCode != http.StatusFound {

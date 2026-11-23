@@ -20,6 +20,8 @@ import (
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
+	"github.com/PeterBooker/kazari/internal/sqlite"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -368,7 +370,7 @@ func TestRequestCookie(t *testing.T) {
 		e := newEnv(t, envOptions{})
 		srv, name := e.svc, oauth.InsecureCookieName
 		if !insecure {
-			srv = oauth.New(e.store, e.users, nil, e.idp, nil, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL, Now: e.clock.Now})
+			srv = oauth.New(e.store, oauth.Deps{Users: e.users, IdP: e.idp, SignIn: e.signin}, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL, Now: e.clock.Now})
 			name = oauth.CookieName
 		}
 		clientID := e.register("https://app.example/cb")
@@ -1181,7 +1183,7 @@ func TestAdminScopeNeverGranted(t *testing.T) {
 		t.Errorf("refresh of a stored admin-scoped grant = %d %q scope %q, want the member scopes", r.status, r.Error, r.Scope)
 	}
 
-	svc := oauth.New(e.store, e.users, nil, nil, nil, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL + "/", Scopes: auth.AllScopes})
+	svc := oauth.New(e.store, oauth.Deps{Users: e.users, SignIn: e.signin}, oauth.Options{Issuer: e.srv.URL, Resource: e.srv.URL + "/", Scopes: auth.AllScopes})
 	rec := httptest.NewRecorder()
 	svc.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
 	var meta struct {
@@ -1292,7 +1294,7 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 	t.Run("no key checker", func(t *testing.T) {
 		e, _, clientID, code := approved(t, 0)
 		tr := exchange(t, e, clientID, code)
-		svc := oauth.New(e.store, e.users, nil, nil, nil, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
+		svc := oauth.New(e.store, oauth.Deps{Users: e.users}, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
 		if _, err := svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
 			t.Errorf("Authenticate without Keys: err = %v, want ErrInvalidToken", err)
 		}
@@ -1301,7 +1303,7 @@ func TestGrantEndsWithApprovingKey(t *testing.T) {
 		e, _, clientID, code := approved(t, 0)
 		tr := exchange(t, e, clientID, code)
 		boom := errors.New("disk on fire")
-		svc := oauth.New(e.store, e.users, failingKeys{e.users, boom}, nil, nil, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
+		svc := oauth.New(e.store, oauth.Deps{Users: e.users, Keys: failingKeys{e.users, boom}}, oauth.Options{Issuer: e.srv.URL, Now: e.clock.Now})
 		if _, err := svc.Authenticate(ctx, tr.AccessToken); !errors.Is(err, boom) || errors.Is(err, auth.ErrInvalidToken) {
 			t.Errorf("Authenticate = %v, want the storage error", err)
 		}
@@ -1390,7 +1392,9 @@ func newMCPHost(t *testing.T) *mcpHost {
 		t.Fatal(err)
 	}
 	return &mcpHost{t: t, key: key, clientID: e.register("https://app.example/cb"),
-		svc: oauth.New(e.store, e.users, e.users, nil, nil, oauth.Options{Issuer: mcpOrigin, Resource: mcpOrigin + "/", Now: e.clock.Now})}
+		svc: oauth.New(e.store, oauth.Deps{Users: e.users, Keys: e.users, SignIn: signin.New(sqlite.NewSignInStore(e.db),
+			signin.Deps{Users: e.users, Keys: e.users}, signin.Options{Origin: mcpOrigin, Now: e.clock.Now})},
+			oauth.Options{Issuer: mcpOrigin, Resource: mcpOrigin + "/", Now: e.clock.Now})}
 }
 
 func (h *mcpHost) serve(req *http.Request) *http.Response {

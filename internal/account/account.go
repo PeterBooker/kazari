@@ -21,15 +21,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/cookie"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
 	"github.com/PeterBooker/kazari/internal/oauth"
@@ -37,6 +36,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
 	"github.com/PeterBooker/kazari/internal/session"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/user"
 )
@@ -45,7 +45,7 @@ import (
 const Prefix = "/account/"
 
 // CallbackPath is where a sign-in for the apex ends; the sign-in host's
-// callback for oauth.HostAccount is this path on the apex.
+// callback for signin.HostAccount is this path on the apex.
 const CallbackPath = Prefix + "callback"
 
 const (
@@ -69,7 +69,8 @@ const (
 )
 
 // Grants lists and ends what a person's sign-ins left behind: the apps they
-// connected and their browser sessions. oauth.Service implements it.
+// connected, which oauth.Service keeps, and their browser sessions, which
+// signin.Service keeps.
 type Grants interface {
 	// ListGrants returns the person's connected apps, each as its newest
 	// live refresh token; FamilyID names the grant.
@@ -101,6 +102,27 @@ type Sharing interface {
 	RevokeShareLink(ctx context.Context, actor artifact.Actor, slug, prefix string) error
 }
 
+// Users are the people who open these pages, and their passwords, keys,
+// passkeys and links. user.Service implements it.
+type Users interface {
+	Account(ctx context.Context, handle string) (user.Account, error)
+	ConfirmPassword(ctx context.Context, handle, password string) error
+	ChangePasswordConfirmed(ctx context.Context, handle, next string, keep int64) error
+	MinPasswordLength() int
+	// AccountKey is what failed password attempts of login count under.
+	AccountKey(ctx context.Context, login string) string
+	NewRecoveryCodes(ctx context.Context, handle string) ([]string, error)
+	Recover(ctx context.Context, login, code, password string) (*user.User, error)
+	Passkeys(ctx context.Context, handle string) ([]user.Passkey, error)
+	RemovePasskey(ctx context.Context, handle string, id int64) error
+	IssueKey(ctx context.Context, req user.IssueKeyRequest) (*user.APIKey, string, error)
+	ListKeys(ctx context.Context, handle string) ([]user.APIKey, error)
+	RevokeKey(ctx context.Context, ref user.KeyRef) error
+	RotateKey(ctx context.Context, ref user.KeyRef, overlap time.Duration) (*user.APIKey, string, *user.APIKey, error)
+	Link(ctx context.Context, token string) (*user.Link, *user.User, error)
+	Redeem(ctx context.Context, token string, req user.RedeemRequest) (*user.User, error)
+}
+
 // Passkeys adds passkeys to accounts. passkey.Service implements it.
 type Passkeys interface {
 	Registration(ctx context.Context, u *user.User) (passkey.Ceremony, error)
@@ -114,7 +136,7 @@ type Passkeys interface {
 // ShareLinks is set whenever Artifacts is.
 type Deps struct {
 	Sessions   session.Provider
-	Users      *user.Service
+	Users      Users
 	Grants     Grants
 	Artifacts  Pages
 	ShareLinks Sharing
@@ -152,14 +174,16 @@ type Options struct {
 }
 
 type server struct {
-	d      Deps
-	o      Options
-	now    func() time.Time
-	log    *slog.Logger
-	sess   *session.Manager
-	tmpl   *template.Template
-	assets theme.Assets
-	host   string // of Options.URL, shown at the foot of a page
+	d    Deps
+	o    Options
+	now  func() time.Time
+	log  *slog.Logger
+	sess *session.Manager
+	// cookies are the apex's, for the link cookie.
+	cookies cookie.Host
+	tmpl    *template.Template
+	assets  theme.Assets
+	host    string // of Options.URL, shown at the foot of a page
 	// linkCSP is the policy of a link's form, whose submission goes on to
 	// the sign-in host or the dashboard; recoverCSP that of the recovery
 	// form, whose submission goes on to the sign-in host.
@@ -189,9 +213,10 @@ func New(d Deps, o Options) http.Handler {
 	s := &server{
 		d: d, o: o, now: o.Now, log: log,
 		sess: session.New(d.Sessions, session.Options{
-			Host: oauth.HostAccount, Cookie: sessionCookie, SignInURL: o.SignInURL, InsecureCookies: o.InsecureCookies, Now: o.Now,
+			Host: signin.HostAccount, Cookie: sessionCookie, SignInURL: o.SignInURL, InsecureCookies: o.InsecureCookies, Now: o.Now,
 			Telemetry: o.Telemetry,
 		}),
+		cookies:   cookie.Host{Insecure: o.InsecureCookies},
 		tmpl:      template.Must(theme.Templates().Funcs(funcs).ParseFS(templateFS, "templates/*.html")),
 		assets:    theme.URLs(assetPrefix),
 		linkDelay: backoff(ratelimit.ScopeIP), passwordDelay: backoff(ratelimit.ScopeAccount), addressDelay: backoff(ratelimit.ScopeIP),
@@ -199,8 +224,8 @@ func New(d Deps, o Options) http.Handler {
 	if u, err := url.Parse(o.URL); err == nil {
 		s.host = u.Host
 	}
-	s.linkCSP = formAction(middleware.PageCSP, o.SignInURL, o.AdminURL)
-	s.recoverCSP = formAction(middleware.PageCSP, o.SignInURL)
+	s.linkCSP = middleware.PageCSPFor(o.SignInURL, o.AdminURL)
+	s.recoverCSP = middleware.PageCSPFor(o.SignInURL)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET "+assetPrefix, theme.Handler(assetPrefix))
@@ -267,18 +292,8 @@ type visit struct {
 // session's token.
 func (s *server) signedIn(fn func(http.ResponseWriter, *http.Request, visit)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		sess, err := s.sess.Require(w, r)
-		var u *user.User
-		if err == nil {
-			u, err = s.d.Users.GetUser(ctx, sess.Handle)
-			if errors.Is(err, user.ErrNotFound) {
-				err = s.sess.SignedOut(w, r)
-			}
-		}
-		if err == nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			err = sess.CheckForm(w, r)
-		}
+		form := r.Method != http.MethodGet && r.Method != http.MethodHead
+		sess, r, err := s.sess.Guard(w, r, form, member)
 		switch {
 		case errors.Is(err, session.ErrSignInStarted):
 			return
@@ -295,21 +310,20 @@ func (s *server) signedIn(fn func(http.ResponseWriter, *http.Request, visit)) ht
 			s.fail(w, r, "load session", err)
 			return
 		}
-		// Member scopes at most, whatever the role: nothing on this page
-		// acts as an admin. A sign-in with a key acts with that key's.
-		scopes := auth.MemberScopes
-		if sess.KeyPrefix != "" {
-			st, err := s.d.Users.KeyStatus(ctx, sess.KeyPrefix)
-			if err != nil && !errors.Is(err, user.ErrKeyNotFound) {
-				s.fail(w, r, "load key", err)
-				return
-			}
-			scopes = slices.DeleteFunc(slices.Clone(auth.MemberScopes), func(sc string) bool { return !slices.Contains(st.Scopes, sc) })
-		}
-		p := auth.Principal{Handle: u.Handle, Scopes: scopes, Source: auth.SourceSession, KeyID: sess.KeyPrefix, QuotaBytes: u.QuotaBytes}
-		s.sess.Admit(ctx, p)
-		fn(w, r.WithContext(auth.ContextWithPrincipal(ctx, p)), visit{sess: sess, user: u})
+		fn(w, r, visit{sess: sess, user: sess.User})
 	}
+}
+
+// member is who a person signed in here acts as: member scopes at most,
+// whatever the role, since nothing on these pages acts as an admin, and
+// after a sign-in with a key that key's.
+func member(sess *session.Session) (auth.Principal, bool) {
+	scopes := auth.MemberScopes
+	if sess.KeyPrefix != "" {
+		scopes = slices.DeleteFunc(slices.Clone(auth.MemberScopes), func(sc string) bool { return !slices.Contains(sess.KeyScopes, sc) })
+	}
+	u := sess.User
+	return auth.Principal{Handle: u.Handle, Scopes: scopes, Source: auth.SourceSession, KeyID: sess.KeyPrefix, QuotaBytes: u.QuotaBytes}, true
 }
 
 // once runs fn, which makes a key shown once, only for a form sent for the
@@ -454,27 +468,6 @@ func (s *server) signOut(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.message(w, r, http.StatusOK, "signed-out")
 	}
-}
-
-// safeOrigin matches an origin that can be put in a CSP source list as is.
-var safeOrigin = regexp.MustCompile(`^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$|^http://\[::1\](:[0-9]+)?$`)
-
-// formAction returns policy with the origins of targets added to its
-// form-action, for a form whose submission is redirected to them.
-func formAction(policy string, targets ...string) string {
-	const self = "form-action 'self'"
-	list := self
-	for _, t := range targets {
-		u, err := url.Parse(t)
-		if err != nil || t == "" {
-			continue
-		}
-		origin := u.Scheme + "://" + u.Host
-		if safeOrigin.MatchString(origin) && !strings.Contains(list, " "+origin) {
-			list += " " + origin
-		}
-	}
-	return strings.Replace(policy, self, list, 1)
 }
 
 var funcs = template.FuncMap{

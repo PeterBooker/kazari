@@ -18,6 +18,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/errcode"
 	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 const scope = "github.com/PeterBooker/kazari/internal/sqlite"
@@ -121,9 +122,9 @@ func errorCode(err error) string {
 		return ""
 	case errcode.CodeOf(err) != "":
 		return errcode.CodeOf(err)
-	case errors.Is(err, oauth.ErrNotFound):
+	case errors.Is(err, oauth.ErrNotFound), errors.Is(err, signin.ErrNotFound):
 		return errcode.NotFound
-	case errors.Is(err, oauth.ErrCodeUsed):
+	case errors.Is(err, oauth.ErrCodeUsed), errors.Is(err, signin.ErrCodeUsed):
 		return errcode.InvalidArgument
 	default:
 		return instrument.CodeInternal

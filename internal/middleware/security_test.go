@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/middleware"
@@ -124,5 +125,52 @@ func TestPageCSP(t *testing.T) {
 		"form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 	if middleware.PageCSP != want {
 		t.Errorf("PageCSP = %q", middleware.PageCSP)
+	}
+}
+
+func TestPageCSPFor(t *testing.T) {
+	const self = "form-action 'self'"
+	tests := []struct {
+		name    string
+		targets []string
+		want    string
+	}{
+		{"none", nil, self},
+		{"one origin", []string{"https://demo.art.example.com/.kazari/callback"}, self + " https://demo.art.example.com"},
+		{"two origins, once each", []string{"https://a.example/x", "https://b.example:8443/", "https://a.example/y"},
+			self + " https://a.example https://b.example:8443"},
+		{"empty and unsafe", []string{"", "https://a.example;evil/", "javascript:alert(1)"}, self},
+		{"loopback", []string{"http://[::1]:8080/cb"}, self + " http://[::1]:8080"},
+	}
+	for _, tt := range tests {
+		got := middleware.PageCSPFor(tt.targets...)
+		want := strings.Replace(middleware.PageCSP, self, tt.want, 1)
+		if got != want {
+			t.Errorf("%s: PageCSPFor(%q) = %q, want %q", tt.name, tt.targets, got, want)
+		}
+	}
+}
+
+func TestNavigation(t *testing.T) {
+	tests := []struct {
+		name, method string
+		headers      map[string]string
+		want         bool
+	}{
+		{"a tab", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, true},
+		{"a frame", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe"}, false},
+		{"a fetch", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}, false},
+		{"an old browser", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml"}, true},
+		{"curl", "GET", map[string]string{"Accept": "*/*"}, false},
+		{"a form post", "POST", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, false},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(tt.method, "https://admin.art.test/", nil)
+		for k, v := range tt.headers {
+			r.Header.Set(k, v)
+		}
+		if got := middleware.Navigation(r); got != tt.want {
+			t.Errorf("%s: Navigation = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

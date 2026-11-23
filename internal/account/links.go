@@ -31,39 +31,23 @@ type linkPageData struct {
 	Err map[string]string
 }
 
-func (s *server) linkCookieName() string {
-	if s.o.InsecureCookies {
-		return linkCookie
-	}
-	return "__Host-" + linkCookie
-}
-
-// setLinkCookie holds the link's token while its form is open. The __Host-
-// prefix keeps script on an artifact host from planting another person's
-// link here.
+// setLinkCookie holds the link's token while its form is open, and ""
+// drops it. The __Host- prefix keeps script on an artifact host from
+// planting another person's link here.
 func (s *server) setLinkCookie(w http.ResponseWriter, token string) {
-	c := &http.Cookie{
-		Name:     s.linkCookieName(),
-		Value:    token,
-		Path:     "/", // required by the __Host- prefix
-		MaxAge:   int(linkCookieTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   !s.o.InsecureCookies,
-		SameSite: http.SameSiteLaxMode,
-	}
 	if token == "" {
-		c.MaxAge = -1
+		s.cookies.Delete(w, linkCookie)
+		return
 	}
-	http.SetCookie(w, c)
+	s.cookies.Set(w, linkCookie, token, linkCookieTTL)
 }
 
 // linkToken returns the token of the open link, or "".
 func (s *server) linkToken(r *http.Request) string {
-	ck, err := r.Cookie(s.linkCookieName())
-	if err != nil || !user.IsLinkToken(ck.Value) {
-		return ""
+	if token := s.cookies.Get(r, linkCookie); user.IsLinkToken(token) {
+		return token
 	}
-	return ck.Value
+	return ""
 }
 
 // linkFormToken ties a link's form to the page that link opened. The cookie

@@ -7,7 +7,7 @@
 //
 // A visitor's access is one host-only cookie, __Host-kazari_view, set by
 // this package and by nothing else: either a view session token from a
-// sign-in (oauth.Service checks it, for this host only) or the token of a
+// sign-in (signin.Service checks it, for this host only) or the token of a
 // share link for this artifact. It is HttpOnly, so the artifact's own
 // script cannot read it, and the __Host- prefix stops a sibling artifact
 // from planting one with a Domain attribute.
@@ -15,28 +15,26 @@ package gate
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/base64"
 	"errors"
-	"github.com/PeterBooker/kazari/internal/instrument"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 	"html/template"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/PeterBooker/kazari/internal/artifact"
+	"github.com/PeterBooker/kazari/internal/cookie"
+	"github.com/PeterBooker/kazari/internal/instrument"
 	"github.com/PeterBooker/kazari/internal/middleware"
-	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/ratelimit"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/user"
 	"github.com/PeterBooker/kazari/internal/views"
@@ -56,8 +54,6 @@ const (
 const (
 	viewCookie  = "kazari_view"
 	nonceCookie = "kazari_nonce"
-	nonceTTL    = 10 * time.Minute // as long as a sign-in may take
-	nonceLen    = 43               // 32 random bytes, base64url
 	shareCookie = "kazari_share"
 	shareTTL    = 10 * time.Minute // as long as typing a password may take
 )
@@ -67,10 +63,10 @@ const (
 const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 
 // Sessions checks and creates view sessions for signed-in people.
-// oauth.Service implements it; every method returns oauth.ErrNotFound for
+// signin.Service implements it; every method returns signin.ErrNotFound for
 // a code or token that does not grant access.
 type Sessions interface {
-	Redeem(ctx context.Context, code, host, nonce string) (oauth.View, error)
+	Redeem(ctx context.Context, code, host, nonce string) (signin.View, error)
 	Viewer(ctx context.Context, host, token string) (string, error)
 	EndView(ctx context.Context, host, token string) error
 }
@@ -110,6 +106,8 @@ type Gate struct {
 	links    Links
 	opts     Options
 	log      *slog.Logger
+	cookies  cookie.Host
+	signIn   signin.Client
 	requests metric.Int64Counter
 	// results are the counter's attribute sets as the option slices Add
 	// takes, built once: every page view passes the gate, and a slice built
@@ -166,7 +164,9 @@ func New(sessions Sessions, links Links, opts Options) *Gate {
 		return ratelimit.NewBackoff(ratelimit.BackoffOptions{Free: free, Base: linkBaseDelay, Max: linkMaxDelay,
 			Now: opts.Now, Scope: scope, Telemetry: opts.Telemetry})
 	}
+	cookies := cookie.Host{Insecure: opts.InsecureCookies}
 	return &Gate{sessions: sessions, links: links, opts: opts, log: log, results: results,
+		cookies: cookies, signIn: signin.Client{SignInURL: opts.SignInURL, Cookies: cookies, NonceCookie: nonceCookie},
 		requests: instrument.Handle(opts.Telemetry.Meter(scope).Int64Counter("kazari.gate.requests",
 			metric.WithUnit("{request}"), metric.WithDescription("Requests for artifact pages by what the gate decided."))),
 		guessDelay: backoff(guessFreeFailures, ratelimit.ScopeIP), linkDelay: backoff(linkFreeFailures, ratelimit.ScopeAccount)}
@@ -187,17 +187,17 @@ func (g *Gate) Allow(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	}
 	a, err := g.admitted(r, p, host)
 	if err != nil {
-		g.log.ErrorContext(r.Context(), "gate: check access", "host", host, "err", err)
-		g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
+		g.fail(w, r, "check access", "host", host, err)
 		return views.Access{}, false
 	}
 	if a.Via != "" {
 		g.decided(r.Context(), string(a.Via))
 		return a, true
 	}
-	if navigation(r) {
+	if middleware.Navigation(r) {
 		g.decided(r.Context(), resultRedirect)
-		g.toSignIn(w, r, host)
+		setNoStore(w.Header())
+		g.signIn.Start(w, r, host, r.URL.RequestURI(), nil, http.StatusFound)
 		return views.Access{}, false
 	}
 	g.decided(r.Context(), resultDenied)
@@ -237,21 +237,22 @@ func (g *Gate) decided(ctx context.Context, result string) {
 // admitted returns how the request's view cookie opens host, by a member's
 // sign-in or a share link, or a zero Access when it does not.
 func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (views.Access, error) {
-	ck, err := r.Cookie(g.name(viewCookie))
-	if err != nil || ck.Value == "" {
-		return views.Access{}, nil //nolint:nilerr // the only error is http.ErrNoCookie, and no cookie opens nothing
+	view := g.cookies.Get(r, viewCookie)
+	if view == "" {
+		return views.Access{}, nil
 	}
-	a, notFound := views.Access{Via: views.ViaMember}, oauth.ErrNotFound
-	if artifact.IsLinkCookie(ck.Value) {
+	var err error
+	a, notFound := views.Access{Via: views.ViaMember}, signin.ErrNotFound
+	if artifact.IsLinkCookie(view) {
 		// A share link is for the people the page is published to, and a
 		// staged version is not published yet.
 		if p.Staged {
 			return views.Access{}, nil
 		}
 		a.Via, notFound = views.ViaShareLink, artifact.ErrLinkNotFound
-		_, err = g.links.CheckShareLink(r.Context(), p.Slug, ck.Value)
+		_, err = g.links.CheckShareLink(r.Context(), p.Slug, view)
 	} else {
-		a.Handle, err = g.sessions.Viewer(r.Context(), host, ck.Value)
+		a.Handle, err = g.sessions.Viewer(r.Context(), host, view)
 	}
 	switch {
 	case errors.Is(err, notFound):
@@ -260,41 +261,6 @@ func (g *Gate) admitted(r *http.Request, p *artifact.Published, host string) (vi
 		return views.Access{}, err
 	}
 	return a, nil
-}
-
-// navigation reports whether r loads a page into a browser tab, where a
-// redirect to sign in helps. Browsers that send no Fetch Metadata are
-// judged by their Accept header.
-func navigation(r *http.Request) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
-		return mode == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
-	}
-	return strings.Contains(r.Header.Get("Accept"), "text/html")
-}
-
-// toSignIn sets the nonce cookie, reusing the browser's current one so
-// that several tabs can sign in at once, and redirects to the sign-in host.
-func (g *Gate) toSignIn(w http.ResponseWriter, r *http.Request, host string) {
-	var nonce string
-	if ck, err := r.Cookie(g.name(nonceCookie)); err == nil && len(ck.Value) == nonceLen {
-		nonce = ck.Value
-	} else {
-		var b [32]byte
-		_, _ = rand.Read(b[:]) // never fails (crypto/rand panics on failure)
-		nonce = base64.RawURLEncoding.EncodeToString(b[:])
-	}
-	g.setCookie(w, nonceCookie, nonce, nonceTTL)
-	sum := sha256.Sum256([]byte(nonce))
-	q := url.Values{
-		"host":  {host},
-		"path":  {r.URL.RequestURI()},
-		"nonce": {base64.RawURLEncoding.EncodeToString(sum[:])},
-	}
-	setNoStore(w.Header())
-	http.Redirect(w, r, g.opts.SignInURL+"?"+q.Encode(), http.StatusFound)
 }
 
 // ServeReserved answers a request under Prefix on host, for artifact p.
@@ -336,28 +302,23 @@ func (g *Gate) method(w http.ResponseWriter, r *http.Request, allowed ...string)
 // returns to the page the visitor wanted. The nonce cookie stays until it
 // expires: another tab's sign-in may still be on its way back with it.
 func (g *Gate) callback(w http.ResponseWriter, r *http.Request, host string) {
-	nonce := ""
-	if ck, err := r.Cookie(g.name(nonceCookie)); err == nil {
-		nonce = ck.Value
-	}
-	v, err := g.sessions.Redeem(r.Context(), r.URL.Query().Get("code"), host, nonce)
-	if errors.Is(err, oauth.ErrNotFound) {
+	v, err := g.sessions.Redeem(r.Context(), r.URL.Query().Get("code"), host, g.signIn.Nonce(r))
+	if errors.Is(err, signin.ErrNotFound) {
 		g.page(w, r, http.StatusBadRequest, page{Title: "Sign-in failed",
 			Message: "This sign-in has expired, was already used or was started in another browser.",
 			Link:    "/", LinkText: "Open the page again"})
 		return
 	}
 	if err != nil {
-		g.log.ErrorContext(r.Context(), "gate: redeem", "host", host, "err", err)
-		g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
+		g.fail(w, r, "redeem", "host", host, err)
 		return
 	}
-	g.setCookie(w, viewCookie, v.Token, v.ExpiresAt.Sub(g.opts.Now()))
+	g.cookies.Set(w, viewCookie, v.Token, v.ExpiresAt.Sub(g.opts.Now()))
 	// Location is set as is: http.Redirect would clean the path, and
 	// cleaning can turn a path on this host into one a browser reads as
 	// another host's.
 	setNoStore(w.Header())
-	w.Header().Set("Location", oauth.ReturnPath(v.Path))
+	w.Header().Set("Location", signin.ReturnPath(v.Path))
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -379,17 +340,17 @@ func (g *Gate) share(w http.ResponseWriter, r *http.Request, p *artifact.Publish
 	}
 	token, fromAddress := r.URL.Query().Get("token"), true
 	if token == "" {
-		token, fromAddress = g.cookie(r, shareCookie), false
+		token, fromAddress = g.cookies.Get(r, shareCookie), false
 	}
 	l, cookie, err := g.links.OpenShareLink(r.Context(), p.Slug, token)
 	switch {
 	case err != nil:
-		g.setCookie(w, shareCookie, "", -1)
+		g.cookies.Delete(w, shareCookie)
 		g.linkFailed(w, r, p, err)
 	case cookie != "":
 		g.opened(w, l, cookie)
 	case fromAddress:
-		g.setCookie(w, shareCookie, token, min(shareTTL, l.ExpiresAt.Sub(g.opts.Now())))
+		g.cookies.Set(w, shareCookie, token, min(shareTTL, l.ExpiresAt.Sub(g.opts.Now())))
 		setNoStore(w.Header())
 		w.Header().Set("Location", SharePath)
 		w.WriteHeader(http.StatusSeeOther)
@@ -410,7 +371,7 @@ func (g *Gate) unlock(w http.ResponseWriter, r *http.Request, p *artifact.Publis
 		g.page(w, r, http.StatusBadRequest, page{Title: "Request rejected", Message: "The form could not be read."})
 		return
 	}
-	token, password := g.cookie(r, shareCookie), r.PostForm.Get("password")
+	token, password := g.cookies.Get(r, shareCookie), r.PostForm.Get("password")
 	if !artifact.IsLinkToken(token) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Form expired",
 			Message: "This password form has expired. Open the link you were sent again."})
@@ -441,23 +402,15 @@ func (g *Gate) unlock(w http.ResponseWriter, r *http.Request, p *artifact.Publis
 		attempt.Done() // the visitor left; there is no one to answer
 	case err != nil:
 		attempt.Done()
-		g.setCookie(w, shareCookie, "", -1)
+		g.cookies.Delete(w, shareCookie)
 		g.linkFailed(w, r, p, err)
 	default:
 		attempt.Done()
 		g.guessDelay.Reset(guess)
 		g.linkDelay.Reset(link)
-		g.setCookie(w, shareCookie, "", -1)
+		g.cookies.Delete(w, shareCookie)
 		g.opened(w, l, cookie)
 	}
-}
-
-// cookie returns the value of the host's cookie named base, "" for none.
-func (g *Gate) cookie(r *http.Request, base string) string {
-	if ck, err := r.Cookie(g.name(base)); err == nil {
-		return ck.Value
-	}
-	return ""
 }
 
 // maxUnlockBytes bounds the password form: a password of at most
@@ -466,7 +419,7 @@ const maxUnlockBytes = 16 << 10
 
 // opened sets the view cookie of an opened link and goes on to the page.
 func (g *Gate) opened(w http.ResponseWriter, l *artifact.ShareLink, cookie string) {
-	g.setCookie(w, viewCookie, cookie, l.ExpiresAt.Sub(g.opts.Now()))
+	g.cookies.Set(w, viewCookie, cookie, l.ExpiresAt.Sub(g.opts.Now()))
 	setNoStore(w.Header())
 	w.Header().Set("Location", "/")
 	w.WriteHeader(http.StatusFound)
@@ -478,8 +431,7 @@ func (g *Gate) linkFailed(w http.ResponseWriter, r *http.Request, p *artifact.Pu
 			Message: "This share link has expired or was revoked. Ask the person who sent it for a new one."})
 		return
 	}
-	g.log.ErrorContext(r.Context(), "gate: open share link", "slug", p.Slug, "err", err)
-	g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
+	g.fail(w, r, "open share link", "slug", p.Slug, err)
 }
 
 // passwordPage asks for the password of the link whose token the share
@@ -500,7 +452,7 @@ func passwordPage(problem string) page {
 func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 	const everywhere = "Sign out of this Kazari instance"
 	if r.Method == http.MethodGet {
-		if ck, err := r.Cookie(g.name(viewCookie)); err != nil || ck.Value == "" {
+		if g.cookies.Get(r, viewCookie) == "" {
 			g.page(w, r, http.StatusOK, page{Title: "Not signed in here",
 				Message: "This browser has not opened this page signed in.",
 				Link:    g.opts.SignOutURL, LinkText: everywhere})
@@ -515,41 +467,23 @@ func (g *Gate) signOut(w http.ResponseWriter, r *http.Request, host string) {
 		g.page(w, r, http.StatusForbidden, page{Title: "Request rejected", Message: "This form was not sent from this page."})
 		return
 	}
-	if ck, err := r.Cookie(g.name(viewCookie)); err == nil && !artifact.IsLinkCookie(ck.Value) {
-		if err := g.sessions.EndView(r.Context(), host, ck.Value); err != nil {
-			g.log.ErrorContext(r.Context(), "gate: end view", "host", host, "err", err)
-			g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
+	if view := g.cookies.Get(r, viewCookie); view != "" && !artifact.IsLinkCookie(view) {
+		if err := g.sessions.EndView(r.Context(), host, view); err != nil {
+			g.fail(w, r, "end view", "host", host, err)
 			return
 		}
 	}
-	g.setCookie(w, viewCookie, "", -1)
+	g.cookies.Delete(w, viewCookie)
 	g.page(w, r, http.StatusOK, page{Title: "Signed out of this page",
 		Message: "This browser's access to this page has ended. Any sign-in to this Kazari instance is still active.",
 		Link:    g.opts.SignOutURL, LinkText: everywhere})
 }
 
-func (g *Gate) name(base string) string {
-	if g.opts.InsecureCookies {
-		return base
-	}
-	return "__Host-" + base
-}
-
-// setCookie sets a host-only cookie; ttl <= 0 deletes it.
-func (g *Gate) setCookie(w http.ResponseWriter, base, value string, ttl time.Duration) {
-	maxAge := int(ttl / time.Second)
-	if maxAge <= 0 {
-		maxAge = -1
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     g.name(base),
-		Value:    value,
-		Path:     "/", // required by the __Host- prefix
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   !g.opts.InsecureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
+// fail logs an error that is not the visitor's doing, with the key and
+// value that say where, and answers with a page that says nothing about it.
+func (g *Gate) fail(w http.ResponseWriter, r *http.Request, what, key, value string, err error) {
+	g.log.ErrorContext(r.Context(), "gate: "+what, key, value, "err", err)
+	g.page(w, r, http.StatusInternalServerError, page{Title: "Something went wrong", Message: "Please try again later."})
 }
 
 // page is the data of the instance page shown on an artifact host.

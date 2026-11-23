@@ -16,7 +16,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/artifact"
 	"github.com/PeterBooker/kazari/internal/gate"
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/views"
 )
 
@@ -42,24 +42,24 @@ type fakeSessions struct {
 	err      error    // returned by every call when set
 }
 
-func (f *fakeSessions) Redeem(_ context.Context, code, host, nonce string) (oauth.View, error) {
+func (f *fakeSessions) Redeem(_ context.Context, code, host, nonce string) (signin.View, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.redeemed = append(f.redeemed, code+" "+host+" "+nonce)
 	if f.err != nil {
-		return oauth.View{}, f.err
+		return signin.View{}, f.err
 	}
 	switch code {
 	case "good":
-		return oauth.View{Token: viewToken, ExpiresAt: now.Add(12 * time.Hour), Path: "/report?q=1"}, nil
+		return signin.View{Token: viewToken, ExpiresAt: now.Add(12 * time.Hour), Path: "/report?q=1"}, nil
 	case "sneaky":
-		return oauth.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: "//evil.example/"}, nil
+		return signin.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: "//evil.example/"}, nil
 	case "dotted":
-		return oauth.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: `/x/../\evil.example/`}, nil
+		return signin.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: `/x/../\evil.example/`}, nil
 	case "dots":
-		return oauth.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: "/a/../b?c=1"}, nil
+		return signin.View{Token: viewToken, ExpiresAt: now.Add(time.Hour), Path: "/a/../b?c=1"}, nil
 	}
-	return oauth.View{}, oauth.ErrNotFound
+	return signin.View{}, signin.ErrNotFound
 }
 
 func (f *fakeSessions) Viewer(_ context.Context, host, token string) (string, error) {
@@ -69,7 +69,7 @@ func (f *fakeSessions) Viewer(_ context.Context, host, token string) (string, er
 	if host == "team" && token == viewToken || host == "team--v2" && token == stagedToken {
 		return "alice", nil
 	}
-	return "", oauth.ErrNotFound
+	return "", signin.ErrNotFound
 }
 
 func (f *fakeSessions) EndView(_ context.Context, host, token string) error {

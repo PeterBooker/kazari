@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/PeterBooker/kazari/internal/middleware"
-	"github.com/PeterBooker/kazari/internal/theme"
 )
 
 // Endpoint paths, relative to the issuer.
@@ -24,9 +23,9 @@ const (
 
 const maxBodyBytes = 64 << 10
 
-// Handler serves the metadata documents and /oauth/, browser sign-in for
-// gated artifacts included. Mount it at the root of the MCP host beside the
-// MCP endpoint; it also claims paths below PathResourceMeta.
+// Handler serves the metadata documents and /oauth/, the sign-in host's
+// pages included. Mount it at the root of the MCP host beside the MCP
+// endpoint; it also claims paths below PathResourceMeta.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET "+PathAuthServerMeta, cors(http.HandlerFunc(s.serveAuthServerMeta)))
@@ -39,20 +38,11 @@ func (s *Service) Handler() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		})))
 	}
-	// No method in the pattern: the theme answers 405 itself.
-	mux.Handle(PathAssets, theme.Handler(PathAssets))
 	mux.HandleFunc("GET "+PathAuthorize, s.serveAuthorize)
 	mux.HandleFunc("GET "+PathCallback, s.serveCallback)
 	mux.HandleFunc("GET "+PathConsent, s.serveConsentPage)
 	mux.HandleFunc("POST "+PathConsent, s.serveConsent)
-	mux.HandleFunc("GET "+PathSignIn, s.serveSignIn)
-	mux.HandleFunc("POST "+PathSignIn, s.serveSignInForm)
-	mux.HandleFunc("GET "+PathSignOut, s.serveSignOutPage)
-	mux.HandleFunc("POST "+PathSignOut, s.serveSignOut)
-	if s.opts.RecoverURL != "" {
-		// The sign-in page links here, so it names no other origin.
-		mux.HandleFunc("GET "+PathRecover, s.serveRecover)
-	}
+	s.signIn.Mount(mux, requests{s})
 	return middleware.Routed(mux)
 }
 

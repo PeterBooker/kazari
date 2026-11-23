@@ -14,6 +14,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/audit"
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -236,7 +237,7 @@ func TestRecoveryReturnsToTheSignIn(t *testing.T) {
 	form := url.Values{"login": {"ana"}, "code": {codes[0]}, "password": {next}, "confirm": {next}}
 	maps.Copy(form, q)
 	resp, body = b.post("/account/recover", form)
-	want := e.mcp.URL + oauth.PathSignIn + "?" + url.Values{"host": {"demo"}, "login": {"ana"}, "nonce": {nonce}, "notice": {"recovered"}, "path": {"/report"}}.Encode()
+	want := e.mcp.URL + signin.PathSignIn + "?" + url.Values{"host": {"demo"}, "login": {"ana"}, "nonce": {nonce}, "notice": {"recovered"}, "path": {"/report"}}.Encode()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != want {
 		t.Fatalf("recovered: status %d to %q, want %q: %s", resp.StatusCode, resp.Header.Get("Location"), want, body)
 	}

@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/session"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 var t0 = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
@@ -23,32 +24,32 @@ var t0 = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 // session.
 type provider struct {
 	code, nonceHash string
-	live            map[string]oauth.ControlSession // token -> session
+	live            map[string]signin.ControlSession // token -> session
 	signedOut       []string
 	linked          string // the handle of the last LinkCode
 	err             error
 }
 
-func (p *provider) Redeem(_ context.Context, code, host, nonce string) (oauth.View, error) {
+func (p *provider) Redeem(_ context.Context, code, host, nonce string) (signin.View, error) {
 	if p.err != nil {
-		return oauth.View{}, p.err
+		return signin.View{}, p.err
 	}
 	sum := sha256.Sum256([]byte(nonce))
-	if code != p.code || host != oauth.HostAdmin || base64.RawURLEncoding.EncodeToString(sum[:]) != p.nonceHash {
-		return oauth.View{}, oauth.ErrNotFound
+	if code != p.code || host != signin.HostAdmin || base64.RawURLEncoding.EncodeToString(sum[:]) != p.nonceHash {
+		return signin.View{}, signin.ErrNotFound
 	}
 	p.code = ""
-	p.live["view-token"] = oauth.ControlSession{Handle: "boss", SessionID: 7, ExpiresAt: t0.Add(12 * time.Hour)}
-	return oauth.View{Token: "view-token", ExpiresAt: t0.Add(12 * time.Hour), Path: "/people?role=admin"}, nil
+	p.live["view-token"] = signin.ControlSession{Handle: "boss", SessionID: 7, ExpiresAt: t0.Add(12 * time.Hour)}
+	return signin.View{Token: "view-token", ExpiresAt: t0.Add(12 * time.Hour), Path: "/people?role=admin"}, nil
 }
 
-func (p *provider) ControlSession(_ context.Context, host, token string) (oauth.ControlSession, error) {
+func (p *provider) ControlSession(_ context.Context, host, token string) (signin.ControlSession, error) {
 	if p.err != nil {
-		return oauth.ControlSession{}, p.err
+		return signin.ControlSession{}, p.err
 	}
 	cs, ok := p.live[token]
-	if !ok || host != oauth.HostAdmin {
-		return oauth.ControlSession{}, oauth.ErrNotFound
+	if !ok || host != signin.HostAdmin {
+		return signin.ControlSession{}, signin.ErrNotFound
 	}
 	return cs, nil
 }
@@ -69,7 +70,7 @@ func (p *provider) LinkCode(_ context.Context, handle string) (string, error) {
 
 func manager(p *provider, insecure bool) *session.Manager {
 	return session.New(p, session.Options{
-		Host: oauth.HostAdmin, Cookie: "kazari_admin", SignInURL: "https://mcp.art.test/oauth/signin",
+		Host: signin.HostAdmin, Cookie: "kazari_admin", SignInURL: "https://mcp.art.test/oauth/signin",
 		InsecureCookies: insecure, Now: func() time.Time { return t0 },
 	})
 }
@@ -102,7 +103,7 @@ func (b *browser) take(t *testing.T, w *httptest.ResponseRecorder) []*http.Cooki
 }
 
 func TestSignInAndRedeem(t *testing.T) {
-	p := &provider{code: "the-code", live: map[string]oauth.ControlSession{}}
+	p := &provider{code: "the-code", live: map[string]signin.ControlSession{}}
 	m := manager(p, false)
 	b := &browser{}
 
@@ -116,7 +117,7 @@ func TestSignInAndRedeem(t *testing.T) {
 		t.Fatalf("SignIn: status %d to %q", w.Code, w.Header().Get("Location"))
 	}
 	q := loc.Query()
-	if q.Get("host") != oauth.HostAdmin || q.Get("path") != "/people?role=admin" || len(q.Get("nonce")) != 43 {
+	if q.Get("host") != signin.HostAdmin || q.Get("path") != "/people?role=admin" || len(q.Get("nonce")) != 43 {
 		t.Fatalf("sign-in query = %v", q)
 	}
 	for _, c := range b.take(t, w) {
@@ -163,7 +164,7 @@ func TestSignInAndRedeem(t *testing.T) {
 }
 
 func TestExpiredSession(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"view-token": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"view-token": {Handle: "boss"}}}
 	m := manager(p, false)
 	b := &browser{cookies: map[string]string{"__Host-kazari_admin": "view-token"}}
 	if s, _ := m.Get(b.request("GET", "https://admin.art.test/")); s == nil {
@@ -186,7 +187,7 @@ func TestExpiredSession(t *testing.T) {
 
 // The unprefixed cookie of plain http is not the session cookie of https.
 func TestCookieNames(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"view-token": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"view-token": {Handle: "boss"}}}
 	planted := &browser{cookies: map[string]string{"kazari_admin": "view-token"}}
 	if s, _ := manager(p, false).Get(planted.request("GET", "https://admin.art.test/")); s != nil {
 		t.Error("a cookie without the __Host- prefix opened a session")
@@ -214,7 +215,7 @@ func TestSignInReturnPath(t *testing.T) {
 }
 
 func TestEnd(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"view-token": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"view-token": {Handle: "boss"}}}
 	m := manager(p, false)
 	b := &browser{cookies: map[string]string{"__Host-kazari_admin": "view-token"}}
 	w := httptest.NewRecorder()
@@ -231,7 +232,7 @@ func TestEnd(t *testing.T) {
 }
 
 func TestFormToken(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"one": {Handle: "boss"}, "two": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"one": {Handle: "boss"}, "two": {Handle: "boss"}}}
 	m := manager(p, false)
 	get := func(token string) *session.Session {
 		s, err := m.Get((&browser{cookies: map[string]string{"__Host-kazari_admin": token}}).request("GET", "https://admin.art.test/"))
@@ -288,34 +289,10 @@ func TestFlash(t *testing.T) {
 	}
 }
 
-func TestNavigation(t *testing.T) {
-	tests := []struct {
-		name, method string
-		headers      map[string]string
-		want         bool
-	}{
-		{"a tab", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, true},
-		{"a frame", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe"}, false},
-		{"a fetch", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}, false},
-		{"an old browser", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml"}, true},
-		{"curl", "GET", map[string]string{"Accept": "*/*"}, false},
-		{"a form post", "POST", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, false},
-	}
-	for _, tt := range tests {
-		r := httptest.NewRequest(tt.method, "https://admin.art.test/", nil)
-		for k, v := range tt.headers {
-			r.Header.Set(k, v)
-		}
-		if got := session.Navigation(r); got != tt.want {
-			t.Errorf("%s: Navigation = %v, want %v", tt.name, got, tt.want)
-		}
-	}
-}
-
 func TestOnce(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"one": {Handle: "boss"}, "two": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"one": {Handle: "boss"}, "two": {Handle: "boss"}}}
 	now := t0
-	m := session.New(p, session.Options{Host: oauth.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
+	m := session.New(p, session.Options{Host: signin.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
 	get := func(m *session.Manager, token string) *session.Session {
 		s, err := m.Get((&browser{cookies: map[string]string{"__Host-kazari_admin": token}}).request("GET", "https://admin.art.test/"))
 		if err != nil || s == nil {
@@ -335,7 +312,7 @@ func TestOnce(t *testing.T) {
 		t.Errorf("the second claim: %v, want ErrFormUsed", err)
 	}
 
-	restarted := session.New(p, session.Options{Host: oauth.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
+	restarted := session.New(p, session.Options{Host: signin.HostAdmin, Cookie: "kazari_admin", Now: func() time.Time { return now }})
 	for name, tt := range map[string]struct {
 		s *session.Session
 		v string
@@ -360,7 +337,7 @@ func TestOnce(t *testing.T) {
 }
 
 func TestRequire(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{"view-token": {Handle: "boss"}}}
+	p := &provider{live: map[string]signin.ControlSession{"view-token": {Handle: "boss"}}}
 	m := manager(p, false)
 	signedIn := &browser{cookies: map[string]string{"__Host-kazari_admin": "view-token"}}
 
@@ -397,8 +374,60 @@ func TestRequire(t *testing.T) {
 	}
 }
 
+func TestGuard(t *testing.T) {
+	p := &provider{live: map[string]signin.ControlSession{"view-token": {Handle: "boss"}}}
+	m := manager(p, false)
+	as := func(handle string) func(*session.Session) (auth.Principal, bool) {
+		return func(s *session.Session) (auth.Principal, bool) {
+			return auth.Principal{Handle: handle}, s.Handle == handle
+		}
+	}
+	request := func(method string, form url.Values, signedIn bool) *http.Request {
+		r := httptest.NewRequest(method, "https://admin.art.test/people", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if signedIn {
+			r.AddCookie(&http.Cookie{Name: "__Host-kazari_admin", Value: "view-token"})
+		}
+		return r
+	}
+	s, r, err := m.Guard(httptest.NewRecorder(), request("GET", nil, true), false, as("boss"))
+	if err != nil || s.Handle != "boss" {
+		t.Fatalf("Guard = %+v, %v; want boss's session", s, err)
+	}
+	if got, ok := auth.FromContext(r.Context()); !ok || got.Handle != "boss" {
+		t.Errorf("Guard: principal %+v, %v; want boss", got, ok)
+	}
+
+	tests := []struct {
+		name     string
+		r        *http.Request
+		form     bool
+		handle   string
+		want     error
+		wantSess bool
+	}{
+		{"no session", request("POST", nil, false), false, "boss", session.ErrSignedOut, false},
+		{"turned away", request("GET", nil, true), false, "ana", session.ErrRefused, true},
+		{"turned away before the form is read", request("POST", nil, true), true, "ana", session.ErrRefused, true},
+		{"no form token", request("POST", url.Values{"x": {"1"}}, true), true, "boss", session.ErrFormToken, true},
+		{"form not checked", request("POST", url.Values{"x": {"1"}}, true), false, "boss", nil, true},
+		{"form token", request("POST", url.Values{session.FormField: {s.FormToken()}}, true), true, "boss", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, r, err := m.Guard(httptest.NewRecorder(), tt.r, tt.form, as(tt.handle))
+			if !errors.Is(err, tt.want) || (s != nil) != tt.wantSess {
+				t.Errorf("Guard = %v, %v; want a session %v, %v", s, err, tt.wantSess, tt.want)
+			}
+			if _, ok := auth.FromContext(r.Context()); ok != (tt.want == nil) {
+				t.Errorf("Guard: principal on the request %v, want %v", ok, tt.want == nil)
+			}
+		})
+	}
+}
+
 func TestCallbackAndSignOut(t *testing.T) {
-	p := &provider{code: "the-code", live: map[string]oauth.ControlSession{}}
+	p := &provider{code: "the-code", live: map[string]signin.ControlSession{}}
 	m := manager(p, false)
 	b := &browser{}
 	w := httptest.NewRecorder()
@@ -442,7 +471,7 @@ func TestCallbackAndSignOut(t *testing.T) {
 // it in there, so the sign-in it opens is the browser's one, and the code
 // comes back as any sign-in's does.
 func TestHandoff(t *testing.T) {
-	p := &provider{live: map[string]oauth.ControlSession{}}
+	p := &provider{live: map[string]signin.ControlSession{}}
 	m := manager(p, false)
 	b := &browser{}
 	w := httptest.NewRecorder()
@@ -454,7 +483,7 @@ func TestHandoff(t *testing.T) {
 		t.Fatalf("Handoff: status %d to %q", w.Code, w.Header().Get("Location"))
 	}
 	q := loc.Query()
-	if q.Get(oauth.ParamHandoff) != "the-link-code" || q.Get("login") != "ana" || q.Get("host") != oauth.HostAdmin ||
+	if q.Get(signin.ParamHandoff) != "the-link-code" || q.Get("login") != "ana" || q.Get("host") != signin.HostAdmin ||
 		q.Get("path") != "/welcome" || len(q.Get("nonce")) != 43 || p.linked != "ana" {
 		t.Errorf("handoff query = %v, linked %q", q, p.linked)
 	}

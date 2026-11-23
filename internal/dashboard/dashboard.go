@@ -39,6 +39,7 @@ import (
 	"github.com/PeterBooker/kazari/internal/present"
 	"github.com/PeterBooker/kazari/internal/scheduler"
 	"github.com/PeterBooker/kazari/internal/session"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/theme"
 	"github.com/PeterBooker/kazari/internal/update"
 	"github.com/PeterBooker/kazari/internal/user"
@@ -46,7 +47,7 @@ import (
 )
 
 // Grants are a person's connected applications and browser sessions.
-// oauth.Service implements it.
+// oauth.Service keeps the one and signin.Service the other.
 type Grants interface {
 	ListGrants(ctx context.Context, handle string) ([]oauth.Token, error)
 	RevokeGrant(ctx context.Context, id int64) error
@@ -188,7 +189,7 @@ func New(d Deps, o Options) http.Handler {
 	s := &server{
 		d: d, o: o, log: d.Logger, now: o.Now, assets: theme.URLs(assetPrefix),
 		sess: session.New(d.Sessions, session.Options{
-			Host: oauth.HostAdmin, Cookie: "kazari_admin", SignInURL: o.SignInURL,
+			Host: signin.HostAdmin, Cookie: "kazari_admin", SignInURL: o.SignInURL,
 			InsecureCookies: o.InsecureCookies, Now: o.Now, Telemetry: o.Telemetry,
 		}),
 	}
@@ -274,8 +275,16 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The assets alone may be cached.
 		w.Header().Set("Cache-Control", "no-store")
-		ctx := r.Context()
-		sess, err := s.sess.Require(w, r)
+		var c *request
+		sess, r, err := s.sess.Guard(w, r, change, func(sess *session.Session) (auth.Principal, bool) {
+			if c = s.admit(sess); c == nil {
+				return auth.Principal{}, false
+			}
+			return auth.Principal{
+				Handle: c.me.Handle, Admin: true, Scopes: auth.AllScopes, Source: auth.SourceSession,
+				KeyID: sess.KeyPrefix, QuotaBytes: c.me.QuotaBytes,
+			}, true
+		})
 		switch {
 		case errors.Is(err, session.ErrSignInStarted):
 			return
@@ -283,39 +292,21 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 			s.door(w, r, http.StatusUnauthorized, doorPage{Title: "Signed out",
 				Message: "Your sign-in has ended. Open the dashboard again to sign in.", Link: "/", LinkText: "Open the dashboard"})
 			return
-		case err != nil:
-			s.log.ErrorContext(ctx, "dashboard: load session", "err", err)
-			s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
-			return
-		}
-		c, err := s.admit(ctx, sess)
-		if err != nil {
-			s.log.ErrorContext(ctx, "dashboard: check admin", "err", err)
-			s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
-			return
-		}
-		if c == nil {
-			s.sess.Refuse(ctx)
+		case errors.Is(err, session.ErrRefused):
 			s.door(w, r, http.StatusForbidden, s.notAdmin(sess))
 			return
+		case errors.Is(err, session.ErrBadForm):
+			s.fail(w, r, c, &problem{status: http.StatusBadRequest, title: "The form could not be read", message: "Go back and try again."})
+			return
+		case errors.Is(err, session.ErrFormToken):
+			s.fail(w, r, c, &problem{status: http.StatusForbidden, title: "This form has expired",
+				message: "It was not sent from a page of this dashboard, or the page is from an earlier sign-in. Go back, reload the page and try again."})
+			return
+		case err != nil:
+			s.log.ErrorContext(r.Context(), "dashboard: load session", "err", err)
+			s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
+			return
 		}
-		if change {
-			switch err := sess.CheckForm(w, r); {
-			case errors.Is(err, session.ErrBadForm):
-				s.fail(w, r, c, &problem{status: http.StatusBadRequest, title: "The form could not be read", message: "Go back and try again."})
-				return
-			case err != nil:
-				s.fail(w, r, c, &problem{status: http.StatusForbidden, title: "This form has expired",
-					message: "It was not sent from a page of this dashboard, or the page is from an earlier sign-in. Go back, reload the page and try again."})
-				return
-			}
-		}
-		p := auth.Principal{
-			Handle: c.me.Handle, Admin: true, Scopes: auth.AllScopes, Source: auth.SourceSession,
-			KeyID: sess.KeyPrefix, QuotaBytes: c.me.QuotaBytes,
-		}
-		s.sess.Admit(ctx, p)
-		r = r.WithContext(auth.ContextWithPrincipal(ctx, p))
 		if err := fn(w, r, c); err != nil {
 			s.fail(w, r, c, err)
 		}
@@ -324,33 +315,19 @@ func (s *server) admin(fn handler, change bool) http.Handler {
 
 // admit returns the request of the session's person if they are an admin
 // now, and nil if they are not: demoted, or signed in with an API key that
-// does not carry the admin scope.
-func (s *server) admit(ctx context.Context, sess *session.Session) (*request, error) {
-	u, err := s.d.Users.GetUser(ctx, sess.Handle)
-	if errors.Is(err, user.ErrNotFound) {
-		return nil, nil
+// does not carry the admin scope. The session holds both as they were read
+// to check it, on this request.
+func (s *server) admit(sess *session.Session) *request {
+	u := sess.User
+	if u.Role != user.RoleAdmin {
+		return nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	if u.DisabledAt != nil || u.Role != user.RoleAdmin {
-		return nil, nil
-	}
-	if sess.KeyPrefix != "" {
-		st, err := s.d.Users.KeyStatus(ctx, sess.KeyPrefix)
-		if errors.Is(err, user.ErrKeyNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !st.Active || st.Handle != u.Handle || !slices.Contains(st.Scopes, auth.ScopeAdmin) {
-			return nil, nil
-		}
+	if sess.KeyPrefix != "" && !slices.Contains(sess.KeyScopes, auth.ScopeAdmin) {
+		return nil
 	}
 	return &request{sess: sess, me: u, actor: artifact.Actor{
 		Handle: u.Handle, Admin: true, CanDelete: true, Credential: credential(sess),
-	}}, nil
+	}}
 }
 
 // credential names the session in the audit log, as present.Actor names
@@ -392,7 +369,7 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		s.door(w, r, http.StatusInternalServerError, doorPage{Title: "Something went wrong", Message: "Please try again later."})
 		return
 	}
-	if c, err := s.admit(ctx, sess); err == nil && c != nil {
+	if s.admit(sess) != nil {
 		details := map[string]string{"credential": credential(sess)}
 		if err := s.d.Recorder.Record(ctx, audit.Event{At: s.now(), Actor: sess.Handle, Action: audit.DashboardSignIn, Subject: sess.Handle, Details: details}); err != nil {
 			s.log.WarnContext(ctx, "dashboard: audit", "err", err)
@@ -566,7 +543,7 @@ func (s *server) done(w http.ResponseWriter, r *http.Request, to, flash string) 
 		panic("dashboard: unknown flash " + flash)
 	}
 	s.sess.SetFlash(w, flash)
-	http.Redirect(w, r, oauth.ReturnPath(to), http.StatusSeeOther)
+	http.Redirect(w, r, signin.ReturnPath(to), http.StatusSeeOther)
 	return nil
 }
 

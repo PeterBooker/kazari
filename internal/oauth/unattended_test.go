@@ -16,6 +16,7 @@ import (
 
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -443,7 +444,7 @@ func TestRestrictedKeyOpensNoBrowserSession(t *testing.T) {
 	if resp.Header.Get("Location") != "" || len(resp.Cookies()) != 0 {
 		t.Errorf("a refused sign-in redirected to %q or set cookies %v", resp.Header.Get("Location"), resp.Cookies())
 	}
-	if ev := e.rec.actions(oauth.ActionSignIn); len(ev) != 0 {
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 0 {
 		t.Errorf("a refused sign-in was recorded: %+v", ev)
 	}
 	// The same person's unrestricted key signs in.
@@ -489,7 +490,7 @@ func TestConsentKeyStaysOutOfLogsAndAudit(t *testing.T) {
 	mu.Lock()
 	logged := logs.String()
 	mu.Unlock()
-	rows := fmt.Sprintf("%+v", e.rec.actions(oauth.ActionGrant)) + fmt.Sprintf("%+v", e.rec.actions(oauth.ActionSignIn)) +
+	rows := fmt.Sprintf("%+v", e.rec.actions(oauth.ActionGrant)) + fmt.Sprintf("%+v", e.rec.actions(signin.ActionSignIn)) +
 		fmt.Sprintf("%+v", e.rec.actions(oauth.ActionRevoke))
 	if !strings.Contains(rows, k.Prefix) {
 		t.Fatalf("the audit rows do not name the key's prefix: %s", rows)

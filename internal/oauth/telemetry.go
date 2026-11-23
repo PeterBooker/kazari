@@ -18,20 +18,6 @@ const scope = "github.com/PeterBooker/kazari/internal/oauth"
 const (
 	grantTypeKey          = attribute.Key("kazari.oauth.grant_type")
 	registrationMethodKey = attribute.Key("kazari.oauth.registration.method")
-	signInMethodKey       = attribute.Key("kazari.sign_in.method")
-	signInResultKey       = attribute.Key("kazari.sign_in.result")
-)
-
-// Sign-in methods and results.
-const (
-	viaOIDC           = "oidc"
-	viaAPIKey         = "api_key"
-	viaPassword       = "password"
-	viaPasskey        = "passkey"
-	signInOK          = "ok"
-	signInNotAdmitted = "not_admitted"
-	signInFailed      = "failed"
-	signInDelayed     = "delayed" // refused unseen, too soon after failures
 )
 
 // errorCodes are the RFC 6749 and RFC 7591 error codes Kazari answers with,
@@ -44,7 +30,6 @@ var errorCodes = []string{
 type metrics struct {
 	tokens        metric.Int64Counter
 	registrations metric.Int64Counter
-	signIns       metric.Int64Counter
 }
 
 func newMetrics(m metric.Meter) metrics {
@@ -54,7 +39,6 @@ func newMetrics(m metric.Meter) metrics {
 	return metrics{
 		tokens:        counter("kazari.oauth.token.requests", "{request}", "Requests to the token endpoint by grant type."),
 		registrations: counter("kazari.oauth.client.registrations", "{registration}", "OAuth clients registered, by DCR or a client ID metadata document."),
-		signIns:       counter("kazari.user.sign_ins", "{sign_in}", "Sign-ins by method and result."),
 	}
 }
 
@@ -87,20 +71,4 @@ func (o *outcome) attrs(kv ...attribute.KeyValue) metric.AddOption {
 		kv = append(kv, semconv.ErrorTypeKey.String(instrument.OneOf(o.code, errorCodes...)))
 	}
 	return metric.WithAttributes(kv...)
-}
-
-func (s *Service) signedIn(ctx context.Context, method, result string) {
-	s.m.signIns.Add(ctx, 1, metric.WithAttributes(signInMethodKey.String(method), signInResultKey.String(result)))
-	if span := trace.SpanFromContext(ctx); span.IsRecording() {
-		span.SetAttributes(signInMethodKey.String(method), signInResultKey.String(result))
-	}
-}
-
-// keySignIn counts a sign-in with an API key; a refused key is failed.
-func (s *Service) keySignIn(ctx context.Context, err error) {
-	result := signInOK
-	if err != nil {
-		result = signInFailed
-	}
-	s.signedIn(ctx, viaAPIKey, result)
 }

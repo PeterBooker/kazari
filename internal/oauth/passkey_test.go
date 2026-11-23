@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey/passkeytest"
+	"github.com/PeterBooker/kazari/internal/signin"
 )
 
 var (
@@ -85,14 +85,14 @@ func TestSignInWithPasskey(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("passkey sign-in: status %d: %s", resp.StatusCode, body)
 	}
-	v, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	v, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "ana" {
+	if got, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil || got != "ana" {
 		t.Fatalf("Viewer = %q, %v; want ana", got, err)
 	}
-	ev := e.rec.actions(oauth.ActionSignIn)
+	ev := e.rec.actions(signin.ActionSignIn)
 	if len(ev) != 1 || ev[0].Actor != "ana" || ev[0].Details["via"] != "passkey" {
 		t.Fatalf("sign-in audit = %+v", ev)
 	}
@@ -110,7 +110,7 @@ func TestPasskeySignInRefusals(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "That passkey was not accepted") {
 		t.Errorf("answer from an artifact host: status %d: %s", resp.StatusCode, body)
 	}
-	if len(e.rec.actions(oauth.ActionSignIn)) != 0 {
+	if len(e.rec.actions(signin.ActionSignIn)) != 0 {
 		t.Error("a refused passkey signed someone in")
 	}
 

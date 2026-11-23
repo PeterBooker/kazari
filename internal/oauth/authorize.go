@@ -10,22 +10,21 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 
 	"github.com/PeterBooker/kazari/internal/auth"
 	"github.com/PeterBooker/kazari/internal/middleware"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
-// Names of the pending request's cookie. Browsers accept a __Host- cookie
-// only when it is Secure, on path / and without Domain, so script in an
-// artifact on a sibling host cannot plant one with Domain=<base>. Plain http
-// (Options.InsecureCookies) cannot use the prefix.
+// Names of the pending request's cookie, with the __Host- prefix and over
+// plain http (Options.InsecureCookies).
 const (
-	CookieName         = "__Host-kazari_oauth"
-	InsecureCookieName = "kazari_oauth"
+	requestCookie      = "kazari_oauth"
+	CookieName         = "__Host-" + requestCookie
+	InsecureCookieName = requestCookie
 )
 
 // maxStateLen bounds the client state stored with a request before sign-in.
@@ -55,8 +54,7 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 				"This server cannot accept new applications right now.", "")
 			return
 		}
-		s.log.ErrorContext(ctx, "oauth: authorize", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "authorize", err)
 		return
 	}
 	redirectURI := q.Get("redirect_uri")
@@ -115,7 +113,7 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		ClientState:   q.Get("state"),
 		ExpiresAt:     s.now().Add(s.opts.RequestTTL),
 	}
-	if s.idp != nil && s.idpUnavailable(w, r) {
+	if s.idp != nil && s.signIn.Unavailable(w, r) {
 		return
 	}
 	var verifier string
@@ -130,54 +128,59 @@ func (s *Service) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 		fail("server_error", "could not store the request")
 		return
 	}
-	s.setCookie(w, req.ID, s.opts.RequestTTL)
+	s.cookies.Set(w, requestCookie, req.ID, s.opts.RequestTTL)
 
 	if s.idp != nil {
 		http.Redirect(w, r, s.idp.AuthURL(req.UpstreamState, req.Nonce, oauth2.S256ChallengeFromVerifier(verifier)), http.StatusFound)
 		return
 	}
-	if s.passwords == nil {
+	if !s.signIn.Passwords() {
 		s.renderConsent(w, http.StatusOK, c, req, "", scopes, "")
 		return
 	}
 	// A browser that is signed in already goes straight to the consent
 	// page; one signed in with an API key signs in again, because a key
 	// approves a grant on the consent page, where it bounds the grant.
-	sess, err := s.liveSession(ctx, r)
+	sess, err := s.signIn.Session(r)
 	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: load session", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "load session", err)
 		return
 	}
 	if sess != nil && sess.KeyPrefix == "" {
-		s.continueRequest(w, r, req, sess.UserHandle)
+		s.continueRequest(w, r, req.ID, sess.UserHandle)
 		return
 	}
-	s.setNamedCookie(w, s.named(signInCookie), s.signInBinding(r), s.opts.SessionTTL)
-	s.renderSignIn(w, http.StatusOK, s.requestForm(ctx, req), false, "")
+	s.signIn.ShowRequestForm(w, r, signin.RequestForm{ID: req.ID, Client: s.clientName(ctx, req), Bind: true})
 }
 
-// requestForm returns the sign-in page that continues an MCP client's
-// authorization.
-func (s *Service) requestForm(ctx context.Context, req *Request) signInPage {
-	name := req.ClientID
+// clientName is the name the sign-in form gives the client of req.
+func (s *Service) clientName(ctx context.Context, req *Request) string {
 	if c, err := s.store.GetClient(ctx, req.ClientID); err == nil && c.Name != "" {
-		name = c.Name
+		return c.Name
 	}
-	return signInPage{
-		Title:      "Sign in to connect " + name,
-		Lede:       "Sign in first; the next page asks what " + name + " may do.",
-		RequestID:  req.ID,
-		KeyConsent: s.keys != nil,
+	return req.ClientID
+}
+
+// requests are the pending requests, as the sign-in form continues them.
+type requests struct{ s *Service }
+
+func (q requests) Form(w http.ResponseWriter, r *http.Request, id string) (signin.RequestForm, bool) {
+	req, ok := q.s.formRequest(w, r, id)
+	if !ok {
+		return signin.RequestForm{}, false
 	}
+	return signin.RequestForm{ID: req.ID, Client: q.s.clientName(r.Context(), req)}, true
+}
+
+func (q requests) Continue(w http.ResponseWriter, r *http.Request, id, handle string) {
+	q.s.continueRequest(w, r, id, handle)
 }
 
 // formRequest loads the pending request a form names. The form's request
 // id must equal the cookie, which another page can neither read nor, with
 // the __Host- prefix, set. When ok is false a page has been written.
-func (s *Service) formRequest(w http.ResponseWriter, r *http.Request, formID string) (*Request, bool) {
-	ck, err := r.Cookie(s.cookieName())
-	if err != nil || formID == "" || subtle.ConstantTimeCompare([]byte(formID), []byte(ck.Value)) != 1 {
+func (s *Service) formRequest(w http.ResponseWriter, r *http.Request, id string) (*Request, bool) {
+	if id == "" || subtle.ConstantTimeCompare([]byte(id), []byte(s.cookies.Get(r, requestCookie))) != 1 {
 		s.message(w, http.StatusForbidden, "Request rejected",
 			"This form does not belong to the current sign-in. Start again from your application.", "")
 		return nil, false
@@ -187,19 +190,27 @@ func (s *Service) formRequest(w http.ResponseWriter, r *http.Request, formID str
 
 // continueRequest binds a pending request to the person who just signed in
 // and sends the browser to the consent page.
-func (s *Service) continueRequest(w http.ResponseWriter, r *http.Request, req *Request, handle string) {
-	ctx := r.Context()
-	if err := s.store.BindRequest(ctx, req.ID, handle); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			s.message(w, http.StatusBadRequest, "Sign-in already used",
-				"This sign-in has already been completed. Start again from your application.", "")
-			return
-		}
-		s.log.ErrorContext(ctx, "oauth: bind request", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+func (s *Service) continueRequest(w http.ResponseWriter, r *http.Request, id, handle string) {
+	if !s.bind(w, r, id, handle) {
 		return
 	}
 	http.Redirect(w, r, PathConsent, http.StatusSeeOther)
+}
+
+// bind binds a pending request to the person who signed in for it. When ok
+// is false a page has been written.
+func (s *Service) bind(w http.ResponseWriter, r *http.Request, id, handle string) bool {
+	err := s.store.BindRequest(r.Context(), id, handle)
+	if errors.Is(err, ErrNotFound) {
+		s.message(w, http.StatusBadRequest, "Sign-in already used",
+			"This sign-in has already been completed. Start again from your application.", "")
+		return false
+	}
+	if err != nil {
+		s.fail(w, r, "bind request", err)
+		return false
+	}
+	return true
 }
 
 // serveConsentPage shows the consent page of the pending request to the
@@ -216,8 +227,7 @@ func (s *Service) serveConsentPage(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.store.GetClient(ctx, req.ClientID)
 	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: load client", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "load client", err)
 		return
 	}
 	if req.UserHandle == "" {
@@ -225,37 +235,41 @@ func (s *Service) serveConsentPage(w http.ResponseWriter, r *http.Request) {
 		case s.idp != nil:
 			s.message(w, http.StatusForbidden, "Sign-in required",
 				"Sign in at the identity provider first. Start again from your application.", "")
-		case s.passwords == nil || (s.keys != nil && r.URL.Query().Get("with") == withKey):
+		case !s.signIn.Passwords() || (s.keys != nil && r.URL.Query().Get(signin.ParamWith) == signin.WithKey):
 			s.renderConsent(w, http.StatusOK, c, req, "", req.Scopes, "")
 		default:
-			page := s.requestForm(ctx, req)
-			prefill(&page, r.URL.Query())
-			s.renderSignIn(w, http.StatusOK, page, false, "")
+			s.signIn.ShowRequestForm(w, r, signin.RequestForm{ID: req.ID, Client: s.clientName(ctx, req)})
 		}
 		return
 	}
-	u, err := s.users.GetUser(ctx, req.UserHandle)
-	if err == nil && u.DisabledAt != nil {
-		err = user.ErrDisabled
-	}
-	if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
-		s.message(w, http.StatusForbidden, "No access",
-			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", "")
-		return
-	}
-	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: load user", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+	u, ok := s.signedIn(w, r, req.UserHandle)
+	if !ok {
 		return
 	}
 	scopes := intersect(req.Scopes, user.ScopesFor(u))
 	if len(scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		s.invalidRequest(w, "invalid_scope", "none of the requested scopes is available to this account")
 		return
 	}
 	s.renderConsent(w, http.StatusOK, c, req, u.Handle, scopes, "")
+}
+
+// signedIn returns the person who signed in for a request, if they may
+// still use this instance. When ok is false a page has been written.
+func (s *Service) signedIn(w http.ResponseWriter, r *http.Request, handle string) (*user.User, bool) {
+	u, err := s.users.ActiveUser(r.Context(), handle)
+	if errors.Is(err, user.ErrNotFound) {
+		s.message(w, http.StatusForbidden, "No access",
+			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", "")
+		return nil, false
+	}
+	if err != nil {
+		s.fail(w, r, "load user", err)
+		return nil, false
+	}
+	return u, true
 }
 
 // invalidRequest answers a request the server cannot act on with a page.
@@ -320,62 +334,27 @@ func withQuery(raw string, v url.Values) string {
 	return u.String()
 }
 
-func (s *Service) cookieName() string { return s.named(InsecureCookieName) }
-
-// named returns a cookie name with the __Host- prefix, or base itself over
-// plain http (Options.InsecureCookies).
-func (s *Service) named(base string) string {
-	if s.opts.InsecureCookies {
-		return base
-	}
-	return "__Host-" + base
-}
-
-func (s *Service) setCookie(w http.ResponseWriter, value string, ttl time.Duration) {
-	s.setNamedCookie(w, s.cookieName(), value, ttl)
-}
-
-// setNamedCookie sets a host-only cookie; a negative ttl deletes it.
-func (s *Service) setNamedCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
-	maxAge := int(ttl / time.Second)
-	if ttl < 0 {
-		maxAge = -1
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    value,
-		Path:     "/", // required by the __Host- prefix
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   !s.opts.InsecureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func (s *Service) clearCookie(w http.ResponseWriter) { s.setCookie(w, "", -1) }
-
 // pendingRequest loads the live request named by the cookie; when ok is
 // false a page has been written.
 func (s *Service) pendingRequest(w http.ResponseWriter, r *http.Request) (*Request, bool) {
-	ck, err := r.Cookie(s.cookieName())
-	if err != nil || ck.Value == "" {
+	id := s.cookies.Get(r, requestCookie)
+	if id == "" {
 		s.message(w, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in is no longer active. Start again from your application.", "")
 		return nil, false
 	}
-	req, err := s.store.GetRequest(r.Context(), ck.Value)
+	req, err := s.store.GetRequest(r.Context(), id)
 	if err == nil && !s.now().Before(req.ExpiresAt) {
 		err = ErrNotFound
 	}
 	if errors.Is(err, ErrNotFound) {
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		s.message(w, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in is no longer active. Start again from your application.", "")
 		return nil, false
 	}
 	if err != nil {
-		s.log.ErrorContext(r.Context(), "oauth: load request", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "load request", err)
 		return nil, false
 	}
 	return req, true
@@ -391,8 +370,8 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// The identity provider has one redirect URI for both flows; the state
 	// says which one this is.
-	if strings.HasPrefix(r.URL.Query().Get("state"), signInStatePrefix) {
-		s.serveSignInCallback(w, r)
+	if strings.HasPrefix(r.URL.Query().Get("state"), signin.StatePrefix) {
+		s.signIn.ServeCallback(w, r)
 		return
 	}
 	req, ok := s.pendingRequest(w, r)
@@ -407,7 +386,7 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if e := q.Get("error"); e != "" {
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		if d := q.Get("error_description"); d != "" {
 			e += ": " + d
 		}
@@ -421,38 +400,14 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := s.idp.Exchange(ctx, q.Get("code"), req.Nonce, req.UpstreamVerifier)
-	if err != nil {
-		s.signedIn(ctx, viaOIDC, signInFailed)
-		s.log.WarnContext(ctx, "oauth: identity provider exchange", "err", err)
-		s.message(w, http.StatusBadGateway, "Sign-in failed",
-			"The identity provider's response could not be verified. Start again from your application.", "")
-		return
-	}
-	u, err := s.users.ResolveIdentity(ctx, id)
-	if errors.Is(err, user.ErrNotProvisioned) || errors.Is(err, user.ErrDisabled) {
-		s.log.InfoContext(ctx, "oauth: identity not admitted", "issuer", id.Issuer, "subject", id.Subject, "email", id.Email, "err", err)
-		s.signedIn(ctx, viaOIDC, signInNotAdmitted)
+	u, ok := s.signIn.Identify(w, r, req.Nonce, req.UpstreamVerifier, "Start again from your application.", func() {
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
-		s.message(w, http.StatusForbidden, "No access",
-			"Your account is not allowed to use this Kazari instance. Ask your administrator for access.", id.Email)
+		s.cookies.Delete(w, requestCookie)
+	})
+	if !ok {
 		return
 	}
-	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: resolve identity", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
-		return
-	}
-	s.signedIn(ctx, viaOIDC, signInOK)
-	if err := s.store.BindRequest(ctx, req.ID, u.Handle); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			s.message(w, http.StatusBadRequest, "Sign-in already used",
-				"This sign-in has already been completed. Start again from your application.", "")
-			return
-		}
-		s.log.ErrorContext(ctx, "oauth: bind request", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+	if !s.bind(w, r, req.ID, u.Handle) {
 		return
 	}
 	req.UserHandle = u.Handle
@@ -460,14 +415,13 @@ func (s *Service) serveCallback(w http.ResponseWriter, r *http.Request) {
 	scopes := intersect(req.Scopes, user.ScopesFor(u))
 	if len(scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		s.invalidRequest(w, "invalid_scope", "none of the requested scopes is available to this account")
 		return
 	}
 	c, err := s.store.GetClient(ctx, req.ClientID)
 	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: load client", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "load client", err)
 		return
 	}
 	s.renderConsent(w, http.StatusOK, c, req, u.Handle, scopes, "")
@@ -482,7 +436,7 @@ func (s *Service) renderConsent(w http.ResponseWriter, status int, c *Client, re
 	if u, err := url.Parse(req.RedirectURI); err == nil {
 		host = u.Host
 	}
-	s.pages.render(w, status, "consent", consentPage{
+	s.pages.Render(w, status, "consent", consentPage{
 		ClientName:   name,
 		ClientID:     c.ID,
 		RedirectHost: host,
@@ -522,7 +476,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	switch r.PostForm.Get("action") {
 	case "deny":
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		s.redirectError(w, r, req.RedirectURI, req.ClientState, "access_denied", "the user denied the request")
 		return
 	case "approve":
@@ -537,7 +491,7 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(a.scopes) == 0 {
 		_ = s.store.DeleteRequest(ctx, req.ID)
-		s.clearCookie(w)
+		s.cookies.Delete(w, requestCookie)
 		s.redirectError(w, r, req.RedirectURI, req.ClientState, "invalid_scope", "none of the requested scopes is available to this account")
 		return
 	}
@@ -555,14 +509,13 @@ func (s *Service) serveConsent(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:     s.now().Add(s.opts.CodeTTL),
 	})
 	if err != nil {
-		s.log.ErrorContext(ctx, "oauth: store code", "err", err)
-		s.message(w, http.StatusInternalServerError, "Something went wrong", "Please try again later.", "")
+		s.fail(w, r, "store code", err)
 		return
 	}
 	if err := s.store.DeleteRequest(ctx, req.ID); err != nil {
 		s.log.WarnContext(ctx, "oauth: delete request", "err", err)
 	}
-	s.clearCookie(w)
+	s.cookies.Delete(w, requestCookie)
 	details := map[string]string{"client_id": req.ClientID, "scopes": strings.Join(a.scopes, " "), "via": a.via}
 	if a.keyPrefix != "" {
 		details["key_prefix"] = a.keyPrefix
@@ -596,17 +549,9 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 	}
 	var signedIn *user.User
 	if req.UserHandle != "" {
-		u, err := s.users.GetUser(ctx, req.UserHandle)
-		if err == nil && u.DisabledAt != nil {
-			err = user.ErrDisabled
-		}
-		if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrDisabled) {
-			return fail(http.StatusForbidden, "No access",
-				"Your account is not allowed to use this Kazari instance. Ask your administrator for access.")
-		}
-		if err != nil {
-			s.log.ErrorContext(ctx, "oauth: load user", "err", err)
-			return fail(http.StatusInternalServerError, "Something went wrong", "Please try again later.")
+		u, ok := s.signedIn(w, r, req.UserHandle)
+		if !ok {
+			return approval{}, false
 		}
 		signedIn = u
 	} else if s.idp != nil {
@@ -616,17 +561,16 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 
 	key := strings.TrimSpace(r.PostForm.Get("api_key"))
 	if signedIn != nil && key == "" {
-		via := viaOIDC
+		via := signin.ViaOIDC
 		if s.idp == nil {
-			via = viaPassword
+			via = signin.ViaPassword
 		}
 		return approval{handle: signedIn.Handle, scopes: intersect(req.Scopes, user.ScopesFor(signedIn)), via: via}, true
 	}
 	if s.keys == nil {
 		return fail(http.StatusForbidden, "Sign-in required", "This instance has no way to approve with an API key.")
 	}
-	p, err := s.keys.Authenticate(ctx, key)
-	s.keySignIn(ctx, err)
+	p, err := s.signIn.CheckKey(ctx, key)
 	if err == nil && signedIn != nil && p.Handle != signedIn.Handle {
 		err = auth.ErrInvalidToken
 	}
@@ -636,7 +580,8 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		}
 		c, cerr := s.store.GetClient(ctx, req.ClientID)
 		if cerr != nil {
-			return fail(http.StatusInternalServerError, "Something went wrong", "Please try again later.")
+			s.pages.Failed(w)
+			return approval{}, false
 		}
 		handle, scopes := "", req.Scopes
 		if signedIn != nil {
@@ -645,5 +590,5 @@ func (s *Service) approver(w http.ResponseWriter, r *http.Request, req *Request)
 		s.renderConsent(w, http.StatusUnauthorized, c, req, handle, scopes, "That API key was not accepted.")
 		return approval{}, false
 	}
-	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: viaAPIKey, keyPrefix: p.KeyID}, true
+	return approval{handle: p.Handle, scopes: intersect(req.Scopes, p.Scopes), via: signin.ViaAPIKey, keyPrefix: p.KeyID}, true
 }

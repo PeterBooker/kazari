@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/PeterBooker/kazari/internal/account"
-	"github.com/PeterBooker/kazari/internal/oauth"
 	"github.com/PeterBooker/kazari/internal/passkey/passkeytest"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -64,9 +64,9 @@ func (b *browser) signInWithPasskey(a *passkeytest.Authenticator) {
 		t.Fatal(err)
 	}
 	q, _ := url.Parse(resp.Request.URL.String())
-	form := url.Values{"host": {oauth.HostAccount}, "path": {"/account/"}, "nonce": {q.Query().Get("nonce")},
+	form := url.Values{"host": {signin.HostAccount}, "path": {"/account/"}, "nonce": {q.Query().Get("nonce")},
 		"passkey_token": {token}, "passkey": {answer}}
-	resp, body = b.postFrom(b.e.mcp.URL, b.e.mcp.URL+oauth.PathSignIn, form)
+	resp, body = b.postFrom(b.e.mcp.URL, b.e.mcp.URL+signin.PathSignIn, form)
 	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), b.e.apex.URL+account.CallbackPath+"?code=") {
 		t.Fatalf("passkey sign-in: status %d to %q: %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}

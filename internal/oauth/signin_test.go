@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/kazari/internal/auth"
-	"github.com/PeterBooker/kazari/internal/oauth"
+	"github.com/PeterBooker/kazari/internal/signin"
 	"github.com/PeterBooker/kazari/internal/user"
 )
 
@@ -30,7 +30,7 @@ func nonceHash(nonce string) string {
 const browserNonce = "the-nonce-cookie-of-this-browser-0123456789"
 
 func signInQuery(host, path string) string {
-	return oauth.PathSignIn + "?" + url.Values{"host": {host}, "path": {path}, "nonce": {nonceHash(browserNonce)}}.Encode()
+	return signin.PathSignIn + "?" + url.Values{"host": {host}, "path": {path}, "nonce": {nonceHash(browserNonce)}}.Encode()
 }
 
 // hostCode checks that resp sends the browser to host's callback and
@@ -74,26 +74,26 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 	}
 	code := e.signInAt("demo", "/report?q=1")
 
-	v, err := e.svc.Redeem(ctx, code, "demo", browserNonce)
+	v, err := e.signin.Redeem(ctx, code, "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Path != "/report?q=1" || !v.ExpiresAt.Equal(t0.Add(oauth.DefaultSessionTTL)) || v.Token == "" {
+	if v.Path != "/report?q=1" || !v.ExpiresAt.Equal(t0.Add(signin.DefaultSessionTTL)) || v.Token == "" {
 		t.Fatalf("view = %+v", v)
 	}
-	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
+	if got, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
 		t.Fatalf("Viewer(demo) = %q, %v; want alice", got, err)
 	}
 	// The view session is for demo only.
 	for _, host := range []string{"other", "demo--v2"} {
-		if _, err := e.svc.Viewer(ctx, host, v.Token); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Viewer(ctx, host, v.Token); !errors.Is(err, signin.ErrNotFound) {
 			t.Errorf("Viewer(%s) with demo's token = %v, want ErrNotFound", host, err)
 		}
 	}
-	if _, err := e.svc.Redeem(ctx, code, "demo", browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Redeem(ctx, code, "demo", browserNonce); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("second Redeem = %v, want ErrNotFound", err)
 	}
-	if ev := e.rec.actions(oauth.ActionSignIn); len(ev) != 1 || ev[0].Actor != "alice" || ev[0].Details["via"] != "oidc" {
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 1 || ev[0].Actor != "alice" || ev[0].Details["via"] != "oidc" {
 		t.Fatalf("sign-in audit = %+v", ev)
 	}
 
@@ -102,48 +102,48 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("second host: status %d: %s", resp.StatusCode, body)
 	}
-	v2, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	v2, err := e.signin.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := e.svc.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
+	if got, err := e.signin.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
 		t.Fatalf("Viewer(other) = %q, %v", got, err)
 	}
 
 	// A host ends its own view session and no more: not with another
 	// host's token, and not the sign-in or the other host's view session.
-	if err := e.svc.EndView(ctx, "demo", v2.Token); err != nil {
+	if err := e.signin.EndView(ctx, "demo", v2.Token); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := e.svc.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
+	if got, err := e.signin.Viewer(ctx, "other", v2.Token); err != nil || got != "alice" {
 		t.Fatalf("Viewer(other) after EndView on demo with its token = %q, %v", got, err)
 	}
-	if err := e.svc.EndView(ctx, "other", v2.Token); err != nil {
+	if err := e.signin.EndView(ctx, "other", v2.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Viewer(ctx, "other", v2.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "other", v2.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("Viewer(other) after EndView = %v", err)
 	}
-	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
+	if got, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil || got != "alice" {
 		t.Fatalf("Viewer(demo) after EndView on other = %q, %v", got, err)
 	}
 	resp, _ = e.get(signInQuery("other", "/"))
-	v3, err := e.svc.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
+	v3, err := e.signin.Redeem(ctx, hostCode(t, resp, "other"), "other", browserNonce)
 	if err != nil {
 		t.Fatalf("the sign-in did not survive EndView: %v", err)
 	}
-	if err := e.svc.EndView(ctx, "demo", "unknown"); err != nil {
+	if err := e.signin.EndView(ctx, "demo", "unknown"); err != nil {
 		t.Fatalf("EndView of an unknown token = %v", err)
 	}
 
 	// The page changes nothing; its form, from this server, ends the
 	// sign-in everywhere. From an artifact host it is refused.
-	resp, body = e.get(oauth.PathSignOut)
+	resp, body = e.get(signin.PathSignOut)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `action="/oauth/signout"`) || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("sign-out page: status %d, %q", resp.StatusCode, body)
 	}
 	post := func(header http.Header) int {
-		req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignOut), nil)
+		req, err := http.NewRequest(http.MethodPost, e.url(signin.PathSignOut), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +158,7 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 		if got := post(header); got != http.StatusForbidden {
 			t.Fatalf("%s: status %d", name, got)
 		}
-		if _, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil {
+		if _, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil {
 			t.Fatalf("%s ended the sign-in: %v", name, err)
 		}
 	}
@@ -166,7 +166,7 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 		t.Fatalf("sign-out: status %d", got)
 	}
 	for host, tok := range map[string]string{"demo": v.Token, "other": v3.Token} {
-		if _, err := e.svc.Viewer(ctx, host, tok); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Viewer(ctx, host, tok); !errors.Is(err, signin.ErrNotFound) {
 			t.Errorf("Viewer(%s) after sign-out = %v", host, err)
 		}
 	}
@@ -174,7 +174,7 @@ func TestSignInWithIdentityProvider(t *testing.T) {
 	if loc := location(t, resp); loc.Host != "idp.example" {
 		t.Fatalf("after sign-out the sign-in went to %s, want the identity provider", loc)
 	}
-	if _, body = e.get(oauth.PathSignOut); !strings.Contains(body, "Not signed in") || strings.Contains(body, "<form") {
+	if _, body = e.get(signin.PathSignOut); !strings.Contains(body, "Not signed in") || strings.Contains(body, "<form") {
 		t.Fatalf("sign-out page after sign-out: %q", body)
 	}
 	if got := post(http.Header{"Origin": {e.url("")}}); got != http.StatusOK {
@@ -192,22 +192,22 @@ func TestRedeemChecks(t *testing.T) {
 		{"another host", "other", browserNonce, 0},
 		{"another browser's nonce", "demo", "someone-else", 0},
 		{"no nonce", "demo", "", 0},
-		{"expired code", "demo", browserNonce, oauth.DefaultViewCodeTTL},
+		{"expired code", "demo", browserNonce, signin.DefaultViewCodeTTL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			code := e.signInAt("demo", "/")
 			e.clock.Advance(tt.wait)
-			if _, err := e.svc.Redeem(ctx, code, tt.host, tt.nonce); !errors.Is(err, oauth.ErrNotFound) {
+			if _, err := e.signin.Redeem(ctx, code, tt.host, tt.nonce); !errors.Is(err, signin.ErrNotFound) {
 				t.Fatalf("Redeem = %v, want ErrNotFound", err)
 			}
 			// A failed redemption uses the code up.
-			if _, err := e.svc.Redeem(ctx, code, "demo", browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+			if _, err := e.signin.Redeem(ctx, code, "demo", browserNonce); !errors.Is(err, signin.ErrNotFound) {
 				t.Fatalf("Redeem after a failure = %v, want ErrNotFound", err)
 			}
 		})
 	}
-	if _, err := e.svc.Redeem(ctx, "short", "demo", browserNonce); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Redeem(ctx, "short", "demo", browserNonce); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("Redeem of a malformed code = %v", err)
 	}
 }
@@ -220,11 +220,11 @@ func TestRedeemRefusesEmptyNonce(t *testing.T) {
 	ctx := context.Background()
 	e.signInAt("demo", "/") // the member's browser has a session
 	for _, nonce := range []string{"", "short", strings.Repeat("!", 43)} {
-		resp, body := e.get(oauth.PathSignIn + "?" + url.Values{"host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(nonce)}}.Encode())
+		resp, body := e.get(signin.PathSignIn + "?" + url.Values{"host": {"demo"}, "path": {"/"}, "nonce": {nonceHash(nonce)}}.Encode())
 		if resp.StatusCode != http.StatusFound {
 			t.Fatalf("sign-in for nonce %q: status %d: %s", nonce, resp.StatusCode, body)
 		}
-		if _, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", nonce); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", nonce); !errors.Is(err, signin.ErrNotFound) {
 			t.Fatalf("Redeem with nonce %q = %v, want ErrNotFound", nonce, err)
 		}
 	}
@@ -238,7 +238,7 @@ func TestSignInRejectsBadTargets(t *testing.T) {
 		{"host": {"demo"}, "path": {"/"}, "nonce": {"short"}},
 		{"host": {"demo"}, "path": {"/"}},
 	} {
-		resp, body := e.get(oauth.PathSignIn + "?" + q.Encode())
+		resp, body := e.get(signin.PathSignIn + "?" + q.Encode())
 		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "Invalid sign-in link") {
 			t.Errorf("%v: status %d: %s", q, resp.StatusCode, body)
 		}
@@ -260,13 +260,13 @@ func TestReturnPath(t *testing.T) {
 		"/a/../b":                       "/a/../b",
 		"/" + strings.Repeat("a", 3000): "/",
 	} {
-		if got := oauth.ReturnPath(in); got != want {
+		if got := signin.ReturnPath(in); got != want {
 			t.Errorf("ReturnPath(%q) = %q, want %q", in, got, want)
 		}
 	}
 	// An unsafe path is stored as "/", so the host returns to its root.
 	e := newEnv(t, envOptions{})
-	v, err := e.svc.Redeem(context.Background(), e.signInAt("demo", "//evil.example/"), "demo", browserNonce)
+	v, err := e.signin.Redeem(context.Background(), e.signInAt("demo", "//evil.example/"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestSignInParallelTabs(t *testing.T) {
 		if resp.StatusCode != http.StatusFound {
 			t.Fatalf("callback %d: status %d: %s", i, resp.StatusCode, body)
 		}
-		if _, err := e.svc.Redeem(context.Background(), hostCode(t, resp, host), host, browserNonce); err != nil {
+		if _, err := e.signin.Redeem(context.Background(), hostCode(t, resp, host), host, browserNonce); err != nil {
 			t.Fatalf("Redeem for %s: %v", host, err)
 		}
 	}
@@ -324,7 +324,7 @@ func TestSignInNotAdmitted(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "No access") {
 		t.Fatalf("status %d: %s", resp.StatusCode, body)
 	}
-	if len(e.rec.actions(oauth.ActionSignIn)) != 0 {
+	if len(e.rec.actions(signin.ActionSignIn)) != 0 {
 		t.Fatal("a refused person was signed in")
 	}
 }
@@ -343,16 +343,16 @@ func TestViewSessionEnds(t *testing.T) {
 	ctx := context.Background()
 	t.Run("expiry", func(t *testing.T) {
 		e := newEnv(t, envOptions{})
-		v, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+		v, err := e.signin.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
 		if err != nil {
 			t.Fatal(err)
 		}
-		e.clock.Advance(oauth.DefaultSessionTTL - time.Second)
-		if _, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil {
+		e.clock.Advance(signin.DefaultSessionTTL - time.Second)
+		if _, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil {
 			t.Fatalf("before expiry: %v", err)
 		}
 		e.clock.Advance(time.Second)
-		if _, err := e.svc.Viewer(ctx, "demo", v.Token); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Viewer(ctx, "demo", v.Token); !errors.Is(err, signin.ErrNotFound) {
 			t.Fatalf("after expiry: %v", err)
 		}
 		resp, _ := e.get(signInQuery("demo", "/"))
@@ -362,7 +362,7 @@ func TestViewSessionEnds(t *testing.T) {
 	})
 	t.Run("disabled user", func(t *testing.T) {
 		e := newEnv(t, envOptions{})
-		v, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+		v, err := e.signin.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -370,7 +370,7 @@ func TestViewSessionEnds(t *testing.T) {
 		if _, err := e.users.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: &disable}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.svc.Viewer(ctx, "demo", v.Token); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Viewer(ctx, "demo", v.Token); !errors.Is(err, signin.ErrNotFound) {
 			t.Fatalf("Viewer for a disabled user = %v", err)
 		}
 		// Enabling the user again does not bring the session back.
@@ -378,7 +378,7 @@ func TestViewSessionEnds(t *testing.T) {
 		if _, err := e.users.UpdateUser(ctx, "alice", user.UpdateUserRequest{Disabled: &enable}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.svc.Viewer(ctx, "demo", v.Token); !errors.Is(err, oauth.ErrNotFound) {
+		if _, err := e.signin.Viewer(ctx, "demo", v.Token); !errors.Is(err, signin.ErrNotFound) {
 			t.Fatalf("Viewer after re-enabling = %v", err)
 		}
 	})
@@ -414,7 +414,7 @@ func (e *env) signInTabs(key string, beforeFinish func(), hosts ...string) []str
 		if resp.StatusCode != http.StatusFound {
 			e.t.Fatalf("finishing %s: status %d: %s", host, resp.StatusCode, body)
 		}
-		v, err := e.svc.Redeem(context.Background(), hostCode(e.t, resp, host), host, browserNonce)
+		v, err := e.signin.Redeem(context.Background(), hostCode(e.t, resp, host), host, browserNonce)
 		if err != nil {
 			e.t.Fatalf("Redeem for %s: %v", host, err)
 		}
@@ -426,7 +426,7 @@ func (e *env) signInTabs(key string, beforeFinish func(), hosts ...string) []str
 // signOut presses the button on the sign-out page, as the browser would.
 func (e *env) signOut() {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignOut), nil)
+	req, err := http.NewRequest(http.MethodPost, e.url(signin.PathSignOut), nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func (e *env) signOut() {
 func (e *env) wantSignedOut(hosts, tokens []string) {
 	e.t.Helper()
 	for i, host := range hosts {
-		if who, err := e.svc.Viewer(context.Background(), host, tokens[i]); !errors.Is(err, oauth.ErrNotFound) {
+		if who, err := e.signin.Viewer(context.Background(), host, tokens[i]); !errors.Is(err, signin.ErrNotFound) {
 			e.t.Errorf("view on %s after sign-out: Viewer = %q, %v", host, who, err)
 		}
 		resp, body := e.get(signInQuery(host, "/"))
@@ -513,7 +513,7 @@ func TestSignOutEndsEverySignInOfTheBrowser(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp, _ := e.keySignIn(hosts[i], key, nil)
-		v, err := e.svc.Redeem(ctx, hostCode(t, resp, hosts[i]), hosts[i], browserNonce)
+		v, err := e.signin.Redeem(ctx, hostCode(t, resp, hosts[i]), hosts[i], browserNonce)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -527,25 +527,25 @@ func TestSignOutEndsEverySignInOfTheBrowser(t *testing.T) {
 func TestSignOutLeavesOtherBrowsers(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, envOptions{})
-	first, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+	first, err := e.signin.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstJar := e.jar
 	e.jar, _ = cookiejar.New(nil) // another browser
 	e.client.Jar = e.jar
-	second, err := e.svc.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
+	second, err := e.signin.Redeem(ctx, e.signInAt("demo", "/"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondJar := e.jar
 	e.jar, e.client.Jar = firstJar, firstJar
 	e.signOut()
-	if _, err := e.svc.Viewer(ctx, "demo", first.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "demo", first.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("view in the browser that signed out: %v", err)
 	}
 	e.jar, e.client.Jar = secondJar, secondJar
-	if who, err := e.svc.Viewer(ctx, "demo", second.Token); err != nil || who != "alice" {
+	if who, err := e.signin.Viewer(ctx, "demo", second.Token); err != nil || who != "alice" {
 		t.Fatalf("view in the other browser: Viewer = %q, %v", who, err)
 	}
 	resp, _ := e.get(signInQuery("other", "/"))
@@ -556,7 +556,7 @@ func TestSignOutLeavesOtherBrowsers(t *testing.T) {
 func (e *env) keySignIn(host, key string, header http.Header) (*http.Response, string) {
 	e.t.Helper()
 	v := url.Values{"host": {host}, "path": {"/"}, "nonce": {nonceHash(browserNonce)}, "api_key": {key}}
-	req, err := http.NewRequest(http.MethodPost, e.url(oauth.PathSignIn), strings.NewReader(v.Encode()))
+	req, err := http.NewRequest(http.MethodPost, e.url(signin.PathSignIn), strings.NewReader(v.Encode()))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -605,14 +605,14 @@ func TestSignInWithAPIKey(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("sign-in: status %d: %s", resp.StatusCode, body)
 	}
-	v, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	v, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := e.svc.Viewer(ctx, "demo", v.Token); err != nil || got != "bob" {
+	if got, err := e.signin.Viewer(ctx, "demo", v.Token); err != nil || got != "bob" {
 		t.Fatalf("Viewer = %q, %v; want bob", got, err)
 	}
-	if ev := e.rec.actions(oauth.ActionSignIn); len(ev) != 1 || ev[0].Details["key_prefix"] != k.Prefix {
+	if ev := e.rec.actions(signin.ActionSignIn); len(ev) != 1 || ev[0].Details["key_prefix"] != k.Prefix {
 		t.Fatalf("sign-in audit = %+v", ev)
 	}
 
@@ -620,7 +620,7 @@ func TestSignInWithAPIKey(t *testing.T) {
 	if err := e.users.RevokeKey(ctx, user.KeyRef{Handle: "bob", Prefix: k.Prefix}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Viewer(ctx, "demo", v.Token); !errors.Is(err, oauth.ErrNotFound) {
+	if _, err := e.signin.Viewer(ctx, "demo", v.Token); !errors.Is(err, signin.ErrNotFound) {
 		t.Fatalf("Viewer after the key was revoked = %v", err)
 	}
 	resp, _ = e.get(signInQuery("other", "/"))
@@ -641,7 +641,7 @@ func TestSignInWithExpiringKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, _ := e.keySignIn("demo", key, nil)
-	v, err := e.svc.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
+	v, err := e.signin.Redeem(ctx, hostCode(t, resp, "demo"), "demo", browserNonce)
 	if err != nil {
 		t.Fatal(err)
 	}

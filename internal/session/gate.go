@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/PeterBooker/kazari/internal/auth"
+	"github.com/PeterBooker/kazari/internal/middleware"
 )
 
 // FormField is the form field that carries the session's form token.
@@ -26,6 +27,8 @@ var (
 	ErrBadForm = errors.New("session: form not readable")
 	// ErrFormToken: the form does not carry the session's form token.
 	ErrFormToken = errors.New("session: form token not valid")
+	// ErrRefused: the host turned the signed-in person away.
+	ErrRefused = errors.New("session: refused")
 )
 
 // Require returns the session of the request. Without one, a page load is
@@ -42,6 +45,32 @@ func (m *Manager) Require(w http.ResponseWriter, r *http.Request) (*Session, err
 	return sess, nil
 }
 
+// Guard admits a request to a page of the host: it returns the request's
+// session, and the request carrying the principal admit says the person acts
+// as, counted as let through. Without a session a page load is sent to sign
+// in and anything else is refused (ErrSignInStarted, ErrSignedOut). A person
+// admit turns away is counted and refused with ErrRefused, the session still
+// returned for the host's page. With form set, the posted form must carry
+// the session's token (ErrBadForm, ErrFormToken).
+func (m *Manager) Guard(w http.ResponseWriter, r *http.Request, form bool, admit func(*Session) (auth.Principal, bool)) (*Session, *http.Request, error) {
+	sess, err := m.Require(w, r)
+	if err != nil {
+		return nil, r, err
+	}
+	p, ok := admit(sess)
+	if !ok {
+		m.Refuse(r.Context())
+		return sess, r, ErrRefused
+	}
+	if form {
+		if err := sess.CheckForm(w, r); err != nil {
+			return sess, r, err
+		}
+	}
+	m.Admit(r.Context(), p)
+	return sess, r.WithContext(auth.ContextWithPrincipal(r.Context(), p)), nil
+}
+
 // SignedOut answers a request whose session is gone, or names a person who
 // is: a page load is sent to sign in again (ErrSignInStarted), anything else
 // gets ErrSignedOut.
@@ -51,7 +80,7 @@ func (m *Manager) SignedOut(w http.ResponseWriter, r *http.Request) error {
 		result = auth.ResultInvalid
 	}
 	m.auth.Record(r.Context(), result, nil)
-	if Navigation(r) {
+	if middleware.Navigation(r) {
 		m.SignIn(w, r, r.URL.RequestURI())
 		return ErrSignInStarted
 	}

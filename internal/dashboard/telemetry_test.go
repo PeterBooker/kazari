@@ -53,7 +53,7 @@ func TestSessionAuthenticationsAreCounted(t *testing.T) {
 		t.Errorf("forbidden = %v after a member's visit, want 1", got)
 	}
 
-	if err := e.oauth.EndSessions(context.Background(), "boss", 0); err != nil {
+	if err := e.signin.EndSessions(context.Background(), "boss", 0); err != nil {
 		t.Fatal(err)
 	}
 	b.navigate("/people")
