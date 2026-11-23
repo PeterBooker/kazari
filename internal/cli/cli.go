@@ -374,7 +374,8 @@ func (r *runner) exit(err error) int {
 	case err == nil:
 		return exitOK
 	case usage:
-		// Before a parse error, which a command's Validate returns it in.
+		// Also inside the parse error a command's Validate makes, whose usage
+		// lines would bury the message.
 		fmt.Fprintf(r.stderr, "kazari: %s\n", ue.msg)
 		return exitUsage
 	case parse:
