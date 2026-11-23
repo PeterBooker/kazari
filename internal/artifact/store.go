@@ -5,9 +5,10 @@ import (
 	"time"
 )
 
-// Store is the persistence contract, checked by storetest. Each method owns
-// its transaction. Users are named by handle, and the caller passes the time
-// so the store never reads the clock.
+// Store is the persistence contract of artifacts and their versions,
+// checked by storetest.Run. Each method owns its transaction. Users are
+// named by handle, and the caller passes the time so the store never reads
+// the clock.
 type Store interface {
 	// Create inserts a with its first version (setting v.ID, v.Number = 1,
 	// and the UploadedBy of each file without one to v.CreatedBy),
@@ -107,6 +108,22 @@ type Store interface {
 	// DeleteTombstone removes the row, freeing the slug.
 	DeleteTombstone(ctx context.Context, slug string) error
 
+	// OwnerUsage returns, for every user who owns an artifact that is not a
+	// tombstone, how many they own and their usage as Usage counts it,
+	// ordered by handle.
+	OwnerUsage(ctx context.Context) ([]OwnerUsage, error)
+
+	// CountArtifacts counts every artifact, tombstones included, by Status
+	// and visibility.
+	CountArtifacts(ctx context.Context) ([]StatusCount, error)
+
+	// VersionTotals counts every version and sums their logical sizes.
+	VersionTotals(ctx context.Context) (Totals, error)
+}
+
+// BlobIndex records the blobs the store holds and which of them a version
+// still uses, for the garbage collector. Checked by storetest.RunBlobIndex.
+type BlobIndex interface {
 	// RecordBlob upserts, refreshing created_at so a re-put blob survives the
 	// garbage collector's grace window.
 	RecordBlob(ctx context.Context, hash string, size int64, at time.Time) error
@@ -120,6 +137,13 @@ type Store interface {
 
 	DeleteBlob(ctx context.Context, hash string) error
 
+	// BlobTotals counts the stored blobs and sums their sizes.
+	BlobTotals(ctx context.Context) (Totals, error)
+}
+
+// LinkStore keeps share links, checked by storetest.RunLinks. Each method
+// owns its transaction.
+type LinkStore interface {
 	// CreateShareLink adds l to the artifact; hash is the hex SHA-256 of
 	// the link's token. ErrNotFound for an unknown slug. A link belongs to
 	// the artifact row, not the slug: it goes when the tombstone does and
@@ -149,21 +173,6 @@ type Store interface {
 	// UseShareLink counts one opening of the artifact's link with prefix
 	// and sets its last use to at. ErrLinkNotFound.
 	UseShareLink(ctx context.Context, slug, prefix string, at time.Time) error
-
-	// OwnerUsage returns, for every user who owns an artifact that is not a
-	// tombstone, how many they own and their usage as Usage counts it,
-	// ordered by handle.
-	OwnerUsage(ctx context.Context) ([]OwnerUsage, error)
-
-	// CountArtifacts counts every artifact, tombstones included, by Status
-	// and visibility.
-	CountArtifacts(ctx context.Context) ([]StatusCount, error)
-
-	// VersionTotals counts every version and sums their logical sizes.
-	VersionTotals(ctx context.Context) (Totals, error)
-
-	// BlobTotals counts the stored blobs and sums their sizes.
-	BlobTotals(ctx context.Context) (Totals, error)
 }
 
 // Statuses of an artifact, one each, in the order the lifecycle checks them:

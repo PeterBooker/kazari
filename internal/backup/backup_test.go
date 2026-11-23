@@ -46,7 +46,8 @@ func open(t *testing.T, dir string) *instance {
 	if err != nil {
 		t.Fatal(err)
 	}
-	arts := artifact.New(sqlite.NewArtifactStore(db), blobs, artifact.NoQuotas{}, nil, artifact.Options{Now: func() time.Time { return start }})
+	store := sqlite.NewArtifactStore(db)
+	arts := artifact.New(store, store, blobs, artifact.NoQuotas{}, nil, artifact.Options{Now: func() time.Time { return start }})
 	return &instance{dir: dir, db: db, arts: arts}
 }
 

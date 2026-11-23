@@ -20,13 +20,33 @@ import (
 	"github.com/PeterBooker/kazari/internal/artifact"
 )
 
-// Run opens a fresh store per subtest. open also returns a hook that
+// Stores are the stores under test, all over one fresh database. User
 // creates a user row for a handle, since artifacts need an existing owner.
-func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle string))) {
-	tests := []struct {
-		name string
-		fn   func(t *testing.T, h *harness)
-	}{
+type Stores struct {
+	Artifacts artifact.Store
+	Blobs     artifact.BlobIndex
+	Links     artifact.LinkStore
+	User      func(handle string)
+}
+
+type suite []struct {
+	name string
+	fn   func(t *testing.T, h *harness)
+}
+
+func (s suite) run(t *testing.T, open func(t *testing.T) Stores) {
+	for _, tt := range s {
+		t.Run(tt.name, func(t *testing.T) {
+			st := open(t)
+			tt.fn(t, &harness{store: st.Artifacts, blobs: st.Blobs, links: st.Links, mkUser: st.User, ctx: t.Context()})
+		})
+	}
+}
+
+// Run checks the artifact.Store of a fresh set of stores per subtest; it
+// reads Blobs for what a version leaves to the garbage collector.
+func Run(t *testing.T, open func(t *testing.T) Stores) {
+	suite{
 		{"CreateGet", testCreateGet},
 		{"CreateSlugTaken", testCreateSlugTaken},
 		{"CreateUnknownOwner", testCreateUnknownOwner},
@@ -56,18 +76,8 @@ func Run(t *testing.T, open func(t *testing.T) (artifact.Store, func(handle stri
 		{"Usage", testUsage},
 		{"LifecycleQueries", testLifecycleQueries},
 		{"PurgeAndDeleteTombstone", testPurgeAndDeleteTombstone},
-		{"Blobs", testBlobs},
-		{"ShareLinks", testShareLinks},
-		{"UserShareLinks", testUserShareLinks},
-		{"ShareLinksFollowTheRow", testShareLinksFollowTheRow},
 		{"Census", testCensus},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store, mkUser := open(t)
-			tt.fn(t, &harness{store: store, mkUser: mkUser, ctx: t.Context()})
-		})
-	}
+	}.run(t, open)
 }
 
 var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -79,6 +89,8 @@ var cmpOpts = []cmp.Option{cmpopts.EquateEmpty()}
 
 type harness struct {
 	store  artifact.Store
+	blobs  artifact.BlobIndex
+	links  artifact.LinkStore
 	mkUser func(handle string)
 	ctx    context.Context
 }
@@ -455,7 +467,7 @@ func testDeleteVersions(t *testing.T, h *harness) {
 	if after, err := h.store.Usage(h.ctx, "alice"); err != nil || after >= before {
 		t.Errorf("Usage after deleting = %d, %v; want less than %d", after, err, before)
 	}
-	unref, err := h.store.UnreferencedBlobs(h.ctx, at(1000*time.Hour), 100)
+	unref, err := h.blobs.UnreferencedBlobs(h.ctx, at(1000*time.Hour), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +569,7 @@ func testAddVersionConflict(t *testing.T, h *harness) {
 	if len(list) != 1 {
 		t.Fatalf("versions after conflict = %d, want 1", len(list))
 	}
-	blobs, err := h.store.UnreferencedBlobs(h.ctx, at(24*time.Hour), 10)
+	blobs, err := h.blobs.UnreferencedBlobs(h.ctx, at(24*time.Hour), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1480,78 +1492,6 @@ func testPurgeAndDeleteTombstone(t *testing.T, h *harness) {
 	wantErr(t, "Purge missing", h.store.Purge(h.ctx, "demo", at(0), nil), artifact.ErrNotFound)
 }
 
-func testBlobs(t *testing.T, h *harness) {
-	h.mkUser("alice")
-	free1, free2, used := hashOf("free1"), hashOf("free2"), hashOf("used")
-	for _, hash := range []string{free2, free1} {
-		if err := h.store.RecordBlob(h.ctx, hash, 5, at(0)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	h.create(t, newArtifact("demo", "alice", at(0)), file("used.txt", "used"))
-
-	unref := func(before time.Time, limit int) []string {
-		t.Helper()
-		got, err := h.store.UnreferencedBlobs(h.ctx, before, limit)
-		if err != nil {
-			t.Fatal(err)
-		}
-		slices.Sort(got)
-		return got
-	}
-	sorted := func(s ...string) []string { slices.Sort(s); return s }
-
-	if got := unref(at(0), 10); len(got) != 0 {
-		t.Fatalf("UnreferencedBlobs before creation = %v, want none (strictly before)", got)
-	}
-	if diff := cmp.Diff(sorted(free1, free2), unref(at(time.Hour), 10)); diff != "" {
-		t.Fatalf("UnreferencedBlobs (-want +got):\n%s", diff)
-	}
-	if got := unref(at(time.Hour), 1); len(got) != 1 {
-		t.Fatalf("UnreferencedBlobs limit 1 returned %d", len(got))
-	}
-
-	if err := h.store.RecordBlob(h.ctx, free1, 5, at(2*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]string{free2}, unref(at(time.Hour), 10)); diff != "" {
-		t.Fatalf("after re-record (-want +got):\n%s", diff)
-	}
-	if err := h.store.RecordBlob(h.ctx, free1, 5, at(0)); err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]string{free2}, unref(at(time.Hour), 10)); diff != "" {
-		t.Fatalf("after older re-record (-want +got):\n%s", diff)
-	}
-
-	for hash, want := range map[string]bool{free1: false, used: true, hashOf("unknown"): false} {
-		got, err := h.store.BlobReferenced(h.ctx, hash)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Fatalf("BlobReferenced(%s) = %v, want %v", hash, got, want)
-		}
-	}
-
-	if err := h.store.DeleteBlob(h.ctx, free2); err != nil {
-		t.Fatal(err)
-	}
-	if got := unref(at(3*time.Hour), 10); !slices.Equal(got, []string{free1}) {
-		t.Fatalf("after DeleteBlob = %v, want [free1]", got)
-	}
-	if err := h.store.DeleteBlob(h.ctx, free2); err != nil {
-		t.Fatalf("DeleteBlob of missing row: %v", err)
-	}
-
-	if err := h.store.Purge(h.ctx, "demo", at(time.Hour), nil); err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(sorted(free1, used), unref(at(3*time.Hour), 10)); diff != "" {
-		t.Fatalf("after purge (-want +got):\n%s", diff)
-	}
-}
-
 // Members artifacts are listed to every viewer, like public ones, unless
 // they are offline.
 func testListMembers(t *testing.T, h *harness) {
@@ -1650,156 +1590,6 @@ func testListSlugs(t *testing.T, h *harness) {
 	}
 }
 
-func testShareLinks(t *testing.T, h *harness) {
-	h.mkUser("alice")
-	h.mkUser("bob")
-	h.create(t, newArtifact("demo", "alice", at(0)))
-	h.create(t, newArtifact("other", "bob", at(0)))
-
-	l1 := &artifact.ShareLink{Prefix: "aaaaaaaa", Label: "for the client", CreatedBy: "alice",
-		CreatedAt: at(time.Hour), ExpiresAt: at(48 * time.Hour)}
-	l2 := &artifact.ShareLink{Prefix: "bbbbbbbb", CreatedBy: "bob", CreatedAt: at(2 * time.Hour), ExpiresAt: at(72 * time.Hour),
-		HasPassword: true}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l1, hashOf("token-1"), ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l2, hashOf("token-2"), "$argon2id$stored"); err != nil {
-		t.Fatal(err)
-	}
-	wantErr(t, "CreateShareLink on a missing slug",
-		h.store.CreateShareLink(h.ctx, "missing", &artifact.ShareLink{Prefix: "cccccccc", CreatedAt: at(0), ExpiresAt: at(time.Hour)}, hashOf("t"), ""),
-		artifact.ErrNotFound)
-
-	links, err := h.store.ListShareLinks(h.ctx, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]artifact.ShareLink{*l2, *l1}, links, cmpOpts...); diff != "" {
-		t.Fatalf("ListShareLinks, newest first (-want +got):\n%s", diff)
-	}
-	if links, err := h.store.ListShareLinks(h.ctx, "other"); err != nil || len(links) != 0 {
-		t.Fatalf("ListShareLinks(other) = %v, %v; want none", links, err)
-	}
-
-	got, passwordHash, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(l1, got, cmpOpts...); diff != "" || passwordHash != "" {
-		t.Fatalf("ShareLink, password hash %q (-want +got):\n%s", passwordHash, diff)
-	}
-	if got, passwordHash, err := h.store.ShareLink(h.ctx, "demo", hashOf("token-2")); err != nil || !got.HasPassword ||
-		passwordHash != "$argon2id$stored" {
-		t.Fatalf("ShareLink with a password = %+v, %q, %v; want HasPassword and the stored hash", got, passwordHash, err)
-	}
-	_, _, err = h.store.ShareLink(h.ctx, "other", hashOf("token-1"))
-	wantErr(t, "ShareLink of another artifact", err, artifact.ErrLinkNotFound)
-	_, _, err = h.store.ShareLink(h.ctx, "demo", hashOf("unknown"))
-	wantErr(t, "ShareLink unknown", err, artifact.ErrLinkNotFound)
-
-	for i := range 2 {
-		if err := h.store.UseShareLink(h.ctx, "demo", l1.Prefix, at(time.Duration(3+i)*time.Hour)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	wantErr(t, "UseShareLink through another artifact", h.store.UseShareLink(h.ctx, "other", l1.Prefix, at(0)), artifact.ErrLinkNotFound)
-	if got, _, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.Uses != 2 || !got.LastUsedAt.Equal(at(4*time.Hour)) {
-		t.Fatalf("after two uses: Uses %d, LastUsedAt %v", got.Uses, got.LastUsedAt)
-	}
-
-	if err := h.store.RevokeShareLink(h.ctx, "demo", l1.Prefix, at(5*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	// A second revoke keeps the first time.
-	if err := h.store.RevokeShareLink(h.ctx, "demo", l1.Prefix, at(6*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if got, _, _ = h.store.ShareLink(h.ctx, "demo", hashOf("token-1")); got.RevokedAt == nil || !got.RevokedAt.Equal(at(5*time.Hour)) {
-		t.Fatalf("RevokedAt = %v, want %v", got.RevokedAt, at(5*time.Hour))
-	}
-	wantErr(t, "RevokeShareLink through another artifact",
-		h.store.RevokeShareLink(h.ctx, "other", l2.Prefix, at(0)), artifact.ErrLinkNotFound)
-	wantErr(t, "RevokeShareLink unknown", h.store.RevokeShareLink(h.ctx, "demo", "zzzzzzzz", at(0)), artifact.ErrLinkNotFound)
-}
-
-// A user's links end together, on every artifact and only theirs, and a link
-// revoked earlier keeps its revoke time.
-func testUserShareLinks(t *testing.T, h *harness) {
-	h.mkUser("alice")
-	h.mkUser("bob")
-	h.create(t, newArtifact("demo", "alice", at(0)))
-	h.create(t, newArtifact("other", "bob", at(0)))
-	for i, l := range []struct{ slug, prefix, by string }{
-		{"demo", "aaaaaaaa", "alice"}, {"other", "bbbbbbbb", "alice"},
-		{"demo", "cccccccc", "alice"}, {"demo", "dddddddd", "bob"},
-	} {
-		link := &artifact.ShareLink{Prefix: l.prefix, CreatedBy: l.by, CreatedAt: at(0), ExpiresAt: at(time.Hour)}
-		if err := h.store.CreateShareLink(h.ctx, l.slug, link, hashOf(fmt.Sprintf("token-%d", i)), ""); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := h.store.RevokeShareLink(h.ctx, "demo", "cccccccc", at(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := h.store.RevokeUserShareLinks(h.ctx, "alice", at(2*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	slices.SortFunc(got, func(a, b artifact.RevokedShareLink) int { return strings.Compare(a.Prefix, b.Prefix) })
-	want := []artifact.RevokedShareLink{{Slug: "demo", Prefix: "aaaaaaaa"}, {Slug: "other", Prefix: "bbbbbbbb"}}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("RevokeUserShareLinks (-want +got):\n%s", diff)
-	}
-	for i, wantAt := range []*time.Time{new(at(2 * time.Minute)), new(at(2 * time.Minute)), new(at(time.Minute)), nil} {
-		slug := "demo"
-		if i == 1 {
-			slug = "other"
-		}
-		l, _, err := h.store.ShareLink(h.ctx, slug, hashOf(fmt.Sprintf("token-%d", i)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if diff := cmp.Diff(wantAt, l.RevokedAt); diff != "" {
-			t.Errorf("link %s RevokedAt (-want +got):\n%s", l.Prefix, diff)
-		}
-	}
-
-	// Nothing is left to revoke, and a handle with no links is not an error.
-	for _, handle := range []string{"alice", "nobody"} {
-		if got, err := h.store.RevokeUserShareLinks(h.ctx, handle, at(3*time.Minute)); err != nil || len(got) != 0 {
-			t.Fatalf("RevokeUserShareLinks(%s) = %v, %v; want none", handle, got, err)
-		}
-	}
-}
-
-// A link belongs to its artifact row: it outlives a purge, goes with the
-// tombstone, and never opens a later artifact that reuses the slug.
-func testShareLinksFollowTheRow(t *testing.T, h *harness) {
-	h.mkUser("alice")
-	h.mkUser("bob")
-	h.create(t, newArtifact("demo", "alice", at(0)))
-	l := &artifact.ShareLink{Prefix: "aaaaaaaa", CreatedBy: "alice", CreatedAt: at(0), ExpiresAt: at(1000 * time.Hour)}
-	if err := h.store.CreateShareLink(h.ctx, "demo", l, hashOf("token"), ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.store.Purge(h.ctx, "demo", at(time.Hour), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token")); err != nil {
-		t.Fatalf("ShareLink on a tombstone: %v", err)
-	}
-	if err := h.store.DeleteTombstone(h.ctx, "demo"); err != nil {
-		t.Fatal(err)
-	}
-	h.create(t, newArtifact("demo", "bob", at(2*time.Hour)))
-	_, _, err := h.store.ShareLink(h.ctx, "demo", hashOf("token"))
-	wantErr(t, "old link on the reused slug", err, artifact.ErrLinkNotFound)
-	if links, err := h.store.ListShareLinks(h.ctx, "demo"); err != nil || len(links) != 0 {
-		t.Fatalf("ListShareLinks on the reused slug = %v, %v; want none", links, err)
-	}
-}
-
 func testCensus(t *testing.T, h *harness) {
 	h.mkUser("alice")
 	empty, err := h.store.CountArtifacts(h.ctx)
@@ -1856,18 +1646,5 @@ func testCensus(t *testing.T, h *harness) {
 	// The tombstone's version went with the purge.
 	if versions.Count != 5 || versions.Bytes != int64(len("live")+len("team")+len("old")+len("hidden")+len("gone")) {
 		t.Errorf("VersionTotals = %+v", versions)
-	}
-	if err := h.store.RecordBlob(h.ctx, hashOf("a"), 10, at(0)); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.store.RecordBlob(h.ctx, hashOf("b"), 32, at(0)); err != nil {
-		t.Fatal(err)
-	}
-	blobs, err := h.store.BlobTotals(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if blobs.Count < 2 || blobs.Bytes < 42 {
-		t.Errorf("BlobTotals = %+v, want at least the two recorded blobs", blobs)
 	}
 }

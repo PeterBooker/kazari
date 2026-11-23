@@ -68,7 +68,11 @@ func newMetrics(m metric.Meter) metrics {
 
 // span starts a service span under a recording parent.
 func (s *Service) span(ctx context.Context, name, slug string) (context.Context, trace.Span) {
-	ctx, span := instrument.StartChild(ctx, s.tracer, name)
+	return startSpan(ctx, s.tracer, name, slug)
+}
+
+func startSpan(ctx context.Context, tracer trace.Tracer, name, slug string) (context.Context, trace.Span) {
+	ctx, span := instrument.StartChild(ctx, tracer, name)
 	if slug != "" && span.IsRecording() {
 		span.SetAttributes(slugKey.String(slug))
 	}
@@ -127,7 +131,7 @@ func (s *Service) edited(ctx context.Context, out []textedit.Outcome) {
 	}
 }
 
-func (s *Service) countOutcome(ctx context.Context, c metric.Int64Counter, err error, attrs ...attribute.KeyValue) {
+func countOutcome(ctx context.Context, c metric.Int64Counter, err error, attrs ...attribute.KeyValue) {
 	if err != nil {
 		attrs = append(attrs, errorType(err))
 	}
@@ -222,7 +226,7 @@ func (s *Service) census(ctx context.Context) (census, error) {
 	if c.versions, err = s.store.VersionTotals(ctx); err != nil {
 		return census{}, err
 	}
-	if c.blobs, err = s.store.BlobTotals(ctx); err != nil {
+	if c.blobs, err = s.index.BlobTotals(ctx); err != nil {
 		return census{}, err
 	}
 	return c, nil

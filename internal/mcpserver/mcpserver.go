@@ -43,11 +43,12 @@ const bodyOverhead = 1 << 20
 // Deps are the services the MCP server calls. Every field is required unless
 // its comment says otherwise.
 type Deps struct {
-	Artifacts *artifact.Service
-	Uploads   *upload.Service
-	Auth      auth.Authenticator
-	Links     present.Links
-	Logger    *slog.Logger
+	Artifacts  *artifact.Service
+	ShareLinks *artifact.ShareLinks
+	Uploads    *upload.Service
+	Auth       auth.Authenticator
+	Links      present.Links
+	Logger     *slog.Logger
 	// Writes limits write and delete calls per credential; it is the user API's
 	// limiter, so a key has one budget on both. Nil disables it.
 	Writes *ratelimit.Limiter

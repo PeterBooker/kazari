@@ -13,6 +13,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/PeterBooker/kazari/internal/audit"
 )
 
@@ -115,17 +118,56 @@ func hashLinkToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ShareLinks creates, opens and revokes the links that open a members
+// artifact without signing in. It is safe for concurrent use.
+type ShareLinks struct {
+	store LinkStore
+
+	get      func(ctx context.Context, slug string) (*Artifact, error)
+	involved func(ctx context.Context, actor Actor, slug string) (bool, error)
+	writable func(actor Actor, a *Artifact, involved, allowDeleted bool) error
+	record   func(ctx context.Context, actor Actor, action, slug string, details map[string]string)
+	now      func() time.Time
+
+	maxTTL    time.Duration
+	passwords Passwords
+	tracer    trace.Tracer
+	ops       metric.Int64Counter
+}
+
+// NewShareLinks returns the share links of arts' artifacts, kept in store.
+// A link follows arts' rules for who may change an artifact, its clock, its
+// audit trail and its Options.MaxShareLinkTTL and Options.Passwords.
+func NewShareLinks(store LinkStore, arts *Service) *ShareLinks {
+	return &ShareLinks{
+		store:     store,
+		get:       arts.store.Get,
+		involved:  arts.involved,
+		writable:  arts.checkWritable,
+		record:    arts.record,
+		now:       arts.now,
+		maxTTL:    arts.opts.MaxShareLinkTTL,
+		passwords: arts.opts.Passwords,
+		tracer:    arts.tracer,
+		ops:       arts.m.shareLinks,
+	}
+}
+
+func (s *ShareLinks) span(ctx context.Context, name, slug string) (context.Context, trace.Span) {
+	return startSpan(ctx, s.tracer, name, slug)
+}
+
 // shareable loads slug for a share-link change by actor: the artifact must
 // be live or unpublished (not deleted or purged), readable by actor and
 // changeable under the write policy, the same rules as a visibility change.
-func (s *Service) shareable(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
+func (s *ShareLinks) shareable(ctx context.Context, actor Actor, slug string) (*Artifact, error) {
 	if actor.Handle == "" {
 		return nil, Errorf(ErrForbidden, "an authenticated actor is required")
 	}
 	if err := checkSlug(actor, slug); err != nil {
 		return nil, err
 	}
-	a, err := s.store.Get(ctx, slug)
+	a, err := s.get(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +175,7 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) (*Art
 	if err != nil {
 		return nil, err
 	}
-	return a, s.checkWritable(actor, a, involved, false)
+	return a, s.writable(actor, a, involved, false)
 }
 
 // CreateShareLink creates a link that opens slug without signing in until
@@ -142,20 +184,20 @@ func (s *Service) shareable(ctx context.Context, actor Actor, slug string) (*Art
 // note such as who the link is for. A password, when not empty, must be
 // given before the link opens anything. It returns the link and its token,
 // which is never available again.
-func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration, password string) (_ *ShareLink, _ string, err error) {
+func (s *ShareLinks) CreateShareLink(ctx context.Context, actor Actor, slug, label string, ttl time.Duration, password string) (_ *ShareLink, _ string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.create", slug)
 	defer func() {
-		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("create"))
+		countOutcome(ctx, s.ops, err, shareOperationKey.String("create"))
 		endSpan(span, err)
 	}()
 	if err := checkSlug(actor, slug); err != nil {
 		return nil, "", err
 	}
-	if ttl > s.opts.MaxShareLinkTTL {
-		return nil, "", Errorf(ErrInvalidArgument, "a share link may live at most %s", formatTTL(s.opts.MaxShareLinkTTL))
+	if ttl > s.maxTTL {
+		return nil, "", Errorf(ErrInvalidArgument, "a share link may live at most %s", formatTTL(s.maxTTL))
 	}
 	if ttl <= 0 {
-		ttl = min(DefaultShareLinkTTL, s.opts.MaxShareLinkTTL)
+		ttl = min(DefaultShareLinkTTL, s.maxTTL)
 	}
 	if err := validateText("label", label, LabelMaxBytes, false); err != nil {
 		return nil, "", err
@@ -164,7 +206,7 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 		if err := CheckLinkPassword(password); err != nil {
 			return nil, "", err
 		}
-		if s.opts.Passwords == nil {
+		if s.passwords == nil {
 			return nil, "", linkPasswordError{Errorf(ErrInvalidArgument, "this instance cannot keep share-link passwords")}
 		}
 	}
@@ -179,7 +221,7 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 	}
 	var passwordHash string
 	if password != "" {
-		if passwordHash, err = s.opts.Passwords.HashPassword(ctx, password); err != nil {
+		if passwordHash, err = s.passwords.HashPassword(ctx, password); err != nil {
 			return nil, "", err
 		}
 	}
@@ -203,7 +245,7 @@ func (s *Service) CreateShareLink(ctx context.Context, actor Actor, slug, label 
 
 // ListShareLinks returns slug's links, newest first, to an actor who may
 // change its sharing.
-func (s *Service) ListShareLinks(ctx context.Context, actor Actor, slug string) ([]ShareLink, error) {
+func (s *ShareLinks) ListShareLinks(ctx context.Context, actor Actor, slug string) ([]ShareLink, error) {
 	if _, err := s.shareable(ctx, actor, slug); err != nil {
 		return nil, err
 	}
@@ -212,10 +254,10 @@ func (s *Service) ListShareLinks(ctx context.Context, actor Actor, slug string) 
 
 // RevokeShareLink ends the link with prefix at once; browsers that opened
 // it lose access on their next request. Revoking twice is not an error.
-func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix string) (err error) {
+func (s *ShareLinks) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix string) (err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.revoke", slug)
 	defer func() {
-		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("revoke"))
+		countOutcome(ctx, s.ops, err, shareOperationKey.String("revoke"))
 		endSpan(span, err)
 	}()
 	if _, err := s.shareable(ctx, actor, slug); err != nil {
@@ -231,16 +273,16 @@ func (s *Service) RevokeShareLink(ctx context.Context, actor Actor, slug, prefix
 // RevokeUserShareLinks ends every link handle created, on any artifact, so a
 // disabled user keeps no way in. It is wired to user.Options.OnDisable, so
 // enabling the user does not restore them.
-func (s *Service) RevokeUserShareLinks(ctx context.Context, actor Actor, handle string) (err error) {
+func (s *ShareLinks) RevokeUserShareLinks(ctx context.Context, actor Actor, handle string) (err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.revoke_user", "")
 	defer func() { endSpan(span, err) }()
 	revoked, err := s.store.RevokeUserShareLinks(ctx, handle, s.now())
 	if err != nil {
-		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("revoke"))
+		countOutcome(ctx, s.ops, err, shareOperationKey.String("revoke"))
 		return err
 	}
 	for _, l := range revoked {
-		s.countOutcome(ctx, s.m.shareLinks, nil, shareOperationKey.String("revoke"))
+		countOutcome(ctx, s.ops, nil, shareOperationKey.String("revoke"))
 		s.record(ctx, actor, audit.ShareLinkRevoke, l.Slug, map[string]string{"prefix": l.Prefix, "created_by": handle})
 	}
 	return nil
@@ -248,7 +290,7 @@ func (s *Service) RevokeUserShareLinks(ctx context.Context, actor Actor, handle 
 
 // activeLink returns slug's active link for token and its password hash;
 // anything else is ErrLinkNotFound.
-func (s *Service) activeLink(ctx context.Context, slug, token string) (*ShareLink, string, error) {
+func (s *ShareLinks) activeLink(ctx context.Context, slug, token string) (*ShareLink, string, error) {
 	if !IsLinkToken(token) {
 		return nil, "", ErrLinkNotFound
 	}
@@ -267,7 +309,7 @@ func (s *Service) activeLink(ctx context.Context, slug, token string) (*ShareLin
 // or for a link with a password the token and the proof that the password
 // was given. Anything else (a malformed, unknown, revoked or expired token,
 // a missing or wrong proof, or another artifact's link) is ErrLinkNotFound.
-func (s *Service) CheckShareLink(ctx context.Context, slug, cookie string) (*ShareLink, error) {
+func (s *ShareLinks) CheckShareLink(ctx context.Context, slug, cookie string) (*ShareLink, error) {
 	token, proof, hasProof := splitLinkCookie(cookie)
 	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
@@ -286,9 +328,9 @@ func (s *Service) CheckShareLink(ctx context.Context, slug, cookie string) (*Sha
 // the link and the view cookie that opens slug, and counts the use. A link
 // with a password returns no cookie and counts nothing: the browser asks
 // for the password and calls UnlockShareLink.
-func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *ShareLink, cookie string, err error) {
+func (s *ShareLinks) OpenShareLink(ctx context.Context, slug, token string) (_ *ShareLink, cookie string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.open", slug)
-	defer func() { s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("open")); endSpan(span, err) }()
+	defer func() { countOutcome(ctx, s.ops, err, shareOperationKey.String("open")); endSpan(span, err) }()
 	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
 		return nil, "", err
@@ -302,20 +344,20 @@ func (s *Service) OpenShareLink(ctx context.Context, slug, token string) (_ *Sha
 // UnlockShareLink opens a link with its password: a wrong password is
 // ErrForbidden, the right one returns the link and its view cookie and
 // counts the use. Slowing guesses down is the caller's part.
-func (s *Service) UnlockShareLink(ctx context.Context, slug, token, password string) (_ *ShareLink, cookie string, err error) {
+func (s *ShareLinks) UnlockShareLink(ctx context.Context, slug, token, password string) (_ *ShareLink, cookie string, err error) {
 	ctx, span := s.span(ctx, "artifact.share_link.unlock", slug)
 	defer func() {
-		s.countOutcome(ctx, s.m.shareLinks, err, shareOperationKey.String("unlock"))
+		countOutcome(ctx, s.ops, err, shareOperationKey.String("unlock"))
 		endSpan(span, err)
 	}()
 	l, passwordHash, err := s.activeLink(ctx, slug, token)
 	if err != nil {
 		return nil, "", err
 	}
-	if passwordHash == "" || s.opts.Passwords == nil {
+	if passwordHash == "" || s.passwords == nil {
 		return nil, "", ErrLinkNotFound
 	}
-	ok, err := s.opts.Passwords.VerifyPassword(ctx, passwordHash, password)
+	ok, err := s.passwords.VerifyPassword(ctx, passwordHash, password)
 	if err != nil {
 		return nil, "", err
 	}
@@ -326,7 +368,7 @@ func (s *Service) UnlockShareLink(ctx context.Context, slug, token, password str
 }
 
 // used counts one opening of l and returns it with cookie.
-func (s *Service) used(ctx context.Context, slug string, l *ShareLink, cookie string) (*ShareLink, string, error) {
+func (s *ShareLinks) used(ctx context.Context, slug string, l *ShareLink, cookie string) (*ShareLink, string, error) {
 	now := s.now()
 	if err := s.store.UseShareLink(ctx, slug, l.Prefix, now); err != nil {
 		return nil, "", err

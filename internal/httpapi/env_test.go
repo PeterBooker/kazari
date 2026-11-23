@@ -102,7 +102,8 @@ func newEnv(t *testing.T, c config) *env {
 	// Loopback is allowed so tests can fetch from httptest servers.
 	fc := fetch.New(fetch.Options{Transport: http.DefaultTransport, Dir: dir})
 	c.artifact.Pages = snapshot.New(fc, snapshot.Options{})
-	art := artifact.New(sqlite.NewArtifactStore(db), blobs, artifact.NoQuotas{}, rec, c.artifact)
+	store := sqlite.NewArtifactStore(db)
+	art := artifact.New(store, store, blobs, artifact.NoQuotas{}, rec, c.artifact)
 	c.upload.Dir = filepath.Join(dir, "uploads")
 	c.upload.Now = now
 	uploads := upload.New(sqlite.NewUploadStore(db), c.upload)
@@ -143,7 +144,7 @@ func newEnv(t *testing.T, c config) *env {
 	c.user.TempDir = dir
 	c.user.Now = now
 	userSrv := httptest.NewServer(httpapi.NewUserAPI(httpapi.UserDeps{
-		Artifacts: art, Uploads: uploads, Users: users, Auth: authn, Links: links,
+		Artifacts: art, ShareLinks: artifact.NewShareLinks(store, art), Uploads: uploads, Users: users, Auth: authn, Links: links,
 		Writes: ratelimit.New(c.writeRate, ratelimit.Options{Now: now, Scope: ratelimit.ScopeCredential}), Fetch: fc,
 	}, c.user))
 	t.Cleanup(userSrv.Close)

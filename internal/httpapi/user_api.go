@@ -30,12 +30,13 @@ const DefaultIPRatePerMinute = ratelimit.DefaultIPPerMinute
 // UserDeps are the collaborators of the user API. Every field is required
 // unless its comment says otherwise.
 type UserDeps struct {
-	Artifacts *artifact.Service
-	Uploads   *upload.Service
-	Users     *user.Service
-	Auth      auth.Authenticator // API keys and OAuth tokens, already chained
-	Links     present.Links
-	Logger    *slog.Logger
+	Artifacts  *artifact.Service
+	ShareLinks *artifact.ShareLinks
+	Uploads    *upload.Service
+	Users      *user.Service
+	Auth       auth.Authenticator // API keys and OAuth tokens, already chained
+	Links      present.Links
+	Logger     *slog.Logger
 	// Writes is shared with the MCP server so a key has one write budget on
 	// both; nil disables it.
 	Writes *ratelimit.Limiter
@@ -645,7 +646,7 @@ func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth
 		return err
 	}
 	actor, slug := present.Actor(p), r.PathValue("slug")
-	l, token, err := h.d.Artifacts.CreateShareLink(r.Context(), actor, slug, req.Label, ttl, req.Password)
+	l, token, err := h.d.ShareLinks.CreateShareLink(r.Context(), actor, slug, req.Label, ttl, req.Password)
 	if err != nil {
 		return err
 	}
@@ -658,7 +659,7 @@ func (h *userAPI) createShareLink(w http.ResponseWriter, r *http.Request, p auth
 }
 
 func (h *userAPI) listShareLinks(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	ls, err := h.d.Artifacts.ListShareLinks(r.Context(), present.Actor(p), r.PathValue("slug"))
+	ls, err := h.d.ShareLinks.ListShareLinks(r.Context(), present.Actor(p), r.PathValue("slug"))
 	if err != nil {
 		return err
 	}
@@ -667,7 +668,7 @@ func (h *userAPI) listShareLinks(w http.ResponseWriter, r *http.Request, p auth.
 }
 
 func (h *userAPI) revokeShareLink(w http.ResponseWriter, r *http.Request, p auth.Principal) error {
-	err := h.d.Artifacts.RevokeShareLink(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("prefix"))
+	err := h.d.ShareLinks.RevokeShareLink(r.Context(), present.Actor(p), r.PathValue("slug"), r.PathValue("prefix"))
 	if err != nil {
 		return err
 	}

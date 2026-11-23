@@ -77,17 +77,19 @@ func newEnv(t testing.TB) *env {
 	reserved := []string{"api", "mcp", "admin"}
 	// Loopback is allowed so tests can fetch from httptest servers.
 	fc := fetch.New(fetch.Options{Transport: http.DefaultTransport, Dir: dir})
-	arts := artifact.New(sqlite.NewArtifactStore(db), blobs, artifact.NoQuotas{}, nil, artifact.Options{ReservedSlugs: reserved,
+	store := sqlite.NewArtifactStore(db)
+	arts := artifact.New(store, store, blobs, artifact.NoQuotas{}, nil, artifact.Options{ReservedSlugs: reserved,
 		Pages: snapshot.New(fc, snapshot.Options{CSP: testCSP}), Passwords: plainPasswords{}})
 	ups := upload.New(sqlite.NewUploadStore(db), upload.Options{Dir: filepath.Join(dir, "uploads"), MaxChunkBytes: 1 << 20})
 	return &env{
 		ctx: ctx,
 		deps: mcpserver.Deps{
-			Artifacts: arts,
-			Uploads:   ups,
-			Logger:    slog.New(slog.DiscardHandler),
-			Links:     present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
-			Fetch:     fc,
+			Artifacts:  arts,
+			ShareLinks: artifact.NewShareLinks(store, arts),
+			Uploads:    ups,
+			Logger:     slog.New(slog.DiscardHandler),
+			Links:      present.Links{URL: func(sub string) string { return "https://" + sub + ".art.test/" }},
+			Fetch:      fc,
 		},
 		opts: mcpserver.Options{
 			BaseDomain:    "art.test",

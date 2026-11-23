@@ -284,17 +284,17 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		userOpts.AutoProvision = o.AutoProvision
 		userOpts.AdminEmails = o.AdminEmails
 	}
-	// oauthSvc and arts are set below, before any request.
+	// oauthSvc and shares are set below, before any request.
 	var (
 		oauthSvc *oauth.Service
-		arts     *artifact.Service
+		shares   *artifact.ShareLinks
 	)
 	userOpts.OnDisable = func(ctx context.Context, handle string) error {
 		actor := artifact.Actor{Handle: "admin"}
 		if p, ok := auth.FromContext(ctx); ok && p.Handle != "" {
 			actor = present.Actor(p)
 		}
-		return errors.Join(oauthSvc.RevokeAllForUser(ctx, handle), arts.RevokeUserShareLinks(ctx, actor, handle))
+		return errors.Join(oauthSvc.RevokeAllForUser(ctx, handle), shares.RevokeUserShareLinks(ctx, actor, handle))
 	}
 	userOpts.EndSessions = func(ctx context.Context, handle string, keep int64) error {
 		return oauthSvc.EndSessions(ctx, handle, keep)
@@ -338,7 +338,9 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 			MaxFiles:      cfg.Limits.MaxFiles,
 		})
 	}
-	arts = artifact.New(sqlite.NewArtifactStore(a.db), blobs, users, auditStore, artOpts)
+	artStore := sqlite.NewArtifactStore(a.db)
+	arts := artifact.New(artStore, artStore, blobs, users, auditStore, artOpts)
+	shares = artifact.NewShareLinks(artStore, arts)
 
 	uploads := upload.New(sqlite.NewUploadStore(a.db), upload.Options{
 		Telemetry:       tel,
@@ -568,6 +570,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	}
 	apiH := httpapi.NewUserAPI(httpapi.UserDeps{
 		Artifacts: arts, Uploads: uploads, Users: users, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
+		ShareLinks: shares,
 	}, httpapi.UserOptions{
 		MaxBodyBytes:    int64(cfg.Limits.MaxVersionBytes) + 1<<20,
 		MaxVersionBytes: int64(cfg.Limits.MaxVersionBytes),
@@ -618,6 +621,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	adminH := httpapi.NewAdminAPI(adminDeps, adminOpts)
 	mcpH := mcpserver.NewHandler(mcpserver.Deps{
 		Artifacts: arts, Uploads: uploads, Auth: authn, Links: links, Logger: log, Writes: writes, Fetch: fetcher,
+		ShareLinks: shares,
 	}, mcpOpts)
 	siteOpts := site.Options{
 		BaseDomain:       cfg.BaseDomain,
@@ -626,7 +630,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		AllowCSPOverride: cfg.Serve.AllowCSPOverride,
 		ImmutableMaxAge:  cfg.Lifecycle.Tombstone.Std(),
 		Logger:           log,
-		Gate: gate.New(oauthSvc, arts, gate.Options{
+		Gate: gate.New(oauthSvc, shares, gate.Options{
 			SignInURL:       mcpURL + strings.TrimPrefix(oauth.PathSignIn, "/"),
 			SignOutURL:      mcpURL + strings.TrimPrefix(oauth.PathSignOut, "/"),
 			InsecureCookies: cfg.ExternalScheme == "http",
@@ -641,6 +645,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 	siteH := site.NewHandler(arts, blobs, siteOpts)
 	accountDeps := account.Deps{
 		Sessions: oauthSvc, Users: users, Grants: oauthSvc, Artifacts: arts, Audit: auditStore, Links: links, Logger: log,
+		ShareLinks: shares,
 	}
 	if passkeys != nil {
 		accountDeps.Passkeys = passkeys
@@ -672,7 +677,7 @@ func (a *App) build(ctx context.Context, now func() time.Time, opts Options) err
 		deps := dashboard.Deps{
 			Sessions: oauthSvc, Users: users, Artifacts: arts, Grants: oauthSvc, Audit: auditStore, Recorder: auditStore,
 			Jobs: a.sched, Ready: ready, Backup: backups, Settings: cfg.Redacted, Views: viewsSvc, Links: links, Logger: log,
-			Flags: sqlite.NewFlagStore(a.db),
+			Flags: sqlite.NewFlagStore(a.db), ShareLinks: shares,
 		}
 		// Assigned only when there is one: a nil *update.Checker in the
 		// interface would not be a nil interface.

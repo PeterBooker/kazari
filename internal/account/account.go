@@ -91,6 +91,11 @@ type Pages interface {
 	UnmarkStale(ctx context.Context, actor artifact.Actor, slug string) (*artifact.Artifact, error)
 	Delete(ctx context.Context, actor artifact.Actor, slug string, hard bool) error
 	Update(ctx context.Context, actor artifact.Actor, req artifact.UpdateRequest) (*artifact.Artifact, *artifact.Version, error)
+}
+
+// Sharing creates, lists and revokes a person's share links.
+// artifact.ShareLinks implements it.
+type Sharing interface {
 	CreateShareLink(ctx context.Context, actor artifact.Actor, slug, label string, ttl time.Duration, password string) (*artifact.ShareLink, string, error)
 	ListShareLinks(ctx context.Context, actor artifact.Actor, slug string) ([]artifact.ShareLink, error)
 	RevokeShareLink(ctx context.Context, actor artifact.Actor, slug, prefix string) error
@@ -106,15 +111,17 @@ type Passkeys interface {
 
 // Deps are the collaborators of the account pages. Audit, Artifacts and
 // Passkeys may be nil; the account page then leaves their sections out.
+// ShareLinks is set whenever Artifacts is.
 type Deps struct {
-	Sessions  session.Provider
-	Users     *user.Service
-	Grants    Grants
-	Artifacts Pages
-	Audit     audit.Reader
-	Passkeys  Passkeys
-	Links     present.Links
-	Logger    *slog.Logger
+	Sessions   session.Provider
+	Users      *user.Service
+	Grants     Grants
+	Artifacts  Pages
+	ShareLinks Sharing
+	Audit      audit.Reader
+	Passkeys   Passkeys
+	Links      present.Links
+	Logger     *slog.Logger
 }
 
 // Options configures the account pages.

@@ -203,7 +203,7 @@ func TestShareScopeOnTools(t *testing.T) {
 		Files: []artifact.FileInput{{Path: "index.html", Content: strings.NewReader("<h1>demo</h1>")}}}); err != nil {
 		t.Fatal(err)
 	}
-	link, _, err := e.deps.Artifacts.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
+	link, _, err := e.deps.ShareLinks.CreateShareLink(e.ctx, alice, "demo", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestShareScopeOnTools(t *testing.T) {
 	if err != nil || a.Visibility != artifact.Public {
 		t.Fatalf("a refused call changed the visibility: %+v, %v", a, err)
 	}
-	if links, err := e.deps.Artifacts.ListShareLinks(e.ctx, alice, "demo"); err != nil || len(links) != 1 || links[0].RevokedAt != nil {
+	if links, err := e.deps.ShareLinks.ListShareLinks(e.ctx, alice, "demo"); err != nil || len(links) != 1 || links[0].RevokedAt != nil {
 		t.Errorf("a refused call changed the share links: %+v, %v", links, err)
 	}
 

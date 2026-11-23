@@ -58,6 +58,7 @@ type env struct {
 	clock     *clock
 	users     *user.Service
 	artifacts *artifact.Service
+	shares    *artifact.ShareLinks
 	oauth     *oauth.Service
 	audit     *sqlite.AuditStore
 	jobs      *scheduler.Scheduler
@@ -126,10 +127,12 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 		},
 		RevokeGrants: func(ctx context.Context, handle string) error { return e.oauth.RevokeAllForUser(ctx, handle) },
 	})
-	e.artifacts = artifact.New(wideArtifacts{sqlite.NewArtifactStore(db), &e.wide}, blobs, e.users, e.audit, artifact.Options{
+	store := sqlite.NewArtifactStore(db)
+	e.artifacts = artifact.New(wideArtifacts{store, &e.wide}, store, blobs, e.users, e.audit, artifact.Options{
 		Passwords: e.users, Now: e.clock.Now, Retention: 30 * 24 * time.Hour, Tombstone: 90 * 24 * time.Hour,
 		DefaultGrace: 14 * 24 * time.Hour, MaxShareLinkTTL: 90 * 24 * time.Hour, DefaultVisibility: artifact.Public,
 	})
+	e.shares = artifact.NewShareLinks(store, e.artifacts)
 	e.jobs = scheduler.New(scheduler.Options{Now: e.clock.Now},
 		scheduler.Job{Name: "sweep", Every: 15 * time.Minute, Run: func(ctx context.Context) error {
 			_, err := e.artifacts.Sweep(ctx)
@@ -153,8 +156,9 @@ func newEnv(t *testing.T, mutate func(*dashboard.Deps, *dashboard.Options)) *env
 	deps := dashboard.Deps{
 		Views:    views.New(viewStore, views.Options{Now: e.clock.Now}),
 		Flags:    sqlite.NewFlagStore(db),
-		Sessions: e.oauth, Users: e.users, Artifacts: e.artifacts, Grants: e.oauth, Audit: e.audit, Recorder: e.audit,
-		Jobs: e.jobs, Links: present.Links{URL: func(sub string) string {
+		Sessions: e.oauth, Users: e.users, Artifacts: e.artifacts, ShareLinks: e.shares, Grants: e.oauth, Audit: e.audit,
+		Recorder: e.audit,
+		Jobs:     e.jobs, Links: present.Links{URL: func(sub string) string {
 			if sub == "" {
 				return "https://art.test/"
 			}

@@ -677,7 +677,7 @@ func (s *Service) CollectGarbage(ctx context.Context) (n int, err error) {
 func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool, error) {
 	s.blobMu.Lock()
 	defer s.blobMu.Unlock()
-	hashes, err := s.store.UnreferencedBlobs(ctx, before, gcBatch)
+	hashes, err := s.index.UnreferencedBlobs(ctx, before, gcBatch)
 	if err != nil {
 		return 0, false, err
 	}
@@ -692,7 +692,7 @@ func (s *Service) collectBatch(ctx context.Context, before time.Time) (int, bool
 			}
 			continue
 		}
-		if err := s.store.DeleteBlob(ctx, h); err != nil {
+		if err := s.index.DeleteBlob(ctx, h); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("artifact: gc blob row %s: %w", h, err)
 			}
@@ -727,7 +727,7 @@ func (s *Service) Storage(ctx context.Context) (versions, blobs Totals, err erro
 	if versions, err = s.store.VersionTotals(ctx); err != nil {
 		return Totals{}, Totals{}, err
 	}
-	if blobs, err = s.store.BlobTotals(ctx); err != nil {
+	if blobs, err = s.index.BlobTotals(ctx); err != nil {
 		return Totals{}, Totals{}, err
 	}
 	return versions, blobs, nil

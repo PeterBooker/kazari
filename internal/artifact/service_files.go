@@ -136,7 +136,7 @@ func (s *Service) putFile(ctx context.Context, p string, in FileInput, versionLe
 		return File{}, domainErr(err)
 	}
 	*put = append(*put, hash)
-	if err := s.store.RecordBlob(ctx, hash, size, s.now()); err != nil {
+	if err := s.index.RecordBlob(ctx, hash, size, s.now()); err != nil {
 		return File{}, err
 	}
 	return File{Path: p, Hash: hash, Size: size, ContentType: ct}, nil
@@ -159,14 +159,14 @@ func (s *Service) dropBlobs(ctx context.Context, hashes []string) {
 
 // dropBlob deletes in CollectGarbage's order: the file before the row.
 func (s *Service) dropBlob(ctx context.Context, hash string) error {
-	referenced, err := s.store.BlobReferenced(ctx, hash)
+	referenced, err := s.index.BlobReferenced(ctx, hash)
 	if err != nil || referenced {
 		return err
 	}
 	if err := s.blobs.Delete(ctx, hash); err != nil {
 		return err
 	}
-	return s.store.DeleteBlob(ctx, hash)
+	return s.index.DeleteBlob(ctx, hash)
 }
 
 // domainErr unwraps an *Error the blob store wrapped, so callers see the

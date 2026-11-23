@@ -367,7 +367,7 @@ func (s *server) pageView(ctx context.Context, c *request, slug string) (*pageDa
 	// A page in the bin has links, but they open nothing and cannot change
 	// until it is restored.
 	if a.DeletedAt == nil {
-		links, err := s.d.Artifacts.ListShareLinks(ctx, c.actor, a.Slug)
+		links, err := s.d.ShareLinks.ListShareLinks(ctx, c.actor, a.Slug)
 		if err != nil {
 			return nil, pageErr(err)
 		}
@@ -645,7 +645,7 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 	if password != "" && artifact.CheckLinkPassword(password) != nil {
 		return refuse("password", passwordRule)
 	}
-	l, token, err := s.d.Artifacts.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour, password)
+	l, token, err := s.d.ShareLinks.CreateShareLink(ctx, c.actor, slug, label, time.Duration(days)*24*time.Hour, password)
 	switch {
 	case errors.Is(err, artifact.ErrLinkPassword):
 		return refuse("password", "This instance cannot keep a password for a link. Leave it empty.")
@@ -681,7 +681,7 @@ func (s *server) pagesLinkCreate(w http.ResponseWriter, r *http.Request, c *requ
 // link finds the page's share link with the prefix of the path.
 func (s *server) link(r *http.Request, c *request) (string, *artifact.ShareLink, error) {
 	slug, prefix := r.PathValue("slug"), r.PathValue("prefix")
-	links, err := s.d.Artifacts.ListShareLinks(r.Context(), c.actor, slug)
+	links, err := s.d.ShareLinks.ListShareLinks(r.Context(), c.actor, slug)
 	if err != nil {
 		return "", nil, pageErr(err)
 	}
@@ -722,7 +722,7 @@ func (s *server) pagesLinkRevoke(w http.ResponseWriter, r *http.Request, c *requ
 	if err != nil {
 		return err
 	}
-	if err := s.d.Artifacts.RevokeShareLink(r.Context(), c.actor, slug, l.Prefix); err != nil {
+	if err := s.d.ShareLinks.RevokeShareLink(r.Context(), c.actor, slug, l.Prefix); err != nil {
 		return pageErr(err)
 	}
 	return s.done(w, r, pagePath(slug), "link-revoked")

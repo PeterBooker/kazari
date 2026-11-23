@@ -138,6 +138,7 @@ func (o Options) withDefaults() Options {
 // use; the store resolves races.
 type Service struct {
 	store  Store
+	index  BlobIndex
 	blobs  blob.Store
 	quotas QuotaSource
 	rec    audit.Recorder
@@ -153,10 +154,11 @@ type Service struct {
 	blobMu sync.RWMutex
 }
 
-// New returns a Service; a nil rec discards audit events. quotas gives the
-// owner's quota when another member adds a version under WriteShared, so
-// every version is charged to the owner.
-func New(store Store, blobs blob.Store, quotas QuotaSource, rec audit.Recorder, opts Options) *Service {
+// New returns a Service whose blobs, kept in blobs, index records; a nil
+// rec discards audit events. quotas gives the owner's quota when another
+// member adds a version under WriteShared, so every version is charged to
+// the owner.
+func New(store Store, index BlobIndex, blobs blob.Store, quotas QuotaSource, rec audit.Recorder, opts Options) *Service {
 	if quotas == nil {
 		// A missing source would leave versions by other members uncharged.
 		panic("artifact: New needs a QuotaSource; NoQuotas for none")
@@ -165,7 +167,7 @@ func New(store Store, blobs blob.Store, quotas QuotaSource, rec audit.Recorder, 
 		rec = audit.Nop{}
 	}
 	meter := opts.Telemetry.Meter(scope)
-	s := &Service{store: store, blobs: blobs, quotas: quotas, rec: rec, opts: opts.withDefaults(),
+	s := &Service{store: store, index: index, blobs: blobs, quotas: quotas, rec: rec, opts: opts.withDefaults(),
 		tracer: opts.Telemetry.Tracer(scope), m: newMetrics(meter)}
 	s.observeCensus(meter)
 	return s
