@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -127,9 +128,7 @@ func TestRunPull(t *testing.T) {
 			t.Fatalf("pull --force: %+v", r)
 		}
 		forced := map[string]string{"notes.txt": "mine"}
-		for k, v := range want {
-			forced[k] = v
-		}
+		maps.Copy(forced, want)
 		if diff := cmp.Diff(forced, readTree(t, out)); diff != "" {
 			t.Errorf("files after pull --force (-want +got):\n%s", diff)
 		}
@@ -189,30 +188,24 @@ func TestRunPullWithoutVersionHeader(t *testing.T) {
 }
 
 func TestExtractBundleRefuses(t *testing.T) {
+	long := tarGz(t, tarEntry{Name: "a", Content: strings.Repeat("x", 4096)})
 	tests := []struct {
 		name    string
-		archive func(t *testing.T) []byte
+		archive []byte
 		unsafe  bool
 	}{
-		{"parent", func(t *testing.T) []byte { return tarGz(t, tarEntry{Name: "../escape", Content: "x"}) }, true},
-		{"absolute", func(t *testing.T) []byte { return tarGz(t, tarEntry{Name: "/escape", Content: "x"}) }, true},
-		{"symlink", func(t *testing.T) []byte {
-			return tarGz(t, tarEntry{Name: "link", Type: tar.TypeSymlink})
-		}, true},
-		{"twice", func(t *testing.T) []byte {
-			return tarGz(t, tarEntry{Name: "a", Content: "1"}, tarEntry{Name: "a", Content: "2"})
-		}, true},
-		{"cut short", func(t *testing.T) []byte {
-			b := tarGz(t, tarEntry{Name: "a", Content: strings.Repeat("x", 4096)})
-			return b[:len(b)-4]
-		}, false},
-		{"not gzip", func(t *testing.T) []byte { return []byte("plain text") }, false},
+		{"parent", tarGz(t, tarEntry{Name: "../escape", Content: "x"}), true},
+		{"absolute", tarGz(t, tarEntry{Name: "/escape", Content: "x"}), true},
+		{"symlink", tarGz(t, tarEntry{Name: "link", Type: tar.TypeSymlink}), true},
+		{"twice", tarGz(t, tarEntry{Name: "a", Content: "1"}, tarEntry{Name: "a", Content: "2"}), true},
+		{"cut short", long[:len(long)-4], false},
+		{"not gzip", []byte("plain text"), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
 			dir := filepath.Join(parent, "out")
-			_, _, err := extractBundle(bytes.NewReader(tc.archive(t)), dir)
+			_, _, err := extractBundle(bytes.NewReader(tc.archive), dir)
 			if err == nil {
 				t.Fatalf("extractBundle(%s) = nil error, want one", tc.name)
 			}

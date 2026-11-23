@@ -87,6 +87,17 @@ kazari deploy ./dist --slug q3-report --label "fix chart"
 
 The new version holds exactly the files in `./dist`: files gone from the directory, such as a bundler's old `assets/index-<hash>.js`, are removed. If the slug does not exist yet, `deploy` creates it, so the same command serves the first build and every one after.
 
+## Editing a published page locally
+
+To change a page that someone, or an agent, published from somewhere else, pull its files into a directory and deploy the directory again:
+
+```sh
+kazari pull q3-report
+kazari deploy q3-report --label "fix chart"
+```
+
+`kazari pull` writes the published version to `./q3-report`, and `deploy` takes its slug from the directory's name. Add `--version 3` to `pull` to start from an earlier version. If the page holds dotfiles, `pull` warns that `deploy` would leave them out; the [CLI reference](cli.md#pull) says how to keep them.
+
 ## Changing an artifact
 
 These commands change an artifact after its first publish:

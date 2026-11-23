@@ -118,6 +118,7 @@ The `kazari` binary is also the client. Install it on a laptop with `curl -fsSL 
 kazari login --url https://api.art.example.com               # save the address and your key
 kazari publish ./site --slug q3-report --name "Q3 report"   # create version 1
 kazari deploy ./site --slug q3-report --label "fix chart"    # version 2 holds exactly ./site
+kazari pull q3-report                                         # the published files, in ./q3-report
 kazari get q3-report                                          # record and versions
 kazari rollback q3-report 1                                   # serve version 1 again
 kazari versions prune q3-report --keep 20                     # delete all but the 20 newest versions

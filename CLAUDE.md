@@ -25,7 +25,7 @@ go run github.com/goreleaser/goreleaser/v2@latest check
 go test -race -count=1 -shuffle=on -timeout=5m ./...
 CGO_ENABLED=0 go test -count=1 -shuffle=on -timeout=5m ./...      # the configuration that ships
 CGO_ENABLED=0 go test -run='^$' -bench=. -benchtime=1x ./...      # every benchmark once
-.github/scripts/smoke.sh ./kazari                                 # the built binary: serve --local, publish, fetch
+.github/scripts/smoke.sh ./kazari                                 # the built binary: serve --local, publish, fetch, pull, deploy
 
 # what scheduled.yml adds daily: every fuzz target for a count of executions, and the sign-in pages
 # in a real browser (skipped unless the variable names a Chromium or Chrome command)
