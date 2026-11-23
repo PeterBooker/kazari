@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/PeterBooker/kazari/internal/api"
 	"github.com/PeterBooker/kazari/internal/auth"
@@ -172,9 +170,9 @@ func (h *adminAPI) backup(w http.ResponseWriter, r *http.Request, _ auth.Princip
 	// A large archive outlasts the server's write timeout, so each write
 	// renews it: the download lasts while its reader reads, and one that
 	// stalls ends, which frees the backup for the next caller.
-	out := &archiveWriter{w: w, body: middleware.Streaming(w, downloadStall), name: h.backupFileName(), contentType: "application/x-tar"}
+	out := middleware.NewDownload(w, backup.FileName(h.o.BackupName, h.o.Now()), "application/x-tar")
 	if _, err := h.d.Backup.Write(r.Context(), out, backup.WriteOptions{Certs: certs}); err != nil {
-		if !out.started {
+		if !out.Started() {
 			return err
 		}
 		h.log.ErrorContext(r.Context(), "httpapi: backup failed mid-stream", "err", err)
@@ -182,53 +180,6 @@ func (h *adminAPI) backup(w http.ResponseWriter, r *http.Request, _ auth.Princip
 		// keep a truncated archive as a whole one.
 		panic(http.ErrAbortHandler)
 	}
-	out.start()
+	out.Start()
 	return nil
-}
-
-// backupFileName is kazari-<name>-<UTC time>.tar, the name reduced to what
-// is safe unquoted in a header and on any file system.
-func (h *adminAPI) backupFileName() string {
-	name := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-' {
-			return r
-		}
-		return -1
-	}, strings.ToLower(h.o.BackupName))
-	if name != "" {
-		name += "-"
-	}
-	return "kazari-" + name + h.o.Now().UTC().Format("20060102-150405") + ".tar"
-}
-
-// archiveWriter sends the download's headers with the first byte, so that
-// until then the response can still be an error.
-type archiveWriter struct {
-	w           http.ResponseWriter
-	body        io.Writer // w, with a write deadline of its own
-	name        string
-	contentType string
-	started     bool
-}
-
-// downloadStall is how long the reader of a backup or a bundle may take over
-// one write before the server gives the download up.
-const downloadStall = time.Minute
-
-func (a *archiveWriter) start() {
-	if a.started {
-		return
-	}
-	a.started = true
-	h := a.w.Header()
-	h.Set("Content-Type", a.contentType)
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Disposition", `attachment; filename="`+a.name+`"`)
-	h.Set("Cache-Control", "no-store")
-	a.w.WriteHeader(http.StatusOK)
-}
-
-func (a *archiveWriter) Write(p []byte) (int, error) {
-	a.start()
-	return a.body.Write(p)
 }

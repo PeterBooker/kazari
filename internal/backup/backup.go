@@ -357,6 +357,21 @@ func (s *Service) record(ctx context.Context, sum Summary) {
 	}
 }
 
+// FileName is kazari-<instance>-<UTC time>.tar, the instance's name reduced
+// to what is safe unquoted in a header and on any file system.
+func FileName(instance string, at time.Time) string {
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-' {
+			return r
+		}
+		return -1
+	}, strings.ToLower(instance))
+	if name != "" {
+		name += "-"
+	}
+	return "kazari-" + name + at.UTC().Format("20060102-150405") + ".tar"
+}
+
 const tempPrefix = "backup-"
 
 func tempName(dir string) (string, error) {

@@ -89,11 +89,3 @@ func TestSystemUpdateView(t *testing.T) {
 		t.Errorf("newer = %+v", v)
 	}
 }
-
-func TestBackupFileName(t *testing.T) {
-	for in, want := range map[string]string{"art.example.com": "art.example.com", `a"b/../c`: "ab..c", "Art.Test": "art.test"} {
-		if got := fileSafe(in); got != want {
-			t.Errorf("fileSafe(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

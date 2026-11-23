@@ -30,10 +30,9 @@ func (h *userAPI) downloadBundle(w http.ResponseWriter, r *http.Request, p auth.
 		return err
 	}
 	w.Header().Set(api.VersionHeader, strconv.Itoa(v.Number))
-	out := &archiveWriter{w: w, body: middleware.Streaming(w, downloadStall),
-		name: slug + "-v" + strconv.Itoa(v.Number) + ".tar.gz", contentType: "application/gzip"}
+	out := middleware.NewDownload(w, slug+"-v"+strconv.Itoa(v.Number)+".tar.gz", "application/gzip")
 	if err := writeBundle(r.Context(), out, v, open); err != nil {
-		if !out.started {
+		if !out.Started() {
 			return err
 		}
 		if r.Context().Err() == nil {
@@ -43,7 +42,7 @@ func (h *userAPI) downloadBundle(w http.ResponseWriter, r *http.Request, p auth.
 		// keep a truncated archive as a whole one.
 		panic(http.ErrAbortHandler)
 	}
-	out.start()
+	out.Start()
 	return nil
 }
 

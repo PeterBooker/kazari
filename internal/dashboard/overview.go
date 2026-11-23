@@ -275,40 +275,25 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		CLIURL: strings.TrimSuffix(strings.TrimSuffix(s.o.APIURL, "/"), "/v1")}
 	in := attentionInput{Now: now, Version: s.o.Build.Version}
 
-	users, err := s.d.Users.ListUsers(ctx)
+	people, err := s.d.Users.People(ctx, s.d.Artifacts)
 	if err != nil {
 		return err
 	}
-	accounts, err := s.d.Users.Accounts(ctx)
-	if err != nil {
-		return err
-	}
-	invited := make(map[string]bool, len(accounts))
 	keyUsed := false
 	// An admin who was invited and has set no password cannot let anyone
 	// back in yet.
 	canSignIn := 0
-	for _, a := range accounts {
-		invited[a.Handle] = a.Invited
-		keyUsed = keyUsed || a.KeyUsedAt != nil
-	}
-	owners, err := s.d.Artifacts.OwnerUsage(ctx)
-	if err != nil {
-		return err
-	}
-	used := make(map[string]int64, len(owners))
 	var counted int64
-	for _, o := range owners {
-		used[o.Handle] = o.Bytes
-		counted += o.Bytes
-	}
-	for i := range users {
-		u := &users[i]
+	for i := range people {
+		p := &people[i]
+		u, invited := &p.User, p.Account.Invited
+		keyUsed = keyUsed || p.Account.KeyUsedAt != nil
+		counted += p.Usage.Bytes
 		d.People.Total++
 		switch {
 		case u.DisabledAt != nil:
 			d.People.Disabled++
-		case invited[u.Handle]:
+		case invited:
 			d.People.Invited++
 		default:
 			d.People.Active++
@@ -316,11 +301,11 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, c *request) er
 		if u.DisabledAt == nil {
 			if u.Role == user.RoleAdmin {
 				d.People.Admins++
-				if !invited[u.Handle] {
+				if !invited {
 					canSignIn++
 				}
 			}
-			in.People = append(in.People, quotaUse{Handle: u.Handle, Name: u.DisplayName, Used: used[u.Handle], Quota: u.QuotaBytes})
+			in.People = append(in.People, quotaUse{Handle: u.Handle, Name: u.DisplayName, Used: p.Usage.Bytes, Quota: u.QuotaBytes})
 		}
 	}
 	in.ActiveAdmins = canSignIn

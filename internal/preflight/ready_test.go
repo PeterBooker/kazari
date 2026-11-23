@@ -78,9 +78,9 @@ func TestReadyPassing(t *testing.T) {
 		"config":      "the configuration is valid",
 		"dns token":   "wrote and removed a TXT record",
 		"certificate": "valid until 2027-01-20 (60 days)",
-		"disk":        "50.0 GiB free of 100.0 GiB on the disk holding " + cfg.DataDir + " (50%)",
-		"database":    "3.0 MiB in " + cfg.DBPath(),
-		"blobs":       "2.0 KiB in " + cfg.BlobDir(),
+		"disk":        "50 GiB free of 100 GiB on the disk holding " + cfg.DataDir + " (50%)",
+		"database":    "3 MiB in " + cfg.DBPath(),
+		"blobs":       "2 KiB in " + cfg.BlobDir(),
 		"dashboard":   "https://admin.art.example.test",
 	} {
 		if f := one(t, findings, check); !strings.Contains(f.Detail, want) {
@@ -136,7 +136,7 @@ func TestReadyProblems(t *testing.T) {
 			o.CertNotAfter = nil
 		}, "certificate", Skip, []string{"proxy mode"}},
 		{"disk filling", func(_ *config.Config, o *ReadyOptions) { o.DiskUsage = diskUsage(9<<30, 100<<30) },
-			"disk", Warn, []string{"9.0 GiB free of 100.0 GiB", "(9%)", "purge pages from the bin, lower lifecycle.retention or grow the disk"}},
+			"disk", Warn, []string{"9 GiB free of 100 GiB", "(9%)", "purge pages from the bin, lower lifecycle.retention or grow the disk"}},
 		{"disk at the threshold", func(_ *config.Config, o *ReadyOptions) { o.DiskUsage = diskUsage(10<<30, 100<<30) },
 			"disk", OK, []string{"(10%)"}},
 		{"disk full", func(_ *config.Config, o *ReadyOptions) { o.DiskUsage = diskUsage(1<<30, 100<<30) },

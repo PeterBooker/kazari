@@ -174,31 +174,15 @@ func Liveness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *adminAPI) listUsers(w http.ResponseWriter, r *http.Request, _ auth.Principal) error {
-	users, err := h.d.Users.ListUsers(r.Context())
+	people, err := h.d.Users.People(r.Context(), h.d.Artifacts)
 	if err != nil {
 		return err
 	}
-	accounts, err := h.d.Users.Accounts(r.Context())
-	if err != nil {
-		return err
-	}
-	byHandle := make(map[string]user.Account, len(accounts))
-	for _, a := range accounts {
-		byHandle[a.Handle] = a
-	}
-	// One query for everyone's usage, not one a person.
-	owners, err := h.d.Artifacts.OwnerUsage(r.Context())
-	if err != nil {
-		return err
-	}
-	used := make(map[string]int64, len(owners))
-	for _, o := range owners {
-		used[o.Handle] = o.Bytes
-	}
-	out := make([]api.User, 0, len(users))
-	for i := range users {
-		u := present.WithAccount(present.User(&users[i]), byHandle[users[i].Handle])
-		u.UsedBytes = used[u.Handle]
+	out := make([]api.User, 0, len(people))
+	for i := range people {
+		p := &people[i]
+		u := present.WithAccount(present.User(&p.User), p.Account)
+		u.UsedBytes = p.Usage.Bytes
 		out = append(out, u)
 	}
 	writeJSON(w, http.StatusOK, out)
