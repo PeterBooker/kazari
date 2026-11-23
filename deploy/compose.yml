@@ -39,13 +39,6 @@ services:
     # KAZARI_TELEMETRY_OTLP_HEADERS.
     # environment:
     #   KAZARI_TELEMETRY_OTLP_ENDPOINT: http://otel-collector:4318
-    healthcheck:
-      # Over the admin socket in the data volume, which needs no token.
-      test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
 
 volumes:
   data:

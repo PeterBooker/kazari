@@ -53,14 +53,6 @@ services:
       KAZARI_TELEMETRY_METRICS_OTLP: ${KAZARI_TELEMETRY_METRICS_OTLP:-false}
       KAZARI_TELEMETRY_LOGS_OTLP: ${KAZARI_TELEMETRY_LOGS_OTLP:-false}
       KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO: ${KAZARI_TELEMETRY_TRACES_SITE_SAMPLE_RATIO:-0.01}
-    healthcheck:
-      # Over the admin socket in the data volume, which needs no token.
-      test: ["CMD", "/usr/local/bin/kazari", "admin", "health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-      start_interval: 1s
     develop:
       watch:
         - action: rebuild

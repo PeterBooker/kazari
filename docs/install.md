@@ -138,7 +138,7 @@ docker run -d --name kazari --restart unless-stopped \
 
 The log, from `docker logs -f kazari`, shows the same lines as under Compose. Wherever this guide runs `docker compose exec kazari kazari`, run `docker exec kazari kazari` instead.
 
-Compose checks the server's health with `kazari admin health`. `docker run --health-cmd` needs a shell, which the image lacks, so a container started this way has no health check.
+The image checks the server's health itself, with `kazari admin health` every 30 seconds, so `docker ps` shows a container started this way as `healthy` too.
 
 ## Installing the package
 
